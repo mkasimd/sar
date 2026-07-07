@@ -39,6 +39,12 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
   - checked arithmetic and checked conversions now gate LFH, TLV, sparse, fragment, and recovery parsing paths
+- **Stage 3 pipeline memory accounting and expansion-bomb protection**
+  - in-memory reconstruction APIs enforce configured limits before allocating any reconstruction buffer
+  - **sparse expansion-bomb protection**: `tiny stored payload + huge Uncompressed Size + sparse extent near end` is rejected with `SAR_ERR_LIMIT_EXCEEDED` before any large allocation; this applies to non-fragmented and fragmented sparse entries alike
+  - decompression bounded by `max_decoded_entry_size` to prevent decompression-bomb attacks
+  - fragment group span, loss-tolerant gap filling, and FEC/recovery working sets are all bounded before allocation
+  - runtime memory budget not implemented by design; configured `ResourceLimits` are the deterministic protection
 
 ## Workspace layout
 

@@ -56,6 +56,18 @@ maintainability cleanup pass.
   - unified `ResourceLimits` model threaded through archive reader, LFH parsing, TLV parsing, sparse reconstruction, fragment reassembly, and recovery/repair helpers
   - configured limits are enforced before dangerous allocations for global flags, KMS payloads, LFH headers, payload buffers, TLV values/counts, Central Dictionary regions, sparse maps, fragment groups, and repair working buffers
   - resource-limit failures return `SAR_ERR_LIMIT_EXCEEDED`
+- **Stage 3 pipeline memory accounting and expansion-bomb protection**
+  - effective limit enforced as `min(max_decoded_entry_size, max_in_memory_buffer, max_total_pipeline_memory)` before any reconstruction buffer is allocated
+  - sparse expansion-bomb protection: `apply_sparse_reconstruction` and `read_all_logical_files` reject entries where `Uncompressed Size` exceeds configured limits **before** any allocation; the attack shape `tiny payload + huge Uncompressed Size + sparse extent near end` returns `SAR_ERR_LIMIT_EXCEEDED`, not `SAR_ERR_INVALID_MAP`
+  - fragmented sparse expansion bombs rejected via the same path using fragment-0's `Uncompressed Size`
+  - decompression output bounded by `max_decoded_entry_size` via `sar-compression`'s `max_output_size` parameter
+  - fragment group span bounded by `max_fragment_group_span` before assembly allocation
+  - fragment descriptor arithmetic overflow detected before any buffer is allocated
+  - loss-tolerant gap fill bounded by `max_loss_tolerant_gap`
+  - FEC/recovery working sets bounded by `max_fec_value_bytes` and `max_repair_working_set`
+  - all `u64 → usize` conversions go through `ResourceLimits::allocation_len` which performs checked conversion and limit checks atomically
+  - runtime memory budget not implemented by design; configured `ResourceLimits` are the deterministic protection
+  - `pipeline_memory_tests` test file added covering: sparse expansion-bomb reject, sparse bounded success, general memory-bound limits, sparse trailing hole tests, fragmentation tests, compression expansion tests, FEC/recovery working-set tests
 - **Milestone 8 CLI additions**
   - `sar repair <archive> <output> --fec [--erasures erasures.json]` command
   - `sar extract` uses `read_all_logical_files` — automatically reconstructs fragment groups and applies sparse reconstruction
@@ -85,6 +97,7 @@ maintainability cleanup pass.
   - M8 closeout: `cli_sparse_tests` — CLI extraction of sparse holes, trailing holes, malformed sparse maps, inspection of sparse archives
   - M8 final pass: `sparse_fragment_tests` — sparse map on fragment-0 applies to whole group; sparse map on non-zero fragment index returns `SAR_ERR_INVALID_MAP`; allow_lossy does not suppress `SAR_ERR_INVALID_MAP`; three-fragment scatter-gather via sparse map; trailing holes preserved across fragment boundaries; missing fragment without allow_lossy fails; missing fragment with allow_lossy+LOSS_TOLERANT succeeds with is_degraded=true; degraded sparse+fragment output is marked
   - M8 final pass: `sparse_writer_tests` — writer creates sparse entry with leading/middle/trailing holes; round-trips through reader; rejects overlapping extents; rejects extent beyond logical_size; rejects payload length mismatch (short and excess); requires sparse flag; edge cases (single full extent, empty extents, indexed archive)
+  - Stage 3: `pipeline_memory_tests` — 25 tests covering sparse expansion-bomb reject and bounded-success, general memory-bound limits (max_decoded_entry_size, max_in_memory_buffer, max_total_pipeline_memory), sparse trailing-hole limit enforcement, fragment descriptor overflow, huge fragment group span, loss-tolerant gap limit, fragmented sparse expansion bomb, decompression output limit, compressed bomb limit, FEC/recovery working-set limits, failed-repair non-output guarantee
 
 ## Partial
 

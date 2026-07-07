@@ -275,7 +275,8 @@ Reads all entries, assembles fragment groups, applies sparse reconstruction, and
 - Overlapping fragment descriptors → `SarError::InvalidMap`.
 - AEAD authentication failures are **never** suppressed by `allow_lossy`.
 - Format errors are **never** suppressed by `allow_lossy`.
-- **Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size.** Trailing holes after the final sparse extent are filled with zero bytes up to `Uncompressed Size`. Large logical sizes are capped by `ArchiveReaderOptions.limits.max_decoded_entry_size`.
+- **Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size.** Trailing holes after the final sparse extent are filled with zero bytes up to `Uncompressed Size`. Large logical sizes are capped by `ArchiveReaderOptions.limits.max_decoded_entry_size`. **The implementation rejects oversized logical sizes before allocation (sparse expansion-bomb protection).**
+- **Sparse expansion-bomb protection**: a tiny stored payload combined with a huge `Uncompressed Size` and a sparse extent near the end (e.g., `Uncompressed Size=1025`, `max_decoded_entry_size=1024`, sparse map `{offset=1024, length=1}`, one stored byte) is rejected with `SAR_ERR_LIMIT_EXCEEDED` **before any large allocation is attempted**. This is not `SAR_ERR_INVALID_MAP` because the sparse map is structurally valid.
 - **CRC32 verification** (when `PER_FILE_CRC` is set and the LFH `file_crc32` field is present): CRC32 is computed over the fully reconstructed logical file bytes, **including sparse holes**. A wrong CRC returns `SarError::CrcMismatch`. Verification applies after fragment reassembly and sparse reconstruction. Content-hash verification is not implemented; see Known Limitations below.
 - **Empty Areas** (entries with `Name Length == 0` and `IS_FRAGMENT == 0`) are excluded from the returned list; they do not participate in sparse reconstruction, hashing, delta, or fragmentation.
 
