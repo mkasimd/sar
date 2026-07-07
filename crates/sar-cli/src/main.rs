@@ -14,7 +14,8 @@ use walkdir::WalkDir;
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
-    EntryInput, KeyProvider, KmsContext, KmsParams, SarError, SecretBytes,
+    EntryInput, FecSettings, GlobalFlags, KeyProvider, KmsContext, KmsParams, SarError,
+    SecretBytes,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
@@ -44,6 +45,16 @@ enum EncryptionChoice {
     Aes256Gcm,
     #[value(name = "xchacha20-poly")]
     XChaCha20Poly,
+}
+
+/// FEC algorithm selector for the `--fec` flag.
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum FecChoice {
+    /// XOR parity (algorithm 0x14).
+    Xor,
+    /// Reed-Solomon (algorithm 0x11).
+    #[value(name = "rs")]
+    Rs,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -121,6 +132,10 @@ enum Command {
         /// Archive password. Falls back to `SAR_PASSWORD` or a terminal prompt.
         #[arg(long)]
         password: Option<String>,
+        /// Protect each entry payload with file-level FEC (Selective FEC).
+        /// Use `xor` for XOR parity or `rs` for Reed-Solomon.
+        #[arg(long, value_enum)]
+        fec: Option<FecChoice>,
     },
     /// Extract archive to output directory.
     Extract {
@@ -207,7 +222,7 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
             let compression = resolve_shorthand_compression(args);
             Some(match (input, output, compression) {
                 (Ok(input), Ok(output), Ok(compression)) => {
-                    create_archive(input, output, false, compression, None, None)
+                    create_archive(input, output, false, compression, None, None, None)
                 }
                 (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
             })
@@ -320,6 +335,7 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             compression_level,
             encrypt,
             password,
+            fec,
         } => {
             if indexed && no_index {
                 return Err(SarError::Malformed(
@@ -335,6 +351,7 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
                 compression,
                 encrypt,
                 password,
+                fec,
             )
         }
         Command::Extract {
@@ -354,6 +371,13 @@ fn compression_to_algo_id(compression: CompressionChoice) -> u8 {
         CompressionChoice::Store => COMP_ALGO_STORE,
         CompressionChoice::Deflate => COMP_ALGO_DEFLATE,
         CompressionChoice::Zstd => COMP_ALGO_ZSTD,
+    }
+}
+
+fn fec_to_settings(fec: FecChoice) -> FecSettings {
+    match fec {
+        FecChoice::Xor => FecSettings::default_xor(),
+        FecChoice::Rs => FecSettings::default_rs(),
     }
 }
 
@@ -424,6 +448,7 @@ fn create_archive(
     compression: CreateCompression,
     encrypt: Option<EncryptionChoice>,
     password: Option<String>,
+    fec: Option<FecChoice>,
 ) -> Result<(), SarError> {
     if encrypt.is_none() && (password.is_some() || env::var_os(PASSWORD_ENV).is_some()) {
         return Err(SarError::Malformed(
@@ -450,6 +475,8 @@ fn create_archive(
         None
     };
 
+    let fec_settings = fec.map(fec_to_settings);
+
     let file = File::create(output)?;
     let mut writer = match encryption {
         Some((settings, password)) => ArchiveWriter::new_with_compression_and_key_provider(
@@ -457,6 +484,7 @@ fn create_archive(
             ArchiveWriterOptions {
                 no_index,
                 encryption: Some(settings),
+                fec: fec_settings,
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -469,6 +497,7 @@ fn create_archive(
             ArchiveWriterOptions {
                 no_index,
                 encryption: None,
+                fec: fec_settings,
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -591,13 +620,33 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         entries.push(entry.metadata);
     }
 
+    let metadata = reader.metadata();
+    let recovery_tlvs: Vec<_> = metadata
+        .as_ref()
+        .and_then(|m| m.central_dictionary.as_ref())
+        .map(|cd| {
+            cd.metadata
+                .iter()
+                .filter(|tlv| (0x10..=0x1F).contains(&tlv.type_id))
+                .map(|tlv| {
+                    json!({
+                        "type_id": format!("0x{:02X}", tlv.type_id),
+                        "value_len": tlv.value.len(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     if as_json {
         let output = json!({
             "global_version": header.version,
             "flags": header.flags.bits(),
             "flags_size": header.flags_bytes.len(),
-            "indexed": !header.flags.contains(sar_core::GlobalFlags::NO_INDEX),
+            "indexed": !header.flags.contains(GlobalFlags::NO_INDEX),
+            "selective_fec": header.flags.contains(GlobalFlags::SELECTIVE_FEC),
             "entry_count": entries.len(),
+            "recovery_tlvs": recovery_tlvs,
             "entries": entries,
         });
         println!(
@@ -607,7 +656,20 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
     } else {
         println!("global_version={}", header.version);
         println!("flags=0x{:08X}", header.flags.bits());
+        println!(
+            "selective_fec={}",
+            header.flags.contains(GlobalFlags::SELECTIVE_FEC)
+        );
         println!("entries={}", entries.len());
+        for entry in &entries {
+            if let Some(fec) = &entry.fec {
+                let fec_json = serde_json::to_string(fec).unwrap_or_else(|_| "<error>".to_string());
+                println!("  entry={} fec={}", entry.name, fec_json);
+            }
+        }
+        if !recovery_tlvs.is_empty() {
+            println!("recovery_tlvs={}", recovery_tlvs.len());
+        }
     }
 
     Ok(())

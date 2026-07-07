@@ -22,6 +22,7 @@ fn writer_reader_deflate_roundtrip_no_index() {
         ArchiveWriterOptions {
             no_index: true,
             encryption: None,
+            fec: None,
         },
         CompressionSettings {
             algo_id: COMP_ALGO_DEFLATE,
@@ -49,6 +50,7 @@ fn writer_reader_zstd_roundtrip_indexed() {
         ArchiveWriterOptions {
             no_index: false,
             encryption: None,
+            fec: None,
         },
         CompressionSettings {
             algo_id: COMP_ALGO_ZSTD,

@@ -10,6 +10,7 @@ use sar_crypto::{
     provider::resolve_cek,
     validate_encr_algo_id,
 };
+use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
 use serde::Serialize;
 
 use crate::{
@@ -17,8 +18,8 @@ use crate::{
     flags::{GlobalFlags, validate_global_flags},
     format::{
         CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION,
-        global_header_flags_bytes, lfh_to_bytes, parse_central_dictionary, parse_footer,
-        parse_global_header, parse_lfh, write_central_dictionary, write_footer,
+        global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary,
+        parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
         write_global_header,
     },
     tlv::Tlv,
@@ -90,6 +91,46 @@ pub struct EntryWritten {
     pub total_bytes: u64,
 }
 
+/// FEC algorithm settings for archive writing.
+///
+/// When provided in [`ArchiveWriterOptions`], every entry payload is FEC-encoded
+/// and the `SELECTIVE_FEC` global flag is set.
+#[derive(Debug, Clone)]
+pub struct FecSettings {
+    /// FEC algorithm ID (`FEC_ALGO_XOR = 0x14` or `FEC_ALGO_REED_SOLOMON = 0x11`).
+    pub algo_id: u8,
+    /// Config byte 0: for XOR = stripe size; for RS = `k` (data symbols per group).
+    pub config0: u8,
+    /// Config byte 1: for XOR = block-size index (0x00–0x08); for RS = parity count (`n-k`).
+    pub config1: u8,
+    /// Symbol size in bytes.  Used by Reed-Solomon; ignored for XOR.
+    pub symbol_size: u32,
+}
+
+impl FecSettings {
+    /// Constructs default XOR FEC settings: stripe=4, block-size-index=4 (4 KiB blocks).
+    #[must_use]
+    pub fn default_xor() -> Self {
+        Self {
+            algo_id: FEC_ALGO_XOR,
+            config0: 4,
+            config1: 4,
+            symbol_size: 0,
+        }
+    }
+
+    /// Constructs default Reed-Solomon FEC settings: k=4, parity=2, symbol-size=256 B.
+    #[must_use]
+    pub fn default_rs() -> Self {
+        Self {
+            algo_id: FEC_ALGO_REED_SOLOMON,
+            config0: 4,
+            config1: 2,
+            symbol_size: 256,
+        }
+    }
+}
+
 /// Encryption settings for archive writing.
 #[derive(Debug, Clone)]
 pub struct EncryptionSettings {
@@ -106,6 +147,9 @@ pub struct ArchiveWriterOptions {
     pub no_index: bool,
     /// Optional encryption settings for new entries.
     pub encryption: Option<EncryptionSettings>,
+    /// Optional FEC settings.  When set, `SELECTIVE_FEC` is enabled and every
+    /// entry payload is FEC-encoded using the specified algorithm.
+    pub fec: Option<FecSettings>,
 }
 
 /// Archive writer compression settings.
@@ -133,6 +177,7 @@ impl Default for ArchiveWriterOptions {
         Self {
             no_index: true,
             encryption: None,
+            fec: None,
         }
     }
 }
@@ -396,7 +441,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
                 "encrypted entry missing IV/nonce field",
             ))?;
-            let aad = build_aead_aad(&self.global_flags_section, &lfh_bytes);
+            // Per spec §13.2.1: when SELECTIVE_FEC is active and FEC Algo ID is
+            // non-zero, FEC Size and FEC Value are excluded from the AAD.
+            let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
+            let aad_lfh_bytes =
+                lfh_bytes_for_aad(header.flags, &lfh_bytes, fec_algo_id, lfh.fec_value.len());
+            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             Some(EntryCryptoContext {
                 algo_id,
                 iv_nonce,
@@ -548,6 +598,7 @@ pub struct ArchiveWriter<W> {
     encr_algo_id: Option<u8>,
     used_nonces: HashSet<[u8; 24]>,
     global_flags_section: Vec<u8>,
+    fec: Option<FecSettings>,
 }
 
 impl<W: Write> ArchiveWriter<W> {
@@ -583,6 +634,9 @@ impl<W: Write> ArchiveWriter<W> {
         }
         if compression.algo_id != COMP_ALGO_STORE {
             flags |= GlobalFlags::COMPRESSED;
+        }
+        if options.fec.is_some() {
+            flags |= GlobalFlags::SELECTIVE_FEC;
         }
 
         let mut cek = None;
@@ -636,6 +690,7 @@ impl<W: Write> ArchiveWriter<W> {
             encr_algo_id,
             used_nonces: HashSet::new(),
             global_flags_section,
+            fec: options.fec,
         })
     }
 
@@ -658,6 +713,11 @@ impl<W: Write> ArchiveWriter<W> {
             },
         )?;
         let is_encrypted = self.flags.contains(GlobalFlags::ENCRYPTED);
+        let is_fec = self.fec.is_some();
+
+        // When FEC is active the payload_size field must account for the FEC algo ID
+        // being present; the actual payload bytes are the same size as without FEC
+        // (FEC value is stored in the LFH header, not in Payload Data).
         let payload_len = if is_encrypted {
             u64::try_from(encoded_payload.len())
                 .map_err(|_| SarError::Overflow("payload len"))?
@@ -674,6 +734,13 @@ impl<W: Write> ArchiveWriter<W> {
         }
         if is_compressed {
             lfh.entry_mode.0 |= 1 << 3;
+        }
+
+        // Pre-set FEC algo ID so it is included in the AEAD AAD (spec §13.2.1).
+        if is_fec {
+            let fec_cfg = self.fec.as_ref().expect("is_fec checked");
+            lfh.fec_algo_id = Some(fec_cfg.algo_id);
+            // fec_value stays empty until after encryption so AAD can be computed.
         }
 
         if is_encrypted {
@@ -696,8 +763,18 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.iv_nonce = Some(nonce);
             lfh.entry_mode.0 |= 1 << 2;
 
-            let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
-            let aad = build_aead_aad(&self.global_flags_section, &lfh_bytes);
+            // Compute AAD from provisional LFH bytes (fec_value is still empty).
+            // Per spec §13.2.1 when SELECTIVE_FEC is active and FEC Algo ID != 0,
+            // FEC Size and FEC Value are excluded from the AAD.
+            let provisional_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
+            let aad_lfh_bytes = lfh_bytes_for_aad(
+                self.flags,
+                &provisional_lfh_bytes,
+                fec_algo_id,
+                0, // fec_value is empty at this point
+            );
+            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             let key = self
                 .cek
                 .as_ref()
@@ -716,8 +793,26 @@ impl<W: Write> ArchiveWriter<W> {
                     }),
                 },
             )?;
-            self.write_entry(lfh, lfh_bytes, encoded_payload)
+
+            if is_fec {
+                // Compute FEC over ciphertext only (exclude the 16-byte AEAD tag).
+                let tag_len = 16usize;
+                let ciphertext_len = encoded_payload.len().saturating_sub(tag_len);
+                let ciphertext = &encoded_payload[..ciphertext_len];
+                let fec_value = compute_fec_value(self.fec.as_ref().expect("is_fec"), ciphertext)?;
+                lfh.fec_value = fec_value;
+            }
+
+            // Re-serialize LFH now that fec_value is populated.
+            let final_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            self.write_entry(lfh, final_lfh_bytes, encoded_payload)
         } else {
+            if is_fec {
+                // Compute FEC over the full encoded (unencrypted) payload.
+                let fec_value =
+                    compute_fec_value(self.fec.as_ref().expect("is_fec"), &encoded_payload)?;
+                lfh.fec_value = fec_value;
+            }
             let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
             self.write_entry(lfh, lfh_bytes, encoded_payload)
         }
@@ -834,4 +929,32 @@ fn build_kms_context(header: &GlobalHeader) -> Result<KmsContext, SarError> {
         mode_id: kms.mode_id,
         params,
     })
+}
+
+/// Encodes FEC parity for `protected` bytes using the provided [`FecSettings`] and
+/// returns the raw FEC value bytes ready for embedding in the `FEC Value` LFH field.
+fn compute_fec_value(fec: &FecSettings, protected: &[u8]) -> Result<Vec<u8>, SarError> {
+    let fec_value = match fec.algo_id {
+        FEC_ALGO_XOR => {
+            let codec = sar_fec::XorCodec::new(fec.config0, fec.config1).map_err(SarError::from)?;
+            codec
+                .encode_recovery(protected, FecOptions)
+                .map_err(SarError::from)?
+        }
+        FEC_ALGO_REED_SOLOMON => {
+            let codec = sar_fec::RsCodec::new(fec.config0, fec.config1, fec.symbol_size)
+                .map_err(SarError::from)?;
+            codec
+                .encode_recovery(protected, FecOptions)
+                .map_err(SarError::from)?
+        }
+        other => {
+            return Err(SarError::Unsupported(if (0x10..=0x1F).contains(&other) {
+                "FEC algorithm is assigned but not supported by archive writer"
+            } else {
+                "FEC algorithm ID out of defined range"
+            }));
+        }
+    };
+    Ok(fec_value.data)
 }

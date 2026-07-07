@@ -17,6 +17,7 @@ fn valid_indexed_archive_roundtrip_offsets_verify() {
         ArchiveWriterOptions {
             no_index: false,
             encryption: None,
+            fec: None,
         },
     )
     .expect("writer");
@@ -43,6 +44,7 @@ fn valid_no_index_archive_roundtrip_verify() {
         ArchiveWriterOptions {
             no_index: true,
             encryption: None,
+            fec: None,
         },
     )
     .expect("writer");

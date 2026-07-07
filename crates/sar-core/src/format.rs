@@ -858,3 +858,106 @@ pub fn global_header_flags_bytes(header: &GlobalHeader) -> Vec<u8> {
 pub fn lfh_to_bytes(lfh: &LocalFileHeader, flags: GlobalFlags) -> Result<Vec<u8>, SarError> {
     write_lfh(&flags, lfh)
 }
+
+/// Returns the byte offset of the `FEC Size` field (3 bytes) within the serialized LFH,
+/// assuming `SELECTIVE_FEC` is active.
+///
+/// This is the sum of all fixed-size and length-prefix fields that precede `FEC Size`
+/// in the LFH field sequence (fields 1–24 in the spec).
+pub fn fec_size_field_offset(flags: GlobalFlags) -> usize {
+    let size_len = size_field_len(flags);
+    let mut off: usize = 4 + 2 + 2 + 2 + size_len + size_len; // fields 1-6
+    if flags.contains(GlobalFlags::COMPRESSED) {
+        off += 1; // Comp Algo ID
+    }
+    if flags.contains(GlobalFlags::HAS_DELTA) {
+        off += 1; // Patch Algo ID
+    }
+    if flags.contains(GlobalFlags::ENCRYPTED) {
+        off += 1; // Encr Algo ID
+    }
+    if flags.contains(GlobalFlags::CDC_SUPPORT) {
+        off += 1; // CDC Algo ID
+    }
+    if flags.contains(GlobalFlags::SELECTIVE_FEC) {
+        off += 1; // FEC Algo ID (field 11, included in AAD)
+    }
+    if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
+        off += 4 + 4 + 12; // Fragment ID + Index + Descriptor
+    }
+    if flags.contains(GlobalFlags::ENCRYPTED) {
+        off += 24; // IV/Nonce
+    }
+    if flags.contains(GlobalFlags::HAS_DELTA) {
+        off += 32; // Delta Base Hash
+    }
+    if flags.contains(GlobalFlags::PER_FILE_CRC) {
+        off += 4; // File CRC32
+    }
+    if flags.contains(GlobalFlags::DEDUPLICATION) {
+        off += 32; // Content Hash
+    }
+    if flags.contains(GlobalFlags::EXT_UID_GID) {
+        off += 4; // UID/GID
+    }
+    if flags.contains(GlobalFlags::EXT_TIME) {
+        off += 24; // Timestamps
+    }
+    if flags.contains(GlobalFlags::HAS_PERMS) {
+        off += 2; // Permissions
+    }
+    off += 2; // Name Length (field 22)
+    if flags.contains(GlobalFlags::HAS_PATH) {
+        off += 2; // Path Length (field 23)
+    }
+    if flags.contains(GlobalFlags::SPARSE_FILES) {
+        off += 4; // Sparse Map Size (field 24)
+    }
+    off // FEC Size starts here (field 25)
+}
+
+/// Returns the LFH bytes with the `FEC Size` (3 bytes) and `FEC Value` fields removed,
+/// for use in AEAD AAD computation per spec §13.2.1.
+///
+/// When `SELECTIVE_FEC` is active and `fec_algo_id` is non-zero, the spec requires that
+/// `FEC Size` and `FEC Value` be excluded from the AEAD AAD.  If `SELECTIVE_FEC` is not
+/// active, or `fec_algo_id` is zero, the full `lfh_bytes` slice is returned unchanged.
+///
+/// # Panics
+///
+/// Panics in debug builds if `lfh_bytes` is shorter than expected.
+pub fn lfh_bytes_for_aad(
+    flags: GlobalFlags,
+    lfh_bytes: &[u8],
+    fec_algo_id: u8,
+    fec_value_len: usize,
+) -> Vec<u8> {
+    if !flags.contains(GlobalFlags::SELECTIVE_FEC) || fec_algo_id == 0 {
+        return lfh_bytes.to_vec();
+    }
+    let fec_size_off = fec_size_field_offset(flags);
+    // FEC Size is 3 bytes; FEC Value is at the very end of the LFH.
+    // The bytes between FEC Size end and FEC Value start are Name + Path + Sparse data.
+    let before_fec_size = fec_size_off;
+    let after_fec_size_end = lfh_bytes.len().saturating_sub(fec_value_len);
+    // Exclude the 3-byte FEC Size field: bytes [before_fec_size .. before_fec_size+3]
+    // Exclude the FEC Value:             bytes [after_fec_size_end .. ]
+    let stripped_len = lfh_bytes.len().saturating_sub(3 + fec_value_len);
+    let mut out = Vec::with_capacity(stripped_len);
+    if before_fec_size <= lfh_bytes.len() {
+        out.extend_from_slice(&lfh_bytes[..before_fec_size]);
+    }
+    let after_fec_size = before_fec_size + 3;
+    if after_fec_size <= after_fec_size_end && after_fec_size_end <= lfh_bytes.len() {
+        out.extend_from_slice(&lfh_bytes[after_fec_size..after_fec_size_end]);
+    }
+    // Patch the Header Size field (first 4 bytes, LE u32) to reflect the stripped size.
+    // This ensures writer (provisional LFH, fec_value=[]) and reader (final LFH, fec_value=N bytes)
+    // produce identical AAD bytes despite the difference in the on-disk Header Size value.
+    // Both normalize to: original_header_size - 3 (FEC Size) - fec_value_len = stripped_len.
+    if out.len() >= 4 {
+        let patched_size = u32::try_from(stripped_len).unwrap_or(u32::MAX);
+        out[..4].copy_from_slice(&patched_size.to_le_bytes());
+    }
+    out
+}

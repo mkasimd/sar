@@ -25,7 +25,7 @@ pub mod transform;
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, VerificationReport,
+    EntryReader, EntryWritten, FecSettings, VerificationReport,
 };
 pub use error::{SarError, SarStatus};
 pub use fec::{FecSummary, parse_lfh_fec_value, validate_recovery_tlv};
@@ -34,9 +34,9 @@ pub use flags::{
 };
 pub use format::{
     CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, PartitionDescriptor,
-    compute_lfh_size, global_header_flags_bytes, lfh_to_bytes, parse_central_dictionary,
-    parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
-    write_global_header, write_lfh,
+    compute_lfh_size, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
+    lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
+    write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
 pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
