@@ -57,7 +57,11 @@
         "4",
         "5",
         "6",
-        "7"
+        "7",
+        "8",
+        "stage-2",
+        "stage-3",
+        "stage-4"
       ],
       "features": [],
       "modules": [
@@ -345,7 +349,11 @@
         "4",
         "5",
         "6",
-        "7"
+        "7",
+        "8",
+        "stage-2",
+        "stage-3",
+        "stage-4"
       ],
       "features": [],
       "modules": [
@@ -507,9 +515,13 @@
               "signature": "pub fn ArchiveReader<R>::read_all_logical_files(&mut self, allow_lossy: bool) -> Result<Vec<LogicalFile>, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
+              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted \u2014 not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
               "parameters": [
-                {"name": "allow_lossy", "type": "bool", "description": "Permit degraded (LOSS_TOLERANT) fragment group output."}
+                {
+                  "name": "allow_lossy",
+                  "type": "bool",
+                  "description": "Permit degraded (LOSS_TOLERANT) fragment group output."
+                }
               ],
               "returns": "Result<Vec<LogicalFile>, SarError>",
               "errors": [
@@ -523,7 +535,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "8",
-              "related_spec_sections": ["19"],
+              "related_spec_sections": [
+                "19"
+              ],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
@@ -662,14 +676,16 @@
               "parameters": [],
               "returns": "Result<(), SarError>",
               "errors": [
-                "SarError::Malformed — sparse flag not set",
-                "SarError::InvalidMap — overlapping extents, extent beyond logical_size, payload length mismatch"
+                "SarError::Malformed \u2014 sparse flag not set",
+                "SarError::InvalidMap \u2014 overlapping extents, extent beyond logical_size, payload length mismatch"
               ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "8",
-              "related_spec_sections": ["13.7.6"],
+              "related_spec_sections": [
+                "13.7.6"
+              ],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
@@ -797,7 +813,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "8",
-              "related_spec_sections": ["13.7.6"],
+              "related_spec_sections": [
+                "13.7.6"
+              ],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
@@ -917,7 +935,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "8",
-              "related_spec_sections": ["19"],
+              "related_spec_sections": [
+                "19"
+              ],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
@@ -1773,7 +1793,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "8",
-              "related_spec_sections": ["19"],
+              "related_spec_sections": [
+                "19"
+              ],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
@@ -2925,6 +2947,380 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Good one-shot wrapper candidate once crypto context is flattened."
+            }
+          ]
+        },
+        {
+          "name": "limits",
+          "path": "src/limits.rs",
+          "items": [
+            {
+              "name": "ResourceLimits",
+              "kind": "struct",
+              "signature": "pub struct ResourceLimits { pub max_archive_size: u64, pub max_entry_count: u64, pub max_lfh_bytes: u64, pub max_path_bytes: u64, pub max_tlv_bytes: u64, pub max_tlv_count: u64, pub max_cd_bytes: u64, pub max_sparse_map_bytes: u64, pub max_sparse_descriptors: u64, pub max_fragment_count: u64, pub max_fragment_group_span: u64, pub max_loss_tolerant_gap: u64, pub max_fec_value_bytes: u64, pub max_recovery_protected_range: u64, pub max_repair_working_set: u64, pub max_decoded_entry_size: u64, pub max_in_memory_buffer: u64, pub max_total_pipeline_memory: u64, ... }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths. Configured limits are the primary protection against allocation-based DoS. All u64-to-usize conversions and large allocations go through ResourceLimits::allocation_len.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "All archive-declared sizes and counts are attacker-controlled; ResourceLimits enforces checked preflight before any dangerous allocation.",
+                "Configured limits are the primary deterministic protection. Runtime memory budget is not implemented by design.",
+                "LimitExceeded (SAR_ERR_LIMIT_EXCEEDED) is returned before allocation when any limit is exceeded."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "stage-2",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Flat C struct mapping is straightforward."
+            },
+            {
+              "name": "ResourceLimits::default",
+              "kind": "function",
+              "signature": "pub fn ResourceLimits::default() -> ResourceLimits",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Conservative safe defaults: max_decoded_entry_size = 1 GiB, max_archive_size = 16 GiB, max_repair_working_set = 2 GiB.",
+              "parameters": [],
+              "returns": "ResourceLimits",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "stage-2",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not-applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "ResourceLimits::unlimited",
+              "kind": "function",
+              "signature": "pub fn ResourceLimits::unlimited() -> ResourceLimits",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "All limits set to u64::MAX. Intended for test use only; do not use in production with untrusted input.",
+              "parameters": [],
+              "returns": "ResourceLimits",
+              "errors": [],
+              "safety_notes": [
+                "Test use only. Using with untrusted input defeats all allocation safeguards."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "stage-2",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not-applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "ResourceLimits::allocation_len",
+              "kind": "function",
+              "signature": "pub fn ResourceLimits::allocation_len(&self, size: u64, label: &'static str) -> Result<usize, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Checked u64-to-usize conversion with limit enforcement. All allocation size conversions go through this function.",
+              "parameters": [],
+              "returns": "Result<usize, SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::Overflow"
+              ],
+              "safety_notes": [
+                "Central gate for all u64->usize conversions in the parsing pipeline."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "stage-2",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not-applicable",
+              "ffi_notes": ""
+            }
+          ]
+        },
+        {
+          "name": "sparse",
+          "path": "src/sparse.rs",
+          "items": [
+            {
+              "name": "SparseExtent",
+              "kind": "struct",
+              "signature": "pub struct SparseExtent { pub offset: u64, pub length: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "A single contiguous data extent within a sparse logical file.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Plain data struct."
+            },
+            {
+              "name": "parse_sparse_map",
+              "kind": "function",
+              "signature": "pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<Vec<SparseExtent>, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Parses a sparse map byte blob into a Vec<SparseExtent>. Enforces configured limits before allocating.",
+              "parameters": [],
+              "returns": "Result<Vec<SparseExtent>, SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::InvalidLength",
+                "SarError::Truncated"
+              ],
+              "safety_notes": [
+                "Limit check precedes vec allocation; no unbounded allocation possible."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
+            },
+            {
+              "name": "write_sparse_map",
+              "kind": "function",
+              "signature": "pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Encodes sparse extents to the on-wire byte format.",
+              "parameters": [],
+              "returns": "Vec<u8>",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
+            },
+            {
+              "name": "validate_sparse_extents",
+              "kind": "function",
+              "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates sparse extents for overlap, bounds, and arithmetic overflow.",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::InvalidMap",
+                "SarError::Overflow"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
+            },
+            {
+              "name": "apply_sparse_reconstruction",
+              "kind": "function",
+              "signature": "pub fn apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<Vec<u8>, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Scatter-gather reconstruction of a sparse logical file. Checks logical_size against configured limits before allocating. Sparse expansion-bomb attack shape (tiny payload + huge logical_size + sparse extent near end) returns LimitExceeded, not InvalidMap.",
+              "parameters": [],
+              "returns": "Result<Vec<u8>, SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::InvalidMap"
+              ],
+              "safety_notes": [
+                "Rejects oversized logical_size before allocation (expansion-bomb protection).",
+                "Error for oversized logical_size is LimitExceeded, not InvalidMap \u2014 the sparse map may be structurally valid."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
+            }
+          ]
+        },
+        {
+          "name": "fragment",
+          "path": "src/fragment.rs",
+          "items": [
+            {
+              "name": "FragmentDescriptor",
+              "kind": "struct",
+              "signature": "pub struct FragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Named-field struct for fragment placement. No .0/.1 tuple access in SAR-owned protocol/domain code.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "Named fields only; no .0/.1 tuple access in SAR-owned protocol/domain code."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Flat C struct mapping."
+            },
+            {
+              "name": "FragmentEntry",
+              "kind": "struct",
+              "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub descriptor: FragmentDescriptor, pub payload: Vec<u8> }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "A single fragment payload and placement metadata.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "complex",
+              "ffi_notes": "Owns a Vec<u8>; needs opaque-buffer handling in FFI."
+            },
+            {
+              "name": "reconstruct_fragments",
+              "kind": "function",
+              "signature": "pub fn reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64, allow_lossy: bool, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Sorts by fragment_index and scatter-gathers by absolute_offset. Returns (data, is_degraded). Fragment group span bounded by max_fragment_group_span before allocation.",
+              "parameters": [],
+              "returns": "Result<(Vec<u8>, bool), SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::FragmentGap",
+                "SarError::InvalidMap"
+              ],
+              "safety_notes": [
+                "Fragment group span bounded by max_fragment_group_span before allocation.",
+                "Descriptor arithmetic overflow detected before any buffer is allocated.",
+                "Loss-tolerant gap fill bounded by max_loss_tolerant_gap.",
+                "AEAD failures are never suppressed by allow_lossy."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "complex",
+              "ffi_notes": ""
+            }
+          ]
+        },
+        {
+          "name": "recovery",
+          "path": "src/recovery.rs",
+          "items": [
+            {
+              "name": "RecoveryMetadata",
+              "kind": "struct",
+              "signature": "pub struct RecoveryMetadata { pub protected_range_start: u64, pub protected_range_end: u64, pub tlv_summaries: Vec<RecoveryTlvSummary> }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Parsed archive-level Data Recovery TLV metadata and protected byte range.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
+            },
+            {
+              "name": "inspect_recovery_metadata",
+              "kind": "function",
+              "signature": "pub fn inspect_recovery_metadata(archive_bytes: &[u8], limits: &ResourceLimits) -> Result<RecoveryMetadata, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Parses CD for RECOVERY TLVs, computes protected range, enforces limits.",
+              "parameters": [],
+              "returns": "Result<RecoveryMetadata, SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::Truncated",
+                "SarError::Unsupported"
+              ],
+              "safety_notes": [
+                "max_recovery_protected_range enforced before parsing."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
+            },
+            {
+              "name": "repair_archive",
+              "kind": "function",
+              "signature": "pub fn repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan, limits: &ResourceLimits) -> Result<RepairReport, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Applies XOR or RS erasure repair over the protected range for block-aligned erasures. Returns RecoveryUnavailable for non-block-aligned erasures (spec gap).",
+              "parameters": [],
+              "returns": "Result<RepairReport, SarError>",
+              "errors": [
+                "SarError::LimitExceeded",
+                "SarError::RecoveryUnavailable"
+              ],
+              "safety_notes": [
+                "max_repair_working_set enforced before repair buffer allocation.",
+                "Arbitrary byte-erasure archive repair unavailable due to spec gap."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": ""
             }
           ]
         }
@@ -4967,13 +5363,53 @@
       },
       {
         "name": "extract",
-        "usage": "sar extract <archive.sar> <output-dir> [--password PASSWORD]",
+        "usage": "sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
         "status": "implemented",
-        "description": "Extract an archive into a destination directory with traversal protection.",
+        "description": "Extract an archive into a destination directory with traversal protection. Accepts ResourceLimits override flags; uses safe defaults when omitted. Sparse files are written via temp-file and scatter-gather seeks (no large in-memory sparse hole buffers). Resource-limit failures do not leave finalized output files behind.",
         "options": [
           {
             "name": "--password",
             "description": "Explicit archive password for encrypted archives."
+          },
+          {
+            "name": "--allow-lossy",
+            "description": "Permit LOSS_TOLERANT degraded output when fragments are missing. Never bypasses AEAD authentication failures."
+          },
+          {
+            "name": "--max-archive-size BYTES",
+            "description": "Override ResourceLimits.max_archive_size."
+          },
+          {
+            "name": "--max-decoded-entry-size BYTES",
+            "description": "Override ResourceLimits.max_decoded_entry_size (default 1 GiB). Primary bound for sparse logical size and decompression output."
+          },
+          {
+            "name": "--max-in-memory-buffer BYTES",
+            "description": "Override ResourceLimits.max_in_memory_buffer."
+          },
+          {
+            "name": "--max-total-pipeline-memory BYTES",
+            "description": "Override ResourceLimits.max_total_pipeline_memory."
+          },
+          {
+            "name": "--max-sparse-map-bytes BYTES",
+            "description": "Override ResourceLimits.max_sparse_map_bytes."
+          },
+          {
+            "name": "--max-sparse-descriptors COUNT",
+            "description": "Override ResourceLimits.max_sparse_descriptors."
+          },
+          {
+            "name": "--max-fragment-count COUNT",
+            "description": "Override ResourceLimits.max_fragment_count."
+          },
+          {
+            "name": "--max-fragment-group-span BYTES",
+            "description": "Override ResourceLimits.max_fragment_group_span."
+          },
+          {
+            "name": "--max-loss-tolerant-gap BYTES",
+            "description": "Override ResourceLimits.max_loss_tolerant_gap."
           }
         ],
         "exit_codes": [
@@ -4993,7 +5429,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Rejects absolute paths and parent-directory traversal in entry names."
+        "notes": "Rejects absolute paths and parent-directory traversal. Sparse outputs use temp-file scatter-gather. Resource-limit failures return SAR_ERR_LIMIT_EXCEEDED and do not finalize outputs."
       },
       {
         "name": "inspect",
@@ -5051,13 +5487,53 @@
       },
       {
         "name": "verify",
-        "usage": "sar verify <archive.sar> [--password PASSWORD]",
+        "usage": "sar verify <archive.sar> [--password PASSWORD] [--recovery] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
         "status": "implemented",
-        "description": "Verify archive structure, indexed offsets, and current recovery-TLV metadata.",
+        "description": "Verify archive integrity. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts ResourceLimits override flags.",
         "options": [
           {
             "name": "--password",
             "description": "Explicit archive password for encrypted archives."
+          },
+          {
+            "name": "--recovery",
+            "description": "Additionally validates fragmentation, sparse, and Data Recovery TLV metadata."
+          },
+          {
+            "name": "--max-archive-size BYTES",
+            "description": "Override ResourceLimits.max_archive_size."
+          },
+          {
+            "name": "--max-decoded-entry-size BYTES",
+            "description": "Override ResourceLimits.max_decoded_entry_size."
+          },
+          {
+            "name": "--max-in-memory-buffer BYTES",
+            "description": "Override ResourceLimits.max_in_memory_buffer."
+          },
+          {
+            "name": "--max-total-pipeline-memory BYTES",
+            "description": "Override ResourceLimits.max_total_pipeline_memory."
+          },
+          {
+            "name": "--max-sparse-map-bytes BYTES",
+            "description": "Override ResourceLimits.max_sparse_map_bytes."
+          },
+          {
+            "name": "--max-sparse-descriptors COUNT",
+            "description": "Override ResourceLimits.max_sparse_descriptors."
+          },
+          {
+            "name": "--max-fragment-count COUNT",
+            "description": "Override ResourceLimits.max_fragment_count."
+          },
+          {
+            "name": "--max-fragment-group-span BYTES",
+            "description": "Override ResourceLimits.max_fragment_group_span."
+          },
+          {
+            "name": "--max-loss-tolerant-gap BYTES",
+            "description": "Override ResourceLimits.max_loss_tolerant_gap."
           }
         ],
         "exit_codes": [
@@ -5102,7 +5578,128 @@
         "related_spec_sections": [],
         "ffi_equivalent_candidate": false,
         "notes": "Also available through shorthand `-V`."
+      },
+      {
+        "name": "repair",
+        "usage": "sar repair <archive.sar> <output.sar> --fec [--erasures erasures.json] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES] [--max-recovery-protected-range BYTES] [--max-repair-working-set BYTES]",
+        "status": "implemented",
+        "description": "Apply archive-level XOR/RS erasure repair. Pre-checks archive-size and repair-working-set limits before reading. Does not finalize output after resource-limit failure. Non-block-aligned erasures return RecoveryUnavailable (spec gap).",
+        "options": [
+          {
+            "name": "--fec",
+            "description": "Required flag enabling FEC-based repair mode."
+          },
+          {
+            "name": "--erasures erasures.json",
+            "description": "JSON file describing block-aligned erasure positions."
+          },
+          {
+            "name": "--max-archive-size BYTES",
+            "description": "Override ResourceLimits.max_archive_size."
+          },
+          {
+            "name": "--max-decoded-entry-size BYTES",
+            "description": "Override ResourceLimits.max_decoded_entry_size."
+          },
+          {
+            "name": "--max-in-memory-buffer BYTES",
+            "description": "Override ResourceLimits.max_in_memory_buffer."
+          },
+          {
+            "name": "--max-total-pipeline-memory BYTES",
+            "description": "Override ResourceLimits.max_total_pipeline_memory."
+          },
+          {
+            "name": "--max-sparse-map-bytes BYTES",
+            "description": "Override ResourceLimits.max_sparse_map_bytes."
+          },
+          {
+            "name": "--max-sparse-descriptors COUNT",
+            "description": "Override ResourceLimits.max_sparse_descriptors."
+          },
+          {
+            "name": "--max-fragment-count COUNT",
+            "description": "Override ResourceLimits.max_fragment_count."
+          },
+          {
+            "name": "--max-fragment-group-span BYTES",
+            "description": "Override ResourceLimits.max_fragment_group_span."
+          },
+          {
+            "name": "--max-loss-tolerant-gap BYTES",
+            "description": "Override ResourceLimits.max_loss_tolerant_gap."
+          },
+          {
+            "name": "--max-recovery-protected-range BYTES",
+            "description": "Override ResourceLimits.max_recovery_protected_range."
+          },
+          {
+            "name": "--max-repair-working-set BYTES",
+            "description": "Override ResourceLimits.max_repair_working_set."
+          }
+        ],
+        "exit_codes": [
+          {
+            "code": 0,
+            "meaning": "success"
+          },
+          {
+            "code": 1,
+            "meaning": "failure; stderr includes SAR status text including SAR_ERR_LIMIT_EXCEEDED for resource-limit violations"
+          }
+        ],
+        "related_crates": [
+          "sar-cli",
+          "sar-core",
+          "sar-fec"
+        ],
+        "related_spec_sections": [],
+        "ffi_equivalent_candidate": true,
+        "notes": "Pre-checks archive-size and repair-working-set limits. Does not finalize output after limit failures. Non-block-aligned erasures return RecoveryUnavailable (spec gap; see SPEC_QUESTIONS.md)."
       }
     ]
+  },
+  "security_notes": {
+    "resource_limits": {
+      "model": "unified ResourceLimits struct threaded through all parsing and reconstruction paths",
+      "primary_protection": "Configured ResourceLimits are the primary and deterministic protection against allocation-based DoS. There is no separate runtime memory budget by design.",
+      "defense_in_depth_note": "Runtime memory tracking is not implemented. Configured limits are both the primary and only protection layer; they are not defense-in-depth.",
+      "allocation_gate": "ResourceLimits::allocation_len is the single gate for all u64-to-usize conversions. No conversion bypasses it.",
+      "limit_exceeded_error": "SAR_ERR_LIMIT_EXCEEDED (SarError::LimitExceeded) is returned before any dangerous allocation."
+    },
+    "sparse_expansion_bomb": {
+      "attack_shape": "tiny stored payload + huge Uncompressed Size + sparse extent near end of logical file",
+      "protection": "apply_sparse_reconstruction and read_all_logical_files reject oversized logical_size before allocation. Error is LimitExceeded, not InvalidMap.",
+      "fragmented_sparse": "Fragmented sparse entries use fragment-0's Uncompressed Size; the same LimitExceeded check applies.",
+      "test": "pipeline_memory_tests::sparse_expansion_bomb_reject and sparse_expansion_bomb_bounded_success verify reject and bounded-success paths"
+    },
+    "compression_expansion": {
+      "protection": "sar-compression enforces a caller-provided max_output_size parameter. Decompression output is bounded by max_decoded_entry_size."
+    },
+    "fec_recovery_working_set": {
+      "fec_bound": "max_fec_value_bytes bounds FEC parity allocations.",
+      "repair_bound": "max_repair_working_set bounds archive-level repair buffer.",
+      "fec_internal_ceiling": "sar-fec caps XOR and Reed-Solomon parity allocations at 256 MiB internal ceiling."
+    },
+    "cli_resource_safety": {
+      "extract": "Validates sparse apparent size against max_decoded_entry_size; creates temp file; scatter-gather seeks; renames only on success. Does not allocate large zero buffers for sparse holes.",
+      "repair": "Pre-checks archive size before fs::read; enforces max_repair_working_set; does not finalize output after limit failure.",
+      "error_reporting": "CLI resource-limit failures reported as: resource-limit error (SAR_ERR_LIMIT_EXCEEDED)"
+    },
+    "loss_tolerant": {
+      "resource_limits_bypass": false,
+      "note": "allow_lossy never bypasses ResourceLimits. Fragment gaps filled with zeros are bounded by max_loss_tolerant_gap.",
+      "aead_bypass": false,
+      "aead_note": "AEAD authentication failures are never suppressed by allow_lossy or LOSS_TOLERANT flag."
+    },
+    "aead": {
+      "failures_suppressed": false,
+      "note": "AEAD decryption failures are never suppressed. Plaintext is not released until authentication succeeds. Working buffer is zeroized on failure before error return."
+    },
+    "arbitrary_byte_erasure_repair": {
+      "available": false,
+      "reason": "spec gap \u2014 no normative byte-to-block mapping defined for arbitrary byte erasure positions",
+      "behavior": "plan_archive_repair returns RecoveryUnavailable for non-block-aligned erasures"
+    }
   }
 }
