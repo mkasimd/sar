@@ -1,5 +1,6 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 
+use sar_compression::COMP_ALGO_STORE;
 use serde::Serialize;
 
 use crate::{
@@ -11,6 +12,7 @@ use crate::{
         write_central_dictionary, write_footer, write_global_header, write_lfh,
     },
     tlv::Tlv,
+    transform::{DecodingPlan, EncodingPlan, decode_payload, encode_payload},
 };
 
 /// Metadata summary for profile/verification checks.
@@ -35,6 +37,12 @@ pub struct EntryMetadata {
     pub payload_size: u64,
     /// Uncompressed size.
     pub uncompressed_size: u64,
+    /// Effective compression algorithm ID used for decoding.
+    pub compression_algo_id: u8,
+    /// Effective compression algorithm name.
+    pub compression_algorithm: &'static str,
+    /// True when entry mode actively applied compression.
+    pub is_compressed: bool,
 }
 
 /// Entry payload reader result.
@@ -73,9 +81,44 @@ pub struct ArchiveWriterOptions {
     pub no_index: bool,
 }
 
+/// Archive writer compression settings.
+#[derive(Debug, Clone, Copy)]
+pub struct CompressionSettings {
+    /// Compression algorithm ID.
+    pub algo_id: u8,
+    /// Optional compression level.
+    pub level: Option<u8>,
+}
+
+impl CompressionSettings {
+    /// STORE/default compression settings.
+    #[must_use]
+    pub const fn store() -> Self {
+        Self {
+            algo_id: COMP_ALGO_STORE,
+            level: None,
+        }
+    }
+}
+
 impl Default for ArchiveWriterOptions {
     fn default() -> Self {
         Self { no_index: true }
+    }
+}
+
+/// Reader-side limits.
+#[derive(Debug, Clone, Copy)]
+pub struct ArchiveReaderOptions {
+    /// Maximum allowed uncompressed bytes per decoded entry.
+    pub max_decoded_entry_size: u64,
+}
+
+impl Default for ArchiveReaderOptions {
+    fn default() -> Self {
+        Self {
+            max_decoded_entry_size: 1024 * 1024 * 1024,
+        }
     }
 }
 
@@ -105,6 +148,7 @@ pub struct VerificationReport {
 #[derive(Debug)]
 pub struct ArchiveReader<R> {
     reader: R,
+    options: ArchiveReaderOptions,
     global_header: Option<GlobalHeader>,
     header_len: u64,
     data_end: u64,
@@ -115,11 +159,17 @@ pub struct ArchiveReader<R> {
 
 impl<R: Read + Seek> ArchiveReader<R> {
     /// Creates a new archive reader.
-    pub fn new(mut reader: R) -> Result<Self, SarError> {
+    pub fn new(reader: R) -> Result<Self, SarError> {
+        Self::with_options(reader, ArchiveReaderOptions::default())
+    }
+
+    /// Creates a new archive reader with configurable limits.
+    pub fn with_options(mut reader: R, options: ArchiveReaderOptions) -> Result<Self, SarError> {
         let file_len = reader.seek(SeekFrom::End(0))?;
         reader.seek(SeekFrom::Start(0))?;
         Ok(Self {
             reader,
+            options,
             global_header: None,
             header_len: 0,
             data_end: 0,
@@ -268,12 +318,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
             ));
         }
 
-        if lfh.entry_mode.is_compressed() && lfh.comp_algo_id.unwrap_or(0) != 0 {
-            return Err(SarError::Unsupported(
-                "compression algorithms beyond STORE are not implemented",
-            ));
-        }
-
         let payload_start = self
             .next_offset
             .checked_add(u64::from(lfh.header_size))
@@ -291,7 +335,30 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let mut payload = vec![0u8; payload_len];
         self.reader.read_exact(&mut payload)?;
 
-        if lfh.payload_size != lfh.uncompressed_size {
+        let is_effectively_compressed =
+            header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
+        let effective_comp_algo_id = if is_effectively_compressed {
+            lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
+        } else {
+            COMP_ALGO_STORE
+        };
+        let decoded = decode_payload(
+            &payload,
+            DecodingPlan {
+                is_compressed: is_effectively_compressed,
+                comp_algo_id: effective_comp_algo_id,
+                expected_output_size: lfh.uncompressed_size,
+                max_output_size: self.options.max_decoded_entry_size,
+            },
+        )?;
+        if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
+            != lfh.uncompressed_size
+        {
+            return Err(SarError::InvalidLength(
+                "decoded payload size does not match LFH Uncompressed Size",
+            ));
+        }
+        if !is_effectively_compressed && lfh.payload_size != lfh.uncompressed_size {
             return Err(SarError::InvalidLength(
                 "STORE mode requires Payload Size == Uncompressed Size",
             ));
@@ -307,13 +374,21 @@ impl<R: Read + Seek> ArchiveReader<R> {
             },
             payload_size: lfh.payload_size,
             uncompressed_size: lfh.uncompressed_size,
+            compression_algo_id: effective_comp_algo_id,
+            compression_algorithm: match effective_comp_algo_id {
+                0x00 => "STORE",
+                0x01 => "DEFLATE",
+                0x02 => "ZSTD",
+                _ => "UNKNOWN",
+            },
+            is_compressed: is_effectively_compressed,
         };
 
         self.next_offset = payload_end;
 
         Ok(Some(EntryReader {
             header: lfh,
-            payload,
+            payload: decoded,
             metadata,
         }))
     }
@@ -381,11 +456,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
     }
 }
 
-/// Archive writer for STORE-only archives.
+/// Archive writer with milestone-4 compression support.
 #[derive(Debug)]
 pub struct ArchiveWriter<W> {
     writer: W,
     flags: GlobalFlags,
+    compression: CompressionSettings,
     position: u64,
     offsets: Vec<u64>,
     finished: bool,
@@ -393,10 +469,22 @@ pub struct ArchiveWriter<W> {
 
 impl<W: Write> ArchiveWriter<W> {
     /// Creates a new archive writer and writes the global header.
-    pub fn new(mut writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
+    pub fn new(writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
+        Self::new_with_compression(writer, options, CompressionSettings::store())
+    }
+
+    /// Creates a new archive writer and writes the global header with compression settings.
+    pub fn new_with_compression(
+        mut writer: W,
+        options: ArchiveWriterOptions,
+        compression: CompressionSettings,
+    ) -> Result<Self, SarError> {
         let mut flags = GlobalFlags::empty();
         if options.no_index {
             flags |= GlobalFlags::NO_INDEX;
+        }
+        if compression.algo_id != COMP_ALGO_STORE {
+            flags |= GlobalFlags::COMPRESSED;
         }
         validate_global_flags(flags)?;
 
@@ -413,6 +501,7 @@ impl<W: Write> ArchiveWriter<W> {
         Ok(Self {
             writer,
             flags,
+            compression,
             position: u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?,
             offsets: Vec::new(),
             finished: false,
@@ -425,14 +514,32 @@ impl<W: Write> ArchiveWriter<W> {
             return Err(SarError::Malformed("archive writer already finished"));
         }
 
-        let payload_len =
+        let uncompressed_len =
             u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
-        let lfh = LocalFileHeader::minimal_store(entry.name.into_bytes(), payload_len);
+        let is_compressed = self.compression.algo_id != COMP_ALGO_STORE;
+        let encoded_payload = encode_payload(
+            &entry.payload,
+            EncodingPlan {
+                is_compressed,
+                comp_algo_id: self.compression.algo_id,
+                compression_level: self.compression.level,
+            },
+        )?;
+        let payload_len =
+            u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
+        let mut lfh = LocalFileHeader::minimal_store(entry.name.into_bytes(), payload_len);
+        lfh.uncompressed_size = uncompressed_len;
+        if self.flags.contains(GlobalFlags::COMPRESSED) {
+            lfh.comp_algo_id = Some(self.compression.algo_id);
+        }
+        if is_compressed {
+            lfh.entry_mode.0 |= 1 << 3;
+        }
         let lfh_bytes = write_lfh(&self.flags, &lfh)?;
 
         let lfh_offset = self.position;
         self.writer.write_all(&lfh_bytes)?;
-        self.writer.write_all(&entry.payload)?;
+        self.writer.write_all(&encoded_payload)?;
 
         let written = u64::try_from(lfh_bytes.len())
             .map_err(|_| SarError::Overflow("lfh bytes len"))?

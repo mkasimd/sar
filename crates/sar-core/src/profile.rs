@@ -33,11 +33,7 @@ pub fn validate_archive_profile(
         ComplianceProfile::MinimalInteroperableArchive => {
             if flags.contains(GlobalFlags::ENCRYPTED) {
                 findings
-                    .push("ENCRYPTED is unsupported in current Milestones 1–3 core".to_string());
-            }
-            if flags.contains(GlobalFlags::COMPRESSED) {
-                findings
-                    .push("COMPRESSED must remain STORE-effective in Milestones 1–3".to_string());
+                    .push("ENCRYPTED is unsupported in current Milestones 1–4 core".to_string());
             }
         }
         ComplianceProfile::Standard => {
