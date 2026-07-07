@@ -172,3 +172,48 @@ When a stable ABI is introduced later, security design should explicitly cover:
 - complete archive-level repair orchestration for non-block-aligned erasures (pending spec clarification)
 - automatic end-to-end loss-tolerant extraction integration in `ArchiveReader`
 - stable FFI/C ABI with explicit status codes, opaque handles, and secret-handling rules
+
+---
+
+## Milestone 9a — CDC security properties
+
+### CDC does not bypass AEAD authentication
+
+CDC metadata (CDC_MAP TLVs, recipe payloads) is parsed from the Central Dictionary and the decrypted/decompressed payload. The CDC parsing layer never operates on raw encrypted bytes. AEAD authentication is enforced before any CDC validation occurs.
+
+### CDC resource limits prevent denial-of-service
+
+All CDC parse paths enforce `ResourceLimits`:
+
+| Limit field              | Default   | Protected paths                                |
+|--------------------------|-----------|------------------------------------------------|
+| `max_cdc_chunk_count`    | 1,000,000 | `validate_recipe_payload`, `parse_cdc_map`, `parse_entry_cdc_map` |
+| `max_cdc_metadata_bytes` | 50 MiB    | `validate_recipe_payload`, `parse_entry_cdc_map`, `make_cdc_map_tlv` |
+
+A malformed archive with an excessively large CDC_MAP TLV or Recipe payload will fail with `SarError::LimitExceeded` before any allocation proportional to the claimed record count occurs.
+
+`Vec::with_capacity` is never called with an unchecked chunk count; all capacity allocations are guarded by `max_cdc_chunk_count`.
+
+### No unchecked u64→usize casts in CDC paths
+
+All `u64` to `usize` conversions in CDC code use `usize::try_from(...).ok()` or are guarded by resource-limit checks that ensure the value fits in a `usize` on the target platform.
+
+### CDC_MAP record alignment checked before iteration
+
+`parse_cdc_map` validates that the byte slice length is a multiple of `CDC_MAP_RECORD_LEN = 50` before iterating. Non-aligned lengths return `SarError::Malformed` without reading out-of-bounds.
+
+### FASTCDC algorithm has no unbounded allocation
+
+The FASTCDC chunker operates on a bounded input slice. Chunk count is bounded by `max_cdc_chunk_count`; a `LimitExceeded` error is returned if this limit is exceeded. No in-place allocation is proportional to the entire input; the gear hash is a rolling scalar.
+
+### Reserved and unsupported CDC algorithm IDs fail closed
+
+- Reserved IDs (0x04–0xEF) → `SarError::ReservedValue`
+- Unsupported optional IDs (0x01 Rabin, 0x03 BuzHash) → `SarError::Unsupported`
+- Custom IDs (0xF0–0xFF) → `SarError::Unsupported`
+
+No fallback behavior is attempted for unknown CDC algorithms.
+
+### Recipe hashes are not verified against file content in M9a
+
+Recipe payloads are validated for structure (32-byte alignment, resource limits) but the SHA-256 hashes within them are not verified against the logical file bytes. This is a known limitation. Verification cannot be performed portably until the spec normatively names the hash algorithm for recipe hashes.

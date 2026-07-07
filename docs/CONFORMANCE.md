@@ -165,3 +165,43 @@ maintainability cleanup pass.
 - Content Hash verification is not implemented. The archive format stores a 32-byte content hash when `DEDUPLICATION` is set, but does not encode the hash algorithm identifier in the LFH or any other fixed-format field. The spec refers to "e.g., BLAKE3" without normatively specifying the algorithm field encoding. Verification cannot be performed without knowing the algorithm. This is an **implementation gap** (not a spec gap): once the spec normatively defines the algorithm encoding, verification can be added. See also `docs/SPEC_QUESTIONS.md`.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.
+
+---
+
+## Milestone 9a — Content-Defined Chunking (CDC)
+
+**Status: Partial (metadata parsing/writing/validation complete; CDC_EXT_PROVIDER, Rabin, BuzHash, and `create --cdc` CLI not implemented)**
+
+### Implemented
+
+- **CDC global flag:** `CDC_SUPPORT` (Bit 5) is parsed, exposed in `GlobalFlags`, and tracked in `VerificationReport.cdc_support`.
+- **CDC algorithm ID in LFH:** parsed when `CDC_SUPPORT` active; validated against algorithm registry; stored in `EntryMetadata.cdc_algo_id`.
+- **Supported algorithms:** `LITERAL_MODE (0x00)` and `FASTCDC (0x02)`.
+- **FASTCDC algorithm:** deterministic two-level gear-hash chunking with configurable `min_size`/`avg_size`/`max_size`; SHA-256 per-chunk hashes; no zero-length chunks; final chunk may be smaller than `min_size` at EOF.
+- **CDC_MAP TLV range (0x40–0x4F):** accepted structurally; content validated via `parse_entry_cdc_map`; `CdcMap` / `CdcMapRecord` structs with 50-byte record layout (assumed — spec does not specify widths).
+- **Recipe Mode:** `validate_recipe_payload` enforces 32-byte hash alignment and resource limits; `recipe_hashes` extracts the hash list.
+- **CDC_MAP write:** `make_cdc_map_tlv` serializes a `CdcMap` to a `Tlv` with type_id `0x40`.
+- **ResourceLimits:** `max_cdc_chunk_count` (default 1,000,000) and `max_cdc_metadata_bytes` (default 50 MiB) fields; enforced in all CDC parse paths.
+- **CDC interaction tests:** CDC with STORE, compressed, sparse, fragmented entries; AEAD not bypassed; resource limits enforced.
+- **CLI `inspect --json`:** `cdc_support` flag and `cdc_map_tlvs` at archive level; `cdc_algo_id` per entry.
+- **CLI `verify --cdc`:** validates CDC algorithm IDs and CDC_MAP TLVs; reports `cdc_support` and entry count.
+- **Documentation:** `docs/API.md`, `docs/CONFORMANCE.md`, `docs/SECURITY.md`, `docs/SPEC_QUESTIONS.md`, `README.md` updated.
+
+### Not implemented in M9a
+
+- `sar create --cdc fastcdc` CLI flag (archive creation with CDC annotation is not exposed in the create command; the `ArchiveWriter` does not yet set `CDC_SUPPORT` automatically).
+- Rabin fingerprinting (`0x01`) and BuzHash (`0x03`) algorithms — fail with `SarError::Unsupported`.
+- Custom CDC algorithm IDs (`0xF0–0xFF`) — fail with `SarError::Unsupported`.
+- Reserved CDC algorithm IDs (`0x04–0xEF`) — fail with `SarError::ReservedValue`.
+- `CDC_EXT_PROVIDER` TLV (type `0x31`) — TLV ID conflict with DATA_HASH range; see `docs/SPEC_QUESTIONS.md`.
+- Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) — out of scope for M9a.
+- Recipe hash verification against logical file content — not implemented; recipe hashes are validated for structure and resource limits only.
+
+### Spec gaps documented in SPEC_QUESTIONS.md
+
+- CDC_MAP record field widths (not specified by spec)
+- Recipe hash algorithm (not named in spec)
+- FastCDC parameters — min/avg/max chunk sizes (not defined by spec)
+- TLV type 0x31 conflict (CDC_EXT_PROVIDER vs DATA_HASH range)
+- CDC transformation domain (not explicitly stated by spec)
+- CDC interaction with LOSS_TOLERANT and FEC (not addressed by spec)

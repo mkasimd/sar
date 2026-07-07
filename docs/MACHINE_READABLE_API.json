@@ -14,34 +14,190 @@
     {
       "name": "sar-cdc",
       "path": "crates/sar-cdc",
-      "purpose": "Placeholder crate for future content-defined chunking support.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0 Milestone 9a.",
+      "status": "implemented",
+      "milestones": [
+        "9a"
+      ],
+      "features": [
+        "FASTCDC algorithm (deterministic, two-level gear-hash)",
+        "CDC algorithm ID registry (LITERAL=0x00, FASTCDC=0x02)",
+        "CdcChunk, CdcMetadata, CdcMapRecord, CdcMap data structs",
+        "CDC_MAP TLV binary parse/write (50-byte records)",
+        "Recipe Mode validation (32-byte hash array)",
+        "CdcError enum with Malformed/Unsupported/ReservedValue/LimitExceeded variants"
+      ],
       "modules": [
         {
-          "name": "lib",
-          "path": "src/lib.rs",
+          "name": "algo",
+          "path": "src/algo.rs",
           "items": [
             {
-              "name": "NotImplemented",
+              "name": "CDC_ALGO_LITERAL",
+              "kind": "const",
+              "signature": "pub const CDC_ALGO_LITERAL: u8 = 0x00;",
+              "description": "Literal mode (payload is raw data, no chunking)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_ALGO_RABIN",
+              "kind": "const",
+              "signature": "pub const CDC_ALGO_RABIN: u8 = 0x01;",
+              "description": "Rabin fingerprinting (optional, not implemented)",
+              "since_milestone": "9a",
+              "implemented": false
+            },
+            {
+              "name": "CDC_ALGO_FASTCDC",
+              "kind": "const",
+              "signature": "pub const CDC_ALGO_FASTCDC: u8 = 0x02;",
+              "description": "FASTCDC required baseline algorithm",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_ALGO_BUZHASH",
+              "kind": "const",
+              "signature": "pub const CDC_ALGO_BUZHASH: u8 = 0x03;",
+              "description": "BuzHash (optional, not implemented)",
+              "since_milestone": "9a",
+              "implemented": false
+            },
+            {
+              "name": "CDC_RECIPE_HASH_LEN",
+              "kind": "const",
+              "signature": "pub const CDC_RECIPE_HASH_LEN: usize = 32;",
+              "description": "Length of each recipe chunk hash in bytes",
+              "since_milestone": "9a",
+              "implemented": true
+            }
+          ]
+        },
+        {
+          "name": "types",
+          "path": "src/types.rs",
+          "items": [
+            {
+              "name": "CdcChunk",
               "kind": "struct",
-              "signature": "pub struct NotImplemented;",
-              "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented CDC functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "signature": "pub struct CdcChunk { pub offset: u64, pub length: u64, pub hash: Option<[u8; 32]> }",
+              "description": "A single CDC chunk with offset, length, and optional SHA-256 hash",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CdcMetadata",
+              "kind": "struct",
+              "signature": "pub struct CdcMetadata { pub algorithm_id: u16, pub min_size: u32, pub avg_size: u32, pub max_size: u32, pub chunks: Vec<CdcChunk> }",
+              "description": "Complete CDC metadata for a file",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CdcMapRecord",
+              "kind": "struct",
+              "signature": "pub struct CdcMapRecord { pub hash: [u8; 32], pub partition_id: u16, pub absolute_offset: u64, pub compressed_size: u64 }",
+              "description": "Single CDC_MAP TLV record (50 bytes; field widths assumed \u2014 spec does not specify)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CdcMap",
+              "kind": "struct",
+              "signature": "pub struct CdcMap { pub records: Vec<CdcMapRecord> }",
+              "description": "Parsed CDC_MAP TLV content",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_MAP_RECORD_LEN",
+              "kind": "const",
+              "signature": "pub const CDC_MAP_RECORD_LEN: usize = 50;",
+              "description": "Byte length of a single CDC_MAP record (assumed layout: 32+2+8+8)",
+              "since_milestone": "9a",
+              "implemented": true
+            }
+          ]
+        },
+        {
+          "name": "validate",
+          "path": "src/validate.rs",
+          "items": [
+            {
+              "name": "CdcError",
+              "kind": "enum",
+              "description": "CDC-specific error type with variants: Malformed, Unsupported, ReservedValue, LimitExceeded, InvalidLength, InvalidChunk",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "validate_cdc_algo_id",
+              "kind": "function",
+              "signature": "pub fn validate_cdc_algo_id(id: u8) -> Result<(), CdcError>",
+              "description": "Validates a CDC algorithm ID; returns Err for reserved or unsupported IDs",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "validate_cdc_map_bytes",
+              "kind": "function",
+              "signature": "pub fn validate_cdc_map_bytes(bytes: &[u8], max_records: usize) -> Result<(), CdcError>",
+              "description": "Validates CDC_MAP TLV byte slice (length must be multiple of 50)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "validate_cdc_metadata",
+              "kind": "function",
+              "signature": "pub fn validate_cdc_metadata(meta: &CdcMetadata, file_size: u64, ...) -> Result<(), CdcError>",
+              "description": "Validates full CdcMetadata (no zero-length chunks, coverage, ordering)",
+              "since_milestone": "9a",
+              "implemented": true
+            }
+          ]
+        },
+        {
+          "name": "map",
+          "path": "src/map.rs",
+          "items": [
+            {
+              "name": "parse_cdc_map",
+              "kind": "function",
+              "signature": "pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcError>",
+              "description": "Parse CDC_MAP TLV binary payload into CdcMap",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "write_cdc_map",
+              "kind": "function",
+              "signature": "pub fn write_cdc_map(map: &CdcMap) -> Result<Vec<u8>, CdcError>",
+              "description": "Serialize CdcMap into CDC_MAP TLV binary payload",
+              "since_milestone": "9a",
+              "implemented": true
+            }
+          ]
+        },
+        {
+          "name": "fastcdc",
+          "path": "src/fastcdc.rs",
+          "items": [
+            {
+              "name": "FastCdcOptions",
+              "kind": "struct",
+              "signature": "pub struct FastCdcOptions { pub min_size: u32, pub avg_size: u32, pub max_size: u32 }",
+              "description": "FASTCDC chunking parameters (defaults: 2KiB/8KiB/64KiB)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "chunk_data",
+              "kind": "function",
+              "signature": "pub fn chunk_data(data: &[u8], opts: &FastCdcOptions) -> Vec<CdcChunk>",
+              "description": "Chunk data using FASTCDC; deterministic and bounded",
+              "since_milestone": "9a",
+              "implemented": true
             }
           ]
         }

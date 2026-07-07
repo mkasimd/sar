@@ -142,3 +142,43 @@ The items below are derived from the current code audit. They document places wh
   - **Current conservative implementation:** the 32-byte field is parsed and preserved in `EntryMetadata.content_hash`, but no verification is performed because the algorithm cannot be determined from the archive.
   - **Interoperability risk:** high. Two implementations that store content hashes with different algorithms would both claim conformance but produce incompatible archives.
   - **Follow-up needed:** spec must normatively define how the hash algorithm is signaled (e.g., a 1-byte algo ID prepended to the 32-byte value, or a Global Header field, or a fixed "BLAKE3-only" mandate). Until this is resolved, content hash verification cannot be implemented portably.
+
+---
+
+## Milestone 9a — Content-Defined Chunking (CDC) spec ambiguities
+
+- **Spec section:** CDC_MAP TLV record field widths (spec section 20)
+  - **Issue:** Section 20 defines CDC_MAP TLVs (type IDs 0x40–0x4F) but does not give byte widths or endianness for the per-record fields (Hash, Partition_ID, Absolute_Offset, Compressed_Size).
+  - **Current conservative implementation:** assumed layout `[hash: 32 bytes][partition_id: u16 LE][absolute_offset: u64 LE][compressed_size: u64 LE]` = 50 bytes per record. `CDC_MAP_RECORD_LEN = 50`.
+  - **Interoperability risk:** high. If the spec intended different widths (e.g., u32 for partition_id), all CDC_MAP records would be misaligned.
+  - **Follow-up needed:** spec must normatively state field widths and endianness for all CDC_MAP record fields.
+
+- **Spec section:** Recipe Mode hash algorithm (spec sections 8.5 and 20)
+  - **Issue:** Section 8.5 states that when `cdc_algo_id > 0` the payload (after decryption/decompression) is an ordered array of 32-byte chunk hashes, and that the hash is "determined by DEDUPLICATION (Bit 29)". Section 20 does not name the hash algorithm.
+  - **Current conservative implementation:** assumed SHA-256 for all recipe chunk hashes (length 32 bytes). This is consistent with the `content_hash` field which is also 32 bytes.
+  - **Interoperability risk:** medium. If DEDUPLICATION Bit 29 selects BLAKE3 in some profiles, SHA-256 chunk hashes would not match.
+  - **Follow-up needed:** spec must normatively name the hash algorithm for Recipe Mode chunk hashes, or reference an algorithm registry. This should be resolved when the DEDUPLICATION feature is specified in full.
+
+- **Spec section:** FastCDC parameters — minimum, average, maximum chunk size (spec section 21)
+  - **Issue:** Section 21 names FASTCDC as a required CDC algorithm (algorithm ID 0x02) but does not specify the minimum, average, or maximum chunk sizes, nor the gear hash polynomial, nor whether the algorithm should be the paper's two-level masking variant.
+  - **Current conservative implementation:** implemented two-level FASTCDC with `min_size=2 KiB`, `avg_size=8 KiB`, `max_size=64 KiB`. Gear table generated via `xorshift64*` PRNG seeded at `0x9e3779b97f4a7c15`. Two-level masking: `mask_s = mask_for(avg/2)`, `mask_l = mask_for(avg)`.
+  - **Interoperability risk:** high. Any difference in chunk sizes or gear table produces completely different chunk boundaries, breaking deduplication across implementations.
+  - **Follow-up needed:** spec must normatively specify FastCDC parameters (min/avg/max chunk sizes), the gear hash table polynomial or generation procedure, and the exact masking strategy. These values must be embedded in the archive or specified as mandatory defaults.
+
+- **Spec section:** TLV type 0x31 conflict (spec sections 5.3 and 21.2)
+  - **Issue:** Section 5.3 assigns type IDs 0x30–0x3F to DATA_HASH TLVs. Section 21.2 introduces `CDC_EXT_PROVIDER` with type ID 0x31. These ranges overlap.
+  - **Current conservative implementation:** treating 0x31 as DATA_HASH (part of the 0x30–0x3F range). CDC_EXT_PROVIDER TLVs at 0x31 are not parsed or generated.
+  - **Interoperability risk:** high. Any archive using type 0x31 for CDC_EXT_PROVIDER would be misinterpreted as DATA_HASH by implementations following section 5.3.
+  - **Follow-up needed:** spec must resolve the TLV type ID conflict. Either CDC_EXT_PROVIDER must be reassigned to an unused ID, or the DATA_HASH range must be clarified.
+
+- **Spec section:** CDC chunking transformation domain (spec sections 8.5 and 21)
+  - **Issue:** The spec does not explicitly state which byte domain CDC chunking operates on. Options include: logical file bytes, pre-compression bytes, post-compression bytes, pre-encryption bytes, or post-encryption bytes.
+  - **Current conservative implementation:** CDC metadata records chunk boundaries over logical reconstructed file bytes (i.e., after fragment reassembly, sparse reconstruction, decryption, and decompression). Recipe Mode hashes are computed over these logical bytes. This follows the conservative expectation: `fragment reassembly → sparse reconstruction → logical file bytes → CDC metadata`.
+  - **Interoperability risk:** medium. If the spec intends CDC over compressed or encrypted bytes, all chunk boundaries and recipe hashes would differ from this implementation.
+  - **Follow-up needed:** spec must normatively state the transformation domain for CDC chunking (which byte sequence is chunked and which byte sequence the recipe hashes cover).
+
+- **Spec section:** CDC interaction with LOSS_TOLERANT and FEC (spec sections 6.2.2, 19.4.5, and 21)
+  - **Issue:** Section 21 does not describe how CDC metadata should be handled when LOSS_TOLERANT is active or when FEC recovery replaces erased data. Should CDC validation be skipped for degraded entries? Should partial recipe hashes be verified?
+  - **Current conservative implementation:** CDC_MAP TLVs in the Central Dictionary are always validated structurally. Recipe payloads are validated against resource limits. For loss-tolerant entries, CDC validation is not enforced beyond structural checks because the logical bytes may be degraded.
+  - **Interoperability risk:** low for structural validation; medium for recipe hash verification in degraded mode.
+  - **Follow-up needed:** spec should state whether CDC recipe hash verification is required when LOSS_TOLERANT is active or when FEC repair has been applied.

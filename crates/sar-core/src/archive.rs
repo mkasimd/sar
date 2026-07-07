@@ -88,6 +88,11 @@ pub struct EntryMetadata {
     /// not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<[u8; 32]>,
+    /// CDC algorithm ID from the LFH.  `None` when `CDC_SUPPORT` global flag
+    /// is not set.  `0x00` = Literal Mode (payload is literal data).
+    /// Values > 0 = Recipe Mode (payload is an ordered list of chunk hashes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cdc_algo_id: Option<u8>,
 }
 
 /// Entry payload reader result.
@@ -298,6 +303,10 @@ pub struct VerificationReport {
     pub entry_count: u64,
     /// Indexed mode flag.
     pub indexed: bool,
+    /// Number of CDC entries with a valid algorithm ID.
+    pub cdc_entry_count: u64,
+    /// True when CDC_SUPPORT is active in the global flags.
+    pub cdc_support: bool,
 }
 
 /// Streaming archive reader over a seekable source.
@@ -644,6 +653,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
             },
             file_crc32: lfh.file_crc32,
             content_hash: lfh.content_hash,
+            cdc_algo_id: if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+                let algo_id = lfh.cdc_algo_id.unwrap_or(0);
+                crate::cdc::validate_cdc_algo_id(algo_id)?;
+                Some(algo_id)
+            } else {
+                None
+            },
         };
 
         self.next_offset = payload_end;
@@ -669,9 +685,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         self.next_offset = self.header_len;
         let mut offsets = Vec::new();
+        let mut cdc_entry_count: u64 = 0;
         while let Some(entry) = self.next_entry()? {
             offsets.push(entry.metadata.lfh_offset);
+            if entry.metadata.cdc_algo_id.is_some() {
+                cdc_entry_count = cdc_entry_count
+                    .checked_add(1)
+                    .ok_or(SarError::Overflow("CDC entry count"))?;
+            }
         }
+
+        let cdc_support = global.flags.contains(GlobalFlags::CDC_SUPPORT);
 
         if let Some(cd) = &self.cd {
             if cd.file_count
@@ -710,6 +734,23 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     }
                 }
             }
+
+            // Validate any CDC_MAP TLVs present in CD metadata when
+            // CDC_SUPPORT is active.
+            if cdc_support {
+                for tlv in &cd.metadata {
+                    if (0x40..=0x4F).contains(&tlv.type_id) {
+                        self.options
+                            .limits
+                            .check_cdc_metadata_bytes(tlv.value.len())?;
+                        sar_cdc::map::parse_cdc_map(
+                            &tlv.value,
+                            self.options.limits.max_cdc_chunk_count,
+                        )
+                        .map_err(crate::cdc::cdc_err_to_sar)?;
+                    }
+                }
+            }
         }
 
         Ok(VerificationReport {
@@ -717,6 +758,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
             entry_count: u64::try_from(offsets.len())
                 .map_err(|_| SarError::Overflow("entry count"))?,
             indexed: self.cd.is_some(),
+            cdc_entry_count,
+            cdc_support,
         })
     }
 

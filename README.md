@@ -35,6 +35,17 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with validation; round-trips through reader
   - `ArchiveWriterOptions::sparse` field — enables `SPARSE_FILES` global flag
   - CRC32 verification in `read_all_logical_files` — verified over fully reconstructed bytes including sparse holes
+- **Milestone 9a — Content-Defined Chunking (CDC)**: CDC metadata parsing/writing/validation, FASTCDC algorithm, resource limits, CLI support
+  - `CDC_SUPPORT` global flag (Bit 5) activates CDC: `cdc_algo_id` parsed from every LFH when active; validated against algorithm registry
+  - Supported CDC algorithms: `LITERAL_MODE (0x00)` and `FASTCDC (0x02)`
+  - FASTCDC: deterministic two-level gear-hash chunking with SHA-256 per-chunk hashes; no zero-length chunks; no unbounded allocation
+  - CDC_MAP TLV range (0x40–0x4F) accepted and parsed; `CdcMap`/`CdcMapRecord` round-trip write/read
+  - Recipe Mode: `validate_recipe_payload` and `recipe_hashes` for ordered 32-byte chunk hash lists
+  - `ResourceLimits`: `max_cdc_chunk_count` and `max_cdc_metadata_bytes` fields added; all CDC parse paths are bounded
+  - `EntryMetadata.cdc_algo_id` exposes CDC algorithm per entry; `VerificationReport.cdc_support` and `cdc_entry_count` added
+  - `inspect --json` includes `cdc_support` and per-entry `cdc_algo_id`; `verify --cdc` validates CDC metadata
+  - CDC does not bypass AEAD authentication, sparse reconstruction, fragment reassembly, or resource limits
+  - Delta encoding (VCDIFF, BSDIFF) is **not** implemented in M9a
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`

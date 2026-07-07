@@ -1,10 +1,13 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–8).
+//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–9a).
 
 /// Archive reader/writer APIs.
 pub mod archive;
+/// CDC (Content-Defined Chunking) support: algorithm IDs, map parsing/writing,
+/// recipe validation (Milestone 9a).
+pub mod cdc;
 /// SAR error and status mapping types.
 pub mod error;
 /// FEC metadata validation and Data Recovery TLV support (Section 9.2).
@@ -35,6 +38,11 @@ pub use archive::{
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
     EntryReader, EntryWritten, FecSettings, LogicalFile, SparseWriteOptions, VerificationReport,
 };
+pub use cdc::{
+    CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
+    CdcAlgoId, CdcChunk, CdcMapRecord, CdcMetadata, make_cdc_map_tlv, parse_entry_cdc_map,
+    validate_cdc_algo_id, validate_recipe_payload,
+};
 pub use error::{SarError, SarStatus};
 pub use fec::{FecSummary, parse_lfh_fec_value, validate_recovery_tlv};
 pub use flags::{
@@ -55,6 +63,8 @@ pub use recovery::{
     EntryErasure, ErasureInput, ErasureRange, ProtectedRange, RecoveryMetadata, RecoveryPlan,
     RepairReport, inspect_recovery_metadata, plan_archive_repair, repair_archive,
 };
+pub use sar_cdc::CDC_MAP_RECORD_LEN;
+pub use sar_cdc::CdcMap;
 pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
 pub use sparse::{
     SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
