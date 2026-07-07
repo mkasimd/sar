@@ -82,6 +82,29 @@ pub struct EntryMetadata {
 }
 
 /// Entry payload reader result.
+/// A reconstructed logical file, which may have been assembled from multiple
+/// fragment entries or had its sparse holes zero-filled.
+///
+/// Returned by [`ArchiveReader::read_all_logical_files`].
+#[derive(Debug, Clone)]
+pub struct LogicalFile {
+    /// Entry name (taken from the first or only entry for this logical file).
+    pub name: String,
+    /// Fragment ID shared by all entries in this group, or `None` for
+    /// unfragmented entries.
+    pub fragment_id: Option<u32>,
+    /// Fully reconstructed payload bytes.
+    ///
+    /// For fragmented entries, fragments have been assembled at their declared
+    /// absolute offsets.  For sparse entries, holes are zero-filled.
+    pub data: Vec<u8>,
+    /// `true` when the payload is incomplete due to missing fragments that were
+    /// permitted by `LOSS_TOLERANT` semantics.  Callers **must not** treat this
+    /// as a fully verified output.
+    pub is_degraded: bool,
+}
+
+/// Decoded archive entry returned by [`ArchiveReader::next_entry`].
 #[derive(Debug, Clone)]
 pub struct EntryReader {
     /// Parsed LFH.
@@ -508,41 +531,40 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
-        let metadata =
-            EntryMetadata {
-                lfh_offset: self.next_offset,
-                name: String::from_utf8_lossy(&lfh.name).into_owned(),
-                path: if lfh.path.is_empty() {
-                    None
-                } else {
-                    Some(String::from_utf8_lossy(&lfh.path).into_owned())
-                },
-                payload_size: lfh.payload_size,
-                uncompressed_size: lfh.uncompressed_size,
-                compression_algo_id: effective_comp_algo_id,
-                compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
-                is_compressed: is_effectively_compressed,
-                fec,
-                fragment_id: lfh.fragment_id,
-                fragment_index: lfh.fragment_index,
-                fragment_descriptor: lfh.fragment_descriptor.map(
-                    |(absolute_offset, fragment_size)| crate::fragment::FragmentDescriptor {
-                        absolute_offset,
-                        fragment_size,
-                    },
-                ),
-                is_fragment: lfh.entry_mode.is_fragment(),
-                is_last_fragment: lfh.entry_mode.is_last_fragment(),
-                is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
-                sparse_extents: if header.flags.contains(GlobalFlags::SPARSE_FILES)
-                    && !lfh.sparse_map.is_empty()
-                {
-                    let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
-                    Some(crate::sparse::parse_sparse_map(&lfh.sparse_map, is_64bit)?)
-                } else {
-                    None
-                },
-            };
+        let metadata = EntryMetadata {
+            lfh_offset: self.next_offset,
+            name: String::from_utf8_lossy(&lfh.name).into_owned(),
+            path: if lfh.path.is_empty() {
+                None
+            } else {
+                Some(String::from_utf8_lossy(&lfh.path).into_owned())
+            },
+            payload_size: lfh.payload_size,
+            uncompressed_size: lfh.uncompressed_size,
+            compression_algo_id: effective_comp_algo_id,
+            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
+            is_compressed: is_effectively_compressed,
+            fec,
+            fragment_id: lfh.fragment_id,
+            fragment_index: lfh.fragment_index,
+            fragment_descriptor: lfh.fragment_descriptor.as_ref().map(|fd| {
+                crate::fragment::FragmentDescriptor {
+                    absolute_offset: fd.absolute_offset,
+                    fragment_size: fd.fragment_size,
+                }
+            }),
+            is_fragment: lfh.entry_mode.is_fragment(),
+            is_last_fragment: lfh.entry_mode.is_last_fragment(),
+            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            sparse_extents: if header.flags.contains(GlobalFlags::SPARSE_FILES)
+                && !lfh.sparse_map.is_empty()
+            {
+                let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
+                Some(crate::sparse::parse_sparse_map(&lfh.sparse_map, is_64bit)?)
+            } else {
+                None
+            },
+        };
 
         self.next_offset = payload_end;
 
@@ -622,6 +644,205 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 global_header: global_header.clone(),
                 central_dictionary: self.cd.clone(),
             })
+    }
+
+    /// Reads all entries from the archive and returns fully reconstructed
+    /// logical files.
+    ///
+    /// This high-level helper handles two cases that [`next_entry`] does not
+    /// address automatically:
+    ///
+    /// * **Fragment groups** — entries sharing a `fragment_id` are assembled
+    ///   using [`crate::fragment::reconstruct_fragments`].  All fragments must
+    ///   be present unless `allow_lossy` is `true` **and** the group has
+    ///   `LOSS_TOLERANT` set.
+    /// * **Sparse entries** — when global `SPARSE_FILES` is active and an entry
+    ///   carries a sparse map, the raw data segments are scattered into a
+    ///   zero-filled logical-size buffer via
+    ///   [`crate::sparse::apply_sparse_reconstruction`].
+    ///
+    /// # Loss-tolerant behavior
+    ///
+    /// When `allow_lossy` is `false`, a missing fragment causes
+    /// [`SarError::FragmentGap`].  When `allow_lossy` is `true` and the
+    /// fragment group has `LOSS_TOLERANT` set, the degraded output is returned
+    /// with [`LogicalFile::is_degraded`] set to `true`.
+    ///
+    /// AEAD authentication failures are **never** suppressed by `allow_lossy`.
+    /// Format errors are **never** suppressed by `allow_lossy`.
+    ///
+    /// # Sparse logical-size derivation
+    ///
+    /// The logical size for sparse reconstruction is derived as the maximum of
+    /// `extent.offset + extent.length` across all extents for that entry.  If
+    /// the file has a trailing sparse hole that is not covered by any extent,
+    /// the derived size will be smaller than the true logical size.  This is a
+    /// known spec gap; see `docs/SPEC_QUESTIONS.md`.
+    ///
+    /// Sparse logical sizes are capped to
+    /// [`ArchiveReaderOptions::max_decoded_entry_size`].
+    ///
+    /// # Caller contract
+    ///
+    /// This method resets the internal read cursor to the beginning of the
+    /// data area, so it can be called even after previous [`next_entry`] calls.
+    ///
+    /// # Errors
+    ///
+    /// * [`SarError::FragmentGap`] — gap in fragment indices without
+    ///   `allow_lossy`.
+    /// * [`SarError::InvalidMap`] — overlapping or out-of-bounds sparse extents
+    ///   or fragment descriptors.
+    /// * [`SarError::Overflow`] — arithmetic overflow or allocation limit
+    ///   exceeded.
+    /// * [`SarError::Malformed`] — `IS_FRAGMENT` without a `fragment_id`.
+    /// * Any error propagated from [`next_entry`].
+    ///
+    /// [`next_entry`]: Self::next_entry
+    pub fn read_all_logical_files(
+        &mut self,
+        allow_lossy: bool,
+    ) -> Result<Vec<LogicalFile>, SarError> {
+        use crate::fragment::{FragmentEntry, reconstruct_fragments};
+        use std::collections::HashMap;
+
+        // Ensure global header is read.
+        if self.global_header.is_none() {
+            self.read_global_header()?;
+        }
+
+        // Reset cursor so callers may invoke this after prior next_entry calls.
+        self.next_offset = self.header_len;
+
+        // Collect all decoded entries.
+        let mut all_entries: Vec<EntryReader> = Vec::new();
+        while let Some(entry) = self.next_entry()? {
+            all_entries.push(entry);
+        }
+
+        // Preserve insertion order of first-seen fragment IDs.
+        let mut frag_order: Vec<u32> = Vec::new();
+        // fragment_id → (first_seen_name, Vec<EntryReader>)
+        let mut frag_groups: HashMap<u32, (String, Vec<EntryReader>)> = HashMap::new();
+        let mut result: Vec<LogicalFile> = Vec::new();
+
+        for entry in all_entries {
+            if entry.metadata.is_fragment {
+                let fid = entry.metadata.fragment_id.ok_or(SarError::Malformed(
+                    "IS_FRAGMENT set but fragment_id is absent",
+                ))?;
+                let group = frag_groups.entry(fid).or_insert_with(|| {
+                    frag_order.push(fid);
+                    (entry.metadata.name.clone(), Vec::new())
+                });
+                group.1.push(entry);
+            } else {
+                let name = entry.metadata.name.clone();
+                let sparse = entry.metadata.sparse_extents.clone();
+                let data = Self::apply_sparse_if_needed(
+                    entry.payload,
+                    &sparse,
+                    self.options.max_decoded_entry_size,
+                )?;
+                result.push(LogicalFile {
+                    name,
+                    fragment_id: None,
+                    data,
+                    is_degraded: false,
+                });
+            }
+        }
+
+        // Reconstruct each fragment group in first-seen order.
+        for fid in frag_order {
+            let (name, group_entries) = frag_groups
+                .remove(&fid)
+                .expect("fid must be present in map");
+
+            // Compute logical size = max(descriptor.absolute_offset + descriptor.fragment_size).
+            let mut logical_size: u64 = 0;
+            for e in &group_entries {
+                if let Some(desc) = &e.metadata.fragment_descriptor {
+                    let end = desc
+                        .absolute_offset
+                        .checked_add(u64::from(desc.fragment_size))
+                        .ok_or(SarError::Overflow("fragment descriptor end overflow"))?;
+                    if end > logical_size {
+                        logical_size = end;
+                    }
+                }
+            }
+
+            // Build FragmentEntry list from decoded payloads.
+            let frag_entries: Vec<FragmentEntry> = group_entries
+                .into_iter()
+                .filter_map(|e| {
+                    let desc = e.metadata.fragment_descriptor?;
+                    Some(FragmentEntry {
+                        fragment_index: e.metadata.fragment_index.unwrap_or(0),
+                        is_last_fragment: e.metadata.is_last_fragment,
+                        is_loss_tolerant: e.metadata.is_loss_tolerant,
+                        descriptor: desc,
+                        payload: e.payload,
+                    })
+                })
+                .collect();
+
+            let (raw, is_degraded) = reconstruct_fragments(frag_entries, logical_size)?;
+
+            // When the caller does not allow lossy and degraded output was
+            // produced by a LOSS_TOLERANT group, surface it as an error.
+            if is_degraded && !allow_lossy {
+                return Err(SarError::FragmentGap(
+                    "fragment group has gaps; use allow_lossy to permit degraded output",
+                ));
+            }
+
+            result.push(LogicalFile {
+                name,
+                fragment_id: Some(fid),
+                data: raw,
+                is_degraded,
+            });
+        }
+
+        Ok(result)
+    }
+
+    /// Applies sparse reconstruction when `sparse_extents` is `Some` and
+    /// non-empty; otherwise returns `payload` unchanged.
+    ///
+    /// The sparse logical size is derived as the maximum of
+    /// `extent.offset + extent.length` across all extents.  If that value
+    /// exceeds `max_size`, an [`SarError::Overflow`] is returned to prevent
+    /// unbounded allocation.
+    fn apply_sparse_if_needed(
+        payload: Vec<u8>,
+        sparse_extents: &Option<Vec<crate::sparse::SparseExtent>>,
+        max_size: u64,
+    ) -> Result<Vec<u8>, SarError> {
+        let Some(extents) = sparse_extents else {
+            return Ok(payload);
+        };
+        if extents.is_empty() {
+            return Ok(payload);
+        }
+
+        // Compute logical size = max extent end.
+        let logical_size = extents
+            .iter()
+            .filter_map(|e| e.offset.checked_add(e.length))
+            .max()
+            .unwrap_or(0);
+
+        if logical_size > max_size {
+            return Err(SarError::Overflow(
+                "sparse logical file size exceeds max_decoded_entry_size limit",
+            ));
+        }
+
+        crate::sparse::validate_sparse_extents(extents, logical_size)?;
+        crate::sparse::apply_sparse_reconstruction(&payload, extents, logical_size)
     }
 }
 

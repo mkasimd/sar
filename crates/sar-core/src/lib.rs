@@ -31,7 +31,7 @@ pub mod transform;
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, FecSettings, VerificationReport,
+    EntryReader, EntryWritten, FecSettings, LogicalFile, VerificationReport,
 };
 pub use error::{SarError, SarStatus};
 pub use fec::{FecSummary, parse_lfh_fec_value, validate_recovery_tlv};
@@ -39,10 +39,10 @@ pub use flags::{
     EntryMode, GlobalFlags, validate_entry_mode_against_global, validate_global_flags,
 };
 pub use format::{
-    CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, PartitionDescriptor,
-    compute_lfh_size, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
-    lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
-    write_central_dictionary, write_footer, write_global_header, write_lfh,
+    CentralDictionary, Footer, GlobalHeader, KmsData, LfhFragmentDescriptor, LocalFileHeader,
+    PartitionDescriptor, compute_lfh_size, fec_size_field_offset, global_header_flags_bytes,
+    lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header,
+    parse_lfh, write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
 pub use fragment::{
     FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,

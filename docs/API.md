@@ -101,6 +101,8 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 #### Format and parser APIs
 
 - Header structs: `GlobalHeader`, `LocalFileHeader`, `CentralDictionary`, `Footer`, `KmsData`, `PartitionDescriptor`
+  - `LocalFileHeader.fragment_descriptor` is typed as `Option<LfhFragmentDescriptor>` (named-field struct; replaced the former `Option<(u64, u32)>` tuple in M8 closeout)
+- `LfhFragmentDescriptor { absolute_offset: u64, fragment_size: u32 }` — fragment descriptor stored inline in a `LocalFileHeader`
 - Parser/writer helpers:
   - `parse_global_header`, `write_global_header`
   - `parse_lfh`, `write_lfh`, `compute_lfh_size`, `lfh_to_bytes`, `lfh_bytes_for_aad`, `fec_size_field_offset`
@@ -163,7 +165,7 @@ These items are public today, but they are better treated as integration helpers
 - Encrypted archives require a `KeyProvider`; missing credentials return `SAR_ERR_KEY_MISSING`.
 - Wrong passwords or invalid tags fail before plaintext is released and surface as `SAR_ERR_AUTH_FAILED` / `SAR_ERR_DECRYPT_FAILED` depending on path.
 
-### Example
+### Example — low-level iteration
 
 ```rust
 use std::fs::File;
@@ -183,6 +185,23 @@ while let Some(entry) = reader.next_entry()? {
 # Ok::<(), sar_core::SarError>(())
 ```
 
+### Example — high-level extraction (fragment + sparse aware)
+
+```rust
+use std::fs::File;
+use std::io::BufReader;
+use sar_core::ArchiveReader;
+
+let mut reader = ArchiveReader::new(BufReader::new(File::open("archive.sar")?))?;
+// read_all_logical_files: assembles fragment groups, applies sparse zero-fill.
+// Pass allow_lossy=false to require complete data; pass true to accept degraded output.
+let files = reader.read_all_logical_files(false)?;
+for file in files {
+    println!("{}: {} bytes (degraded={})", file.name, file.data.len(), file.is_degraded);
+}
+# Ok::<(), sar_core::SarError>(())
+```
+
 ### Unsupported or planned in `sar-core`
 
 Not implemented in this pass, even though some flags or structural fields already exist:
@@ -191,14 +210,41 @@ Not implemented in this pass, even though some flags or structural fields alread
 - CDC map processing
 - delta application
 - partition reassembly logic
-- automatic end-to-end multi-fragment file assembly in `ArchiveReader`
-- end-to-end loss-tolerant extraction through `ArchiveReader`
-- streaming session APIs
-- stable FFI / C ABI
+- streaming session APIs (Milestone 10)
+- stable FFI / C ABI (Milestone 12)
 
 ---
 
 ## M8 APIs in `sar-core`
+
+### `sar_core::archive` — high-level extraction types
+
+#### `LogicalFile`
+
+```rust
+pub struct LogicalFile {
+    pub name: String,
+    pub fragment_id: Option<u32>,
+    pub data: Vec<u8>,
+    pub is_degraded: bool,
+}
+```
+
+Returned by `ArchiveReader::read_all_logical_files`. For fragmented entries, fragments have been assembled at their declared absolute offsets. For sparse entries, holes are zero-filled. `is_degraded` is `true` when the payload is incomplete due to `LOSS_TOLERANT`-permitted missing fragments.
+
+#### `ArchiveReader::read_all_logical_files(allow_lossy: bool) -> Result<Vec<LogicalFile>, SarError>`
+
+Reads all entries, assembles fragment groups, applies sparse reconstruction, and returns fully reconstructed logical files. Resets the internal read cursor so it can be called after prior `next_entry` calls.
+
+**Behavior:**
+- Non-fragmented entries: returned as-is (with optional sparse reconstruction).
+- Fragment groups: sorted by `fragment_index`, scattered by `descriptor.absolute_offset`.
+- Missing fragments + `allow_lossy=false` → `SarError::FragmentGap`.
+- Missing fragments + `allow_lossy=true` + `LOSS_TOLERANT` → degraded output, `is_degraded=true`.
+- Overlapping fragment descriptors → `SarError::InvalidMap`.
+- AEAD authentication failures are **never** suppressed by `allow_lossy`.
+- Format errors are **never** suppressed by `allow_lossy`.
+- Sparse logical size is derived from `max(extent.offset + extent.length)`; large holes are capped by `ArchiveReaderOptions::max_decoded_entry_size`.
 
 ### `sar_core::sparse`
 

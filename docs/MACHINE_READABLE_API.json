@@ -502,7 +502,34 @@
               "ffi_notes": "Maps well to a high-level verify API."
             },
             {
-              "name": "ArchiveReader::with_key_provider",
+              "name": "ArchiveReader::read_all_logical_files",
+              "kind": "function",
+              "signature": "pub fn ArchiveReader<R>::read_all_logical_files(&mut self, allow_lossy: bool) -> Result<Vec<LogicalFile>, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed.",
+              "parameters": [
+                {"name": "allow_lossy", "type": "bool", "description": "Permit degraded (LOSS_TOLERANT) fragment group output."}
+              ],
+              "returns": "Result<Vec<LogicalFile>, SarError>",
+              "errors": [
+                "SarError::FragmentGap",
+                "SarError::InvalidMap",
+                "SarError::Overflow",
+                "SarError::Malformed",
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": ["19"],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "High-value FFI candidate; Vec<LogicalFile> ownership needs care."
+            },
+            {
               "kind": "function",
               "signature": "pub fn ArchiveReader<R>::with_key_provider(self, key_provider: Box<dyn KeyProvider>) -> Self",
               "visibility": "public",
@@ -832,6 +859,26 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Good inspect/list wrapper target."
+            },
+            {
+              "name": "LogicalFile",
+              "kind": "struct",
+              "signature": "pub struct LogicalFile { pub name: String, pub fragment_id: Option<u32>, pub data: Vec<u8>, pub is_degraded: bool }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "A fully reconstructed logical file returned by ArchiveReader::read_all_logical_files. For fragmented entries, fragments have been assembled at their absolute offsets. For sparse entries, holes are zero-filled. is_degraded is true when the payload is incomplete due to LOSS_TOLERANT-permitted missing fragments.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": ["19"],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Ownership of data Vec must be explicit in FFI."
             },
             {
               "name": "EntryReader",
@@ -1510,7 +1557,26 @@
               "ffi_notes": "Useful as a builder helper; name ownership should be flattened for FFI."
             },
             {
-              "name": "PartitionDescriptor",
+              "name": "LfhFragmentDescriptor",
+              "kind": "struct",
+              "signature": "pub struct LfhFragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Fragment descriptor stored inline in a Local File Header. Records the absolute byte offset and declared byte size of this fragment's contribution within the fully reconstructed logical file. Replaces the former Option<(u64, u32)> tuple in LocalFileHeader.fragment_descriptor.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": ["19"],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Simple numeric fields, good FFI target."
+            },
+            {
               "kind": "struct",
               "signature": "pub struct PartitionDescriptor { ... }",
               "visibility": "public",

@@ -3,7 +3,7 @@
 use sar_core::{
     EntryMode, GlobalFlags,
     error::SarError,
-    format::{LocalFileHeader, parse_lfh, write_lfh},
+    format::{LfhFragmentDescriptor, LocalFileHeader, parse_lfh, write_lfh},
     fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group},
 };
 
@@ -43,7 +43,10 @@ fn make_frag_lfh(
         fec_algo_id: None,
         fragment_id: Some(fragment_id),
         fragment_index: Some(fragment_index),
-        fragment_descriptor: Some((abs_offset, frag_size)),
+        fragment_descriptor: Some(LfhFragmentDescriptor {
+            absolute_offset: abs_offset,
+            fragment_size: frag_size,
+        }),
         iv_nonce: None,
         delta_base_hash: None,
         file_crc32: None,
@@ -71,7 +74,13 @@ fn parse_write_fragment_metadata() {
 
     assert_eq!(parsed.fragment_id, Some(0xAB));
     assert_eq!(parsed.fragment_index, Some(2));
-    assert_eq!(parsed.fragment_descriptor, Some((1024, 512)));
+    assert_eq!(
+        parsed.fragment_descriptor,
+        Some(LfhFragmentDescriptor {
+            absolute_offset: 1024,
+            fragment_size: 512,
+        })
+    );
     assert!(parsed.entry_mode.is_fragment());
     assert!(!parsed.entry_mode.is_last_fragment());
     assert!(!parsed.entry_mode.is_loss_tolerant());

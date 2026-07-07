@@ -619,23 +619,27 @@ fn extract_archive(
         reader = reader.with_key_provider(Box::new(CliKeyProvider::new(Some(password))));
     }
 
-    while let Some(entry) = reader.next_entry()? {
-        // Warn about loss-tolerant entries since full fragment reconstruction
-        // is not yet implemented in archival mode.
-        if entry.metadata.is_loss_tolerant && !allow_lossy {
+    // Use the high-level read_all_logical_files path which handles fragment
+    // group reassembly and sparse reconstruction automatically.
+    let logical_files = reader.read_all_logical_files(allow_lossy)?;
+
+    for file in logical_files {
+        if file.is_degraded {
+            // is_degraded only occurs when allow_lossy is true (otherwise the
+            // function would have returned FragmentGap).
             eprintln!(
-                "warning: entry '{}' has LOSS_TOLERANT set; full loss-tolerant extraction \
-                 requires fragment support (use --allow-lossy to suppress this warning)",
-                entry.metadata.name
+                "warning: '{}' extracted with degraded (incomplete) content; \
+                 some fragments were missing (LOSS_TOLERANT output)",
+                file.name
             );
         }
 
-        let rel = sanitize_relative(&entry.metadata.name)?;
+        let rel = sanitize_relative(&file.name)?;
         let out_path = output_dir.join(rel);
         if let Some(parent) = out_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(out_path, entry.payload)?;
+        fs::write(out_path, &file.data)?;
     }
 
     Ok(())
