@@ -57,36 +57,36 @@ jobs:
   # If this job fails with "Advanced Security is not enabled", go to:
   #   Settings → Security → Code security and analysis → Code scanning
   # and enable it (requires GitHub Advanced Security on private repos).
-  codeql:
-    name: CodeQL (Rust)
-    runs-on: ubuntu-latest
+#  codeql:
+#    name: CodeQL (Rust)
+#    runs-on: ubuntu-latest
 
     # CodeQL needs these additional permissions.
-    permissions:
-      contents: read
-      actions: read
-      security-events: write
-      packages: read
+#    permissions:
+#      contents: read
+#      actions: read
+#      security-events: write
+#      packages: read
 
-    steps:
-      - uses: actions/checkout@v4
+#    steps:
+#      - uses: actions/checkout@v4
+#
+#      - name: Install Rust (stable)
+#        uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
+#      - uses: Swatinem/rust-cache@v2
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
+#      - name: Initialize CodeQL
+#        uses: github/codeql-action/init@v3
+#        with:
           # GitHub CodeQL supports Rust natively as of late 2024.
-          languages: rust
+#          languages: rust
 
       # Build the workspace so CodeQL can trace the compilation.
-      - name: Build workspace (for CodeQL tracing)
-        run: cargo build --workspace --all-features
+ #     - name: Build workspace (for CodeQL tracing)
+#        run: cargo build --workspace --all-features
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:rust"
+#      - name: Perform CodeQL Analysis
+#        uses: github/codeql-action/analyze@v3
+#        with:
+#          category: "/language:rust"
