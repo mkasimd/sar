@@ -17,13 +17,8 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 # ── Licenses ──────────────────────────────────────────────────────────────────
 [licenses]
 version = 2
-# Fail if a license cannot be determined.
-unlicensed = "deny"
-# Warn on copyleft licenses that may require manual review before the deny list
-# below fires; set to "deny" if you want a hard failure immediately.
-copyleft = "warn"
-# Default to "deny" for any license not listed below.
-allow-osi-fsf-free = "neither"
+# Only licenses listed in `allow` are permitted; everything else is denied.
+# Unlicensed crates and any license not in this list are automatically rejected.
 
 allow = [
   # Apache
@@ -58,43 +53,6 @@ allow = [
 
   # OpenSSL — commonly needed by TLS/crypto crates.
   "OpenSSL",
-]
-
-# Licenses that must NOT appear without an explicit exception below.
-deny = [
-  # GPL family
-  "GPL-2.0",
-  "GPL-2.0-only",
-  "GPL-2.0-or-later",
-  "GPL-3.0",
-  "GPL-3.0-only",
-  "GPL-3.0-or-later",
-
-  # AGPL
-  "AGPL-3.0",
-  "AGPL-3.0-only",
-  "AGPL-3.0-or-later",
-
-  # LGPL — flag for manual review; add crate-level exceptions below if accepted.
-  "LGPL-2.0",
-  "LGPL-2.0-only",
-  "LGPL-2.0-or-later",
-  "LGPL-2.1",
-  "LGPL-2.1-only",
-  "LGPL-2.1-or-later",
-  "LGPL-3.0",
-  "LGPL-3.0-only",
-  "LGPL-3.0-or-later",
-
-  # EUPL
-  "EUPL-1.1",
-  "EUPL-1.2",
-
-  # Creative Commons ShareAlike
-  "CC-BY-SA-4.0",
-
-  # OSL
-  "OSL-3.0",
 ]
 
 # If a crate uses a dual-license expression (e.g. MIT OR Apache-2.0), cargo-deny
