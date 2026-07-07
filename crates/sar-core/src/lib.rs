@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–4).
+//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–5).
 
 /// Archive reader/writer APIs.
 pub mod archive;
@@ -22,8 +22,8 @@ pub mod transform;
 
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
-    ArchiveWriterOptions, CompressionSettings, EntryInput, EntryMetadata, EntryReader,
-    EntryWritten, VerificationReport,
+    ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
+    EntryReader, EntryWritten, VerificationReport,
 };
 pub use error::{SarError, SarStatus};
 pub use flags::{
@@ -31,11 +31,14 @@ pub use flags::{
 };
 pub use format::{
     CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, PartitionDescriptor,
-    compute_lfh_size, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
-    write_central_dictionary, write_footer, write_global_header, write_lfh,
+    compute_lfh_size, global_header_flags_bytes, lfh_to_bytes, parse_central_dictionary,
+    parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
+    write_global_header, write_lfh,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
+pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
 pub use transform::{
     CompressionDecoderTransform, CompressionEncoderTransform, DecoderTransform, DecodingPlan,
-    EncoderTransform, EncodingPlan, decode_payload, encode_payload,
+    DecodingPlanV2, EncoderTransform, EncodingPlan, EncodingPlanV2, EntryCryptoContext,
+    decode_payload, decode_payload_v2, encode_payload, encode_payload_v2,
 };

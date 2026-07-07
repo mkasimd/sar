@@ -12,8 +12,14 @@ use sar_core::{
 #[test]
 fn valid_indexed_archive_roundtrip_offsets_verify() {
     let mut out = Vec::new();
-    let mut writer =
-        ArchiveWriter::new(&mut out, ArchiveWriterOptions { no_index: false }).expect("writer");
+    let mut writer = ArchiveWriter::new(
+        &mut out,
+        ArchiveWriterOptions {
+            no_index: false,
+            encryption: None,
+        },
+    )
+    .expect("writer");
     writer
         .add_entry(EntryInput {
             name: "one.txt".into(),
@@ -32,8 +38,14 @@ fn valid_indexed_archive_roundtrip_offsets_verify() {
 #[test]
 fn valid_no_index_archive_roundtrip_verify() {
     let mut out = Vec::new();
-    let mut writer =
-        ArchiveWriter::new(&mut out, ArchiveWriterOptions { no_index: true }).expect("writer");
+    let mut writer = ArchiveWriter::new(
+        &mut out,
+        ArchiveWriterOptions {
+            no_index: true,
+            encryption: None,
+        },
+    )
+    .expect("writer");
     writer
         .add_entry(EntryInput {
             name: "one.txt".into(),

@@ -46,8 +46,8 @@ fn unsupported_features_fail_clearly() {
         flags: GlobalFlags::ENCRYPTED | GlobalFlags::NO_INDEX,
         partition_descriptor: None,
         kms: Some(KmsData {
-            mode_id: 0x01,
-            payload: vec![1, 2, 3],
+            mode_id: 0xF0,
+            payload: vec![],
         }),
     };
     let mut bytes = write_global_header(&header).expect("header");

@@ -17,7 +17,6 @@ fn payload_out_of_bounds_is_rejected() {
     })
     .expect("header");
 
-    // LFH with payload size 10, but only 3 bytes present.
     bytes.extend_from_slice(&17u32.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
@@ -35,7 +34,7 @@ fn payload_out_of_bounds_is_rejected() {
 }
 
 #[test]
-fn encrypted_archive_rejected_as_unsupported() {
+fn global_encrypted_with_plaintext_entry_passes_through() {
     let header = GlobalHeader {
         version: 1,
         flags_bytes: (GlobalFlags::ENCRYPTED | GlobalFlags::NO_INDEX)
@@ -46,7 +45,13 @@ fn encrypted_archive_rejected_as_unsupported() {
         partition_descriptor: None,
         kms: Some(KmsData {
             mode_id: 0x01,
-            payload: vec![1, 2, 3],
+            payload: {
+                let mut payload = vec![1, 16];
+                payload.extend_from_slice(&[0x11; 16]);
+                payload.extend_from_slice(&100_000u32.to_le_bytes());
+                payload.extend_from_slice(&32u16.to_le_bytes());
+                payload
+            },
         }),
     };
     let mut bytes = write_global_header(&header).expect("header");
@@ -64,15 +69,21 @@ fn encrypted_archive_rejected_as_unsupported() {
 
     let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     let _ = reader.read_global_header().expect("header");
-    let err = reader.next_entry().expect_err("must fail");
-    assert!(matches!(err, SarError::Unsupported(_)));
+    let entry = reader.next_entry().expect("next").expect("entry");
+    assert_eq!(entry.payload, b"a");
 }
 
 #[test]
 fn writer_reader_store_no_index_roundtrip() {
     let mut out = Vec::new();
-    let mut writer =
-        ArchiveWriter::new(&mut out, ArchiveWriterOptions { no_index: true }).expect("writer");
+    let mut writer = ArchiveWriter::new(
+        &mut out,
+        ArchiveWriterOptions {
+            no_index: true,
+            encryption: None,
+        },
+    )
+    .expect("writer");
     writer
         .add_entry(EntryInput {
             name: "a.txt".into(),
@@ -83,7 +94,7 @@ fn writer_reader_store_no_index_roundtrip() {
 
     let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
     reader.read_global_header().expect("header");
-    let e = reader.next_entry().expect("next").expect("entry");
-    assert_eq!(e.metadata.name, "a.txt");
-    assert_eq!(e.payload, b"abc");
+    let entry = reader.next_entry().expect("next").expect("entry");
+    assert_eq!(entry.metadata.name, "a.txt");
+    assert_eq!(entry.payload, b"abc");
 }

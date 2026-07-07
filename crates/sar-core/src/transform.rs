@@ -4,6 +4,8 @@ use sar_compression::{
     COMP_ALGO_STORE, CompressionError, CompressionOptions, DecompressionOptions, decode_stream,
     encode_stream,
 };
+use sar_crypto::aead::{aead_decrypt, aead_encrypt};
+use sar_crypto::secret::SecretBytes;
 
 use crate::SarError;
 
@@ -115,6 +117,44 @@ pub struct DecodingPlan {
     pub max_output_size: u64,
 }
 
+/// Crypto context for one entry.
+pub struct EntryCryptoContext {
+    /// AEAD algorithm ID.
+    pub algo_id: u8,
+    /// 24-byte IV/nonce field.
+    pub iv_nonce: [u8; 24],
+    /// Pre-built AAD bytes.
+    pub aad: Vec<u8>,
+    /// Content-encryption key.
+    pub key: SecretBytes,
+}
+
+/// Extended encoding plan including optional crypto.
+pub struct EncodingPlanV2 {
+    /// Whether IS_COMPRESSED is set.
+    pub is_compressed: bool,
+    /// Compression algorithm ID.
+    pub comp_algo_id: u8,
+    /// Compression level hint.
+    pub compression_level: Option<u8>,
+    /// Optional AEAD crypto context.
+    pub crypto: Option<EntryCryptoContext>,
+}
+
+/// Extended decoding plan including optional crypto.
+pub struct DecodingPlanV2 {
+    /// Whether IS_COMPRESSED is set.
+    pub is_compressed: bool,
+    /// Compression algorithm ID.
+    pub comp_algo_id: u8,
+    /// Expected decoded byte size.
+    pub expected_output_size: u64,
+    /// Maximum allowed output size.
+    pub max_output_size: u64,
+    /// Optional AEAD crypto context.
+    pub crypto: Option<EntryCryptoContext>,
+}
+
 /// Applies milestone-4 encoding pipeline (`logical -> compression/STORE`).
 pub fn encode_payload(logical_payload: &[u8], plan: EncodingPlan) -> Result<Vec<u8>, SarError> {
     let algo_id = if plan.is_compressed {
@@ -154,6 +194,63 @@ pub fn decode_payload(encoded_payload: &[u8], plan: DecodingPlan) -> Result<Vec<
     let mut decoded = Vec::new();
     transform.decode_stream(&mut input, &mut decoded)?;
     Ok(decoded)
+}
+
+/// Encode payload: compress, then optionally encrypt.
+pub fn encode_payload_v2(
+    logical_payload: &[u8],
+    plan: EncodingPlanV2,
+) -> Result<Vec<u8>, SarError> {
+    let compressed = encode_payload(
+        logical_payload,
+        EncodingPlan {
+            is_compressed: plan.is_compressed,
+            comp_algo_id: plan.comp_algo_id,
+            compression_level: plan.compression_level,
+        },
+    )?;
+
+    if let Some(context) = plan.crypto {
+        aead_encrypt(
+            context.algo_id,
+            &context.key,
+            &context.iv_nonce,
+            &context.aad,
+            &compressed,
+        )
+        .map_err(SarError::from)
+    } else {
+        Ok(compressed)
+    }
+}
+
+/// Decode payload: authenticate/decrypt first, then decompress.
+pub fn decode_payload_v2(
+    encoded_payload: &[u8],
+    plan: DecodingPlanV2,
+) -> Result<Vec<u8>, SarError> {
+    let decrypted = if let Some(context) = plan.crypto {
+        aead_decrypt(
+            context.algo_id,
+            &context.key,
+            &context.iv_nonce,
+            &context.aad,
+            encoded_payload,
+        )
+        .map_err(SarError::from)?
+    } else {
+        encoded_payload.to_vec()
+    };
+
+    decode_payload(
+        &decrypted,
+        DecodingPlan {
+            is_compressed: plan.is_compressed,
+            comp_algo_id: plan.comp_algo_id,
+            expected_output_size: plan.expected_output_size,
+            max_output_size: plan.max_output_size,
+        },
+    )
 }
 
 fn map_compression_error(error: CompressionError) -> SarError {

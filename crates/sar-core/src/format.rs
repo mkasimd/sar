@@ -841,3 +841,20 @@ pub fn parse_footer(input: &[u8]) -> Result<Footer, SarError> {
 pub fn write_footer(footer: Footer) -> [u8; 8] {
     footer.cd_offset.to_le_bytes()
 }
+
+/// Returns the raw bytes of the global-header AAD section.
+pub fn global_header_flags_bytes(header: &GlobalHeader) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + header.flags_bytes.len());
+    out.extend_from_slice(b"SAR!");
+    out.push(header.version);
+    out.push(0x00);
+    let flags_size = header.flags_bytes.len() as u16;
+    out.extend_from_slice(&flags_size.to_le_bytes());
+    out.extend_from_slice(&header.flags_bytes);
+    out
+}
+
+/// Serialize a local file header into its on-wire bytes for AAD construction.
+pub fn lfh_to_bytes(lfh: &LocalFileHeader, flags: GlobalFlags) -> Result<Vec<u8>, SarError> {
+    write_lfh(&flags, lfh)
+}
