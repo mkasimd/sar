@@ -740,7 +740,10 @@ impl<W: Write> ArchiveWriter<W> {
         if is_fec {
             let fec_cfg = self.fec.as_ref().expect("is_fec checked");
             lfh.fec_algo_id = Some(fec_cfg.algo_id);
-            // fec_value stays empty until after encryption so AAD can be computed.
+            if is_encrypted {
+                let reserved_fec_len = compute_fec_value_len(fec_cfg, encoded_payload.len())?;
+                lfh.fec_value = vec![0u8; reserved_fec_len];
+            }
         }
 
         if is_encrypted {
@@ -763,16 +766,16 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.iv_nonce = Some(nonce);
             lfh.entry_mode.0 |= 1 << 2;
 
-            // Compute AAD from provisional LFH bytes (fec_value is still empty).
-            // Per spec §13.2.1 when SELECTIVE_FEC is active and FEC Algo ID != 0,
-            // FEC Size and FEC Value are excluded from the AAD.
+            // Reserve the final FEC Value length before AEAD so Header Size in the
+            // AAD matches the final on-wire LFH. Per spec §13.2.1, only FEC Size
+            // and FEC Value are excluded from the AAD.
             let provisional_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
             let aad_lfh_bytes = lfh_bytes_for_aad(
                 self.flags,
                 &provisional_lfh_bytes,
                 fec_algo_id,
-                0, // fec_value is empty at this point
+                lfh.fec_value.len(),
             );
             let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             let key = self
@@ -800,6 +803,11 @@ impl<W: Write> ArchiveWriter<W> {
                 let ciphertext_len = encoded_payload.len().saturating_sub(tag_len);
                 let ciphertext = &encoded_payload[..ciphertext_len];
                 let fec_value = compute_fec_value(self.fec.as_ref().expect("is_fec"), ciphertext)?;
+                if fec_value.len() != lfh.fec_value.len() {
+                    return Err(SarError::InvalidLength(
+                        "computed FEC value length changed after AEAD",
+                    ));
+                }
                 lfh.fec_value = fec_value;
             }
 
@@ -957,4 +965,76 @@ fn compute_fec_value(fec: &FecSettings, protected: &[u8]) -> Result<Vec<u8>, Sar
         }
     };
     Ok(fec_value.data)
+}
+
+fn compute_fec_value_len(fec: &FecSettings, protected_len: usize) -> Result<usize, SarError> {
+    const MAX_PARITY_SIZE: u64 = 256 * 1024 * 1024;
+    let original_len =
+        u64::try_from(protected_len).map_err(|_| SarError::Overflow("protected len"))?;
+
+    match fec.algo_id {
+        FEC_ALGO_XOR => {
+            sar_fec::XorCodec::new(fec.config0, fec.config1).map_err(SarError::from)?;
+            let stripe_size = fec.config0;
+            let block_size = match fec.config1 {
+                0x00 => 256u64,
+                0x01 => 512,
+                0x02 => 1_024,
+                0x03 => 2_048,
+                0x04 => 4_096,
+                0x05 => 8_192,
+                0x06 => 16_384,
+                0x07 => 32_768,
+                0x08 => 65_536,
+                _ => return Err(SarError::ReservedValue("XOR block size index is reserved")),
+            };
+
+            let stripe_bytes = u64::from(stripe_size)
+                .checked_mul(block_size)
+                .ok_or(SarError::Overflow("XOR effective stripe size overflow"))?;
+            let stripe_count = ceil_div_u64(original_len, stripe_bytes)?;
+            let parity_len = stripe_count
+                .checked_mul(block_size)
+                .ok_or(SarError::Overflow("XOR parity length overflow"))?;
+            if parity_len > MAX_PARITY_SIZE {
+                return Err(SarError::LimitExceeded("XOR parity exceeds implementation limit"));
+            }
+            usize::try_from(14u64 + parity_len)
+                .map_err(|_| SarError::Overflow("XOR FEC value length exceeds usize"))
+        }
+        FEC_ALGO_REED_SOLOMON => {
+            sar_fec::RsCodec::new(fec.config0, fec.config1, fec.symbol_size)
+                .map_err(SarError::from)?;
+
+            let group_bytes = u64::from(fec.config0)
+                .checked_mul(u64::from(fec.symbol_size))
+                .ok_or(SarError::Overflow("RS group size overflow"))?;
+            let group_count = ceil_div_u64(original_len, group_bytes)?;
+            let parity_len = group_count
+                .checked_mul(u64::from(fec.config1))
+                .ok_or(SarError::Overflow("RS parity count × group overflow"))?
+                .checked_mul(u64::from(fec.symbol_size))
+                .ok_or(SarError::Overflow("RS parity length overflow"))?;
+            if parity_len > MAX_PARITY_SIZE {
+                return Err(SarError::LimitExceeded("RS parity exceeds implementation limit"));
+            }
+            usize::try_from(18u64 + parity_len)
+                .map_err(|_| SarError::Overflow("RS FEC value length exceeds usize"))
+        }
+        other => Err(SarError::Unsupported(if (0x10..=0x1F).contains(&other) {
+            "FEC algorithm is assigned but not supported by archive writer"
+        } else {
+            "FEC algorithm ID out of defined range"
+        })),
+    }
+}
+
+fn ceil_div_u64(a: u64, b: u64) -> Result<u64, SarError> {
+    if b == 0 {
+        return Err(SarError::Overflow("ceil_div by zero"));
+    }
+    a.checked_add(b - 1)
+        .ok_or(SarError::Overflow("ceil_div overflow"))?
+        .checked_div(b)
+        .ok_or(SarError::Overflow("ceil_div"))
 }

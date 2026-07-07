@@ -7,7 +7,7 @@
 5. **TLV processing scope**: milestone-limited parser supports structural parsing and strict reserved/unsupported mapping.
 6. **Compression override behavior**: when global `COMPRESSED` is set but `IS_COMPRESSED` is unset, implementation treats effective algorithm as STORE.
 7. **Compression level mapping**: CLI accepts levels `0..9` and passes them as hints to codec backends.
-8. **AEAD AAD scope**: current implementation authenticates `global_header_flags_section || raw_lfh_bytes` plus ciphertext/tag. This matches the Milestone 5 conservative choice but should be confirmed against the final spec wording.
+8. **AEAD AAD scope**: the implementation authenticates `global_header_flags_section || lfh_aad_bytes` plus ciphertext/tag, where `lfh_aad_bytes` preserves the on-wire LFH `Header Size` and excludes only `FEC Size` and `FEC Value` when `SELECTIVE_FEC` is active and `FEC Algo ID != 0`.
 9. **Global ENCRYPTED with plaintext entries**: the implementation permits `GlobalFlags::ENCRYPTED` archives to contain entries without `IS_ENCRYPTED`; such entries pass through as plaintext while still carrying the global KMS extension.
 10. **AES-GCM nonce field layout**: the implementation treats the 24-byte LFH nonce field as `nonce[0..12] || 12 zero bytes` for AES-GCM and validates the zero suffix strictly.
 
@@ -32,4 +32,3 @@
 19. **RS Vandermonde generator matrix**: The generator uses `G[r][c] = α^((r+1)×c)` where r is the zero-based parity row and c is the zero-based data column. The primitive element α=0x02 with polynomial 0x11D is used. This is exactly as specified in Section 9.2.1.
 
 20. **Archive-level FEC recovery scope**: Before Milestone 8 (fragmentation), archive-level FEC recovery is limited to metadata validation and codec-level APIs over explicit byte slices. Full archive repair over fragmented or partial data requires fragmentation-aware address translation not yet available. Attempting archive repair without explicit erasure positions returns `SAR_ERR_RECOVERY_UNAVAILABLE`.
-

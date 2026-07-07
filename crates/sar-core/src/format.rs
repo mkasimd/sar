@@ -936,28 +936,13 @@ pub fn lfh_bytes_for_aad(
         return lfh_bytes.to_vec();
     }
     let fec_size_off = fec_size_field_offset(flags);
-    // FEC Size is 3 bytes; FEC Value is at the very end of the LFH.
-    // The bytes between FEC Size end and FEC Value start are Name + Path + Sparse data.
-    let before_fec_size = fec_size_off;
-    let after_fec_size_end = lfh_bytes.len().saturating_sub(fec_value_len);
-    // Exclude the 3-byte FEC Size field: bytes [before_fec_size .. before_fec_size+3]
-    // Exclude the FEC Value:             bytes [after_fec_size_end .. ]
-    let stripped_len = lfh_bytes.len().saturating_sub(3 + fec_value_len);
-    let mut out = Vec::with_capacity(stripped_len);
-    if before_fec_size <= lfh_bytes.len() {
-        out.extend_from_slice(&lfh_bytes[..before_fec_size]);
-    }
-    let after_fec_size = before_fec_size + 3;
-    if after_fec_size <= after_fec_size_end && after_fec_size_end <= lfh_bytes.len() {
-        out.extend_from_slice(&lfh_bytes[after_fec_size..after_fec_size_end]);
-    }
-    // Patch the Header Size field (first 4 bytes, LE u32) to reflect the stripped size.
-    // This ensures writer (provisional LFH, fec_value=[]) and reader (final LFH, fec_value=N bytes)
-    // produce identical AAD bytes despite the difference in the on-disk Header Size value.
-    // Both normalize to: original_header_size - 3 (FEC Size) - fec_value_len = stripped_len.
-    if out.len() >= 4 {
-        let patched_size = u32::try_from(stripped_len).unwrap_or(u32::MAX);
-        out[..4].copy_from_slice(&patched_size.to_le_bytes());
-    }
+    let fec_size_end = fec_size_off + 3;
+    let fec_value_start = lfh_bytes.len().saturating_sub(fec_value_len);
+    debug_assert!(fec_size_end <= fec_value_start);
+    debug_assert!(fec_value_start <= lfh_bytes.len());
+
+    let mut out = Vec::with_capacity(lfh_bytes.len().saturating_sub(3 + fec_value_len));
+    out.extend_from_slice(&lfh_bytes[..fec_size_off]);
+    out.extend_from_slice(&lfh_bytes[fec_size_end..fec_value_start]);
     out
 }
