@@ -1,84 +1,725 @@
-# API (Milestones 1–5)
+# API Inventory (post–Milestones 6–7 source audit)
+
+This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
+
+Current scope:
+
+- Milestones 1–3: archive format, parser/writer, indexed and `NO_INDEX` archive flows
+- Milestone 4: compression registry and transform pipeline foundation
+- Milestone 5: crypto, KMS parsing, password-based CEK resolution, hashes, AEAD integration
+- Milestones 6–7: Selective FEC metadata, XOR FEC, Reed-Solomon FEC, CLI FEC create/inspect/verify/extract flows
+- Milestone 12: future FFI / C ABI only; not implemented yet
+
+Feature flags: no workspace crate in the current tree defines Cargo feature flags.
+
+## Workspace summary
+
+| Crate | Purpose | Status |
+| --- | --- | --- |
+| `sar-core` | Archive format, reader/writer, validation, transform integration | implemented with partial roadmap surface |
+| `sar-compression` | Compression registry and bounded encode/decode helpers | implemented |
+| `sar-crypto` | Hashing, AEAD, KMS types/parsing, key-provider abstraction | implemented with some planned algorithms |
+| `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
+| `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
+| `sar-cdc` | Future CDC support placeholder | placeholder |
+| `sar-delta` | Future delta support placeholder | placeholder |
+| `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
+| `sar-partition` | Future partition support placeholder | placeholder |
+| `sar-sparse` | Future sparse-file support placeholder | placeholder |
+| `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
+| `sar-stream` | Future streaming API placeholder | placeholder |
+| `sar-transport` | Future transport integration placeholder | placeholder |
 
 ## `sar-core`
 
-Primary archive APIs:
+### Purpose
 
-- `ArchiveReader<R: Read + Seek>`
+`sar-core` is the main Rust API surface for reading, writing, verifying, and structurally validating SAR archives. It owns the on-wire format structs, status/error mapping, global/LFH flag rules, TLV handling, archive reader/writer flows, and transform integration with compression, crypto, and FEC crates.
+
+### Implemented milestone coverage
+
+- Milestones 1–3: global header, LFH, central dictionary, footer, TLV parsing/writing, archive read/write
+- Milestone 4: compression-aware transform plans and archive integration
+- Milestone 5: AEAD + KMS integration, AAD construction hooks, key-provider integration
+- Milestones 6–7: Selective FEC metadata validation and writer integration
+
+### Public modules
+
+- `archive`
+- `error`
+- `fec`
+- `flags`
+- `format`
+- `io`
+- `profile`
+- `tlv`
+- `transform`
+
+### Main public APIs
+
+#### High-level archive APIs
+
+- `ArchiveReader<R>`
   - `new(reader)`
-  - `with_options(reader, options)`
-  - `with_key_provider(provider)`
+  - `with_options(reader, ArchiveReaderOptions)`
+  - `with_key_provider(Box<dyn KeyProvider>)`
   - `read_global_header()`
   - `next_entry()`
   - `verify()`
-- `ArchiveWriter<W: Write>`
-  - `new(writer, options)`
-  - `new_with_compression(writer, options, compression)`
-  - `new_with_compression_and_key_provider(writer, options, compression, provider)`
-  - `add_entry(entry)`
+  - `metadata()`
+- `ArchiveWriter<W>`
+  - `new(writer, ArchiveWriterOptions)`
+  - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
+  - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
+  - `add_entry(EntryInput)`
   - `finish()`
 
-Writer configuration:
+#### Important public types
 
 - `ArchiveWriterOptions`
-  - `no_index`
+  - `no_index: bool`
   - `encryption: Option<EncryptionSettings>`
+  - `fec: Option<FecSettings>`
+- `ArchiveReaderOptions`
+  - `max_decoded_entry_size: u64` (default `1 GiB`)
 - `CompressionSettings`
+  - `store()` helper
 - `EncryptionSettings`
   - `algo_id`
-  - `kms_params`
+  - `kms_params: KmsParams`
+- `FecSettings`
+  - `default_xor()`
+  - `default_rs()`
+- `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
+- `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
-Transform APIs:
+#### Format and parser APIs
 
-- `EncoderTransform` / `DecoderTransform`
-- `CompressionEncoderTransform` / `CompressionDecoderTransform`
-- `encode_payload` / `decode_payload`
-- `encode_payload_v2` / `decode_payload_v2`
-- `EntryCryptoContext`
-- `EncodingPlanV2` / `DecodingPlanV2`
+- Header structs: `GlobalHeader`, `LocalFileHeader`, `CentralDictionary`, `Footer`, `KmsData`, `PartitionDescriptor`
+- Parser/writer helpers:
+  - `parse_global_header`, `write_global_header`
+  - `parse_lfh`, `write_lfh`, `compute_lfh_size`, `lfh_to_bytes`, `lfh_bytes_for_aad`, `fec_size_field_offset`
+  - `parse_central_dictionary`, `write_central_dictionary`
+  - `parse_footer`, `write_footer`
+  - `global_header_flags_bytes`
+- TLV helpers:
+  - `Tlv`
+  - `parse_tlvs`, `write_tlvs`
 
-Format/parser helpers:
+#### Flags, status, and validation APIs
 
-- `parse_global_header`, `write_global_header`
-- `parse_lfh`, `write_lfh`, `compute_lfh_size`
-- `global_header_flags_bytes`, `lfh_to_bytes`
-- `parse_central_dictionary`, `write_central_dictionary`
-- `parse_footer`, `write_footer`
-- `parse_tlvs`, `write_tlvs`
+- `GlobalFlags`
+- `EntryMode`
+  - `is_encrypted()`
+  - `is_compressed()`
+  - `is_fragment()`
+  - `is_last_fragment()`
+- `validate_global_flags()`
+- `validate_entry_mode_against_global()`
+- `SarStatus`, `SarStatusParseError`, `SarError`
+- `SarStatus::code()`, `SarStatus::name()`
+- `SarError::status()`
+
+#### Transform pipeline APIs
+
+- Traits: `EncoderTransform`, `DecoderTransform`
+- Concrete compression transforms:
+  - `CompressionEncoderTransform`
+  - `CompressionDecoderTransform`
+- Plans and helpers:
+  - `EncodingPlan`, `DecodingPlan`
+  - `EncodingPlanV2`, `DecodingPlanV2`
+  - `EntryCryptoContext`
+  - `encode_payload`, `decode_payload`
+  - `encode_payload_v2`, `decode_payload_v2`
+
+#### FEC-facing public APIs in `sar-core`
+
+- `FecSummary`
+- `classify_recovery_tlv_id()`
+- `validate_recovery_tlv()`
+- `validate_lfh_fec_algo_id()`
+- `parse_lfh_fec_value()`
+
+### Low-level/internal-public helpers
+
+These items are public today, but they are better treated as integration helpers than as a stable external API commitment:
+
+- `io::ParseCursor<'a>`
+- `io::BinaryWriter`
+- `profile::validate_archive_profile()` and `ComplianceProfile`
+- direct transform plan structs used by `ArchiveReader` / `ArchiveWriter`
+
+### Error behavior
+
+- Structural failures map into `SarError` and `SarStatus` values such as `SAR_ERR_TRUNCATED`, `SAR_ERR_MALFORMED`, `SAR_ERR_INVALID_LENGTH`, `SAR_ERR_BOUNDS`, and `SAR_ERR_FLAG_CONFLICT`.
+- Compression, crypto, and FEC failures are normalized into SAR-specific errors.
+- Encrypted archives require a `KeyProvider`; missing credentials return `SAR_ERR_KEY_MISSING`.
+- Wrong passwords or invalid tags fail before plaintext is released and surface as `SAR_ERR_AUTH_FAILED` / `SAR_ERR_DECRYPT_FAILED` depending on path.
+
+### Example
+
+```rust
+use std::fs::File;
+use std::io::BufReader;
+use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
+
+let file = File::create("archive.sar")?;
+let mut writer = ArchiveWriter::new(file, ArchiveWriterOptions::default())?;
+writer.add_entry(EntryInput { name: "hello.txt".into(), payload: b"hello".to_vec() })?;
+writer.finish()?;
+
+let mut reader = ArchiveReader::new(BufReader::new(File::open("archive.sar")?))?;
+reader.read_global_header()?;
+while let Some(entry) = reader.next_entry()? {
+    println!("{}", entry.metadata.name);
+}
+# Ok::<(), sar_core::SarError>(())
+```
+
+### Unsupported or planned in `sar-core`
+
+Not implemented in this pass, even though some flags or structural fields already exist:
+
+- signature cryptography and signature verification
+- CDC map processing
+- delta application
+- partition reassembly logic
+- fragmentation reassembly
+- sparse reconstruction
+- streaming session APIs
+- stable FFI / C ABI
+
+### FFI / C ABI notes for `sar-core`
+
+- Good future FFI candidates:
+  - archive open/read/close wrappers built around `ArchiveReader`
+  - archive create/add_entry/finish wrappers built around `ArchiveWriter`
+  - archive verify / inspect summary wrappers
+  - `SarStatus`-based status mapping
+- Not FFI-ready as-is:
+  - `ArchiveReader<R>` / `ArchiveWriter<W>` generics
+  - `Box<dyn KeyProvider>` callbacks
+  - `EncoderTransform` / `DecoderTransform` trait objects
+  - helper structs exposing owned Rust collections directly
+
+## `sar-compression`
+
+### Purpose
+
+`sar-compression` implements the current SAR compression registry and bounded stream encode/decode helpers.
+
+### Implemented milestone coverage
+
+- Milestone 4
+
+### Main public APIs
+
+- Constants:
+  - `COMP_ALGO_STORE = 0x00`
+  - `COMP_ALGO_DEFLATE = 0x01`
+  - `COMP_ALGO_ZSTD = 0x02`
+- `CompressionAlgorithm`
+  - `from_id()`
+  - `id()`
+  - `name()`
+- `CompressionOptions`
+- `DecompressionOptions`
+- `CompressionError`
+- `encode_stream()`
+- `decode_stream()`
+
+### Error behavior
+
+- Unknown assigned IDs return `Unsupported`.
+- Reserved IDs return `ReservedValue`.
+- Decoding is bounded by `DecompressionOptions.max_output_size`; overrun returns `LimitExceeded`.
+
+### Unsupported or planned
+
+- No additional compression algorithms beyond STORE/DEFLATE/ZSTD.
+- No Cargo feature gating for individual backends.
+
+### FFI / C ABI notes
+
+- `ready` for registry constants and wrapper-friendly settings structs.
+- `candidate` for stream helpers because the Rust API uses `Read`/`Write` trait objects and should become buffer-based or handle-based at the FFI boundary.
 
 ## `sar-crypto`
 
-Public building blocks:
+### Purpose
 
+`sar-crypto` contains hash functions, AEAD helpers, KMS parameter types/parsers, and the `KeyProvider` abstraction used by `sar-core` and `sar-cli`.
+
+### Implemented milestone coverage
+
+- Milestone 5
+
+### Public modules
+
+- `aad`
+- `aead`
+- `algorithm`
+- `error`
+- `hash`
+- `kms`
+- `provider`
+- `secret`
+
+### Main public APIs
+
+#### Registry and validation
+
+- Hash IDs: `HASH_SHA256`, `HASH_BLAKE3`, `HASH_SHA3_256`
+- Encryption IDs: `ENCR_PLAINTEXT`, `ENCR_AES256_GCM`, `ENCR_CHACHA20`, `ENCR_AES256_CBC`, `ENCR_XCHACHA20_POLY`, `ENCR_CHACHA20_POLY1305`
+- KMS IDs: `KMS_PBKDF2`, `KMS_ARGON2`, `KMS_ASYMMETRIC_WRAP`
+- PBKDF2 PRF IDs and Argon2 variant IDs
+- `AEAD_KEY_SIZE`, `AEAD_TAG_SIZE`
+- `validate_encr_algo_id()`
+- `validate_kms_mode_id()`
+
+#### AEAD and AAD helpers
+
+- `aead_encrypt()`
+- `aead_decrypt()`
+- `generate_nonce()`
+- `validate_nonce_field()`
+- `global_header_aad_bytes()`
+- `build_aead_aad()`
+
+#### Hashing APIs
+
+- `Hasher` trait
+- `sha256()`
+- `blake3_hash()`
+- `new_hasher()`
+- `hash_data()`
+- `ct_eq()`
+
+#### KMS and key-provider APIs
+
+- `Pbkdf2Params`
+- `Argon2Params`
+- `AsymmetricRecipient`
+- `AsymmetricWrapParams`
+- `KmsParams`
+- `KmsContext`
+- `parse_kms_payload()`
+- `serialize_kms_payload()`
+- `KeyProvider`
+- `resolve_cek()`
+- low-level public helpers currently exposed from submodules:
+  - `kms::pbkdf2::derive_key()`
+  - `kms::argon2::derive_key()`
+  - `kms::asymmetric::unwrap_cek()`
+
+#### Secret containers and errors
+
+- `SecretBytes = Zeroizing<Vec<u8>>`
+- `SecretString = Zeroizing<String>`
 - `SarCryptoError`
-- Algorithm constants and validators
-- `aead::{aead_encrypt, aead_decrypt, generate_nonce, validate_nonce_field}`
-- `aad::{global_header_aad_bytes, build_aead_aad}`
-- `hash::{sha256, blake3_hash, new_hasher, hash_data, ct_eq}`
-- `kms::{Pbkdf2Params, Argon2Params, AsymmetricWrapParams, KmsParams}`
-- `parse_kms_payload`, `serialize_kms_payload`
-- `KeyProvider`, `resolve_cek`
-- `SecretBytes`, `SecretString`
 
-### `KeyProvider`
+### Error behavior
 
-`KeyProvider` is the integration point for applications that need to supply:
+- Unsupported or reserved algorithm IDs fail closed.
+- PBKDF2 parsing enforces salt and iteration minimums and a hard iteration ceiling.
+- Argon2 parsing enforces minimum salt, memory, time, and parallelism values plus DoS ceilings.
+- AEAD decryption validates tags before returning plaintext.
 
-- passwords for PBKDF2/Argon2 derivation;
-- externally wrapped-key unwrap logic;
-- pre-derived/external CEKs.
+### Unsupported or planned
 
-`sar-cli` provides a simple password-based implementation (`CliKeyProvider`). Applications embedding `sar-core` can implement their own provider for HSM/KMS-backed key resolution.
+- SHA3-256 is declared but not implemented.
+- Only AES-256-GCM and XChaCha20-Poly1305 are integrated into `sar-core` archive flows.
+- `ASYMMETRIC_WRAP` is a structural/public KMS mode with callback-based unwrapping, not a built-in RSA/ECIES implementation.
+
+### FFI / C ABI notes
+
+- `ready`: algorithm constants, KMS config structs, status-like crypto error mapping.
+- `candidate`: one-shot hash helpers, AEAD wrappers, KMS payload parse/serialize helpers.
+- `unstable`: `KeyProvider`, `Hasher`, and callback-heavy or trait-object APIs.
+- `not_applicable`: direct exposure of `SecretBytes` / `SecretString`; a C ABI should use explicit buffers plus explicit zero/free functions instead.
+
+## `sar-fec`
+
+### Purpose
+
+`sar-fec` implements current FEC codecs and metadata parsing for Milestones 6–7.
+
+### Implemented milestone coverage
+
+- Milestone 6: XOR FEC (`0x14`)
+- Milestone 7: Reed-Solomon FEC (`0x11`)
+
+### Public modules
+
+- `error`
+- `registry`
+- `rs`
+- `types`
+- `xor`
+
+### Main public APIs
+
+#### Registry and shared types
+
+- `FEC_ALGO_REED_SOLOMON = 0x11`
+- `FEC_ALGO_XOR = 0x14`
+- `validate_fec_algo_id()`
+- `parse_fec_value()`
+- `FecValue`
+- `Erasure`
+- `FecRecoverInput<'a>`
+- `FecOptions`
+- `FecCodec`
+- `XorMeta`, `RsMeta`, `FecMeta`
+- `FecError`
+
+#### XOR codec APIs
+
+- `XorCodec`
+  - `new(stripe_size, block_size_index)`
+  - `from_fec_value(data)`
+- `parse_xor_meta()`
+- `validate_xor_fec_value()`
+
+#### Reed-Solomon codec APIs
+
+- `RsCodec`
+  - `new(k, parity_count, symbol_size)`
+  - `from_fec_value(data)`
+- `parse_rs_meta()`
+- `validate_rs_fec_value()`
+
+### Error behavior
+
+- FEC is explicit-erasure recovery only; callers must identify erasure positions.
+- Unsupported assigned FEC IDs fail with `Unsupported`; reserved IDs fail with `ReservedValue`.
+- Both codecs bound parity size to `256 MiB`.
+- Reed-Solomon currently caps parity count to 32.
+
+### Examples
+
+- `XorCodec::new(4, 4)` corresponds to stripe size 4 and 4 KiB blocks.
+- `RsCodec::new(4, 2, 256)` corresponds to `k=4`, `n-k=2`, and 256-byte symbols.
+
+### Unsupported or planned
+
+- No automatic archive repair command or archive-wide repair orchestration yet.
+- No support for assigned-but-unimplemented FEC IDs such as `0x12`, `0x13`, `0x15`, `0x16`.
+
+### FFI / C ABI notes
+
+- `ready`: metadata structs (`XorMeta`, `RsMeta`), algorithm IDs, status mapping wrappers.
+- `candidate`: codec constructor + encode/validate/recover wrappers with opaque handles or direct one-shot functions.
+- `unstable`: exposing the trait `FecCodec` directly across FFI.
 
 ## `sar-cli`
 
-Commands:
+### Purpose
 
-- `sar create <input> <output.sar> [--indexed|--no-index] [--compression ...] [--compression-level ...] [--encrypt aes256-gcm|xchacha20-poly] [--password ...]`
-- `sar extract <archive.sar> <output-dir> [--password ...]`
-- `sar list <archive.sar>`
-- `sar verify <archive.sar> [--password ...]`
-- `sar inspect <archive.sar> --json`
-- `sar version`
+`sar-cli` is the current command-line front end over `sar-core`.
 
-If `--password` is omitted for encrypted create/extract/verify flows, the CLI falls back to `SAR_PASSWORD` and then to a terminal prompt.
+### Implemented milestone coverage
+
+- Milestones 3–7 for the currently implemented archive, compression, crypto, and Selective FEC flows
+
+### Actual command surface
+
+#### `create`
+
+Status: implemented
+
+Usage:
+
+```text
+sar create <input> <output.sar> [--indexed|--no-index]
+    [--compression store|deflate|zstd | -S | -z | -Z]
+    [--compression-level 0..9 | -0..-9]
+    [--encrypt aes256-gcm|xchacha20-poly] [--password PASSWORD]
+    [--fec xor|rs]
+```
+
+Behavior:
+
+- archives either one file or a directory tree
+- defaults to STORE compression
+- rejects `--indexed` together with `--no-index`
+- rejects `--password` unless `--encrypt` is also set
+- encryption currently uses PBKDF2-HMAC-SHA256 with a random 32-byte salt
+- Selective FEC is per-entry only
+
+#### `extract`
+
+Status: implemented
+
+Usage:
+
+```text
+sar extract <archive.sar> <output-dir> [--password PASSWORD]
+```
+
+Behavior:
+
+- creates parent directories as needed
+- rejects absolute paths and `..` traversal during extraction
+- loads password from `--password`, then `SAR_PASSWORD`, then an interactive prompt if the archive is encrypted
+
+#### `list`
+
+Status: partial
+
+Usage:
+
+```text
+sar list <archive.sar>
+```
+
+Behavior:
+
+- prints one line per entry: name, compression name, encoded size, uncompressed size
+- works for unencrypted archives and current FEC archives
+- does not currently accept `--password`, so encrypted archives cannot be listed successfully once entry decoding requires credentials
+
+#### `verify`
+
+Status: implemented
+
+Usage:
+
+```text
+sar verify <archive.sar> [--password PASSWORD]
+```
+
+Behavior:
+
+- verifies archive structure and indexed offsets
+- validates recovery TLV structure when archive-level FEC metadata exists
+- decrypts entries when needed, so encrypted verification requires a password/key provider
+
+#### `inspect`
+
+Status: partial
+
+Usage:
+
+```text
+sar inspect <archive.sar> [--json]
+```
+
+Behavior:
+
+- plaintext mode prints global version, flags, selective-FEC status, entry count, per-entry FEC summary lines, and recovery-TLV count
+- JSON mode prints archive summary plus serialized `EntryMetadata`
+- current implementation can inspect unencrypted archives and FEC metadata
+- it does not accept `--password`, so encrypted archives are not fully inspectable through the CLI today
+
+#### `version`
+
+Status: implemented
+
+Usage:
+
+```text
+sar version
+sar -V
+```
+
+Output format:
+
+```text
+sar-cli <crate-version> | sar-spec v1.0 | cd-v1
+```
+
+#### Shorthand aliases
+
+Implemented:
+
+```text
+sar -c <input> -f <output.sar>
+sar -x -f <archive.sar> -C <dir>
+sar -t -f <archive.sar>
+sar -v -f <archive.sar>
+sar -V
+```
+
+Compression shorthands:
+
+```text
+sar create <input> <output.sar> -S
+sar create <input> <output.sar> -z
+sar create <input> <output.sar> -Z -9
+```
+
+### Error behavior
+
+- success exits `0`
+- failure exits `1` and prints `error (SAR_STATUS_NAME): ...` to stderr
+
+### Unsupported or planned CLI surface
+
+- no dedicated `repair` command
+- no dedicated FEC-specific `verify` or `inspect` subcommands beyond the existing general commands
+- no `--password` support for `list` or `inspect`
+- no CLI support for signatures, CDC, delta, fragmentation, partitioning, sparse reconstruction, or streaming APIs
+
+### FFI / C ABI notes
+
+- good future FFI equivalents: create, extract, list, verify, inspect
+- not FFI-ready as-is: terminal prompting, environment-variable password fallback, Rust-specific `CliKeyProvider`
+
+## Placeholder crates
+
+Each placeholder crate currently exposes exactly one public marker type, `NotImplemented`, and no usable protocol API.
+
+### `sar-cdc`
+
+- Purpose: reserved for future content-defined chunking support
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-delta`
+
+- Purpose: reserved for future delta support
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-fragmentation`
+
+- Purpose: reserved for future fragmentation support
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-partition`
+
+- Purpose: reserved for future partition support
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-sparse`
+
+- Purpose: reserved for future sparse-file support
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-loss-tolerant`
+
+- Purpose: reserved for future loss-tolerant modes
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-stream`
+
+- Purpose: reserved for future streaming APIs
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+### `sar-transport`
+
+- Purpose: reserved for future transport integration
+- Status: placeholder
+- Public API: `NotImplemented`
+- FFI readiness: `not_applicable`
+
+## Foreign-Language Interface Readiness
+
+No foreign-language interfaces are implemented yet.
+
+Planned interface milestones:
+
+Milestone 12: General developer interfaces
+
+- 12a: Stable C ABI.
+- 12b: Python module.
+
+Milestone 13: Mobile platform interfaces
+
+- 13a: Swift package, iOS-compatible.
+- 13b: Kotlin/Java package, Android-compatible.
+
+C++ support:
+
+- C++ consumers are expected to use the stable C ABI directly.
+- A dedicated C++ wrapper is not a baseline requirement.
+
+Candidate high-level operations:
+
+- create archive
+- extract archive
+- list archive
+- inspect archive
+- verify archive
+- compression configuration
+- encryption/KMS configuration
+- FEC verification/repair
+- error/status mapping
+- streaming archive read/write APIs
+- SAR-over-QUIC transport for streaming and remote archive access
+
+### C ABI readiness
+
+- The future C ABI should be representable with opaque handles such as archive-reader, archive-writer, verification-report, and streaming-session handles rather than exposing Rust generic types directly.
+- Ownership and lifetime rules are not documented strongly enough yet for a stable ABI; Milestone 12a should define handle lifetime, entry/result lifetime, and whether buffers remain valid until the next call, until explicit free, or until handle teardown.
+- High-level operations are good candidates for explicit create/free style entry points, including reader/writer open-close, result-free, and SAR-owned string/buffer release helpers.
+- Buffer strategy is still an open design choice: some operations fit caller-provided buffers, while inspect/list/error text may need SAR-owned allocations with explicit free functions.
+- `SarStatus` already provides a strong foundation for stable error/status return codes, but the exported code set and error-to-string contract are not frozen yet.
+- Version negotiation is still required for any future stable ABI, including ABI version constants, feature discovery, and reject-on-mismatch behavior.
+- Thread-safety expectations are not yet defined clearly enough for foreign callers; Milestone 12a should document whether handles are thread-confined, thread-safe, or safe only under external synchronization.
+- KMS and key-provider callbacks need a callback-safe C ABI contract covering invocation context, reentrancy, cancellation, error propagation, and how secret inputs/outputs are passed.
+- Secret handling across FFI needs explicit zeroization and allocator-boundary rules so keys, passwords, and decrypted material do not leak across create/free or callback boundaries.
+- Rust APIs that are unsuitable for direct C ABI exposure include `ArchiveReader<R>`, `ArchiveWriter<W>`, `Box<dyn KeyProvider>`, `EncoderTransform`, `DecoderTransform`, `FecCodec`, terminal-prompt behavior, environment-variable password fallback, and other generic-, trait-, or lifetime-heavy surfaces.
+
+### Python readiness
+
+- The archive lifecycle and summary operations can plausibly be represented as high-level Python functions and reader/writer classes.
+- Python should not be committed yet to either a C-ABI wrapper or a direct PyO3/maturin module; the C ABI offers broader reuse, while direct Rust bindings may reach a usable Python surface earlier.
+- Path-like object handling looks practical because high-level archive APIs are path-oriented, but future bindings still need clear normalization rules for `str`, `bytes`, and `os.PathLike`.
+- Bytes and buffer ownership are not settled yet; future bindings should prefer copies into Python `bytes`/buffer objects unless an explicit borrowed-buffer contract is proven safe.
+- `SarStatus` and related errors look mappable into Python exceptions, but the public exception hierarchy is still an open design choice.
+- Archive readers and writers are good candidates for context-manager support once close/finalize semantics are frozen.
+- Long-running operations such as create, extract, verify, FEC work, and future transport/streaming flows should likely release the GIL while native work is in progress.
+- Password and KMS callback support is not binding-ready yet because callback threading, blocking behavior, and exception/error translation must be designed first.
+- Secret material may end up in Python-managed memory if passwords, keys, or decrypted bytes are exposed as ordinary Python objects; that risk needs explicit documentation and minimization.
+- Wheel and packaging work is intentionally deferred, but future milestones will need platform wheel decisions, bundled native library policy, and build backend choices.
+- First Python exposures should focus on create, extract, list, inspect, verify, compression/encryption/FEC option objects, and status/error mapping before lower-level transform internals.
+
+### Swift/iOS readiness
+
+- Swift can likely consume a future stable interface through an imported C header, but that depends on Milestone 12a first defining a clean C ABI.
+- Opaque handles are a suitable model for Swift ownership wrappers as long as create/free and invalidation rules are explicit.
+- `SarStatus`-style results appear capable of mapping cleanly into Swift `Error`, but the conversion contract and human-readable error text policy are not yet fixed.
+- Any SAR-owned strings or buffers exposed to Swift must have explicit free functions and allocator-boundary rules.
+- File-path-oriented APIs should prefer UTF-8 C strings at the ABI boundary, with Swift wrappers handling `String` and `URL` conversion above that layer.
+- Future streaming APIs will probably require callback-oriented or pull/push handle designs rather than direct translation of Rust traits.
+- KMS and password callbacks are not ready yet; Swift interoperability will need clear rules for callback lifetime, escaping closures, threading, and cancellation.
+- Secret material may cross into Swift-managed memory if passwords, keys, or plaintext are surfaced as Swift `String`, `Data`, or closure-captured values; that should be minimized and documented.
+- Long-running operations should likely support cancellation hooks that Swift can integrate with task or operation cancellation.
+- Thread-safety guarantees are still too informal for Swift consumers and need to be made explicit before mobile bindings.
+- Future packaging will need XCFramework and Swift Package decisions after the native ABI surface is stable.
+- Intended Apple targets are likely iOS device, iOS simulator, macOS, Mac Catalyst, and possibly visionOS, but target support should remain a later Milestone 13 decision.
+
+### Kotlin/Java/Android readiness
+
+- A Kotlin/Java interface could be built either through JNI over the stable C ABI or through a dedicated native Android wrapper, but that decision should wait until the C ABI is settled.
+- Opaque handles are a plausible representation for long-lived native resources if Java/Kotlin ownership, finalization, and explicit close semantics are defined carefully.
+- `SarStatus` values can likely map into Java/Kotlin exceptions, but the exception taxonomy and checked-vs-unchecked policy are still open.
+- Byte arrays, direct buffers, and file paths all look representable, but the binding must define when data is copied, when direct buffers are allowed, and how path encoding is normalized on Android and JVM hosts.
+- Long-running operations such as create, extract, verify, FEC, and future transport flows likely need cancellation and progress callbacks.
+- KMS and password callbacks are not ready for Kotlin/Java yet because JNI callback safety, thread attachment, exception propagation, and blocking behavior are unresolved.
+- Secret material may cross into JVM-managed memory if passwords, keys, or plaintext are carried in `String`, `byte[]`, or buffer objects; that risk should be minimized and documented explicitly.
+- Likely Android ABI targets include `arm64-v8a`, `armeabi-v7a`, and `x86_64`, but final support policy is a Milestone 13 packaging decision.
+- Future packaging will need AAR distribution decisions, native library loading policy, and JVM/Android compatibility guidance.
+
+### Open design questions
+
+- Should Milestone 12 prefer a small C ABI first and have Python, Swift, Kotlin/Java, and C++ build on top of it wherever practical?
+- Which high-level operations should be considered baseline-stable first: create/extract/list/inspect/verify only, or also streaming, FEC repair, and SAR-over-QUIC?
+- Which result types should be handle-based versus copied into caller-provided buffers?
+- How should callback-based KMS and password resolution propagate errors, cancellation, and secret zeroization requirements across language boundaries?
+- What thread-safety and cancellation guarantees are required before mobile-facing bindings are credible?

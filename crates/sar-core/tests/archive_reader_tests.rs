@@ -81,6 +81,7 @@ fn writer_reader_store_no_index_roundtrip() {
         ArchiveWriterOptions {
             no_index: true,
             encryption: None,
+            fec: None,
         },
     )
     .expect("writer");

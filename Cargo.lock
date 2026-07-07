@@ -783,6 +783,7 @@ dependencies = [
  "bitflags",
  "sar-compression",
  "sar-crypto",
+ "sar-fec",
  "serde",
  "serde_json",
  "tempfile",
