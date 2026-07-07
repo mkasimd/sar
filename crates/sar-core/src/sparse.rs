@@ -131,7 +131,10 @@ pub fn validate_sparse_extents(
             .ok_or(SarError::Overflow("sparse extent length sum overflow"))?;
         last_end = end;
     }
-    let _ = total_length;
+    // Keep the checked running sum even when reconstruction is not performed
+    // here so malformed maps with overflowing total sparse lengths fail during
+    // validation.
+    let _checked_total_length = total_length;
     Ok(())
 }
 

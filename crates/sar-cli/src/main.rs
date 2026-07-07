@@ -716,18 +716,14 @@ fn verify_archive(
                 })
                 .collect();
 
-            let max_offset = frag_entries
-                .iter()
-                .map(|f| {
-                    f.descriptor
-                        .absolute_offset
-                        .checked_add(u64::from(f.descriptor.fragment_size))
-                        .ok_or(SarError::Overflow("fragment descriptor end"))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .max()
-                .unwrap_or(0);
+            let max_offset = frag_entries.iter().try_fold(0u64, |max_end, f| {
+                let end = f
+                    .descriptor
+                    .absolute_offset
+                    .checked_add(u64::from(f.descriptor.fragment_size))
+                    .ok_or(SarError::Overflow("fragment descriptor end"))?;
+                Ok::<u64, SarError>(max_end.max(end))
+            })?;
 
             if let Err(err) = validate_fragment_group(&frag_entries, max_offset, &limits) {
                 eprintln!("recovery verify: fragment group {fid} error: {err}");
