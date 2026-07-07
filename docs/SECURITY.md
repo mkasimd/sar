@@ -15,6 +15,8 @@ This document reflects current implemented behavior only.
 - `sar-compression` enforces a caller-provided maximum decoded size to reduce decompression-bomb risk.
 - `sar-fec` bounds parity allocations to `256 MiB` for both XOR and Reed-Solomon helpers.
 - Parsing rejects configured-limit violations before dangerous allocation and returns `SAR_ERR_LIMIT_EXCEEDED`.
+- `sar-cli extract`, `verify`, and `repair` use the same `ResourceLimits` model as the library and expose override flags for the relevant limits.
+- CLI resource-limit failures are reported explicitly as `resource-limit error (SAR_ERR_LIMIT_EXCEEDED)`.
 - KMS parsing enforces conservative limits, including PBKDF2 and Argon2 DoS ceilings.
 
 ## Crypto and secret handling
@@ -128,6 +130,9 @@ without a checked path through `ResourceLimits::allocation_len`.
 - Overlapping descriptors are rejected before reconstruction begins.
 - Sparse payload length is validated: it must exactly equal the sum of all extent lengths. Excess bytes (possible padding forgery) and short payload (truncated payload) both return an error.
 - The zero-filled reconstruction buffer is bounded by `ArchiveReaderOptions.limits.max_decoded_entry_size` and the general in-memory allocation limits to prevent denial-of-service via large `Uncompressed Size` values.  **The implementation never allocates `vec![0u8; Uncompressed Size]` without first verifying the size is within all configured limits.**
+- `sar-cli extract` does **not** finalize sparse outputs by reconstructing the apparent file size in memory. It validates the apparent size against `max_decoded_entry_size`, creates a temp file, sets the final file length, seeks to each sparse extent, writes only gathered payload bytes, and renames the temp file only after successful completion.
+- Sparse holes are left as filesystem holes when supported by the host filesystem. The CLI does not allocate large zero buffers for holes; CRC32 accounting for sparse holes uses bounded zero chunks.
+- Fragmented sparse extraction still enforces `max_fragment_group_span`, `max_fragment_count`, and `max_loss_tolerant_gap` before fragment-group reconstruction.
 - **CRC32 verification** is now active in `read_all_logical_files`. CRC32 is computed over the fully reconstructed sparse file including zero-filled holes; it is not computed over the stored sparse payload bytes alone. A CRC mismatch returns `SarError::CrcMismatch`. This ensures that tampering with sparse map offsets (changing where data lands in the logical file without changing the stored payload) is detected when the LFH carries a CRC32.
 - **Content Hash is not verified** because the archive format does not encode the hash algorithm identifier. The 32-byte `content_hash` field is parsed and preserved in `EntryMetadata`, but no verification is performed. See `docs/CONFORMANCE.md` Known Gaps.
 - **Sparse Map placement**: in a fragmented archive, a Sparse Map on any non-zero fragment index returns `SarError::InvalidMap` immediately and is never suppressed by `allow_lossy`, preventing a malformed archive from triggering undefined reconstruction ordering.
@@ -136,6 +141,7 @@ without a checked path through `ResourceLimits::allocation_len`.
 
 - Extraction rejects absolute paths.
 - Extraction rejects `..` traversal.
+- Failed CLI extraction and failed CLI repair do not leave finalized output files behind after a resource-limit error.
 - Parsing uses checked arithmetic for offsets, lengths, header sizes, and region boundaries.
 - Unknown assigned-but-unsupported algorithms return SAR unsupported/reserved errors rather than silent fallback.
 

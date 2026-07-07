@@ -114,6 +114,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `max_recovery_protected_range`
   - `max_repair_working_set`
   - `use_runtime_memory_budget`
+  - CLI defaults currently rely on `ResourceLimits::default()` unless the caller or CLI flags override them; the most relevant Stage 4 defaults are `max_archive_size = 16 GiB`, `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, and `max_repair_working_set = 2 GiB`
 - `CompressionSettings`
   - `store()` helper
 - `EncryptionSettings`
@@ -659,6 +660,15 @@ Usage:
 
 ```text
 sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
 ```
 
 Behavior:
@@ -667,6 +677,9 @@ Behavior:
 - rejects absolute paths and `..` traversal during extraction
 - loads password from `--password`, then `SAR_PASSWORD`, then an interactive prompt if the archive is encrypted
 - `--allow-lossy`: permits extraction of archives containing LOSS_TOLERANT entries; prints a warning if any such entries are present; does not currently perform automatic degraded fragment reassembly
+- sparse extraction validates the final apparent size against `ResourceLimits.max_decoded_entry_size`, creates a temp file, sets the target file length, seeks to sparse extents, writes only gathered payload bytes, and renames to the final output only after success
+- fragmented sparse extraction reuses the same `ResourceLimits` model for fragment span/count checks and sparse output checks
+- resource-limit failures are printed as `resource-limit error (SAR_ERR_LIMIT_EXCEEDED)` and do not leave finalized output files behind
 
 #### `list`
 
@@ -692,6 +705,15 @@ Usage:
 
 ```text
 sar verify <archive.sar> [--password PASSWORD] [--recovery]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
 ```
 
 Behavior:
@@ -700,6 +722,7 @@ Behavior:
 - validates recovery TLV structure when archive-level FEC metadata exists
 - decrypts entries when needed, so encrypted verification requires a password/key provider
 - `--recovery`: additionally validates fragmentation metadata consistency, sparse extent validity, Data Recovery TLV structure, and reports `repair_possible` / unavailable reason; distinguishes file-level FEC metadata from archive-level recovery TLVs
+- recovery-mode archive reads that require `fs::read` are pre-checked against `max_archive_size` before allocating the archive byte buffer
 
 #### `inspect`
 
@@ -726,6 +749,17 @@ Usage:
 
 ```text
 sar repair <archive.sar> <output.sar> --fec [--erasures erasures.json]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
+    [--max-recovery-protected-range BYTES]
+    [--max-repair-working-set BYTES]
 ```
 
 Behavior:
@@ -736,10 +770,11 @@ Behavior:
 - calls `inspect_recovery_metadata` to check archive EC support
 - calls `plan_archive_repair`; if `RecoveryUnavailable`, prints message and does **not** create output file
 - calls `repair_archive` on success
-- writes repaired bytes to a temp file (`<output>.sar.tmp`) first
+- pre-checks the archive file length against `max_archive_size` before reading the archive into memory
+- writes repaired bytes to a temp sibling file (`<output>.tmp`) first
 - verifies temp file structure (parses, checks structure)
 - renames temp to final output only if verification passes
-- if any step fails, deletes temp file and does **not** create the final output file
+- if any step fails, including `SAR_ERR_LIMIT_EXCEEDED`, deletes temp file and does **not** create the final output file
 
 #### `version`
 

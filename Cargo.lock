@@ -756,6 +756,7 @@ version = "0.1.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "crc32fast",
  "getrandom 0.2.17",
  "predicates",
  "rpassword",
