@@ -18,6 +18,16 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - XOR FEC (`0x14`)
   - Reed-Solomon FEC (`0x11`)
   - FEC validation and CLI create/inspect/verify/extract coverage for current FEC archives
+- **Milestone 8**: sparse files, fragmentation reassembly, loss-tolerant semantics, archive-level repair
+  - Sparse file map parsing, writing, validation, and scatter-gather reconstruction
+  - Fragment group reassembly with `FragmentDescriptor`-based absolute-offset placement
+  - LOSS_TOLERANT degraded reconstruction (zero-fill gaps, `WarnIncomplete`); AEAD auth not bypassed
+  - Archive-level Data Recovery TLV inspection (`inspect_recovery_metadata`)
+  - Archive-level repair planning and XOR/RS erasure repair (`plan_archive_repair`, `repair_archive`)
+  - CLI `repair` command with temp-file safety pattern
+  - CLI `verify --recovery` for recovery metadata validation
+  - CLI `extract --allow-lossy` for archives with LOSS_TOLERANT entries
+  - Enhanced `inspect --json` output with fragment, sparse, and recovery metadata
 
 ## Workspace layout
 
@@ -53,10 +63,11 @@ sar create <input> <output.sar> [--indexed|--no-index]
     [--encrypt aes256-gcm|xchacha20-poly] [--password PASSWORD]
     [--fec xor|rs]
 
-sar extract <archive.sar> <output-dir> [--password PASSWORD]
+sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
 sar list <archive.sar>
-sar verify <archive.sar> [--password PASSWORD]
+sar verify <archive.sar> [--password PASSWORD] [--recovery]
 sar inspect <archive.sar> [--json]
+sar repair <archive.sar> <output.sar> --fec [--erasures erasures.json]
 sar version
 
 # shorthand aliases
@@ -71,8 +82,10 @@ Notes:
 
 - `create` supports per-entry Selective FEC via `--fec xor|rs`.
 - `extract` and `verify` can load passwords from `--password`, `SAR_PASSWORD`, or an interactive prompt.
+- `extract --allow-lossy` permits archives with LOSS_TOLERANT entries (warns if present).
+- `verify --recovery` additionally validates fragmentation, sparse, and Data Recovery TLV metadata.
+- `repair` applies archive-level XOR/RS erasure repair using explicit erasure positions from `--erasures`.
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
-- There is no dedicated `repair` command yet.
 
 ## Validation
 

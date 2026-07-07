@@ -14,8 +14,10 @@ use walkdir::WalkDir;
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
-    EntryInput, FecSettings, GlobalFlags, KeyProvider, KmsContext, KmsParams, SarError,
-    SecretBytes,
+    EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider, KmsContext, KmsParams,
+    SarError, SecretBytes, fec::validate_recovery_tlv, fragment::FragmentDescriptor,
+    fragment::FragmentEntry, fragment::validate_fragment_group, inspect_recovery_metadata,
+    plan_archive_repair, repair_archive, sparse::validate_sparse_extents,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
@@ -146,6 +148,9 @@ enum Command {
         /// Archive password. Falls back to `SAR_PASSWORD` or a terminal prompt.
         #[arg(long)]
         password: Option<String>,
+        /// Permit degraded (loss-tolerant) output when entries have LOSS_TOLERANT set.
+        #[arg(long, action = ArgAction::SetTrue)]
+        allow_lossy: bool,
     },
     /// List archive entries.
     List {
@@ -159,6 +164,9 @@ enum Command {
         /// Archive password. Falls back to `SAR_PASSWORD` or a terminal prompt.
         #[arg(long)]
         password: Option<String>,
+        /// Additionally validate fragmentation, sparse, and Data Recovery TLV metadata.
+        #[arg(long, action = ArgAction::SetTrue)]
+        recovery: bool,
     },
     /// Inspect archive metadata.
     Inspect {
@@ -167,6 +175,19 @@ enum Command {
         /// Emit JSON output.
         #[arg(long)]
         json: bool,
+    },
+    /// Repair archive using archive-level FEC Data Recovery TLVs.
+    Repair {
+        /// Archive path to repair.
+        archive: PathBuf,
+        /// Output path for the repaired archive.
+        output: PathBuf,
+        /// Activate FEC-based repair (required).
+        #[arg(long, action = ArgAction::SetTrue)]
+        fec: bool,
+        /// Path to a JSON file describing explicit byte erasures.
+        #[arg(long, value_name = "erasures.json")]
+        erasures: Option<PathBuf>,
     },
     /// Print version information.
     Version,
@@ -231,12 +252,14 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
             let archive = value_after_flag(args, "-f");
             let out = value_after_flag(args, "-C");
             Some(match (archive, out) {
-                (Ok(archive), Ok(out)) => extract_archive(archive, out, None),
+                (Ok(archive), Ok(out)) => extract_archive(archive, out, None, false),
                 (Err(err), _) | (_, Err(err)) => Err(err),
             })
         }
         "-t" => Some(value_after_flag(args, "-f").and_then(list_archive)),
-        "-v" => Some(value_after_flag(args, "-f").and_then(|path| verify_archive(path, None))),
+        "-v" => {
+            Some(value_after_flag(args, "-f").and_then(|path| verify_archive(path, None, false)))
+        }
         _ => None,
     }
 }
@@ -358,10 +381,21 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             archive,
             output_dir,
             password,
-        } => extract_archive(archive, output_dir, password),
+            allow_lossy,
+        } => extract_archive(archive, output_dir, password, allow_lossy),
         Command::List { archive } => list_archive(archive),
-        Command::Verify { archive, password } => verify_archive(archive, password),
+        Command::Verify {
+            archive,
+            password,
+            recovery,
+        } => verify_archive(archive, password, recovery),
         Command::Inspect { archive, json } => inspect_archive(archive, json),
+        Command::Repair {
+            archive,
+            output,
+            fec,
+            erasures,
+        } => repair_cmd(archive, output, fec, erasures),
         Command::Version => print_version(),
     }
 }
@@ -575,6 +609,7 @@ fn extract_archive(
     archive: PathBuf,
     output_dir: PathBuf,
     password: Option<String>,
+    allow_lossy: bool,
 ) -> Result<(), SarError> {
     fs::create_dir_all(&output_dir)?;
     let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
@@ -585,6 +620,16 @@ fn extract_archive(
     }
 
     while let Some(entry) = reader.next_entry()? {
+        // Warn about loss-tolerant entries since full fragment reconstruction
+        // is not yet implemented in archival mode.
+        if entry.metadata.is_loss_tolerant && !allow_lossy {
+            eprintln!(
+                "warning: entry '{}' has LOSS_TOLERANT set; full loss-tolerant extraction \
+                 requires fragment support (use --allow-lossy to suppress this warning)",
+                entry.metadata.name
+            );
+        }
+
         let rel = sanitize_relative(&entry.metadata.name)?;
         let out_path = output_dir.join(rel);
         if let Some(parent) = out_path.parent() {
@@ -596,7 +641,11 @@ fn extract_archive(
     Ok(())
 }
 
-fn verify_archive(archive: PathBuf, password: Option<String>) -> Result<(), SarError> {
+fn verify_archive(
+    archive: PathBuf,
+    password: Option<String>,
+    recovery: bool,
+) -> Result<(), SarError> {
     let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
     let header = reader.read_global_header()?;
     if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
@@ -608,11 +657,103 @@ fn verify_archive(archive: PathBuf, password: Option<String>) -> Result<(), SarE
         "verify: valid={} entries={} indexed={}",
         report.valid, report.entry_count, report.indexed
     );
+
+    if recovery {
+        // Collect entries for additional recovery metadata validation
+        let mut re_reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
+        let _ = re_reader.read_global_header()?;
+        let mut entries = Vec::new();
+        while let Some(entry) = re_reader.next_entry()? {
+            entries.push(entry.metadata);
+        }
+
+        // Validate sparse extents for each entry that has them
+        let mut sparse_errors = 0u32;
+        for entry in &entries {
+            if entry
+                .sparse_extents
+                .as_ref()
+                .is_some_and(|ext| validate_sparse_extents(ext, entry.uncompressed_size).is_err())
+            {
+                eprintln!("recovery verify: sparse extent error in '{}'", entry.name);
+                sparse_errors += 1;
+            }
+        }
+
+        // Group entries by fragment_id and validate fragment groups
+        let mut frag_groups: std::collections::HashMap<u32, Vec<&sar_core::EntryMetadata>> =
+            std::collections::HashMap::new();
+        for entry in &entries {
+            if let (true, Some(fid)) = (entry.is_fragment, entry.fragment_id) {
+                frag_groups.entry(fid).or_default().push(entry);
+            }
+        }
+
+        let mut frag_errors = 0u32;
+        for (fid, group) in &frag_groups {
+            // Build FragmentEntry list for validation
+            let frag_entries: Vec<FragmentEntry> = group
+                .iter()
+                .filter_map(|entry| {
+                    let desc = entry.fragment_descriptor.as_ref()?;
+                    Some(FragmentEntry {
+                        fragment_index: entry.fragment_index.unwrap_or(0),
+                        is_last_fragment: entry.is_last_fragment,
+                        is_loss_tolerant: entry.is_loss_tolerant,
+                        descriptor: FragmentDescriptor {
+                            absolute_offset: desc.absolute_offset,
+                            fragment_size: desc.fragment_size,
+                        },
+                        payload: Vec::new(), // not needed for validation
+                    })
+                })
+                .collect();
+
+            let max_offset = frag_entries
+                .iter()
+                .map(|f| {
+                    f.descriptor
+                        .absolute_offset
+                        .saturating_add(u64::from(f.descriptor.fragment_size))
+                })
+                .max()
+                .unwrap_or(0);
+
+            if let Err(err) = validate_fragment_group(&frag_entries, max_offset) {
+                eprintln!("recovery verify: fragment group {fid} error: {err}");
+                frag_errors += 1;
+            }
+        }
+
+        // Validate recovery TLVs and check repair_possible
+        let archive_bytes = fs::read(&archive)?;
+        let rec_meta = inspect_recovery_metadata(&archive_bytes)?;
+
+        println!(
+            "recovery verify: sparse_errors={sparse_errors} fragment_group_errors={frag_errors}"
+        );
+        println!(
+            "recovery verify: has_global_ec={} recovery_tlv_count={} repair_possible={}",
+            rec_meta.has_global_ec,
+            rec_meta.recovery_tlvs.len(),
+            rec_meta.repair_possible
+        );
+        if let Some(reason) = rec_meta.repair_unavailable_reason {
+            println!("recovery verify: repair_unavailable_reason={reason}");
+        }
+
+        if sparse_errors > 0 || frag_errors > 0 {
+            return Err(SarError::Malformed(
+                "recovery metadata validation found errors",
+            ));
+        }
+    }
+
     Ok(())
 }
 
 fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
-    let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
+    let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
     let header = reader.read_global_header()?;
 
     let mut entries = Vec::new();
@@ -621,7 +762,10 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
     }
 
     let metadata = reader.metadata();
-    let recovery_tlvs: Vec<_> = metadata
+    let has_global_ec = header.flags.contains(GlobalFlags::HAS_GLOBAL_EC);
+
+    // Build recovery TLV list with validated summaries
+    let recovery_tlvs_raw: Vec<_> = metadata
         .as_ref()
         .and_then(|m| m.central_dictionary.as_ref())
         .map(|cd| {
@@ -629,25 +773,56 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 .iter()
                 .filter(|tlv| (0x10..=0x1F).contains(&tlv.type_id))
                 .map(|tlv| {
-                    json!({
-                        "type_id": format!("0x{:02X}", tlv.type_id),
-                        "value_len": tlv.value.len(),
-                    })
+                    let summary = validate_recovery_tlv(tlv.type_id, &tlv.value).ok();
+                    (tlv.type_id, tlv.value.len(), summary)
                 })
                 .collect()
         })
         .unwrap_or_default();
 
+    let repair_possible = has_global_ec && !recovery_tlvs_raw.is_empty();
+
     if as_json {
+        let recovery_tlvs_json: Vec<serde_json::Value> = recovery_tlvs_raw
+            .iter()
+            .map(|(type_id, value_len, summary)| {
+                json!({
+                    "type_id": format!("0x{type_id:02X}"),
+                    "value_len": value_len,
+                    "summary": summary,
+                })
+            })
+            .collect();
+
+        // Build per-entry JSON, adding sparse_extent_count
+        let entries_json: Vec<serde_json::Value> = entries
+            .iter()
+            .map(|entry| {
+                let sparse_extent_count = entry.sparse_extents.as_ref().map_or(0, Vec::len);
+                let mut val = serde_json::to_value(entry).unwrap_or(json!({}));
+                if let Some(obj) = val.as_object_mut() {
+                    obj.insert(
+                        "sparse_extent_count".to_string(),
+                        json!(sparse_extent_count),
+                    );
+                }
+                val
+            })
+            .collect();
+
         let output = json!({
             "global_version": header.version,
             "flags": header.flags.bits(),
             "flags_size": header.flags_bytes.len(),
             "indexed": !header.flags.contains(GlobalFlags::NO_INDEX),
             "selective_fec": header.flags.contains(GlobalFlags::SELECTIVE_FEC),
+            "global_ec": has_global_ec,
+            "fragmentation": header.flags.contains(GlobalFlags::FILE_FRAGMENTATION),
+            "sparse_files": header.flags.contains(GlobalFlags::SPARSE_FILES),
             "entry_count": entries.len(),
-            "recovery_tlvs": recovery_tlvs,
-            "entries": entries,
+            "recovery_tlvs": recovery_tlvs_json,
+            "repair_possible": repair_possible,
+            "entries": entries_json,
         });
         println!(
             "{}",
@@ -660,7 +835,17 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             "selective_fec={}",
             header.flags.contains(GlobalFlags::SELECTIVE_FEC)
         );
+        println!("global_ec={has_global_ec}");
+        println!(
+            "fragmentation={}",
+            header.flags.contains(GlobalFlags::FILE_FRAGMENTATION)
+        );
+        println!(
+            "sparse_files={}",
+            header.flags.contains(GlobalFlags::SPARSE_FILES)
+        );
         println!("entries={}", entries.len());
+        println!("repair_possible={repair_possible}");
         for entry in &entries {
             if let Some(fec) = &entry.fec {
                 let fec_line = match fec {
@@ -684,12 +869,131 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 };
                 println!("  entry={} fec={}", entry.name, fec_line);
             }
+            if entry.is_fragment {
+                println!(
+                    "  entry={} fragment_id={:?} fragment_index={:?} last={} loss_tolerant={}",
+                    entry.name,
+                    entry.fragment_id,
+                    entry.fragment_index,
+                    entry.is_last_fragment,
+                    entry.is_loss_tolerant
+                );
+            }
+            if let Some(extents) = &entry.sparse_extents {
+                println!(
+                    "  entry={} sparse_extent_count={}",
+                    entry.name,
+                    extents.len()
+                );
+            }
         }
-        if !recovery_tlvs.is_empty() {
-            println!("recovery_tlvs={}", recovery_tlvs.len());
+        if !recovery_tlvs_raw.is_empty() {
+            println!("recovery_tlvs={}", recovery_tlvs_raw.len());
         }
     }
 
+    Ok(())
+}
+
+fn repair_cmd(
+    archive: PathBuf,
+    output: PathBuf,
+    fec: bool,
+    erasures_path: Option<PathBuf>,
+) -> Result<(), SarError> {
+    if !fec {
+        return Err(SarError::Malformed("repair requires --fec"));
+    }
+
+    let erasures_file =
+        erasures_path.ok_or(SarError::Malformed("repair requires --erasures <file>"))?;
+
+    // Parse erasure input from JSON
+    let erasures_bytes = fs::read(&erasures_file)?;
+    let erasures: ErasureInput = serde_json::from_slice(&erasures_bytes)
+        .map_err(|_| SarError::Malformed("failed to parse erasures JSON"))?;
+
+    // Read archive bytes
+    let archive_bytes = fs::read(&archive)?;
+
+    // Inspect metadata
+    let rec_meta = inspect_recovery_metadata(&archive_bytes)?;
+    if !rec_meta.repair_possible {
+        let reason = rec_meta
+            .repair_unavailable_reason
+            .unwrap_or("repair unavailable");
+        eprintln!("repair: recovery unavailable — {reason}");
+        return Err(SarError::RecoveryUnavailable(
+            "archive-level repair is unavailable for this archive",
+        ));
+    }
+
+    // Plan repair
+    let plan = match plan_archive_repair(&archive_bytes, erasures) {
+        Ok(plan) => plan,
+        Err(SarError::RecoveryUnavailable(msg)) => {
+            eprintln!("repair: planning failed — {msg}");
+            return Err(SarError::RecoveryUnavailable(msg));
+        }
+        Err(err) => return Err(err),
+    };
+
+    // Execute repair
+    let (repaired_bytes, report) = match repair_archive(&archive_bytes, &plan) {
+        Ok(pair) => pair,
+        Err(SarError::EcFailed(msg)) => {
+            eprintln!("repair: FEC repair failed (too many erasures) — {msg}");
+            return Err(SarError::EcFailed(msg));
+        }
+        Err(SarError::RecoveryUnavailable(msg)) => {
+            eprintln!("repair: recovery unavailable — {msg}");
+            return Err(SarError::RecoveryUnavailable(msg));
+        }
+        Err(err) => return Err(err),
+    };
+
+    // Write to temp file first — append .tmp to the full output path to avoid extension confusion
+    let tmp_path = PathBuf::from(format!("{}.tmp", output.display()));
+    if let Err(err) = fs::write(&tmp_path, &repaired_bytes) {
+        eprintln!("repair: failed to write temp file: {err}");
+        return Err(SarError::Io(err));
+    }
+
+    // Verify temp file structure
+    let verify_result = (|| -> Result<(), SarError> {
+        let mut re_reader = ArchiveReader::new(BufReader::new(File::open(&tmp_path)?))?;
+        let _ = re_reader.read_global_header()?;
+        re_reader.verify()?;
+        Ok(())
+    })();
+
+    if let Err(err) = verify_result {
+        eprintln!("repair: temp file verification failed: {err}");
+        if let Err(rm_err) = fs::remove_file(&tmp_path) {
+            eprintln!(
+                "repair: warning: could not remove temp file {}: {rm_err}",
+                tmp_path.display()
+            );
+        }
+        return Err(err);
+    }
+
+    // Rename temp to final output
+    if let Err(err) = fs::rename(&tmp_path, &output) {
+        if let Err(rm_err) = fs::remove_file(&tmp_path) {
+            eprintln!(
+                "repair: warning: could not remove temp file {}: {rm_err}",
+                tmp_path.display()
+            );
+        }
+        return Err(SarError::Io(err));
+    }
+
+    println!(
+        "repair: success repaired_ranges={} degraded={}",
+        report.repaired_ranges.len(),
+        report.degraded
+    );
     Ok(())
 }
 

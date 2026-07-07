@@ -60,6 +60,25 @@ pub struct EntryMetadata {
     /// is disabled or this entry has `FEC Algo ID == 0x00`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fec: Option<crate::fec::FecSummary>,
+    /// Fragment ID shared by all fragments of one logical file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fragment_id: Option<u32>,
+    /// Zero-based fragment sequence index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fragment_index: Option<u32>,
+    /// Typed fragment descriptor (absolute offset + declared size).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fragment_descriptor: Option<crate::fragment::FragmentDescriptor>,
+    /// True when the `IS_FRAGMENT` entry mode bit is set.
+    pub is_fragment: bool,
+    /// True when the `LAST_FRAGMENT` entry mode bit is set.
+    pub is_last_fragment: bool,
+    /// True when the `LOSS_TOLERANT` entry mode bit is set.
+    pub is_loss_tolerant: bool,
+    /// Parsed sparse extents.  `None` when `SPARSE_FILES` is not enabled or
+    /// the sparse map is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
 }
 
 /// Entry payload reader result.
@@ -489,21 +508,41 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
-        let metadata = EntryMetadata {
-            lfh_offset: self.next_offset,
-            name: String::from_utf8_lossy(&lfh.name).into_owned(),
-            path: if lfh.path.is_empty() {
-                None
-            } else {
-                Some(String::from_utf8_lossy(&lfh.path).into_owned())
-            },
-            payload_size: lfh.payload_size,
-            uncompressed_size: lfh.uncompressed_size,
-            compression_algo_id: effective_comp_algo_id,
-            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
-            is_compressed: is_effectively_compressed,
-            fec,
-        };
+        let metadata =
+            EntryMetadata {
+                lfh_offset: self.next_offset,
+                name: String::from_utf8_lossy(&lfh.name).into_owned(),
+                path: if lfh.path.is_empty() {
+                    None
+                } else {
+                    Some(String::from_utf8_lossy(&lfh.path).into_owned())
+                },
+                payload_size: lfh.payload_size,
+                uncompressed_size: lfh.uncompressed_size,
+                compression_algo_id: effective_comp_algo_id,
+                compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
+                is_compressed: is_effectively_compressed,
+                fec,
+                fragment_id: lfh.fragment_id,
+                fragment_index: lfh.fragment_index,
+                fragment_descriptor: lfh.fragment_descriptor.map(
+                    |(absolute_offset, fragment_size)| crate::fragment::FragmentDescriptor {
+                        absolute_offset,
+                        fragment_size,
+                    },
+                ),
+                is_fragment: lfh.entry_mode.is_fragment(),
+                is_last_fragment: lfh.entry_mode.is_last_fragment(),
+                is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+                sparse_extents: if header.flags.contains(GlobalFlags::SPARSE_FILES)
+                    && !lfh.sparse_map.is_empty()
+                {
+                    let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
+                    Some(crate::sparse::parse_sparse_map(&lfh.sparse_map, is_64bit)?)
+                } else {
+                    None
+                },
+            };
 
         self.next_offset = payload_end;
 

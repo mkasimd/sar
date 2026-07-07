@@ -1,4 +1,4 @@
-# API Inventory (post–Milestones 6–7 source audit)
+# API Inventory (post–Milestone 8 source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -8,6 +8,7 @@ Current scope:
 - Milestone 4: compression registry and transform pipeline foundation
 - Milestone 5: crypto, KMS parsing, password-based CEK resolution, hashes, AEAD integration
 - Milestones 6–7: Selective FEC metadata, XOR FEC, Reed-Solomon FEC, CLI FEC create/inspect/verify/extract flows
+- Milestone 8: sparse file map parsing/reconstruction, fragment reassembly, loss-tolerant semantics, archive-level Data Recovery TLV inspection/planning/repair, CLI repair/verify-recovery/allow-lossy
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: no workspace crate in the current tree defines Cargo feature flags.
@@ -42,6 +43,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 - Milestone 4: compression-aware transform plans and archive integration
 - Milestone 5: AEAD + KMS integration, AAD construction hooks, key-provider integration
 - Milestones 6–7: Selective FEC metadata validation and writer integration
+- Milestone 8: sparse file map module, fragment reassembly module, archive-level recovery module
 
 ### Public modules
 
@@ -50,8 +52,11 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 - `fec`
 - `flags`
 - `format`
+- `fragment`  *(new in M8)*
 - `io`
 - `profile`
+- `recovery`  *(new in M8)*
+- `sparse`    *(new in M8)*
 - `tlv`
 - `transform`
 
@@ -114,6 +119,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `is_compressed()`
   - `is_fragment()`
   - `is_last_fragment()`
+  - `is_loss_tolerant()`  *(new in M8)*
 - `validate_global_flags()`
 - `validate_entry_mode_against_global()`
 - `SarStatus`, `SarStatusParseError`, `SarError`
@@ -185,10 +191,86 @@ Not implemented in this pass, even though some flags or structural fields alread
 - CDC map processing
 - delta application
 - partition reassembly logic
-- fragmentation reassembly
-- sparse reconstruction
+- automatic end-to-end multi-fragment file assembly in `ArchiveReader`
+- end-to-end loss-tolerant extraction through `ArchiveReader`
 - streaming session APIs
 - stable FFI / C ABI
+
+---
+
+## M8 APIs in `sar-core`
+
+### `sar_core::sparse`
+
+Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
+
+#### Public types
+
+- `SparseExtent { offset: u64, length: u64 }` — one contiguous extent in the logical file
+
+#### Public functions
+
+- `parse_sparse_map(bytes: &[u8], is_64bit: bool) -> Result<Vec<SparseExtent>, SarError>`
+  — decodes the raw sparse map from an LFH; 8 bytes per entry in 32-bit mode, 16 bytes in 64-bit mode
+- `write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>`
+  — serializes extents back to the wire format
+- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64) -> Result<(), SarError>`
+  — checks that extents are sorted, non-overlapping, and within bounds; returns `SarError::InvalidMap` on violation
+- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64) -> Result<Vec<u8>, SarError>`
+  — creates a zero-filled buffer of `logical_size` and writes each extent slice at its offset; returns `SarError::InvalidMap` if `offset + length > logical_size`
+
+### `sar_core::fragment`
+
+Fragment group types and archival reassembly.
+
+#### Public types
+
+- `FragmentDescriptor { absolute_offset: u64, fragment_size: u32 }`
+  — position of a fragment in the logical file (from the LFH Fragment Descriptor field)
+- `FragmentEntry { fragment_index: u32, is_last_fragment: bool, is_loss_tolerant: bool, descriptor: FragmentDescriptor, payload: Vec<u8> }`
+  — one fragment's decoded payload and metadata, ready for reassembly
+
+#### Public functions
+
+- `validate_fragment_group(fragments: &[FragmentEntry], logical_size: u64) -> Result<(), SarError>`
+  — checks bounds (each fragment fits within `logical_size`) and fragment-level overlaps
+- `reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64) -> Result<(Vec<u8>, bool), SarError>`
+  — sorts fragments by index, fills a `logical_size` zero buffer with each fragment's payload at `descriptor.absolute_offset`
+  — if a gap exists and `is_loss_tolerant` is set on any fragment, fills gap with zeros and returns `(data, true)` (degraded)
+  — if a gap exists and no fragment has `is_loss_tolerant`, returns `SarError::FragmentGap`
+
+### `sar_core::recovery`
+
+Archive-level Data Recovery TLV inspection, planning, and repair.
+
+#### Public types
+
+- `ErasureRange { offset: u64, length: u64 }` — one erased byte range in the protected region
+- `ProtectedRange { offset: u64, length: u64, algo_id: u8 }` — the archive-level FEC protected range
+- `EntryErasure { entry_index: usize, ranges: Vec<ErasureRange> }` — per-entry erasures (for future use)
+- `ErasureInput { entries: Vec<EntryErasure>, archive_ranges: Vec<ErasureRange> }` — erasure JSON input format
+- `RecoveryMetadata { has_global_ec: bool, protected_range: Option<ProtectedRange>, recovery_tlvs: Vec<FecSummary>, repair_possible: bool, repair_unavailable_reason: Option<&'static str> }`
+- `RecoveryPlan { erasures: ErasureInput, protected_range: ProtectedRange, algo_id: u8 }`
+- `RepairReport { success: bool, repaired_ranges: Vec<ErasureRange>, degraded: bool, error: Option<String> }`
+
+#### Public functions
+
+- `inspect_recovery_metadata(archive_bytes: &[u8]) -> Result<RecoveryMetadata, SarError>`
+  — parses archive global header and CD, extracts RECOVERY TLVs (type IDs 0x10–0x1F), computes protected range `[GLOBAL_FLAGS_OFFSET, cd_offset)`
+- `plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput) -> Result<RecoveryPlan, SarError>`
+  — validates erasures within protected range and against FEC block boundaries
+  — returns `SarError::RecoveryUnavailable` for unaligned erasures or missing TLV (see SPEC_QUESTIONS.md)
+- `repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan) -> Result<(Vec<u8>, RepairReport), SarError>`
+  — applies XOR or Reed-Solomon erasure repair to the protected range, returns repaired archive bytes and a report
+  — returns `SarError::EcFailed` if erasures exceed parity capacity
+  — returns `SarError::RecoveryUnavailable` if repair is not supported for this TLV
+
+#### Important constraints
+
+- `repair_archive` never writes to the filesystem; the caller handles temp-file + rename
+- Repair never guesses erasures; only explicit `ErasureInput` is accepted
+- LOSS_TOLERANT does not bypass AEAD authentication
+- FEC repair is applied to ciphertext bytes before AEAD authentication
 
 ### FFI / C ABI notes for `sar-core`
 
@@ -421,7 +503,7 @@ Not implemented in this pass, even though some flags or structural fields alread
 
 ### Implemented milestone coverage
 
-- Milestones 3–7 for the currently implemented archive, compression, crypto, and Selective FEC flows
+- Milestones 3–8 for the currently implemented archive, compression, crypto, Selective FEC, sparse, fragment, recovery, and repair flows
 
 ### Actual command surface
 
@@ -455,7 +537,7 @@ Status: implemented
 Usage:
 
 ```text
-sar extract <archive.sar> <output-dir> [--password PASSWORD]
+sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
 ```
 
 Behavior:
@@ -463,6 +545,7 @@ Behavior:
 - creates parent directories as needed
 - rejects absolute paths and `..` traversal during extraction
 - loads password from `--password`, then `SAR_PASSWORD`, then an interactive prompt if the archive is encrypted
+- `--allow-lossy`: permits extraction of archives containing LOSS_TOLERANT entries; prints a warning if any such entries are present; does not currently perform automatic degraded fragment reassembly
 
 #### `list`
 
@@ -487,7 +570,7 @@ Status: implemented
 Usage:
 
 ```text
-sar verify <archive.sar> [--password PASSWORD]
+sar verify <archive.sar> [--password PASSWORD] [--recovery]
 ```
 
 Behavior:
@@ -495,6 +578,7 @@ Behavior:
 - verifies archive structure and indexed offsets
 - validates recovery TLV structure when archive-level FEC metadata exists
 - decrypts entries when needed, so encrypted verification requires a password/key provider
+- `--recovery`: additionally validates fragmentation metadata consistency, sparse extent validity, Data Recovery TLV structure, and reports `repair_possible` / unavailable reason; distinguishes file-level FEC metadata from archive-level recovery TLVs
 
 #### `inspect`
 
@@ -509,9 +593,32 @@ sar inspect <archive.sar> [--json]
 Behavior:
 
 - plaintext mode prints global version, flags, selective-FEC status, entry count, per-entry FEC summary lines, and recovery-TLV count
-- JSON mode prints archive summary plus serialized `EntryMetadata`
-- current implementation can inspect unencrypted archives and FEC metadata
+- JSON mode prints archive summary including `global_ec`, `fragmentation`, `sparse_files`, `repair_possible`, `recovery_tlvs` (archive-level TLV summaries), and per-entry `fec` (file-level selective FEC), `is_fragment`, `fragment_id`, `fragment_index`, `is_last_fragment`, `is_loss_tolerant`, `sparse_extent_count`
+- current implementation can inspect unencrypted archives and FEC/fragment/sparse/recovery metadata
 - it does not accept `--password`, so encrypted archives are not fully inspectable through the CLI today
+
+#### `repair`
+
+Status: implemented (M8)
+
+Usage:
+
+```text
+sar repair <archive.sar> <output.sar> --fec [--erasures erasures.json]
+```
+
+Behavior:
+
+- `--fec` is required; prints error "repair requires --fec" if absent
+- `--erasures <file>` is required; prints error "repair requires --erasures <file>" if absent
+- parses erasures JSON into `ErasureInput`
+- calls `inspect_recovery_metadata` to check archive EC support
+- calls `plan_archive_repair`; if `RecoveryUnavailable`, prints message and does **not** create output file
+- calls `repair_archive` on success
+- writes repaired bytes to a temp file (`<output>.sar.tmp`) first
+- verifies temp file structure (parses, checks structure)
+- renames temp to final output only if verification passes
+- if any step fails, deletes temp file and does **not** create the final output file
 
 #### `version`
 
@@ -557,10 +664,9 @@ sar create <input> <output.sar> -Z -9
 
 ### Unsupported or planned CLI surface
 
-- no dedicated `repair` command
-- no dedicated FEC-specific `verify` or `inspect` subcommands beyond the existing general commands
 - no `--password` support for `list` or `inspect`
-- no CLI support for signatures, CDC, delta, fragmentation, partitioning, sparse reconstruction, or streaming APIs
+- no CLI support for signatures, CDC, delta, fragmentation partition sets, or streaming APIs
+- automatic end-to-end loss-tolerant fragment extraction not yet wired through `ArchiveReader`
 
 ### FFI / C ABI notes
 

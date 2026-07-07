@@ -49,7 +49,16 @@ stored payload -> FEC repair over ciphertext bytes (if applicable)
 Notes:
 
 - current writer-side integration computes Selective FEC over ciphertext bytes when encryption is enabled
-- archive-level/global EC is validated structurally, not repaired automatically
+- archive-level/global EC is validated structurally; `repair_archive` applies XOR/RS repair for block-aligned erasures
+- LOSS_TOLERANT flag never bypasses AEAD authentication — if AEAD verification fails, the entry is rejected regardless of the LOSS_TOLERANT setting
+- archive-level repair applies FEC repair to ciphertext bytes within the protected range; AEAD tags within that range are repaired before authentication
+
+## Fragmentation and loss-tolerant semantics
+
+- `reconstruct_fragments` fills gap regions in the logical output buffer with zero bytes when LOSS_TOLERANT is set, and sets `is_degraded = true`
+- without LOSS_TOLERANT, any missing fragment index returns `FragmentGap` error and no data is released
+- AEAD authentication of individual fragment payloads must succeed before plaintext is released, regardless of LOSS_TOLERANT
+- LOSS_TOLERANT permits degraded logical file output only for *missing* fragments, not for *corrupted* (authentication-failed) fragments
 
 ## Filesystem and parsing safety
 
@@ -82,5 +91,6 @@ When a stable ABI is introduced later, security design should explicitly cover:
 
 - signature support
 - fuller interoperability and adversarial corpus testing
-- archive-level repair orchestration
+- complete archive-level repair orchestration for non-block-aligned erasures (pending spec clarification)
+- automatic end-to-end loss-tolerant extraction integration in `ArchiveReader`
 - stable FFI/C ABI with explicit status codes, opaque handles, and secret-handling rules

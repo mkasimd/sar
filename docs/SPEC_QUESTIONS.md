@@ -104,6 +104,28 @@ The items below are derived from the current code audit. They document places wh
   - **Interoperability risk:** consumers may incorrectly treat `validate_archive_profile()` as a definitive conformance oracle.
   - **Follow-up needed:** refresh profile rules after milestone stabilization.
 
+---
+
+## Milestone 8 additions
+
+- **Spec section:** Archive-level repair orchestration (spec section 9.2)
+  - **Issue:** The spec defines the protected byte range (global_flags_offset to the final byte before the Central Dictionary) and the FEC TLV wire format (type IDs 0x10–0x1F), but does not specify how to map arbitrary byte erasures to FEC block positions for a complete end-to-end archive repair workflow.
+  - **Current conservative implementation:** `inspect_recovery_metadata` fully parses recovery TLVs and computes the protected range. `plan_archive_repair` validates that erasures are within the protected range and returns `RecoveryUnavailable` with the message "archive-level repair orchestration requires explicit block-aligned erasure mapping; see docs/SPEC_QUESTIONS.md" when erasures are not aligned to FEC block boundaries. `repair_archive` applies XOR or Reed-Solomon erasure recovery when erasures can be properly mapped to block indices.
+  - **Interoperability risk:** archives with recovery TLVs will report `repair_possible: false` for unaligned erasures, even if another implementation could repair them with a different block-mapping heuristic.
+  - **Follow-up needed:** the spec needs to normatively define the mapping from arbitrary byte offsets to FEC block positions — specifically the byte offset of the first FEC block within the protected range, the block stride, and how partial trailing blocks are padded.
+
+- **Spec section:** Fragment reconstruction ordering (spec section 19)
+  - **Issue:** Spec section 19 is primarily streaming-oriented; it describes fragment groups in terms of sequential delivery rather than random-access archival reconstruction.
+  - **Current conservative implementation:** archival fragment reconstruction uses the Fragment Descriptor (`abs_offset` + `frag_size`) to scatter-gather each fragment's payload at its absolute offset within a logical-size buffer. Fragments are sorted by `fragment_index` before placement; this matches streaming delivery order but is driven by absolute offsets, not arrival order.
+  - **Interoperability risk:** implementations that reconstruct by concatenation (ignoring Fragment Descriptor offsets) will produce the same output only if fragments are contiguous and monotonically laid out. Non-contiguous or sparse fragment groups will diverge.
+  - **Follow-up needed:** spec should state whether Fragment Descriptor `abs_offset` is normative for archival reconstruction or only a hint for streaming delivery.
+
+- **Spec section:** Loss-tolerant extraction in archival mode (spec sections 6.2.2 and 19.4.5)
+  - **Issue:** Spec sections 6.2.2 and 19.4.5 describe LOSS_TOLERANT in a streaming context. The archival interpretation — accepting degraded output with gaps filled with zero bytes — is a reasonable extension but not explicitly specified.
+  - **Current conservative implementation:** when LOSS_TOLERANT is set and fragments are missing, reconstruction fills gap regions with zero bytes and returns `is_degraded = true`, signaling `WarnIncomplete` to the caller. AEAD authentication failures are **never** overridden by LOSS_TOLERANT; this is enforced by the spec constraint that loss-tolerant semantics apply only to missing/unrecoverable fragments, not to authentication errors.
+  - **Interoperability risk:** implementations that interpret LOSS_TOLERANT as bypassing all error categories would be non-conformant; this implementation is strict.
+  - **Follow-up needed:** spec should explicitly state that LOSS_TOLERANT applies only to missing fragment data, not to authentication or format errors.
+
 - **Spec section:** Future Milestone 12 FFI / C ABI
   - **Issue:** Future cross-language bindings will affect API shape, ownership rules, and interoperability claims.
   - **Current conservative implementation:** no FFI/C ABI is implemented in this pass.
