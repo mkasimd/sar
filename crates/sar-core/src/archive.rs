@@ -261,8 +261,8 @@ pub struct SparseWriteOptions {
 /// Reader-side limits.
 ///
 /// Pass a [`ResourceLimits`] value to configure all resource caps uniformly.
-/// The legacy `max_decoded_entry_size` field is forwarded from `limits` for
-/// backward compatibility.
+/// The [`ArchiveReaderOptions::max_decoded_entry_size`] method provides
+/// backward-compatible access to the corresponding limit value.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ArchiveReaderOptions {
     /// Unified resource limits for parsing and reconstruction.

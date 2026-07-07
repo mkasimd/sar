@@ -165,7 +165,7 @@ impl Default for ResourceLimits {
             max_global_flags_bytes: 65_535,
             max_kms_payload_bytes: 64 * 1024,
             max_tlv_bytes: 1024 * 1024,
-            max_tlv_count: 1_024,
+            max_tlv_count: 1024,
             max_cd_bytes: 256 * 1024 * 1024,
             max_decoded_entry_size: 1024 * 1024 * 1024,
             max_in_memory_buffer: 1024 * 1024 * 1024,
