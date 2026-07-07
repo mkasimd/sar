@@ -149,7 +149,7 @@ The items below are derived from the current code audit. They document places wh
 
 - **Spec section:** CDC_MAP TLV record field widths (spec section 21.1)
   - **Status: RESOLVED in M9a (CDC_MAP v1 header format)**
-  - Section 21.1 now defines a `CDC_MAP_Header v1` with normative field widths. The record layout for v1 is `[Hash: 32 B][Partition_ID: 4 B u32 LE][Absolute_Offset: 8 B u64 LE][Compressed_Size: 4 B u32 LE]` = 48 bytes per record. The header carries `Hash_Algorithm_ID` so parsers do not need to guess the hash algorithm. `CDC_MAP_RECORD_LEN = 48`. This resolves the previous conservative assumed layout of 50 bytes.
+  - Section 21.1 now defines a `CDC_MAP_Header v1` with normative field widths. The record layout for v1 is `[Hash: 32 B][Partition_ID: 4 B u32 LE][Absolute_Offset: 8 B u64 LE][Compressed_Size: 4 B u32 LE]` = 48 bytes per record. The header carries `Hash_Algorithm_ID` so parsers do not need to guess the hash algorithm. `CDC_MAP_RECORD_LEN = 48`. The pre-M9a implementation used a provisional 50-byte assumed layout (`Partition_ID: u16 2B, Compressed_Size: u64 8B`) which was replaced by this normative header-based format.
 
 - **Spec section:** CDC_MAP Hash_Algorithm_ID (spec section 21.1)
   - **Status: RESOLVED in M9a (CDC_MAP v1 header format)**
