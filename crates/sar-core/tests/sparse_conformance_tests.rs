@@ -322,7 +322,10 @@ fn sparse_allocation_bounded_by_max_size() {
     let mut reader = ArchiveReader::with_options(
         Cursor::new(archive),
         ArchiveReaderOptions {
-            max_decoded_entry_size: 512,
+            limits: sar_core::limits::ResourceLimits {
+                max_decoded_entry_size: 512,
+                ..sar_core::limits::ResourceLimits::default()
+            },
         },
     )
     .expect("reader");

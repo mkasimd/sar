@@ -416,7 +416,10 @@ fn large_sparse_hole_capped_by_max_size() {
     let mut reader = ArchiveReader::with_options(
         Cursor::new(archive),
         ArchiveReaderOptions {
-            max_decoded_entry_size: 512, // cap at 512 bytes
+            limits: sar_core::limits::ResourceLimits {
+                max_decoded_entry_size: 512, // cap at 512 bytes
+                ..sar_core::limits::ResourceLimits::default()
+            },
         },
     )
     .expect("reader");
@@ -452,7 +455,10 @@ fn large_sparse_hole_capped_by_max_size() {
     let mut reader2 = ArchiveReader::with_options(
         Cursor::new(archive2),
         ArchiveReaderOptions {
-            max_decoded_entry_size: 512,
+            limits: sar_core::limits::ResourceLimits {
+                max_decoded_entry_size: 512,
+                ..sar_core::limits::ResourceLimits::default()
+            },
         },
     )
     .expect("reader2");

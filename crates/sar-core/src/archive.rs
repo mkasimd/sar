@@ -22,6 +22,7 @@ use crate::{
         parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
         write_global_header,
     },
+    limits::ResourceLimits,
     tlv::Tlv,
     transform::{
         DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
@@ -258,17 +259,22 @@ pub struct SparseWriteOptions {
 }
 
 /// Reader-side limits.
-#[derive(Debug, Clone, Copy)]
+///
+/// Pass a [`ResourceLimits`] value to configure all resource caps uniformly.
+/// The legacy `max_decoded_entry_size` field is forwarded from `limits` for
+/// backward compatibility.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ArchiveReaderOptions {
-    /// Maximum allowed uncompressed bytes per decoded entry.
-    pub max_decoded_entry_size: u64,
+    /// Unified resource limits for parsing and reconstruction.
+    pub limits: ResourceLimits,
 }
 
-impl Default for ArchiveReaderOptions {
-    fn default() -> Self {
-        Self {
-            max_decoded_entry_size: 1024 * 1024 * 1024,
-        }
+impl ArchiveReaderOptions {
+    /// Returns the effective maximum decoded entry size from the embedded
+    /// [`ResourceLimits`].
+    #[must_use]
+    pub fn max_decoded_entry_size(&self) -> u64 {
+        self.limits.max_decoded_entry_size
     }
 }
 
@@ -542,7 +548,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let decode_expected = if is_sparse {
             // We don't want the decompressor to be bounded by logical_size;
             // max_decoded_entry_size is already the correct upper bound.
-            self.options.max_decoded_entry_size
+            self.options.max_decoded_entry_size()
         } else {
             lfh.uncompressed_size
         };
@@ -553,7 +559,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 is_compressed: is_effectively_compressed,
                 comp_algo_id: effective_comp_algo_id,
                 expected_output_size: decode_expected,
-                max_output_size: self.options.max_decoded_entry_size,
+                max_output_size: self.options.max_decoded_entry_size(),
                 crypto,
             },
         )?;
@@ -736,7 +742,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// available.
     ///
     /// Sparse logical sizes are capped to
-    /// [`ArchiveReaderOptions::max_decoded_entry_size`].
+    /// [`ResourceLimits::max_decoded_entry_size`].
     ///
     /// # Caller contract
     ///
@@ -880,7 +886,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     entry.payload,
                     &sparse,
                     uncompressed_size,
-                    self.options.max_decoded_entry_size,
+                    self.options.max_decoded_entry_size(),
                 )?;
                 // CRC32 verification over the fully reconstructed logical file
                 // (including sparse holes), per spec §17.5.
@@ -962,7 +968,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // assembled fragment payload.  The sparse map and logical size come
             // from fragment index 0.
             let data = if let Some(ref extents) = group_sparse_extents {
-                if group_sparse_uncompressed_size > self.options.max_decoded_entry_size {
+                if group_sparse_uncompressed_size > self.options.max_decoded_entry_size() {
                     return Err(SarError::Overflow(
                         "sparse logical file size exceeds max_decoded_entry_size limit",
                     ));
