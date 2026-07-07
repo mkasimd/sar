@@ -1229,6 +1229,14 @@ fn verify_archive(
     Ok(())
 }
 
+struct CdcMetadataInspectRow {
+    type_id: u8,
+    value_len: usize,
+    kind: &'static str,
+    record_count: Option<usize>,
+    uri: Option<String>,
+}
+
 fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
     let limits = ResourceLimits::default();
     let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
@@ -1259,51 +1267,56 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         })
         .unwrap_or_default();
 
-    let cdc_metadata_tlvs_raw: Vec<(u8, usize, &'static str, Option<usize>, Option<String>)> =
-        if let Some(cd) = metadata
-            .as_ref()
-            .and_then(|m| m.central_dictionary.as_ref())
-        {
-            let mut out = Vec::new();
-            for tlv in &cd.metadata {
-                if !sar_core::is_cdc_metadata_tlv_type(tlv.type_id) {
-                    continue;
-                }
-
-                match tlv.type_id {
-                    sar_core::TLV_CDC_MAP => {
-                        let record_count =
-                            sar_core::parse_entry_cdc_map(std::slice::from_ref(tlv), &limits)?
-                                .map_or(0, |map| map.records.len());
-                        out.push((
-                            tlv.type_id,
-                            tlv.value.len(),
-                            "cdc_map",
-                            Some(record_count),
-                            None,
-                        ));
-                    }
-                    sar_core::TLV_CDC_EXT_PROVIDER => {
-                        let provider = sar_core::parse_cdc_ext_provider_tlv(tlv, &limits)?;
-                        out.push((
-                            tlv.type_id,
-                            tlv.value.len(),
-                            "cdc_ext_provider",
-                            None,
-                            Some(provider.uri),
-                        ));
-                    }
-                    sar_core::TLV_CDC_CUSTOM => {
-                        sar_core::validate_cdc_metadata_tlv(tlv, &limits)?;
-                        out.push((tlv.type_id, tlv.value.len(), "cdc_custom", None, None));
-                    }
-                    _ => unreachable!("non-CDC TLV filtered earlier"),
-                }
+    let cdc_metadata_tlvs_raw: Vec<CdcMetadataInspectRow> = if let Some(cd) = metadata
+        .as_ref()
+        .and_then(|m| m.central_dictionary.as_ref())
+    {
+        let mut out = Vec::new();
+        for tlv in &cd.metadata {
+            if !sar_core::is_cdc_metadata_tlv_type(tlv.type_id) {
+                continue;
             }
-            out
-        } else {
-            Vec::new()
-        };
+
+            match tlv.type_id {
+                sar_core::TLV_CDC_MAP => {
+                    let record_count =
+                        sar_core::parse_entry_cdc_map(std::slice::from_ref(tlv), &limits)?
+                            .map_or(0, |map| map.records.len());
+                    out.push(CdcMetadataInspectRow {
+                        type_id: tlv.type_id,
+                        value_len: tlv.value.len(),
+                        kind: "cdc_map",
+                        record_count: Some(record_count),
+                        uri: None,
+                    });
+                }
+                sar_core::TLV_CDC_EXT_PROVIDER => {
+                    let provider = sar_core::parse_cdc_ext_provider_tlv(tlv, &limits)?;
+                    out.push(CdcMetadataInspectRow {
+                        type_id: tlv.type_id,
+                        value_len: tlv.value.len(),
+                        kind: "cdc_ext_provider",
+                        record_count: None,
+                        uri: Some(provider.uri),
+                    });
+                }
+                sar_core::TLV_CDC_CUSTOM => {
+                    sar_core::validate_cdc_metadata_tlv(tlv, &limits)?;
+                    out.push(CdcMetadataInspectRow {
+                        type_id: tlv.type_id,
+                        value_len: tlv.value.len(),
+                        kind: "cdc_custom",
+                        record_count: None,
+                        uri: None,
+                    });
+                }
+                _ => unreachable!("non-CDC TLV filtered earlier"),
+            }
+        }
+        out
+    } else {
+        Vec::new()
+    };
 
     let repair_possible = has_global_ec && !recovery_tlvs_raw.is_empty();
 
@@ -1321,21 +1334,21 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
 
         let cdc_metadata_tlvs_json: Vec<serde_json::Value> = cdc_metadata_tlvs_raw
             .iter()
-            .map(|(type_id, value_len, kind, record_count, uri)| {
+            .map(|row| {
                 let mut value = json!({
-                    "type_id": format!("0x{type_id:02X}"),
-                    "kind": kind,
-                    "value_len": value_len,
+                    "type_id": format!("0x{:02X}", row.type_id),
+                    "kind": row.kind,
+                    "value_len": row.value_len,
                 });
-                if let Some(record_count) = record_count {
+                if let Some(record_count) = row.record_count {
                     value["record_count"] = json!(record_count);
                     value["portability"] = json!("implementation-defined");
                 }
-                if let Some(uri) = uri {
+                if let Some(uri) = &row.uri {
                     value["uri"] = json!(uri);
                     value["resolution"] = json!("not_implemented");
                 }
-                if *kind == "cdc_custom" {
+                if row.kind == "cdc_custom" {
                     value["handling"] = json!("parsed_preserved_only");
                 }
                 value
@@ -1405,16 +1418,19 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         println!("repair_possible={repair_possible}");
         if !cdc_metadata_tlvs_raw.is_empty() {
             println!("cdc_metadata_tlvs={}", cdc_metadata_tlvs_raw.len());
-            for (type_id, value_len, kind, record_count, uri) in &cdc_metadata_tlvs_raw {
-                match (*kind, record_count, uri) {
+            for row in &cdc_metadata_tlvs_raw {
+                match (row.kind, row.record_count, row.uri.as_deref()) {
                     ("cdc_map", Some(record_count), _) => println!(
-                        "  cdc_map: type_id=0x{type_id:02X} value_len={value_len} record_count={record_count} portability=implementation-defined"
+                        "  cdc_map: type_id=0x{:02X} value_len={} record_count={record_count} portability=implementation-defined",
+                        row.type_id, row.value_len
                     ),
                     ("cdc_ext_provider", _, Some(uri)) => println!(
-                        "  cdc_ext_provider: type_id=0x{type_id:02X} value_len={value_len} uri={uri} resolution=not_implemented"
+                        "  cdc_ext_provider: type_id=0x{:02X} value_len={} uri={uri} resolution=not_implemented",
+                        row.type_id, row.value_len
                     ),
                     ("cdc_custom", _, _) => println!(
-                        "  cdc_custom: type_id=0x{type_id:02X} value_len={value_len} handling=parsed_preserved_only"
+                        "  cdc_custom: type_id=0x{:02X} value_len={} handling=parsed_preserved_only",
+                        row.type_id, row.value_len
                     ),
                     _ => {}
                 }
