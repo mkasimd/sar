@@ -629,7 +629,8 @@ fn extract_archive(
             // function would have returned FragmentGap).
             eprintln!(
                 "warning: '{}' extracted with degraded (incomplete) content; \
-                 some fragments were missing (LOSS_TOLERANT output)",
+                 missing fragments were replaced with zero bytes (LOSS_TOLERANT). \
+                 This output MUST NOT be used for integrity-critical purposes.",
                 file.name
             );
         }

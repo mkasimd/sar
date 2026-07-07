@@ -43,12 +43,12 @@ fn build_simple_archive(name: &str, payload: &[u8]) -> Vec<u8> {
 /// This constructs the on-wire bytes for a FILE_FRAGMENTATION archive
 /// containing two fragments of a 16-byte logical file.
 fn build_two_fragment_archive() -> Vec<u8> {
-    let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
+    let fragment_flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
 
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
-        flags,
+        flags_bytes: fragment_flags.bits().to_le_bytes().to_vec(),
+        flags: fragment_flags,
         partition_descriptor: None,
         kms: None,
     })
@@ -64,7 +64,7 @@ fn build_two_fragment_archive() -> Vec<u8> {
         absolute_offset: 0,
         fragment_size: 8,
     });
-    let lfh0_bytes = write_lfh(&flags, &lfh0).expect("write lfh0");
+    let lfh0_bytes = write_lfh(&fragment_flags, &lfh0).expect("write lfh0");
     archive.extend_from_slice(&lfh0_bytes);
     archive.extend_from_slice(b"AAAAAAAA");
 
@@ -78,7 +78,7 @@ fn build_two_fragment_archive() -> Vec<u8> {
         absolute_offset: 8,
         fragment_size: 8,
     });
-    let lfh1_bytes = write_lfh(&flags, &lfh1).expect("write lfh1");
+    let lfh1_bytes = write_lfh(&fragment_flags, &lfh1).expect("write lfh1");
     archive.extend_from_slice(&lfh1_bytes);
     archive.extend_from_slice(b"BBBBBBBB");
 
