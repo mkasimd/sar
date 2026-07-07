@@ -125,7 +125,7 @@ fn loss_tolerant_without_fragment_flag_is_invalid() {
 
     let global = GlobalFlags::NO_INDEX;
     // mode: LOSS_TOLERANT (bit 7) set but IS_FRAGMENT (bit 5) NOT set
-    let mode = EntryMode(1u16 << 7);
+    let mode = EntryMode::from_bits(1u16 << 7);
     let err = validate_entry_mode_against_global(global, mode).expect_err("should fail");
     assert!(
         matches!(err, SarError::FlagConflict(_)),

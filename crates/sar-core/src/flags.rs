@@ -53,37 +53,62 @@ bitflags! {
 
 /// Entry mode bits from LFH.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EntryMode(pub u16);
+pub struct EntryMode {
+    bits: u16,
+}
 
 impl EntryMode {
+    /// Entry payload is encrypted.
+    pub const ENCRYPTED: u16 = 1 << 2;
+    /// Entry payload is compressed.
+    pub const COMPRESSED: u16 = 1 << 3;
+    /// Entry is a fragment.
+    pub const FRAGMENT: u16 = 1 << 5;
+    /// Entry is the last fragment in its group.
+    pub const LAST_FRAGMENT: u16 = 1 << 6;
+    /// Entry supports degraded loss-tolerant reconstruction.
+    pub const LOSS_TOLERANT: u16 = 1 << 7;
+
+    /// Creates an entry mode from raw wire bits.
+    #[must_use]
+    pub const fn from_bits(bits: u16) -> Self {
+        Self { bits }
+    }
+
+    /// Returns the raw wire bits.
+    #[must_use]
+    pub const fn bits(self) -> u16 {
+        self.bits
+    }
+
     /// Returns true when entry payload is encrypted.
     #[must_use]
     pub const fn is_encrypted(self) -> bool {
-        self.0 & (1 << 2) != 0
+        self.bits & Self::ENCRYPTED != 0
     }
 
     /// Returns true when entry payload is compressed.
     #[must_use]
     pub const fn is_compressed(self) -> bool {
-        self.0 & (1 << 3) != 0
+        self.bits & Self::COMPRESSED != 0
     }
 
     /// Returns true when entry is marked as fragment.
     #[must_use]
     pub const fn is_fragment(self) -> bool {
-        self.0 & (1 << 5) != 0
+        self.bits & Self::FRAGMENT != 0
     }
 
     /// Returns true when entry is marked as last fragment.
     #[must_use]
     pub const fn is_last_fragment(self) -> bool {
-        self.0 & (1 << 6) != 0
+        self.bits & Self::LAST_FRAGMENT != 0
     }
 
     /// Returns true when entry permits degraded (loss-tolerant) reconstruction.
     #[must_use]
     pub const fn is_loss_tolerant(self) -> bool {
-        self.0 & (1 << 7) != 0
+        self.bits & Self::LOSS_TOLERANT != 0
     }
 }
 

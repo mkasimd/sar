@@ -35,7 +35,7 @@ fn make_frag_lfh(
     }
     LocalFileHeader {
         header_size: 0,
-        entry_mode: EntryMode(mode),
+        entry_mode: EntryMode::from_bits(mode),
         stream_id: 0,
         sequence_no: 0,
         uncompressed_size: payload_size,

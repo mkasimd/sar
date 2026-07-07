@@ -129,7 +129,7 @@ fn supports_64bit_sizes() {
 fn rejects_invalid_global_entry_flag_combination() {
     let flags = GlobalFlags::NO_INDEX;
     let mut lfh = LocalFileHeader::minimal_store(b"x".to_vec(), 1);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     let err = write_lfh(&flags, &lfh).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }

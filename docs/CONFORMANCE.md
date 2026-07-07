@@ -87,7 +87,7 @@ maintainability cleanup pass.
   - CLI resource-limit failures are surfaced clearly as `SAR_ERR_LIMIT_EXCEEDED`
   - All SAR-owned public multi-field tuple types in protocol/domain code replaced with named-field structs
   - `LfhFragmentDescriptor { absolute_offset, fragment_size }` replaces the former `(u64, u32)` tuple in `LocalFileHeader.fragment_descriptor`
-  - `EntryMode` and `SarStatusParseError` opaque single-field newtypes retained as-is (intentionally private internals)
+  - `EntryMode` uses a private named `bits` field with explicit constructors/accessors; `SarStatusParseError` remains an opaque single-field error newtype
   - No `.0` / `.1` tuple access remains in SAR-owned protocol domain logic (only inside opaque newtype impls)
 - **Tests currently present**
   - unit and integration tests across `sar-core`, `sar-fec`, `sar-crypto`, and `sar-cli`

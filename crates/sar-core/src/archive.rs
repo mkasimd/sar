@@ -15,7 +15,7 @@ use serde::Serialize;
 
 use crate::{
     error::SarError,
-    flags::{GlobalFlags, validate_global_flags},
+    flags::{EntryMode, GlobalFlags, validate_global_flags},
     format::{
         CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION,
         global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary,
@@ -1224,7 +1224,7 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
         if is_compressed {
-            lfh.entry_mode.0 |= 1 << 3;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::COMPRESSED);
         }
 
         // Pre-set FEC algo ID so it is included in the AEAD AAD (spec §13.2.1).
@@ -1258,7 +1258,7 @@ impl<W: Write> ArchiveWriter<W> {
             }
             lfh.encr_algo_id = Some(algo_id);
             lfh.iv_nonce = Some(nonce);
-            lfh.entry_mode.0 |= 1 << 2;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::ENCRYPTED);
 
             // Reserve the final FEC Value length before AEAD so Header Size in the
             // AAD matches the final on-wire LFH. Per spec §13.2.1, only FEC Size
@@ -1466,7 +1466,7 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
         if is_compressed {
-            lfh.entry_mode.0 |= 1 << 3;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::COMPRESSED);
         }
 
         if is_fec {
@@ -1499,7 +1499,7 @@ impl<W: Write> ArchiveWriter<W> {
             }
             lfh.encr_algo_id = Some(algo_id);
             lfh.iv_nonce = Some(nonce);
-            lfh.entry_mode.0 |= 1 << 2;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::ENCRYPTED);
 
             let provisional_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);

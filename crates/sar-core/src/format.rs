@@ -123,7 +123,7 @@ impl LocalFileHeader {
     pub fn minimal_store(name: Vec<u8>, payload_size: u64) -> Self {
         Self {
             header_size: 0,
-            entry_mode: EntryMode(0),
+            entry_mode: EntryMode::from_bits(0),
             stream_id: 0,
             sequence_no: 0,
             uncompressed_size: payload_size,
@@ -467,7 +467,7 @@ pub fn parse_lfh(
         return Err(SarError::InvalidLength("LFH header size mismatch"));
     }
 
-    let entry_mode = EntryMode(hdr_cursor.read_u16_le()?);
+    let entry_mode = EntryMode::from_bits(hdr_cursor.read_u16_le()?);
     validate_entry_mode_against_global(*flags, entry_mode)?;
 
     let stream_id = hdr_cursor.read_u16_le()?;
@@ -691,7 +691,7 @@ pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, 
 
     let mut writer = BinaryWriter::new();
     writer.write_u32_le(header_size);
-    writer.write_u16_le(lfh.entry_mode.0);
+    writer.write_u16_le(lfh.entry_mode.bits());
     writer.write_u16_le(lfh.stream_id);
     writer.write_u16_le(lfh.sequence_no);
     write_size(&mut writer, *flags, lfh.uncompressed_size)?;

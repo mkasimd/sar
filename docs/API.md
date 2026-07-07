@@ -145,6 +145,9 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 
 - `GlobalFlags`
 - `EntryMode`
+  - `ENCRYPTED`, `COMPRESSED`, `FRAGMENT`, `LAST_FRAGMENT`, `LOSS_TOLERANT`
+  - `from_bits(bits)`
+  - `bits()`
   - `is_encrypted()`
   - `is_compressed()`
   - `is_fragment()`

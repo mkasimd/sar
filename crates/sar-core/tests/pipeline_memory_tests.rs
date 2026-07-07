@@ -436,7 +436,7 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
     // Fragment 0: declares logical_size=1024 via uncompressed_size, carries sparse map
     let mut lfh0 = LocalFileHeader::minimal_store(b"bomb.bin".to_vec(), 1);
     lfh0.uncompressed_size = 1024; // huge logical size
-    lfh0.entry_mode = EntryMode((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
+    lfh0.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
     lfh0.fragment_id = Some(77);
     lfh0.fragment_index = Some(0);
     lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {

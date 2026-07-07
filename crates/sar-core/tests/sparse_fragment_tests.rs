@@ -89,7 +89,7 @@ fn build_two_fragment_sparse_archive(p: TwoFragmentArchiveParams<'_>) -> Vec<u8>
     } else {
         frag0_payload.len() as u64
     };
-    lfh0.entry_mode = EntryMode(mode0);
+    lfh0.entry_mode = EntryMode::from_bits(mode0);
     lfh0.fragment_id = Some(42);
     lfh0.fragment_index = Some(frag0_index);
     lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -118,7 +118,7 @@ fn build_two_fragment_sparse_archive(p: TwoFragmentArchiveParams<'_>) -> Vec<u8>
     } else {
         frag1_payload.len() as u64
     };
-    lfh1.entry_mode = EntryMode(mode1);
+    lfh1.entry_mode = EntryMode::from_bits(mode1);
     lfh1.fragment_id = Some(42);
     lfh1.fragment_index = Some(frag1_index);
     lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -239,7 +239,7 @@ fn sparse_map_on_nonzero_fragment_not_suppressed_by_allow_lossy() {
     // Only fragment index 1 with a sparse map (no fragment index 0 present)
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
     lfh.uncompressed_size = 4;
-    lfh.entry_mode = EntryMode((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
+    lfh.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
     lfh.fragment_id = Some(55);
     lfh.fragment_index = Some(1); // non-zero index with sparse map
     lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -300,7 +300,7 @@ fn reassembled_three_fragment_payload_scattered_by_sparse_map() {
     // Fragment 0: b"AA" at offset 0
     let mut lfh0 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 2);
     lfh0.uncompressed_size = 12; // logical file size
-    lfh0.entry_mode = EntryMode(1u16 << 5);
+    lfh0.entry_mode = EntryMode::from_bits(1u16 << 5);
     lfh0.fragment_id = Some(10);
     lfh0.fragment_index = Some(0);
     lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -314,7 +314,7 @@ fn reassembled_three_fragment_payload_scattered_by_sparse_map() {
     // Fragment 1: b"BB" at offset 2
     let mut lfh1 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 2);
     lfh1.uncompressed_size = 2;
-    lfh1.entry_mode = EntryMode(1u16 << 5);
+    lfh1.entry_mode = EntryMode::from_bits(1u16 << 5);
     lfh1.fragment_id = Some(10);
     lfh1.fragment_index = Some(1);
     lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -327,7 +327,7 @@ fn reassembled_three_fragment_payload_scattered_by_sparse_map() {
     // Fragment 2: b"CC" at offset 4 (last)
     let mut lfh2 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 2);
     lfh2.uncompressed_size = 2;
-    lfh2.entry_mode = EntryMode((1u16 << 5) | (1u16 << 6));
+    lfh2.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6));
     lfh2.fragment_id = Some(10);
     lfh2.fragment_index = Some(2);
     lfh2.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -418,7 +418,7 @@ fn sparse_fragment_missing_without_allow_lossy_fails() {
     // Only fragment 0, no LAST_FRAGMENT marker (missing fragment 1)
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
     lfh.uncompressed_size = 8; // logical size
-    lfh.entry_mode = EntryMode(1u16 << 5); // IS_FRAGMENT only
+    lfh.entry_mode = EntryMode::from_bits(1u16 << 5); // IS_FRAGMENT only
     lfh.fragment_id = Some(11);
     lfh.fragment_index = Some(0);
     lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -462,7 +462,7 @@ fn sparse_fragment_missing_with_allow_lossy_loss_tolerant_succeeds() {
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
     lfh.uncompressed_size = 8; // logical size
     // IS_FRAGMENT | LOSS_TOLERANT
-    lfh.entry_mode = EntryMode((1u16 << 5) | (1u16 << 7));
+    lfh.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 7));
     lfh.fragment_id = Some(12);
     lfh.fragment_index = Some(0);
     lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -517,7 +517,7 @@ fn sparse_fragment_degraded_output_is_marked() {
     // Fragment index 0 with LOSS_TOLERANT; no other fragment present
     let mut lfh = LocalFileHeader::minimal_store(b"sparse.bin".to_vec(), 3);
     lfh.uncompressed_size = 10;
-    lfh.entry_mode = EntryMode((1u16 << 5) | (1u16 << 7)); // IS_FRAGMENT | LOSS_TOLERANT
+    lfh.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 7)); // IS_FRAGMENT | LOSS_TOLERANT
     lfh.fragment_id = Some(99);
     lfh.fragment_index = Some(0);
     lfh.fragment_descriptor = Some(LfhFragmentDescriptor {

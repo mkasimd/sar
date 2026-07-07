@@ -80,7 +80,7 @@ fn write_two_fragment_sparse_archive(
 
     let mut lfh0 = LocalFileHeader::minimal_store(b"frag.bin".to_vec(), 2);
     lfh0.uncompressed_size = logical_size;
-    lfh0.entry_mode = EntryMode(1u16 << 5);
+    lfh0.entry_mode = EntryMode::from_bits(1u16 << 5);
     lfh0.fragment_id = Some(42);
     lfh0.fragment_index = Some(0);
     lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -93,7 +93,7 @@ fn write_two_fragment_sparse_archive(
 
     let mut lfh1 = LocalFileHeader::minimal_store(b"frag.bin".to_vec(), 2);
     lfh1.uncompressed_size = 2;
-    lfh1.entry_mode = EntryMode((1u16 << 5) | (1u16 << 6));
+    lfh1.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6));
     lfh1.fragment_id = Some(42);
     lfh1.fragment_index = Some(1);
     lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
