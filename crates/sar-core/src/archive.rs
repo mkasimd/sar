@@ -997,7 +997,9 @@ fn compute_fec_value_len(fec: &FecSettings, protected_len: usize) -> Result<usiz
                 .checked_mul(block_size)
                 .ok_or(SarError::Overflow("XOR parity length overflow"))?;
             if parity_len > MAX_PARITY_SIZE {
-                return Err(SarError::LimitExceeded("XOR parity exceeds implementation limit"));
+                return Err(SarError::LimitExceeded(
+                    "XOR parity exceeds implementation limit",
+                ));
             }
             usize::try_from(14u64 + parity_len)
                 .map_err(|_| SarError::Overflow("XOR FEC value length exceeds usize"))
@@ -1016,7 +1018,9 @@ fn compute_fec_value_len(fec: &FecSettings, protected_len: usize) -> Result<usiz
                 .checked_mul(u64::from(fec.symbol_size))
                 .ok_or(SarError::Overflow("RS parity length overflow"))?;
             if parity_len > MAX_PARITY_SIZE {
-                return Err(SarError::LimitExceeded("RS parity exceeds implementation limit"));
+                return Err(SarError::LimitExceeded(
+                    "RS parity exceeds implementation limit",
+                ));
             }
             usize::try_from(18u64 + parity_len)
                 .map_err(|_| SarError::Overflow("RS FEC value length exceeds usize"))

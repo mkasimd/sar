@@ -7,7 +7,9 @@ use sar_core::{
     encode_payload_v2, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
     parse_global_header, parse_lfh, write_lfh,
 };
-use sar_crypto::{ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretBytes, SecretString};
+use sar_crypto::{
+    ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretBytes, SecretString,
+};
 use sar_fec::FEC_ALGO_XOR;
 use zeroize::Zeroizing;
 
@@ -45,7 +47,10 @@ fn lfh_aad_preserves_on_wire_header_size_and_excludes_only_fec_ranges() {
 
     let header_size = u32::from_le_bytes(lfh_bytes[..4].try_into().expect("header size bytes"));
     assert_eq!(header_size as usize, lfh_bytes.len());
-    assert_eq!(header_size as usize, aad_lfh_bytes.len() + 3 + lfh.fec_value.len());
+    assert_eq!(
+        header_size as usize,
+        aad_lfh_bytes.len() + 3 + lfh.fec_value.len()
+    );
 }
 
 #[test]
@@ -201,7 +206,8 @@ fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
 
     let mut placeholder_lfh = lfh.clone();
     placeholder_lfh.fec_value = vec![0u8; lfh.fec_value.len()];
-    let placeholder_lfh_bytes = write_lfh(&header.flags, &placeholder_lfh).expect("placeholder lfh");
+    let placeholder_lfh_bytes =
+        write_lfh(&header.flags, &placeholder_lfh).expect("placeholder lfh");
     let writer_aad = sar_crypto::aad::build_aead_aad(
         &global_aad,
         &lfh_bytes_for_aad(
