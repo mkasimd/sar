@@ -1,28 +1,40 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
 
+# Minimal permissions — this workflow only reads the repo.
+permissions:
+  contents: read
+
 jobs:
-  checks:
-    permissions:
-      contents: read
+  ci:
+    name: Format / Lint / Test
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Rust stable
+      - name: Install Rust (stable) with rustfmt and clippy
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+      # Cache ~/.cargo/registry, ~/.cargo/git, and the target directory.
+      - uses: Swatinem/rust-cache@v2
 
-      - name: cargo fmt
-        run: cargo fmt --check
+      - name: Check formatting
+        run: cargo fmt --all -- --check
 
-      - name: cargo clippy
+      - name: Clippy (workspace, all targets, all features)
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-      - name: cargo test
-        run: cargo test --workspace --all-features
+      - name: Run tests (workspace, all features, locked)
+        run: cargo test --workspace --all-features --locked
+
+      # NOTE: The fuzz/ directory does not currently contain a Cargo project.
+      # If fuzzing targets are added under fuzz/ in the future, do NOT run them
+      # here — fuzzing is slow, target-dependent, and should be handled in a
+      # dedicated fuzzing workflow or via a service such as OSS-Fuzz / cargo-fuzz.
