@@ -1,60 +1,86 @@
-# Security Notes (Milestones 1–5)
+# Security Notes
 
-## Core guarantees
+This document reflects current implemented behavior only.
 
-- `unsafe` is forbidden across SAR crates (`#![forbid(unsafe_code)]`).
-- Parsers fail closed on malformed, reserved, or unsupported values.
-- Checked arithmetic guards offsets, lengths, sizes, and archive-region boundaries.
-- Extraction rejects absolute paths and `..` traversal.
-- Decompression is bounded by `ArchiveReaderOptions.max_decoded_entry_size`.
-- AEAD authentication happens **before** decompression for encrypted entries.
+## Unsafe code policy
 
-## Crypto scope in Milestone 5
+- All currently audited SAR crates use `#![forbid(unsafe_code)]`.
+- Public parsing and validation paths fail closed on malformed, reserved, and unsupported values.
 
-Implemented in `sar-crypto` and integrated into `sar-core`/`sar-cli`:
+## Resource bounds and allocation limits
 
-- Hashing:
-  - SHA-256 (`0x30`)
-  - BLAKE3 (`0x31`)
-- AEAD:
-  - AES-256-GCM (`0x01`)
-  - XChaCha20-Poly1305 (`0x04`)
-- KMS/password modes:
-  - PBKDF2-HMAC-SHA256 (`0x01`)
-  - Argon2id (`0x02`)
-  - ASYMMETRIC_WRAP structural model/hooks (`0x03`)
+- `ArchiveReaderOptions.max_decoded_entry_size` defaults to `1 GiB` and bounds decompression output.
+- `sar-compression` enforces a caller-provided maximum decoded size to reduce decompression-bomb risk.
+- `sar-fec` bounds parity allocations to `256 MiB` for both XOR and Reed-Solomon helpers.
+- KMS parsing enforces conservative limits, including PBKDF2 and Argon2 DoS ceilings.
 
-Assigned-but-unimplemented algorithms return SAR unsupported/reserved errors.
+## Crypto and secret handling
 
-## Key handling
+- `SecretBytes` and `SecretString` use zeroizing containers.
+- Archives store KMS metadata and wrapped/derived-key parameters, **not** plaintext CEKs.
+- `sar-cli` currently writes password-based archives using PBKDF2-HMAC-SHA256 with a random 32-byte salt and 100,000 iterations.
+- `ArchiveWriter` tracks nonces per writer instance and fails if it cannot obtain a unique nonce.
+- AEAD decryption zeroizes its working plaintext buffer on authentication failure before returning an error.
 
-- Content-encryption keys use `SecretBytes = Zeroizing<Vec<u8>>` and are cleared on drop.
-- Passwords use `SecretString = Zeroizing<String>`.
-- Archives never store plaintext CEKs.
-- CEKs are resolved externally through the `KeyProvider` trait.
-- `sar-cli` currently writes password-protected archives with PBKDF2-HMAC-SHA256 and a random 32-byte salt.
+## Password handling
 
-## KDF policy
+- `sar-cli create`, `extract`, and `verify` accept `--password`.
+- If `--password` is absent where needed, the CLI falls back to `SAR_PASSWORD` and then a terminal prompt.
+- `list` and `inspect` do not accept passwords today, so encrypted archives are not fully supported by those commands.
 
-Conservative minimums are enforced while parsing and deriving keys:
+## Authentication, AAD, and release ordering
 
-- PBKDF2 salt length >= 16 bytes
-- PBKDF2 iterations >= 100,000
-- Argon2id salt length >= 16 bytes
-- Argon2id memory >= 64 MiB
-- Argon2id output length = 32 bytes
+- Encrypted entry payloads are authenticated before plaintext is released.
+- Current AAD binding uses the global-header flag section plus LFH bytes prepared for AEAD.
+- When Selective FEC is enabled for an encrypted entry, the AEAD AAD excludes only the FEC size/value region so that ciphertext repair metadata can vary without invalidating the authenticated header contract.
+- Wrong passwords fail during AEAD verification before decompression runs.
 
-DoS ceilings are also enforced for PBKDF2 iterations and Argon2 memory/time/parallelism values.
+## FEC and AEAD ordering
 
-## AEAD / nonce policy
+Current implemented order is:
 
-- AES-256-GCM uses the first 12 bytes of the on-wire 24-byte nonce field; bytes `12..24` must be zero.
-- XChaCha20-Poly1305 uses all 24 bytes.
-- `ArchiveWriter` tracks nonces per session and fails on detected reuse.
-- Authentication failures map to `SAR_ERR_AUTH_FAILED`.
+```text
+stored payload -> FEC repair over ciphertext bytes (if applicable)
+               -> AEAD verify/decrypt
+               -> decompression / STORE decode
+               -> logical payload
+```
 
-## Operational notes
+Notes:
 
-- Listing/inspection of encrypted archives may require keys if entry decoding is attempted.
-- Wrong passwords fail during AEAD verification before any plaintext reaches the decompressor.
-- Future milestones will extend signatures, asymmetric wrapping implementations, and recovery features; unsupported modes fail closed today.
+- current writer-side integration computes Selective FEC over ciphertext bytes when encryption is enabled
+- archive-level/global EC is validated structurally, not repaired automatically
+
+## Filesystem and parsing safety
+
+- Extraction rejects absolute paths.
+- Extraction rejects `..` traversal.
+- Parsing uses checked arithmetic for offsets, lengths, header sizes, and region boundaries.
+- Unknown assigned-but-unsupported algorithms return SAR unsupported/reserved errors rather than silent fallback.
+
+## Known security limitations
+
+- No signature implementation is present.
+- No built-in asymmetric-wrap cryptography is present; application code must provide unwrap behavior.
+- `sar-core::profile` is not a complete security/compliance oracle.
+- The current CLI has no dedicated encrypted `list` or encrypted `inspect` path because those commands do not accept passwords.
+- There is no stable FFI/C ABI yet, so no cross-language ownership guarantees exist.
+
+## Future FFI / C ABI security concerns (Milestone 12)
+
+When a stable ABI is introduced later, security design should explicitly cover:
+
+- ownership across language boundaries
+- allocator mismatch and explicit free functions
+- zeroization rules for secret buffers returned to or accepted from foreign callers
+- avoiding secret leakage in error strings or debug output
+- callback safety for key-provider / KMS integration
+- thread-safety guarantees for archive and crypto handles
+- version negotiation so new ABI fields do not get misinterpreted by older clients
+
+## Future work
+
+- signature support
+- fuller interoperability and adversarial corpus testing
+- archive-level repair orchestration
+- stable FFI/C ABI with explicit status codes, opaque handles, and secret-handling rules
