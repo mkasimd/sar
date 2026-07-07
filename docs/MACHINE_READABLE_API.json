@@ -803,6 +803,8 @@
               "ffi_readiness": "candidate",
               "ffi_notes": "Requires flattening Vec<SparseExtent> to a C-compatible pointer+len pair."
             },
+            {
+              "name": "CompressionSettings",
               "kind": "struct",
               "signature": "pub struct CompressionSettings { pub algo_id: u8, pub level: Option<u8> }",
               "visibility": "public",
