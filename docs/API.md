@@ -627,31 +627,99 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 - Public API: `NotImplemented`
 - FFI readiness: `not_applicable`
 
-## FFI / C ABI Readiness
+## Foreign-Language Interface Readiness
 
-This project may expose a stable C ABI in a future Milestone 12. No C ABI is implemented yet.
+No foreign-language interfaces are implemented yet.
 
-Candidate stable FFI surfaces:
-- archive open/read/next-entry/close wrappers over `ArchiveReader`
-- archive create/add-entry/finish wrappers over `ArchiveWriter`
-- archive verification and inspection summary functions
-- compression settings and one-shot compression/decompression wrappers
-- AEAD/hash helpers with explicit buffer-based APIs
-- KMS parameter parse/serialize helpers
-- FEC metadata parse/validate and high-level repair wrappers
-- `SarStatus`-style status mapping and CLI-equivalent high-level operations
+Planned interface milestones:
 
-Unstable / not ready for FFI:
-- generic Rust types such as `ArchiveReader<R>` and `ArchiveWriter<W>`
-- trait objects such as `KeyProvider`, `EncoderTransform`, `DecoderTransform`, and `FecCodec`
-- borrowed-slice and lifetime-heavy APIs without explicit ownership conventions
-- Rust-owned strings or `Vec<u8>` returned without an explicit allocation/free contract
-- terminal-prompt or environment-variable behavior from `sar-cli`
-- any future streaming API until ownership, threading, and callback contracts are defined
+Milestone 12: General developer interfaces
 
-Open design questions:
-- Should Milestone 12 prefer opaque handles like `sar_archive_reader_t` and `sar_archive_writer_t` for all high-level flows?
-- Should all public FFI entry points return `sar_status_t` plus out-parameters instead of exposing rich Rust error strings?
-- How should buffers be owned: caller-provided, SAR-allocated with explicit free functions, or both?
-- How should `KeyProvider` evolve into a callback-safe C ABI without leaking secret data or violating thread-safety expectations?
-- How should secret zeroization, allocator boundaries, and version negotiation be specified for long-lived FFI consumers?
+- 12a: Stable C ABI.
+- 12b: Python module.
+
+Milestone 13: Mobile platform interfaces
+
+- 13a: Swift package, iOS-compatible.
+- 13b: Kotlin/Java package, Android-compatible.
+
+C++ support:
+
+- C++ consumers are expected to use the stable C ABI directly.
+- A dedicated C++ wrapper is not a baseline requirement.
+
+Candidate high-level operations:
+
+- create archive
+- extract archive
+- list archive
+- inspect archive
+- verify archive
+- compression configuration
+- encryption/KMS configuration
+- FEC verification/repair
+- error/status mapping
+- streaming archive read/write APIs
+- SAR-over-QUIC transport for streaming and remote archive access
+
+### C ABI readiness
+
+- The future C ABI should be representable with opaque handles such as archive-reader, archive-writer, verification-report, and streaming-session handles rather than exposing Rust generic types directly.
+- Ownership and lifetime rules are not documented strongly enough yet for a stable ABI; Milestone 12a should define handle lifetime, entry/result lifetime, and whether buffers remain valid until the next call, until explicit free, or until handle teardown.
+- High-level operations are good candidates for explicit create/free style entry points, including reader/writer open-close, result-free, and SAR-owned string/buffer release helpers.
+- Buffer strategy is still an open design choice: some operations fit caller-provided buffers, while inspect/list/error text may need SAR-owned allocations with explicit free functions.
+- `SarStatus` already provides a strong foundation for stable error/status return codes, but the exported code set and error-to-string contract are not frozen yet.
+- Version negotiation is still required for any future stable ABI, including ABI version constants, feature discovery, and reject-on-mismatch behavior.
+- Thread-safety expectations are not yet defined clearly enough for foreign callers; Milestone 12a should document whether handles are thread-confined, thread-safe, or safe only under external synchronization.
+- KMS and key-provider callbacks need a callback-safe C ABI contract covering invocation context, reentrancy, cancellation, error propagation, and how secret inputs/outputs are passed.
+- Secret handling across FFI needs explicit zeroization and allocator-boundary rules so keys, passwords, and decrypted material do not leak across create/free or callback boundaries.
+- Rust APIs that are unsuitable for direct C ABI exposure include `ArchiveReader<R>`, `ArchiveWriter<W>`, `Box<dyn KeyProvider>`, `EncoderTransform`, `DecoderTransform`, `FecCodec`, terminal-prompt behavior, environment-variable password fallback, and other generic-, trait-, or lifetime-heavy surfaces.
+
+### Python readiness
+
+- The archive lifecycle and summary operations can plausibly be represented as high-level Python functions and reader/writer classes.
+- Python should not be committed yet to either a C-ABI wrapper or a direct PyO3/maturin module; the C ABI offers broader reuse, while direct Rust bindings may reach a usable Python surface earlier.
+- Path-like object handling looks practical because high-level archive APIs are path-oriented, but future bindings still need clear normalization rules for `str`, `bytes`, and `os.PathLike`.
+- Bytes and buffer ownership are not settled yet; future bindings should prefer copies into Python `bytes`/buffer objects unless an explicit borrowed-buffer contract is proven safe.
+- `SarStatus` and related errors look mappable into Python exceptions, but the public exception hierarchy is still an open design choice.
+- Archive readers and writers are good candidates for context-manager support once close/finalize semantics are frozen.
+- Long-running operations such as create, extract, verify, FEC work, and future transport/streaming flows should likely release the GIL while native work is in progress.
+- Password and KMS callback support is not binding-ready yet because callback threading, blocking behavior, and exception/error translation must be designed first.
+- Secret material may end up in Python-managed memory if passwords, keys, or decrypted bytes are exposed as ordinary Python objects; that risk needs explicit documentation and minimization.
+- Wheel and packaging work is intentionally deferred, but future milestones will need platform wheel decisions, bundled native library policy, and build backend choices.
+- First Python exposures should focus on create, extract, list, inspect, verify, compression/encryption/FEC option objects, and status/error mapping before lower-level transform internals.
+
+### Swift/iOS readiness
+
+- Swift can likely consume a future stable interface through an imported C header, but that depends on Milestone 12a first defining a clean C ABI.
+- Opaque handles are a suitable model for Swift ownership wrappers as long as create/free and invalidation rules are explicit.
+- `SarStatus`-style results appear capable of mapping cleanly into Swift `Error`, but the conversion contract and human-readable error text policy are not yet fixed.
+- Any SAR-owned strings or buffers exposed to Swift must have explicit free functions and allocator-boundary rules.
+- File-path-oriented APIs should prefer UTF-8 C strings at the ABI boundary, with Swift wrappers handling `String` and `URL` conversion above that layer.
+- Future streaming APIs will probably require callback-oriented or pull/push handle designs rather than direct translation of Rust traits.
+- KMS and password callbacks are not ready yet; Swift interoperability will need clear rules for callback lifetime, escaping closures, threading, and cancellation.
+- Secret material may cross into Swift-managed memory if passwords, keys, or plaintext are surfaced as Swift `String`, `Data`, or closure-captured values; that should be minimized and documented.
+- Long-running operations should likely support cancellation hooks that Swift can integrate with task or operation cancellation.
+- Thread-safety guarantees are still too informal for Swift consumers and need to be made explicit before mobile bindings.
+- Future packaging will need XCFramework and Swift Package decisions after the native ABI surface is stable.
+- Intended Apple targets are likely iOS device, iOS simulator, macOS, Mac Catalyst, and possibly visionOS, but target support should remain a later Milestone 13 decision.
+
+### Kotlin/Java/Android readiness
+
+- A Kotlin/Java interface could be built either through JNI over the stable C ABI or through a dedicated native Android wrapper, but that decision should wait until the C ABI is settled.
+- Opaque handles are a plausible representation for long-lived native resources if Java/Kotlin ownership, finalization, and explicit close semantics are defined carefully.
+- `SarStatus` values can likely map into Java/Kotlin exceptions, but the exception taxonomy and checked-vs-unchecked policy are still open.
+- Byte arrays, direct buffers, and file paths all look representable, but the binding must define when data is copied, when direct buffers are allowed, and how path encoding is normalized on Android and JVM hosts.
+- Long-running operations such as create, extract, verify, FEC, and future transport flows likely need cancellation and progress callbacks.
+- KMS and password callbacks are not ready for Kotlin/Java yet because JNI callback safety, thread attachment, exception propagation, and blocking behavior are unresolved.
+- Secret material may cross into JVM-managed memory if passwords, keys, or plaintext are carried in `String`, `byte[]`, or buffer objects; that risk should be minimized and documented explicitly.
+- Likely Android ABI targets include `arm64-v8a`, `armeabi-v7a`, and `x86_64`, but final support policy is a Milestone 13 packaging decision.
+- Future packaging will need AAR distribution decisions, native library loading policy, and JVM/Android compatibility guidance.
+
+### Open design questions
+
+- Should Milestone 12 prefer a small C ABI first and have Python, Swift, Kotlin/Java, and C++ build on top of it wherever practical?
+- Which high-level operations should be considered baseline-stable first: create/extract/list/inspect/verify only, or also streaming, FEC repair, and SAR-over-QUIC?
+- Which result types should be handle-based versus copied into caller-provided buffers?
+- How should callback-based KMS and password resolution propagate errors, cancellation, and secret zeroization requirements across language boundaries?
+- What thread-safety and cancellation guarantees are required before mobile-facing bindings are credible?
