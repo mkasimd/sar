@@ -112,15 +112,13 @@ fn parse_lfh_fec_value_disabled_returns_none() {
 
 #[test]
 fn parse_lfh_fec_value_reserved_id_0x10_fails() {
-    let err =
-        parse_lfh_fec_value(0x10, &[1, 2, 3], &unlimited_limits()).expect_err("must fail");
+    let err = parse_lfh_fec_value(0x10, &[1, 2, 3], &unlimited_limits()).expect_err("must fail");
     assert!(matches!(err, SarError::ReservedValue(_)));
 }
 
 #[test]
 fn parse_lfh_fec_value_unsupported_id_0x12_fails() {
-    let err =
-        parse_lfh_fec_value(0x12, &[1, 2, 3], &unlimited_limits()).expect_err("must fail");
+    let err = parse_lfh_fec_value(0x12, &[1, 2, 3], &unlimited_limits()).expect_err("must fail");
     assert!(matches!(err, SarError::Unsupported(_)));
 }
 

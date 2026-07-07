@@ -64,8 +64,7 @@ fn fec_value_bytes_do_not_change_aad() {
     let (_, _, second_lfh_bytes) = sample_lfh(vec![0xEE; 14]);
 
     let first = lfh_bytes_for_aad(flags, &first_lfh_bytes, FEC_ALGO_XOR, 14).expect("aad lfh");
-    let second =
-        lfh_bytes_for_aad(flags, &second_lfh_bytes, FEC_ALGO_XOR, 14).expect("aad lfh");
+    let second = lfh_bytes_for_aad(flags, &second_lfh_bytes, FEC_ALGO_XOR, 14).expect("aad lfh");
 
     assert_eq!(first, second);
 }
@@ -77,8 +76,7 @@ fn changing_header_size_bytes_breaks_aead_authentication() {
 
     let aad = sar_crypto::aad::build_aead_aad(
         b"global-flags",
-        &lfh_bytes_for_aad(flags, &lfh_bytes, FEC_ALGO_XOR, lfh.fec_value.len())
-            .expect("aad lfh"),
+        &lfh_bytes_for_aad(flags, &lfh_bytes, FEC_ALGO_XOR, lfh.fec_value.len()).expect("aad lfh"),
     );
     let encoded = encode_payload_v2(
         &payload,

@@ -194,8 +194,7 @@ fn parse_write_cd_helpers() {
     };
     let bytes = write_central_dictionary(&cd, GlobalFlags::empty()).expect("write");
     let (parsed, consumed) =
-        parse_central_dictionary(&bytes, GlobalFlags::empty(), &unlimited_limits())
-            .expect("parse");
+        parse_central_dictionary(&bytes, GlobalFlags::empty(), &unlimited_limits()).expect("parse");
     assert_eq!(consumed, bytes.len());
     assert_eq!(parsed.offsets, vec![8]);
 }

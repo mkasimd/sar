@@ -131,8 +131,9 @@ fn parse_archive_layout(
     archive_bytes: &[u8],
     limits: &ResourceLimits,
 ) -> Result<ArchiveLayout, SarError> {
-    limits
-        .check_archive_size(u64::try_from(archive_bytes.len()).map_err(|_| SarError::Overflow("archive size"))?)?;
+    limits.check_archive_size(
+        u64::try_from(archive_bytes.len()).map_err(|_| SarError::Overflow("archive size"))?,
+    )?;
     let (global_header, _header_len) = parse_global_header(archive_bytes, limits)?;
     let flags = global_header.flags;
 
@@ -412,11 +413,7 @@ pub fn repair_archive(
     let repair_working_set = u64::try_from(archive_bytes.len())
         .map_err(|_| SarError::Overflow("archive repair working set"))?
         .checked_add(plan.protected_range.length)
-        .and_then(|value| {
-            value.checked_add(
-                u64::try_from(tlv_value.len()).ok()?,
-            )
-        })
+        .and_then(|value| value.checked_add(u64::try_from(tlv_value.len()).ok()?))
         .and_then(|value| value.checked_add(plan.protected_range.length))
         .ok_or(SarError::Overflow("archive repair working set"))?;
     limits.check_repair_working_set(repair_working_set)?;

@@ -333,8 +333,8 @@ fn sparse_allocation_bounded_by_max_size() {
         .read_all_logical_files(false)
         .expect_err("should fail");
     assert!(
-        matches!(err, SarError::Overflow(_)),
-        "expected Overflow, got {err:?}"
+        matches!(err, SarError::LimitExceeded(_)),
+        "expected LimitExceeded, got {err:?}"
     );
 }
 

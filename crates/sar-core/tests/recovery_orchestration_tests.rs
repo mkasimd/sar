@@ -168,8 +168,8 @@ fn plan_repair_unavailable_without_ec() {
         entries: Vec::new(),
         archive_ranges: Vec::new(),
     };
-    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
-        .expect_err("should fail");
+    let err =
+        plan_archive_repair(&archive, erasures, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::RecoveryUnavailable(_)),
         "expected RecoveryUnavailable, got {err:?}"
@@ -225,8 +225,8 @@ fn plan_repair_rejects_out_of_range_erasures() {
             length: 256,
         }],
     };
-    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
-        .expect_err("should fail");
+    let err =
+        plan_archive_repair(&archive, erasures, &unlimited_limits()).expect_err("should fail");
     assert!(matches!(err, SarError::RecoveryUnavailable(_)));
     let _ = pr;
 }
@@ -245,8 +245,8 @@ fn plan_repair_rejects_unaligned_erasures() {
             length: 256,
         }],
     };
-    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
-        .expect_err("should fail");
+    let err =
+        plan_archive_repair(&archive, erasures, &unlimited_limits()).expect_err("should fail");
     assert!(matches!(err, SarError::RecoveryUnavailable(_)));
 }
 
@@ -265,8 +265,8 @@ fn archive_level_repair_unavailable_when_spec_incomplete() {
             length: 3,             // not a multiple of 256
         }],
     };
-    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
-        .expect_err("should fail");
+    let err =
+        plan_archive_repair(&archive, erasures, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::RecoveryUnavailable(_)),
         "expected RecoveryUnavailable for spec-incomplete case"

@@ -779,7 +779,8 @@ pub fn parse_central_dictionary(
     flags: GlobalFlags,
     limits: &ResourceLimits,
 ) -> Result<(CentralDictionary, usize), SarError> {
-    limits.check_cd_bytes(u64::try_from(input.len()).map_err(|_| SarError::Overflow("CD size"))?)?;
+    limits
+        .check_cd_bytes(u64::try_from(input.len()).map_err(|_| SarError::Overflow("CD size"))?)?;
     let mut cursor = ParseCursor::new(input);
     let version = cursor.read_u8()?;
     if version != SUPPORTED_CD_VERSION {
@@ -1002,10 +1003,13 @@ pub fn lfh_bytes_for_aad(
     let fec_size_end = fec_size_off
         .checked_add(3)
         .ok_or(SarError::Overflow("FEC size field end"))?;
-    let fec_value_start = lfh_bytes
-        .len()
-        .checked_sub(fec_value_len)
-        .ok_or(SarError::InvalidLength("FEC value length exceeds LFH length"))?;
+    let fec_value_start =
+        lfh_bytes
+            .len()
+            .checked_sub(fec_value_len)
+            .ok_or(SarError::InvalidLength(
+                "FEC value length exceeds LFH length",
+            ))?;
     if fec_size_end > fec_value_start || fec_value_start > lfh_bytes.len() {
         return Err(SarError::InvalidLength(
             "LFH FEC fields exceed available LFH bytes",
@@ -1019,7 +1023,9 @@ pub fn lfh_bytes_for_aad(
                 .checked_add(fec_value_len)
                 .ok_or(SarError::Overflow("LFH AAD exclusion length"))?,
         )
-        .ok_or(SarError::InvalidLength("LFH AAD exclusion exceeds LFH length"))?;
+        .ok_or(SarError::InvalidLength(
+            "LFH AAD exclusion exceeds LFH length",
+        ))?;
     let mut out = Vec::with_capacity(out_len);
     out.extend_from_slice(&lfh_bytes[..fec_size_off]);
     out.extend_from_slice(&lfh_bytes[fec_size_end..fec_value_start]);

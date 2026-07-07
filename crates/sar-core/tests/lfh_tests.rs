@@ -106,13 +106,12 @@ fn path_field_required_only_when_global_has_path() {
 
     let with =
         write_lfh(&(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH), &lfh).expect("write with");
-    let (parsed_with, _) =
-        parse_lfh(
-            &(with),
-            &(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH),
-            &unlimited_limits(),
-        )
-        .expect("parse with");
+    let (parsed_with, _) = parse_lfh(
+        &(with),
+        &(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH),
+        &unlimited_limits(),
+    )
+    .expect("parse with");
     assert_eq!(parsed_with.path, b"p");
 }
 

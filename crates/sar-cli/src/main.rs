@@ -15,9 +15,10 @@ use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
     EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider, KmsContext, KmsParams,
-    ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv, fragment::FragmentDescriptor,
-    fragment::FragmentEntry, fragment::validate_fragment_group, inspect_recovery_metadata,
-    plan_archive_repair, repair_archive, sparse::validate_sparse_extents,
+    ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv,
+    fragment::FragmentDescriptor, fragment::FragmentEntry, fragment::validate_fragment_group,
+    inspect_recovery_metadata, plan_archive_repair, repair_archive,
+    sparse::validate_sparse_extents,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
@@ -678,13 +679,9 @@ fn verify_archive(
         // Validate sparse extents for each entry that has them
         let mut sparse_errors = 0u32;
         for entry in &entries {
-            if entry
-                .sparse_extents
-                .as_ref()
-                .is_some_and(|ext| {
-                    validate_sparse_extents(ext, entry.uncompressed_size, &limits).is_err()
-                })
-            {
+            if entry.sparse_extents.as_ref().is_some_and(|ext| {
+                validate_sparse_extents(ext, entry.uncompressed_size, &limits).is_err()
+            }) {
                 eprintln!("recovery verify: sparse extent error in '{}'", entry.name);
                 sparse_errors += 1;
             }

@@ -8,7 +8,9 @@ use sar_core::{
         write_global_header, write_lfh,
     },
     fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
-    sparse::{SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents},
+    sparse::{
+        SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
+    },
     tlv::{Tlv, parse_tlvs, write_tlvs},
 };
 
@@ -27,7 +29,11 @@ fn build_xor_tlv_value(protected_len: u64) -> Vec<u8> {
     let mut value = vec![stripe_size, 0x00];
     value.extend_from_slice(&protected_len.to_le_bytes());
     value.extend_from_slice(&(u32::try_from(stripe_count).expect("stripe count")).to_le_bytes());
-    value.extend(vec![0u8; usize::try_from(stripe_count * block_size).expect("parity len")]);
+    value.extend(vec![
+        0u8;
+        usize::try_from(stripe_count * block_size)
+            .expect("parity len")
+    ]);
     value
 }
 
@@ -205,7 +211,8 @@ fn excessive_cd_size_fails() {
         ..base_limits()
     };
 
-    let err = parse_central_dictionary(&bytes, GlobalFlags::empty(), &limits).expect_err("must fail");
+    let err =
+        parse_central_dictionary(&bytes, GlobalFlags::empty(), &limits).expect_err("must fail");
     assert!(matches!(err, SarError::LimitExceeded(_)));
 }
 

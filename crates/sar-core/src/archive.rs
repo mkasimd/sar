@@ -540,12 +540,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // Per spec §13.2.1: when SELECTIVE_FEC is active and FEC Algo ID is
             // non-zero, FEC Size and FEC Value are excluded from the AAD.
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
-            let aad_lfh_bytes = lfh_bytes_for_aad(
-                header.flags,
-                &lfh_bytes,
-                fec_algo_id,
-                lfh.fec_value.len(),
-            )?;
+            let aad_lfh_bytes =
+                lfh_bytes_for_aad(header.flags, &lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
             let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             Some(EntryCryptoContext {
                 algo_id,
@@ -894,7 +890,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     }
                 });
                 self.options.limits.check_fragment_count(
-                    group.entries
+                    group
+                        .entries
                         .len()
                         .checked_add(1)
                         .ok_or(SarError::Overflow("fragment count"))?,
@@ -950,11 +947,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 sparse_extents: group_sparse_extents,
                 sparse_uncompressed_size: group_sparse_uncompressed_size,
                 file_crc32: group_file_crc32,
-            } = frag_groups
-                .remove(&fid)
-                .ok_or(SarError::Malformed(
-                    "fragment group ID vanished during reconstruction",
-                ))?;
+            } = frag_groups.remove(&fid).ok_or(SarError::Malformed(
+                "fragment group ID vanished during reconstruction",
+            ))?;
 
             // Compute assembled-payload logical size from FragmentDescriptors:
             // max(descriptor.absolute_offset + descriptor.fragment_size).
@@ -1299,12 +1294,13 @@ impl<W: Write> ArchiveWriter<W> {
             if is_fec {
                 // Compute FEC over ciphertext only (exclude the 16-byte AEAD tag).
                 let tag_len = 16usize;
-                let ciphertext_len = encoded_payload
-                    .len()
-                    .checked_sub(tag_len)
-                    .ok_or(SarError::InvalidLength(
-                        "encrypted payload shorter than AEAD tag",
-                    ))?;
+                let ciphertext_len =
+                    encoded_payload
+                        .len()
+                        .checked_sub(tag_len)
+                        .ok_or(SarError::InvalidLength(
+                            "encrypted payload shorter than AEAD tag",
+                        ))?;
                 let ciphertext = &encoded_payload[..ciphertext_len];
                 let fec_value = compute_fec_value(
                     self.fec
@@ -1535,12 +1531,13 @@ impl<W: Write> ArchiveWriter<W> {
 
             if is_fec {
                 let tag_len = 16usize;
-                let ciphertext_len = encoded_payload
-                    .len()
-                    .checked_sub(tag_len)
-                    .ok_or(SarError::InvalidLength(
-                        "encrypted payload shorter than AEAD tag",
-                    ))?;
+                let ciphertext_len =
+                    encoded_payload
+                        .len()
+                        .checked_sub(tag_len)
+                        .ok_or(SarError::InvalidLength(
+                            "encrypted payload shorter than AEAD tag",
+                        ))?;
                 let ciphertext = &encoded_payload[..ciphertext_len];
                 let fec_value = compute_fec_value(
                     self.fec

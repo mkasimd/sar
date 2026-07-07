@@ -187,8 +187,7 @@ fn reject_overlapping_fragments() {
             payload: vec![0u8; 8],
         },
     ];
-    let err =
-        validate_fragment_group(&frags, 12, &unlimited_limits()).expect_err("should fail");
+    let err = validate_fragment_group(&frags, 12, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
@@ -208,8 +207,7 @@ fn reject_invalid_fragment_bounds() {
         },
         payload: vec![0u8; 100],
     }];
-    let err =
-        validate_fragment_group(&frags, 50, &unlimited_limits()).expect_err("should fail");
+    let err = validate_fragment_group(&frags, 50, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::Bounds(_)),
         "expected Bounds, got {err:?}"
@@ -241,8 +239,7 @@ fn reject_missing_fragments_no_loss_tolerant() {
             payload: vec![0u8; 4],
         },
     ];
-    let err =
-        reconstruct_fragments(frags, 12, &unlimited_limits()).expect_err("should fail");
+    let err = reconstruct_fragments(frags, 12, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::FragmentGap(_)),
         "expected FragmentGap, got {err:?}"

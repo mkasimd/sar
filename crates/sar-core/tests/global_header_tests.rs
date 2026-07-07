@@ -18,7 +18,8 @@ fn parses_valid_minimal_global_header() {
     };
 
     let bytes = write_global_header(&header).expect("write header");
-    let (parsed, consumed) = parse_global_header(&bytes, &unlimited_limits()).expect("parse header");
+    let (parsed, consumed) =
+        parse_global_header(&bytes, &unlimited_limits()).expect("parse header");
     assert_eq!(consumed, bytes.len());
     assert_eq!(parsed.flags, GlobalFlags::NO_INDEX);
 }

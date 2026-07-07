@@ -249,8 +249,7 @@ fn reject_overlapping_extents() {
             length: 8,
         }, // overlaps
     ];
-    let err =
-        validate_sparse_extents(&extents, 64, &unlimited_limits()).expect_err("should fail");
+    let err = validate_sparse_extents(&extents, 64, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
@@ -263,8 +262,7 @@ fn reject_extent_beyond_logical_size() {
         offset: 4,
         length: 8,
     }];
-    let err =
-        validate_sparse_extents(&extents, 10, &unlimited_limits()).expect_err("should fail");
+    let err = validate_sparse_extents(&extents, 10, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
@@ -279,8 +277,7 @@ fn sparse_invalid_map_error_code() {
         offset: 0,
         length: 100,
     }];
-    let err =
-        validate_sparse_extents(&extents, 50, &unlimited_limits()).expect_err("should fail");
+    let err = validate_sparse_extents(&extents, 50, &unlimited_limits()).expect_err("should fail");
     assert_eq!(err.status(), SarStatus::ErrInvalidMap);
 }
 

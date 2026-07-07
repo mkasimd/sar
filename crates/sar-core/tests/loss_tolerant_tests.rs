@@ -39,8 +39,7 @@ fn missing_data_fails_by_default() {
             payload: vec![3u8; 4],
         },
     ];
-    let err =
-        reconstruct_fragments(frags, 12, &unlimited_limits()).expect_err("should fail");
+    let err = reconstruct_fragments(frags, 12, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::FragmentGap(_)),
         "expected FragmentGap, got {err:?}"
