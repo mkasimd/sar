@@ -19,7 +19,10 @@ fn writer_reader_deflate_roundtrip_no_index() {
     let mut out = Vec::new();
     let mut writer = ArchiveWriter::new_with_compression(
         &mut out,
-        ArchiveWriterOptions { no_index: true },
+        ArchiveWriterOptions {
+            no_index: true,
+            encryption: None,
+        },
         CompressionSettings {
             algo_id: COMP_ALGO_DEFLATE,
             level: Some(6),
@@ -43,7 +46,10 @@ fn writer_reader_zstd_roundtrip_indexed() {
     let mut out = Vec::new();
     let mut writer = ArchiveWriter::new_with_compression(
         &mut out,
-        ArchiveWriterOptions { no_index: false },
+        ArchiveWriterOptions {
+            no_index: false,
+            encryption: None,
+        },
         CompressionSettings {
             algo_id: COMP_ALGO_ZSTD,
             level: Some(7),

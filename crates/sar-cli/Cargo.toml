@@ -8,8 +8,11 @@ license.workspace = true
 clap.workspace = true
 serde_json.workspace = true
 walkdir.workspace = true
+rpassword.workspace = true
+getrandom.workspace = true
 sar-core = { path = "../sar-core" }
 sar-compression = { path = "../sar-compression" }
+sar-crypto = { path = "../sar-crypto" }
 
 [lints]
 workspace = true

@@ -1,18 +1,30 @@
+use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use sar_compression::COMP_ALGO_STORE;
+use sar_crypto::aad::build_aead_aad;
+use sar_crypto::{
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KeyProvider, KmsContext, KmsParams, SecretBytes,
+    aead::generate_nonce,
+    kms::types::{parse_kms_payload, serialize_kms_payload},
+    provider::resolve_cek,
+    validate_encr_algo_id,
+};
 use serde::Serialize;
 
 use crate::{
     error::SarError,
     flags::{GlobalFlags, validate_global_flags},
     format::{
-        CentralDictionary, Footer, GlobalHeader, LocalFileHeader, SUPPORTED_CD_VERSION,
-        parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
-        write_central_dictionary, write_footer, write_global_header, write_lfh,
+        CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION,
+        global_header_flags_bytes, lfh_to_bytes, parse_central_dictionary, parse_footer,
+        parse_global_header, parse_lfh, write_central_dictionary, write_footer,
+        write_global_header,
     },
     tlv::Tlv,
-    transform::{DecodingPlan, EncodingPlan, decode_payload, encode_payload},
+    transform::{
+        DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
+    },
 };
 
 /// Metadata summary for profile/verification checks.
@@ -33,9 +45,9 @@ pub struct EntryMetadata {
     pub name: String,
     /// Optional path bytes interpreted as UTF-8 lossily.
     pub path: Option<String>,
-    /// Payload size.
+    /// Encoded payload size.
     pub payload_size: u64,
-    /// Uncompressed size.
+    /// Logical uncompressed size.
     pub uncompressed_size: u64,
     /// Effective compression algorithm ID used for decoding.
     pub compression_algo_id: u8,
@@ -74,11 +86,22 @@ pub struct EntryWritten {
     pub total_bytes: u64,
 }
 
+/// Encryption settings for archive writing.
+#[derive(Debug, Clone)]
+pub struct EncryptionSettings {
+    /// AEAD algorithm ID (`ENCR_AES256_GCM` or `ENCR_XCHACHA20_POLY`).
+    pub algo_id: u8,
+    /// KMS parameters used to resolve and serialize the CEK.
+    pub kms_params: KmsParams,
+}
+
 /// Writer options.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ArchiveWriterOptions {
     /// If true, omit Central Dictionary and Footer.
     pub no_index: bool,
+    /// Optional encryption settings for new entries.
+    pub encryption: Option<EncryptionSettings>,
 }
 
 /// Archive writer compression settings.
@@ -103,7 +126,10 @@ impl CompressionSettings {
 
 impl Default for ArchiveWriterOptions {
     fn default() -> Self {
-        Self { no_index: true }
+        Self {
+            no_index: true,
+            encryption: None,
+        }
     }
 }
 
@@ -145,16 +171,17 @@ pub struct VerificationReport {
 }
 
 /// Streaming archive reader over a seekable source.
-#[derive(Debug)]
 pub struct ArchiveReader<R> {
     reader: R,
     options: ArchiveReaderOptions,
     global_header: Option<GlobalHeader>,
+    global_flags_section: Vec<u8>,
     header_len: u64,
     data_end: u64,
     next_offset: u64,
     file_len: u64,
     cd: Option<CentralDictionary>,
+    key_provider: Option<Box<dyn KeyProvider>>,
 }
 
 impl<R: Read + Seek> ArchiveReader<R> {
@@ -171,12 +198,21 @@ impl<R: Read + Seek> ArchiveReader<R> {
             reader,
             options,
             global_header: None,
+            global_flags_section: Vec::new(),
             header_len: 0,
             data_end: 0,
             next_offset: 0,
             file_len,
             cd: None,
+            key_provider: None,
         })
+    }
+
+    /// Attach a key provider used for encrypted entry decoding.
+    #[must_use]
+    pub fn with_key_provider(mut self, key_provider: Box<dyn KeyProvider>) -> Self {
+        self.key_provider = Some(key_provider);
+        self
     }
 
     /// Parses and returns the global header.
@@ -224,6 +260,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         let (header, consumed) = parse_global_header(&header_bytes)?;
+        if let Some(kms) = &header.kms {
+            let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+        }
         let header_len = u64::try_from(consumed).map_err(|_| SarError::Overflow("header len"))?;
 
         let (data_end, cd) = if header.flags.contains(GlobalFlags::NO_INDEX) {
@@ -247,7 +286,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let cd_region_len = self
                 .file_len
                 .checked_sub(8)
-                .and_then(|v| v.checked_sub(cd_offset))
+                .and_then(|value| value.checked_sub(cd_offset))
                 .ok_or(SarError::Overflow("CD region length"))?;
             let cd_len_usize = usize::try_from(cd_region_len)
                 .map_err(|_| SarError::Overflow("CD region length usize"))?;
@@ -267,6 +306,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             (cd_offset, Some(cd))
         };
 
+        self.global_flags_section = global_header_flags_bytes(&header);
         self.global_header = Some(header.clone());
         self.header_len = header_len;
         self.data_end = data_end;
@@ -281,7 +321,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let header = self
             .global_header
             .as_ref()
-            .ok_or(SarError::Malformed("call read_global_header first"))?;
+            .ok_or(SarError::Malformed("call read_global_header first"))?
+            .clone();
 
         if self.next_offset >= self.data_end {
             return Ok(None);
@@ -305,18 +346,21 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags)?;
+        let is_effectively_compressed =
+            header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
+        let is_encrypted = lfh.entry_mode.is_encrypted();
 
-        if header.flags.contains(GlobalFlags::ENCRYPTED) {
-            return Err(SarError::Unsupported(
-                "encrypted payload processing is not implemented in Milestones 1–3",
+        if is_encrypted && !header.flags.contains(GlobalFlags::ENCRYPTED) {
+            return Err(SarError::FlagConflict(
+                "IS_ENCRYPTED requires global ENCRYPTED",
             ));
         }
 
-        if lfh.entry_mode.is_encrypted() {
-            return Err(SarError::Unsupported(
-                "entry-level encryption processing is not implemented in Milestones 1–3",
-            ));
-        }
+        let effective_comp_algo_id = if is_effectively_compressed {
+            lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
+        } else {
+            COMP_ALGO_STORE
+        };
 
         let payload_start = self
             .next_offset
@@ -332,25 +376,44 @@ impl<R: Read + Seek> ArchiveReader<R> {
         self.reader.seek(SeekFrom::Start(payload_start))?;
         let payload_len = usize::try_from(lfh.payload_size)
             .map_err(|_| SarError::Overflow("payload length usize"))?;
-        let mut payload = vec![0u8; payload_len];
-        self.reader.read_exact(&mut payload)?;
+        let mut encoded_payload = vec![0u8; payload_len];
+        self.reader.read_exact(&mut encoded_payload)?;
 
-        let is_effectively_compressed =
-            header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
-        let effective_comp_algo_id = if is_effectively_compressed {
-            lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
+        let crypto = if is_encrypted {
+            let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
+                "encrypted entry missing encryption algorithm ID",
+            ))?;
+            validate_encr_algo_id(algo_id).map_err(SarError::from)?;
+            let provider = self.key_provider.as_deref().ok_or(SarError::KeyMissing(
+                "no key provider configured for encrypted archive",
+            ))?;
+            let context = build_kms_context(&header)?;
+            let key = resolve_cek(provider, &context).map_err(SarError::from)?;
+            let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
+                "encrypted entry missing IV/nonce field",
+            ))?;
+            let aad = build_aead_aad(&self.global_flags_section, &lfh_bytes);
+            Some(EntryCryptoContext {
+                algo_id,
+                iv_nonce,
+                aad,
+                key,
+            })
         } else {
-            COMP_ALGO_STORE
+            None
         };
-        let decoded = decode_payload(
-            &payload,
-            DecodingPlan {
+
+        let decoded = decode_payload_v2(
+            &encoded_payload,
+            DecodingPlanV2 {
                 is_compressed: is_effectively_compressed,
                 comp_algo_id: effective_comp_algo_id,
                 expected_output_size: lfh.uncompressed_size,
                 max_output_size: self.options.max_decoded_entry_size,
+                crypto,
             },
         )?;
+
         if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
             != lfh.uncompressed_size
         {
@@ -358,7 +421,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 "decoded payload size does not match LFH Uncompressed Size",
             ));
         }
-        if !is_effectively_compressed && lfh.payload_size != lfh.uncompressed_size {
+        if !is_effectively_compressed && !is_encrypted && lfh.payload_size != lfh.uncompressed_size
+        {
             return Err(SarError::InvalidLength(
                 "STORE mode requires Payload Size == Uncompressed Size",
             ));
@@ -375,12 +439,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             payload_size: lfh.payload_size,
             uncompressed_size: lfh.uncompressed_size,
             compression_algo_id: effective_comp_algo_id,
-            compression_algorithm: match effective_comp_algo_id {
-                0x00 => "STORE",
-                0x01 => "DEFLATE",
-                0x02 => "ZSTD",
-                _ => "UNKNOWN",
-            },
+            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
             is_compressed: is_effectively_compressed,
         };
 
@@ -456,8 +515,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     }
 }
 
-/// Archive writer with milestone-4 compression support.
-#[derive(Debug)]
+/// Archive writer with compression and optional encryption support.
 pub struct ArchiveWriter<W> {
     writer: W,
     flags: GlobalFlags,
@@ -465,19 +523,38 @@ pub struct ArchiveWriter<W> {
     position: u64,
     offsets: Vec<u64>,
     finished: bool,
+    cek: Option<SecretBytes>,
+    encr_algo_id: Option<u8>,
+    used_nonces: HashSet<[u8; 24]>,
+    global_flags_section: Vec<u8>,
 }
 
 impl<W: Write> ArchiveWriter<W> {
     /// Creates a new archive writer and writes the global header.
     pub fn new(writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
-        Self::new_with_compression(writer, options, CompressionSettings::store())
+        Self::new_with_compression_and_key_provider(
+            writer,
+            options,
+            CompressionSettings::store(),
+            None,
+        )
     }
 
     /// Creates a new archive writer and writes the global header with compression settings.
     pub fn new_with_compression(
+        writer: W,
+        options: ArchiveWriterOptions,
+        compression: CompressionSettings,
+    ) -> Result<Self, SarError> {
+        Self::new_with_compression_and_key_provider(writer, options, compression, None)
+    }
+
+    /// Creates a new archive writer with compression and an optional key provider.
+    pub fn new_with_compression_and_key_provider(
         mut writer: W,
         options: ArchiveWriterOptions,
         compression: CompressionSettings,
+        key_provider: Option<Box<dyn KeyProvider>>,
     ) -> Result<Self, SarError> {
         let mut flags = GlobalFlags::empty();
         if options.no_index {
@@ -486,15 +563,44 @@ impl<W: Write> ArchiveWriter<W> {
         if compression.algo_id != COMP_ALGO_STORE {
             flags |= GlobalFlags::COMPRESSED;
         }
-        validate_global_flags(flags)?;
 
+        let mut cek = None;
+        let mut encr_algo_id = None;
+        let kms = if let Some(encryption) = &options.encryption {
+            validate_encr_algo_id(encryption.algo_id).map_err(SarError::from)?;
+            if !matches!(encryption.algo_id, ENCR_AES256_GCM | ENCR_XCHACHA20_POLY) {
+                return Err(SarError::Unsupported(
+                    "archive writer supports only AES-256-GCM and XChaCha20-Poly1305",
+                ));
+            }
+            flags |= GlobalFlags::ENCRYPTED;
+            let mode_id = kms_mode_id(&encryption.kms_params);
+            let context = KmsContext {
+                mode_id,
+                params: encryption.kms_params.clone(),
+            };
+            let provider = key_provider
+                .as_deref()
+                .ok_or(SarError::KeyMissing("encryption requires a key provider"))?;
+            cek = Some(resolve_cek(provider, &context).map_err(SarError::from)?);
+            encr_algo_id = Some(encryption.algo_id);
+            Some(KmsData {
+                mode_id,
+                payload: serialize_kms_payload(&encryption.kms_params),
+            })
+        } else {
+            None
+        };
+
+        validate_global_flags(flags)?;
         let header = GlobalHeader {
             version: 0x01,
             flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
             partition_descriptor: None,
-            kms: None,
+            kms,
         };
+        let global_flags_section = global_header_flags_bytes(&header);
         let bytes = write_global_header(&header)?;
         writer.write_all(&bytes)?;
 
@@ -505,10 +611,14 @@ impl<W: Write> ArchiveWriter<W> {
             position: u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?,
             offsets: Vec::new(),
             finished: false,
+            cek,
+            encr_algo_id,
+            used_nonces: HashSet::new(),
+            global_flags_section,
         })
     }
 
-    /// Adds a STORE entry.
+    /// Adds one archive entry.
     pub fn add_entry(&mut self, entry: EntryInput) -> Result<EntryWritten, SarError> {
         if self.finished {
             return Err(SarError::Malformed("archive writer already finished"));
@@ -517,16 +627,25 @@ impl<W: Write> ArchiveWriter<W> {
         let uncompressed_len =
             u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
         let is_compressed = self.compression.algo_id != COMP_ALGO_STORE;
-        let encoded_payload = encode_payload(
+        let mut encoded_payload = encode_payload_v2(
             &entry.payload,
-            EncodingPlan {
+            EncodingPlanV2 {
                 is_compressed,
                 comp_algo_id: self.compression.algo_id,
                 compression_level: self.compression.level,
+                crypto: None,
             },
         )?;
-        let payload_len =
-            u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
+        let is_encrypted = self.flags.contains(GlobalFlags::ENCRYPTED);
+        let payload_len = if is_encrypted {
+            u64::try_from(encoded_payload.len())
+                .map_err(|_| SarError::Overflow("payload len"))?
+                .checked_add(16)
+                .ok_or(SarError::Overflow("encrypted payload len"))?
+        } else {
+            u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
+        };
+
         let mut lfh = LocalFileHeader::minimal_store(entry.name.into_bytes(), payload_len);
         lfh.uncompressed_size = uncompressed_len;
         if self.flags.contains(GlobalFlags::COMPRESSED) {
@@ -535,15 +654,70 @@ impl<W: Write> ArchiveWriter<W> {
         if is_compressed {
             lfh.entry_mode.0 |= 1 << 3;
         }
-        let lfh_bytes = write_lfh(&self.flags, &lfh)?;
 
+        if is_encrypted {
+            let algo_id = self
+                .encr_algo_id
+                .ok_or(SarError::Internal("missing writer encryption algorithm"))?;
+            let mut nonce = [0u8; 24];
+            let mut inserted = false;
+            for _ in 0..3 {
+                generate_nonce(algo_id, &mut nonce).map_err(SarError::from)?;
+                if self.used_nonces.insert(nonce) {
+                    inserted = true;
+                    break;
+                }
+            }
+            if !inserted {
+                return Err(SarError::NonceReuse("failed to generate a unique nonce"));
+            }
+            lfh.encr_algo_id = Some(algo_id);
+            lfh.iv_nonce = Some(nonce);
+            lfh.entry_mode.0 |= 1 << 2;
+
+            let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            let aad = build_aead_aad(&self.global_flags_section, &lfh_bytes);
+            let key = self
+                .cek
+                .as_ref()
+                .ok_or(SarError::KeyMissing("writer CEK is unavailable"))?;
+            encoded_payload = encode_payload_v2(
+                &entry.payload,
+                EncodingPlanV2 {
+                    is_compressed,
+                    comp_algo_id: self.compression.algo_id,
+                    compression_level: self.compression.level,
+                    crypto: Some(EntryCryptoContext {
+                        algo_id,
+                        iv_nonce: nonce,
+                        aad,
+                        key: key.clone(),
+                    }),
+                },
+            )?;
+            self.write_entry(lfh, lfh_bytes, encoded_payload)
+        } else {
+            let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            self.write_entry(lfh, lfh_bytes, encoded_payload)
+        }
+    }
+
+    fn write_entry(
+        &mut self,
+        lfh: LocalFileHeader,
+        lfh_bytes: Vec<u8>,
+        encoded_payload: Vec<u8>,
+    ) -> Result<EntryWritten, SarError> {
         let lfh_offset = self.position;
         self.writer.write_all(&lfh_bytes)?;
         self.writer.write_all(&encoded_payload)?;
 
         let written = u64::try_from(lfh_bytes.len())
             .map_err(|_| SarError::Overflow("lfh bytes len"))?
-            .checked_add(payload_len)
+            .checked_add(
+                u64::try_from(encoded_payload.len())
+                    .map_err(|_| SarError::Overflow("payload bytes len"))?,
+            )
             .ok_or(SarError::Overflow("entry write length"))?;
         self.position = self
             .position
@@ -551,6 +725,7 @@ impl<W: Write> ArchiveWriter<W> {
             .ok_or(SarError::Overflow("archive position"))?;
         self.offsets.push(lfh_offset);
 
+        let _ = lfh;
         Ok(EntryWritten {
             lfh_offset,
             total_bytes: written,
@@ -609,4 +784,33 @@ impl<W: Write> ArchiveWriter<W> {
             indexed: !self.flags.contains(GlobalFlags::NO_INDEX),
         })
     }
+}
+
+fn compression_algorithm_name(algo_id: u8) -> &'static str {
+    match algo_id {
+        0x00 => "STORE",
+        0x01 => "DEFLATE",
+        0x02 => "ZSTD",
+        _ => "UNKNOWN",
+    }
+}
+
+fn kms_mode_id(params: &KmsParams) -> u8 {
+    match params {
+        KmsParams::Pbkdf2(_) => sar_crypto::KMS_PBKDF2,
+        KmsParams::Argon2(_) => sar_crypto::KMS_ARGON2,
+        KmsParams::AsymmetricWrap(_) => sar_crypto::KMS_ASYMMETRIC_WRAP,
+    }
+}
+
+fn build_kms_context(header: &GlobalHeader) -> Result<KmsContext, SarError> {
+    let kms = header
+        .kms
+        .as_ref()
+        .ok_or(SarError::Malformed("encrypted archive is missing KMS data"))?;
+    let params = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+    Ok(KmsContext {
+        mode_id: kms.mode_id,
+        params,
+    })
 }

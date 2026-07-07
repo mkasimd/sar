@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    env,
     fs::{self, File},
     io::{BufReader, Write},
     path::{Component, Path, PathBuf},
@@ -12,11 +13,16 @@ use walkdir::WalkDir;
 
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput, SarError,
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
+    EntryInput, KeyProvider, KmsContext, KmsParams, SarError, SecretBytes,
+};
+use sar_crypto::{
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
 };
 
 const SAR_SPEC_VERSION: &str = "1.0";
 const SAR_CD_VERSION: &str = "1";
+const PASSWORD_ENV: &str = "SAR_PASSWORD";
 
 #[derive(Parser)]
 #[command(name = "sar", version)]
@@ -32,10 +38,52 @@ enum CompressionChoice {
     Zstd,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum EncryptionChoice {
+    #[value(name = "aes256-gcm")]
+    Aes256Gcm,
+    #[value(name = "xchacha20-poly")]
+    XChaCha20Poly,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CreateCompression {
     algo_id: u8,
     level: Option<u8>,
+}
+
+struct CliKeyProvider {
+    password: Option<SecretString>,
+}
+
+impl CliKeyProvider {
+    fn new(password: Option<SecretString>) -> Self {
+        Self { password }
+    }
+}
+
+impl KeyProvider for CliKeyProvider {
+    fn password_for(
+        &self,
+        _context: &KmsContext,
+    ) -> Result<Option<SecretString>, sar_core::SarCryptoError> {
+        Ok(self.password.clone())
+    }
+
+    fn unwrap_key(
+        &self,
+        _context: &KmsContext,
+        _wrapped_key: &[u8],
+    ) -> Result<Option<SecretBytes>, sar_core::SarCryptoError> {
+        Ok(None)
+    }
+
+    fn external_key(
+        &self,
+        _context: &KmsContext,
+    ) -> Result<Option<SecretBytes>, sar_core::SarCryptoError> {
+        Ok(None)
+    }
 }
 
 #[derive(Subcommand)]
@@ -67,6 +115,12 @@ enum Command {
         /// Compression level (0-9), supports shorthand like `-9`.
         #[arg(long = "compression-level", value_parser = clap::value_parser!(u8).range(0..=9))]
         compression_level: Option<u8>,
+        /// Encrypt entry payloads with the selected AEAD algorithm.
+        #[arg(long, value_enum)]
+        encrypt: Option<EncryptionChoice>,
+        /// Archive password. Falls back to `SAR_PASSWORD` or a terminal prompt.
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Extract archive to output directory.
     Extract {
@@ -74,6 +128,9 @@ enum Command {
         archive: PathBuf,
         /// Output directory.
         output_dir: PathBuf,
+        /// Archive password. Falls back to `SAR_PASSWORD` or a terminal prompt.
+        #[arg(long)]
+        password: Option<String>,
     },
     /// List archive entries.
     List {
@@ -84,6 +141,9 @@ enum Command {
     Verify {
         /// Archive path.
         archive: PathBuf,
+        /// Archive password. Falls back to `SAR_PASSWORD` or a terminal prompt.
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Inspect archive metadata.
     Inspect {
@@ -98,7 +158,7 @@ enum Command {
 }
 
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
+    let args: Vec<String> = env::args().collect();
     let result = if let Some(outcome) = try_handle_shorthand(&args) {
         outcome
     } else {
@@ -147,21 +207,21 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
             let compression = resolve_shorthand_compression(args);
             Some(match (input, output, compression) {
                 (Ok(input), Ok(output), Ok(compression)) => {
-                    create_archive(input, output, false, compression)
+                    create_archive(input, output, false, compression, None, None)
                 }
-                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+                (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
             })
         }
         "-x" => {
             let archive = value_after_flag(args, "-f");
             let out = value_after_flag(args, "-C");
             Some(match (archive, out) {
-                (Ok(archive), Ok(out)) => extract_archive(archive, out),
-                (Err(e), _) | (_, Err(e)) => Err(e),
+                (Ok(archive), Ok(out)) => extract_archive(archive, out, None),
+                (Err(err), _) | (_, Err(err)) => Err(err),
             })
         }
         "-t" => Some(value_after_flag(args, "-f").and_then(list_archive)),
-        "-v" => Some(value_after_flag(args, "-f").and_then(verify_archive)),
+        "-v" => Some(value_after_flag(args, "-f").and_then(|path| verify_archive(path, None))),
         _ => None,
     }
 }
@@ -258,6 +318,8 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             deflate,
             store,
             compression_level,
+            encrypt,
+            password,
         } => {
             if indexed && no_index {
                 return Err(SarError::Malformed(
@@ -266,14 +328,22 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             }
             let compression =
                 resolve_create_compression(compression, zstd, deflate, store, compression_level)?;
-            create_archive(input, output, no_index && !indexed, compression)
+            create_archive(
+                input,
+                output,
+                no_index && !indexed,
+                compression,
+                encrypt,
+                password,
+            )
         }
         Command::Extract {
             archive,
             output_dir,
-        } => extract_archive(archive, output_dir),
+            password,
+        } => extract_archive(archive, output_dir, password),
         Command::List { archive } => list_archive(archive),
-        Command::Verify { archive } => verify_archive(archive),
+        Command::Verify { archive, password } => verify_archive(archive, password),
         Command::Inspect { archive, json } => inspect_archive(archive, json),
         Command::Version => print_version(),
     }
@@ -284,6 +354,13 @@ fn compression_to_algo_id(compression: CompressionChoice) -> u8 {
         CompressionChoice::Store => COMP_ALGO_STORE,
         CompressionChoice::Deflate => COMP_ALGO_DEFLATE,
         CompressionChoice::Zstd => COMP_ALGO_ZSTD,
+    }
+}
+
+fn encryption_to_algo_id(encryption: EncryptionChoice) -> u8 {
+    match encryption {
+        EncryptionChoice::Aes256Gcm => ENCR_AES256_GCM,
+        EncryptionChoice::XChaCha20Poly => ENCR_XCHACHA20_POLY,
     }
 }
 
@@ -345,16 +422,60 @@ fn create_archive(
     output: PathBuf,
     no_index: bool,
     compression: CreateCompression,
+    encrypt: Option<EncryptionChoice>,
+    password: Option<String>,
 ) -> Result<(), SarError> {
+    if encrypt.is_none() && (password.is_some() || env::var_os(PASSWORD_ENV).is_some()) {
+        return Err(SarError::Malformed(
+            "create only accepts passwords when --encrypt is specified",
+        ));
+    }
+
+    let encryption = if let Some(choice) = encrypt {
+        let password = load_password(password)?;
+        let mut salt = [0u8; 32];
+        getrandom::getrandom(&mut salt)
+            .map_err(|_| SarError::Internal("random salt generation failed"))?;
+        let settings = EncryptionSettings {
+            algo_id: encryption_to_algo_id(choice),
+            kms_params: KmsParams::Pbkdf2(Pbkdf2Params {
+                prf_algo_id: PBKDF2_PRF_HMAC_SHA256,
+                salt: salt.to_vec(),
+                iterations: 100_000,
+                derived_key_length: 32,
+            }),
+        };
+        Some((settings, password))
+    } else {
+        None
+    };
+
     let file = File::create(output)?;
-    let mut writer = ArchiveWriter::new_with_compression(
-        file,
-        ArchiveWriterOptions { no_index },
-        CompressionSettings {
-            algo_id: compression.algo_id,
-            level: compression.level,
-        },
-    )?;
+    let mut writer = match encryption {
+        Some((settings, password)) => ArchiveWriter::new_with_compression_and_key_provider(
+            file,
+            ArchiveWriterOptions {
+                no_index,
+                encryption: Some(settings),
+            },
+            CompressionSettings {
+                algo_id: compression.algo_id,
+                level: compression.level,
+            },
+            Some(Box::new(CliKeyProvider::new(Some(password)))),
+        )?,
+        None => ArchiveWriter::new_with_compression(
+            file,
+            ArchiveWriterOptions {
+                no_index,
+                encryption: None,
+            },
+            CompressionSettings {
+                algo_id: compression.algo_id,
+                level: compression.level,
+            },
+        )?,
+    };
 
     if input.is_file() {
         let name = input
@@ -421,10 +542,18 @@ fn sanitize_relative(name: &str) -> Result<PathBuf, SarError> {
     Ok(rel.to_path_buf())
 }
 
-fn extract_archive(archive: PathBuf, output_dir: PathBuf) -> Result<(), SarError> {
+fn extract_archive(
+    archive: PathBuf,
+    output_dir: PathBuf,
+    password: Option<String>,
+) -> Result<(), SarError> {
     fs::create_dir_all(&output_dir)?;
-    let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
-    let _ = reader.read_global_header()?;
+    let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
+    let header = reader.read_global_header()?;
+    if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
+        let password = load_password(password)?;
+        reader = reader.with_key_provider(Box::new(CliKeyProvider::new(Some(password))));
+    }
 
     while let Some(entry) = reader.next_entry()? {
         let rel = sanitize_relative(&entry.metadata.name)?;
@@ -438,9 +567,13 @@ fn extract_archive(archive: PathBuf, output_dir: PathBuf) -> Result<(), SarError
     Ok(())
 }
 
-fn verify_archive(archive: PathBuf) -> Result<(), SarError> {
-    let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
-    let _ = reader.read_global_header()?;
+fn verify_archive(archive: PathBuf, password: Option<String>) -> Result<(), SarError> {
+    let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
+    let header = reader.read_global_header()?;
+    if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
+        let password = load_password(password)?;
+        reader = reader.with_key_provider(Box::new(CliKeyProvider::new(Some(password))));
+    }
     let report = reader.verify()?;
     println!(
         "verify: valid={} entries={} indexed={}",
@@ -478,4 +611,16 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
     }
 
     Ok(())
+}
+
+fn load_password(explicit: Option<String>) -> Result<SecretString, SarError> {
+    if let Some(value) = explicit {
+        return Ok(SecretString::new(value));
+    }
+    if let Ok(value) = env::var(PASSWORD_ENV) {
+        return Ok(SecretString::new(value));
+    }
+    let prompted = rpassword::prompt_password("SAR password: ")
+        .map_err(|_| SarError::KeyMissing("password not provided and prompt failed"))?;
+    Ok(SecretString::new(prompted))
 }

@@ -1,51 +1,84 @@
-# API (Milestones 1–4)
+# API (Milestones 1–5)
 
 ## `sar-core`
 
-Primary APIs:
+Primary archive APIs:
 
 - `ArchiveReader<R: Read + Seek>`
   - `new(reader)`
-  - `with_options(reader, ArchiveReaderOptions)`
+  - `with_options(reader, options)`
+  - `with_key_provider(provider)`
   - `read_global_header()`
   - `next_entry()`
   - `verify()`
 - `ArchiveWriter<W: Write>`
   - `new(writer, options)`
-  - `new_with_compression(writer, options, CompressionSettings)`
+  - `new_with_compression(writer, options, compression)`
+  - `new_with_compression_and_key_provider(writer, options, compression, provider)`
   - `add_entry(entry)`
   - `finish()`
+
+Writer configuration:
+
+- `ArchiveWriterOptions`
+  - `no_index`
+  - `encryption: Option<EncryptionSettings>`
+- `CompressionSettings`
+- `EncryptionSettings`
+  - `algo_id`
+  - `kms_params`
 
 Transform APIs:
 
 - `EncoderTransform` / `DecoderTransform`
 - `CompressionEncoderTransform` / `CompressionDecoderTransform`
 - `encode_payload` / `decode_payload`
+- `encode_payload_v2` / `decode_payload_v2`
+- `EntryCryptoContext`
+- `EncodingPlanV2` / `DecodingPlanV2`
 
-Format/parser APIs:
+Format/parser helpers:
 
 - `parse_global_header`, `write_global_header`
 - `parse_lfh`, `write_lfh`, `compute_lfh_size`
+- `global_header_flags_bytes`, `lfh_to_bytes`
 - `parse_central_dictionary`, `write_central_dictionary`
 - `parse_footer`, `write_footer`
 - `parse_tlvs`, `write_tlvs`
 
-Validation APIs:
+## `sar-crypto`
 
-- `validate_global_flags`
-- `validate_entry_mode_against_global`
-- `validate_archive_profile`
+Public building blocks:
 
-Section 10 registry APIs:
+- `SarCryptoError`
+- Algorithm constants and validators
+- `aead::{aead_encrypt, aead_decrypt, generate_nonce, validate_nonce_field}`
+- `aad::{global_header_aad_bytes, build_aead_aad}`
+- `hash::{sha256, blake3_hash, new_hasher, hash_data, ct_eq}`
+- `kms::{Pbkdf2Params, Argon2Params, AsymmetricWrapParams, KmsParams}`
+- `parse_kms_payload`, `serialize_kms_payload`
+- `KeyProvider`, `resolve_cek`
+- `SecretBytes`, `SecretString`
 
-- `SarStatus` (full status/error/warning registry mapping with stable numeric codes)
-- `SarError::status()`
-- `TryFrom<i32> for SarStatus`
+### `KeyProvider`
+
+`KeyProvider` is the integration point for applications that need to supply:
+
+- passwords for PBKDF2/Argon2 derivation;
+- externally wrapped-key unwrap logic;
+- pre-derived/external CEKs.
+
+`sar-cli` provides a simple password-based implementation (`CliKeyProvider`). Applications embedding `sar-core` can implement their own provider for HSM/KMS-backed key resolution.
 
 ## `sar-cli`
 
-Thin CLI wrapper over `sar-core` archive APIs for create/extract/list/verify/inspect/version and shorthand aliases, including compression options:
+Commands:
 
-- `--compression store|deflate|zstd`
-- `-S` / `-z` / `-Z`
-- `--compression-level 0..9` or `-0..-9`
+- `sar create <input> <output.sar> [--indexed|--no-index] [--compression ...] [--compression-level ...] [--encrypt aes256-gcm|xchacha20-poly] [--password ...]`
+- `sar extract <archive.sar> <output-dir> [--password ...]`
+- `sar list <archive.sar>`
+- `sar verify <archive.sar> [--password ...]`
+- `sar inspect <archive.sar> --json`
+- `sar version`
+
+If `--password` is omitted for encrypted create/extract/verify flows, the CLI falls back to `SAR_PASSWORD` and then to a terminal prompt.

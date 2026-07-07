@@ -484,3 +484,19 @@ impl SarError {
         }
     }
 }
+
+impl From<sar_crypto::SarCryptoError> for SarError {
+    fn from(err: sar_crypto::SarCryptoError) -> Self {
+        match err {
+            sar_crypto::SarCryptoError::AuthFailed(msg) => Self::AuthFailed(msg),
+            sar_crypto::SarCryptoError::KeyMissing(msg) => Self::KeyMissing(msg),
+            sar_crypto::SarCryptoError::Malformed(msg) => Self::Malformed(msg),
+            sar_crypto::SarCryptoError::Unsupported(msg) => Self::Unsupported(msg),
+            sar_crypto::SarCryptoError::ReservedValue(msg) => Self::ReservedValue(msg),
+            sar_crypto::SarCryptoError::InvalidLength(msg) => Self::InvalidLength(msg),
+            sar_crypto::SarCryptoError::Internal(msg) => Self::Internal(msg),
+            sar_crypto::SarCryptoError::NonceReuse => Self::NonceReuse("nonce reuse detected"),
+            sar_crypto::SarCryptoError::FlagConflict(msg) => Self::FlagConflict(msg),
+        }
+    }
+}
