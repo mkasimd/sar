@@ -1406,15 +1406,9 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 );
             }
             if let Some(algo_id) = entry.cdc_algo_id {
-                let algo_name = match algo_id {
-                    0x00 => "literal",
-                    0x02 => "fastcdc",
-                    0x01 => "rabin",
-                    0x03 => "buzhash",
-                    _ => "unknown",
-                };
+                let name = sar_cdc::algo_name(algo_id);
                 println!(
-                    "  entry={} cdc_algo_id=0x{algo_id:02X} ({algo_name})",
+                    "  entry={} cdc_algo_id=0x{algo_id:02X} ({name})",
                     entry.name
                 );
             }

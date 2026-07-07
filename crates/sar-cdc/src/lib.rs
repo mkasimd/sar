@@ -42,7 +42,7 @@ pub mod validate;
 
 pub use algo::{
     CDC_ALGO_BUZHASH, CDC_ALGO_CUSTOM_MAX, CDC_ALGO_CUSTOM_MIN, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL,
-    CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
+    CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN, algo_name,
 };
 pub use fastcdc::{FastCdcOptions, chunk_data};
 pub use map::{parse_cdc_map, write_cdc_map};

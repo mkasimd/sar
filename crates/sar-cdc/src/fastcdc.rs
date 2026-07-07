@@ -48,7 +48,7 @@ const GEAR: [u64; 256] = generate_gear();
 
 const fn generate_gear() -> [u64; 256] {
     let mut table = [0u64; 256];
-    let mut state: u64 = 0x9e3779b97f4a7c15; // fixed seed
+    let mut state: u64 = 0x9e3779b97f4a7c15; // fixed seed: Fibonacci-hashing constant (2^64 / phi)
     let mut i = 0usize;
     while i < 256 {
         // xorshift64*

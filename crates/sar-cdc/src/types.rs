@@ -9,8 +9,11 @@ pub struct CdcChunk {
     pub offset: u64,
     /// Byte length of this chunk.
     pub length: u64,
-    /// SHA-256 (or BLAKE3) hash of the chunk bytes; `None` when hash
-    /// computation was not requested.
+    /// SHA-256 hash of the chunk bytes (the current implementation always uses
+    /// SHA-256).  `None` when hash computation was not requested.
+    ///
+    /// The spec does not name the hash algorithm for recipe chunk hashes; see
+    /// `docs/SPEC_QUESTIONS.md` for the open spec question.
     pub hash: Option<[u8; 32]>,
 }
 
@@ -52,7 +55,11 @@ pub struct CdcMetadata {
 /// Total: 50 bytes per record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CdcMapRecord {
-    /// 32-byte chunk hash (SHA-256 / BLAKE3 — see `docs/SPEC_QUESTIONS.md`).
+    /// 32-byte chunk hash (SHA-256 in current implementation).
+    ///
+    /// The spec does not normatively name the hash algorithm for CDC_MAP
+    /// records; SHA-256 is used as a conservative default.  See
+    /// `docs/SPEC_QUESTIONS.md` for the open spec question.
     pub hash: [u8; 32],
     /// Partition identifier where the physical chunk bytes reside.
     pub partition_id: u16,

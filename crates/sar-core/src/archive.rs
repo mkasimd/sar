@@ -654,6 +654,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             file_crc32: lfh.file_crc32,
             content_hash: lfh.content_hash,
             cdc_algo_id: if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+                // `lfh.cdc_algo_id` is `None` when parsing an archive written by
+                // an older implementation that sets `CDC_SUPPORT` but omits the
+                // per-entry byte.  Default to `LITERAL_MODE (0x00)` so validation
+                // still proceeds — 0x00 is always valid and never triggers a
+                // chunking path, making it the safest conservative fallback.
                 let algo_id = lfh.cdc_algo_id.unwrap_or(0);
                 crate::cdc::validate_cdc_algo_id(algo_id)?;
                 Some(algo_id)

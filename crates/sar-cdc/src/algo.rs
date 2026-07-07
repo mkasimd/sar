@@ -28,3 +28,19 @@ pub const CDC_ALGO_CUSTOM_MAX: u8 = 0xFF;
 /// 32 bytes (section 6.1, row 18).  We therefore fix the recipe hash size
 /// at 32 bytes and document the ambiguity in `docs/SPEC_QUESTIONS.md`.
 pub const CDC_RECIPE_HASH_LEN: usize = 32;
+
+/// Returns a short human-readable name for a CDC algorithm ID.
+///
+/// This is a display-only helper; it does **not** validate the ID.  Unknown
+/// or reserved IDs are reported as `"unknown"`.
+#[must_use]
+pub fn algo_name(id: u8) -> &'static str {
+    match id {
+        CDC_ALGO_LITERAL => "literal",
+        CDC_ALGO_RABIN => "rabin",
+        CDC_ALGO_FASTCDC => "fastcdc",
+        CDC_ALGO_BUZHASH => "buzhash",
+        CDC_ALGO_CUSTOM_MIN..=CDC_ALGO_CUSTOM_MAX => "custom",
+        _ => "unknown",
+    }
+}
