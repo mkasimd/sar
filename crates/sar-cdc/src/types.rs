@@ -9,11 +9,8 @@ pub struct CdcChunk {
     pub offset: u64,
     /// Byte length of this chunk.
     pub length: u64,
-    /// SHA-256 hash of the chunk bytes (the current implementation always uses
-    /// SHA-256).  `None` when hash computation was not requested.
-    ///
-    /// The spec does not name the hash algorithm for recipe chunk hashes; see
-    /// `docs/SPEC_QUESTIONS.md` for the open spec question.
+    /// Hash of the chunk bytes.  `None` when hash computation was not
+    /// requested.
     pub hash: Option<[u8; 32]>,
 }
 
@@ -39,42 +36,92 @@ pub struct CdcMetadata {
     pub chunks: Vec<CdcChunk>,
 }
 
-/// A single record in a `CDC_MAP` catalog.
+// ---------------------------------------------------------------------------
+// CDC_MAP v1 header constants
+// ---------------------------------------------------------------------------
+
+/// `Map_Version` value for CDC_MAP v1.
+pub const CDC_MAP_VERSION_V1: u8 = 0x01;
+
+/// Byte size of the CDC_MAP v1 header.
+pub const CDC_MAP_HEADER_SIZE: usize = 16;
+
+/// `Record_Size` value required for CDC_MAP v1 (48 bytes per record).
+pub const CDC_MAP_V1_RECORD_SIZE: u16 = 48;
+
+/// Byte length of one serialised [`CdcMapRecord`] on the wire (v1 format).
 ///
-/// The spec (section 21.1) defines the structure as:
-/// `[Hash, Partition_ID, Absolute_Offset, Compressed_Size]`
-/// but does not specify field widths.  We use the following conservative
-/// widths and document the ambiguity in `docs/SPEC_QUESTIONS.md`:
+/// Layout (all little-endian):
 ///
-/// | Field | Width |
-/// |-------|-------|
-/// | Hash | 32 B |
-/// | Partition_ID | 2 B (u16 LE) |
-/// | Absolute_Offset | 8 B (u64 LE) |
-/// | Compressed_Size | 8 B (u64 LE) |
-/// Total: 50 bytes per record.
+/// | Field             | Size |
+/// |-------------------|------|
+/// | `Hash`            | 32 B |
+/// | `Partition_ID`    |  4 B |
+/// | `Absolute_Offset` |  8 B |
+/// | `Compressed_Size` |  4 B |
+pub const CDC_MAP_RECORD_LEN: usize = 32 + 4 + 8 + 4; // = 48
+
+// ---------------------------------------------------------------------------
+// CDC_MAP types
+// ---------------------------------------------------------------------------
+
+/// Parsed CDC_MAP v1 header (16 bytes on the wire).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct CdcMapRecord {
-    /// 32-byte chunk hash (SHA-256 in current implementation).
+pub struct CdcMapHeader {
+    /// `Map_Version` — MUST be `0x01` for v1.
+    pub map_version: u8,
+    /// SAR hash algorithm registry ID used to compute all record hashes.
     ///
-    /// The spec does not normatively name the hash algorithm for CDC_MAP
-    /// records; SHA-256 is used as a conservative default.  See
-    /// `docs/SPEC_QUESTIONS.md` for the open spec question.
-    pub hash: [u8; 32],
-    /// Partition identifier where the physical chunk bytes reside.
-    pub partition_id: u16,
-    /// Absolute byte offset of the chunk within the identified partition.
-    pub absolute_offset: u64,
-    /// Compressed (encoded) byte length of the stored chunk.
-    pub compressed_size: u64,
+    /// `0x31` (BLAKE3) is required.  `0x30` (SHA-256) is supported.
+    pub hash_algorithm_id: u8,
+    /// `Flags` — MUST be zero for v1; non-zero bits are reserved.
+    pub flags: u16,
+    /// Number of `CDC_MAP_Record` entries following the header.
+    pub record_count: u32,
+    /// Wire byte size of each record — MUST be `48` for v1.
+    pub record_size: u16,
+    /// Six reserved bytes — MUST be zero.
+    pub reserved: [u8; 6],
 }
 
-/// Byte length of one serialised [`CdcMapRecord`] on the wire.
-pub const CDC_MAP_RECORD_LEN: usize = 32 + 2 + 8 + 8; // = 50
+/// A single record in a `CDC_MAP` v1 catalog.
+///
+/// On-wire layout (all little-endian):
+///
+/// | Field             | Size     |
+/// |-------------------|----------|
+/// | `Hash`            | 32 bytes |
+/// | `Partition_ID`    |  4 bytes |
+/// | `Absolute_Offset` |  8 bytes |
+/// | `Compressed_Size` |  4 bytes |
+///
+/// Total: 48 bytes per record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CdcMapRecord {
+    /// 32-byte chunk hash, computed using the `Hash_Algorithm_ID` from the
+    /// CDC_MAP header (not the CDC chunking algorithm ID).
+    pub hash: [u8; 32],
+    /// Partition identifier where the physical chunk bytes reside.
+    pub partition_id: u32,
+    /// Absolute byte offset of the chunk from the beginning of the archive.
+    pub absolute_offset: u64,
+    /// Compressed (stored) byte length of the chunk payload.
+    pub compressed_size: u32,
+}
 
-/// A parsed CDC_MAP catalog (TLV type ID 0x40).
+/// A parsed CDC_MAP catalog (TLV type ID `0x40`).
+///
+/// The `hash_algorithm_id` field reflects the SAR hash algorithm registry ID
+/// stored in the CDC_MAP v1 header.  It is distinct from the CDC chunking
+/// algorithm ID (`CDC Algo ID` in the LFH): FASTCDC controls chunk
+/// *boundaries*; `hash_algorithm_id` controls how chunk *hashes* are computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CdcMap {
+    /// SAR hash algorithm registry ID used for all record hashes.
+    ///
+    /// Set to `0x31` (BLAKE3) or `0x30` (SHA-256).  Callers MUST NOT assume
+    /// any particular algorithm without reading this field.
+    pub hash_algorithm_id: u8,
     /// Ordered list of catalog records.
     pub records: Vec<CdcMapRecord>,
 }

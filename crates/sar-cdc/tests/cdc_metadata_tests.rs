@@ -1,19 +1,32 @@
 //! CDC metadata parse/write tests (CDC_MAP round-trips, validation, error cases).
 
 use sar_cdc::{
+    CDC_MAP_RECORD_LEN,
     algo::{CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL},
     map::{parse_cdc_map, write_cdc_map},
-    types::{CDC_MAP_RECORD_LEN, CdcChunk, CdcMap, CdcMapRecord, CdcMetadata},
+    types::{CdcChunk, CdcMap, CdcMapRecord, CdcMetadata},
     validate::{CdcError, validate_cdc_algo_id, validate_cdc_map_bytes, validate_cdc_metadata},
 };
+
+const BLAKE3_ID: u8 = 0x31;
+const SHA256_ID: u8 = 0x30;
 
 fn make_record(seed: u8) -> CdcMapRecord {
     CdcMapRecord {
         hash: [seed; 32],
-        partition_id: u16::from(seed),
+        partition_id: u32::from(seed),
         absolute_offset: u64::from(seed) * 1024,
         compressed_size: 512,
     }
+}
+
+/// Build a valid 1-record CDC_MAP v1 byte payload using BLAKE3.
+fn make_v1_bytes_one_record() -> Vec<u8> {
+    let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
+        records: vec![make_record(1)],
+    };
+    write_cdc_map(&map).expect("write")
 }
 
 // ---------------------------------------------------------------------------
@@ -67,23 +80,33 @@ fn custom_range_algo_id_unsupported() {
 }
 
 // ---------------------------------------------------------------------------
-// validate_cdc_map_bytes
+// validate_cdc_map_bytes — structural validation via parse
 // ---------------------------------------------------------------------------
 
 #[test]
 fn valid_map_bytes_accepted() {
-    let bytes = vec![0u8; CDC_MAP_RECORD_LEN * 3];
+    let bytes = make_v1_bytes_one_record();
     assert!(validate_cdc_map_bytes(&bytes, 100).is_ok());
 }
 
 #[test]
-fn empty_map_bytes_accepted() {
-    assert!(validate_cdc_map_bytes(&[], 100).is_ok());
+fn empty_bytes_missing_header_rejected() {
+    // An empty payload lacks the 16-byte header and must be rejected.
+    assert!(matches!(
+        validate_cdc_map_bytes(&[], 100),
+        Err(CdcError::Malformed(_))
+    ));
 }
 
 #[test]
 fn non_multiple_length_rejected() {
-    let bytes = vec![0u8; CDC_MAP_RECORD_LEN - 1];
+    // Build a valid header-only map (0 records), then truncate by 1.
+    let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
+        records: vec![],
+    };
+    let mut bytes = write_cdc_map(&map).expect("write");
+    bytes.push(0); // corrupt length
     assert!(matches!(
         validate_cdc_map_bytes(&bytes, 100),
         Err(CdcError::Malformed(_))
@@ -92,7 +115,11 @@ fn non_multiple_length_rejected() {
 
 #[test]
 fn record_count_exceeds_limit_rejected() {
-    let bytes = vec![0u8; CDC_MAP_RECORD_LEN * 5];
+    let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
+        records: (0u8..5).map(make_record).collect(),
+    };
+    let bytes = write_cdc_map(&map).expect("write");
     assert!(matches!(
         validate_cdc_map_bytes(&bytes, 4),
         Err(CdcError::LimitExceeded(_))
@@ -105,9 +132,13 @@ fn record_count_exceeds_limit_rejected() {
 
 #[test]
 fn round_trip_empty_map() {
-    let map = CdcMap { records: vec![] };
+    let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
+        records: vec![],
+    };
     let bytes = write_cdc_map(&map).expect("write");
-    assert!(bytes.is_empty());
+    // Header only (16 bytes), no records.
+    assert_eq!(bytes.len(), 16);
     let parsed = parse_cdc_map(&bytes, 100).expect("parse");
     assert_eq!(parsed, map);
 }
@@ -115,10 +146,12 @@ fn round_trip_empty_map() {
 #[test]
 fn round_trip_single_record() {
     let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
         records: vec![make_record(1)],
     };
     let bytes = write_cdc_map(&map).expect("write");
-    assert_eq!(bytes.len(), CDC_MAP_RECORD_LEN);
+    // 16-byte header + 48-byte record = 64 bytes.
+    assert_eq!(bytes.len(), 16 + CDC_MAP_RECORD_LEN);
     let parsed = parse_cdc_map(&bytes, 100).expect("parse");
     assert_eq!(parsed, map);
 }
@@ -126,23 +159,37 @@ fn round_trip_single_record() {
 #[test]
 fn round_trip_multiple_records() {
     let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
         records: (0u8..10).map(make_record).collect(),
     };
     let bytes = write_cdc_map(&map).expect("write");
-    assert_eq!(bytes.len(), CDC_MAP_RECORD_LEN * 10);
+    assert_eq!(bytes.len(), 16 + CDC_MAP_RECORD_LEN * 10);
     let parsed = parse_cdc_map(&bytes, 100).expect("parse");
     assert_eq!(parsed, map);
+}
+
+#[test]
+fn round_trip_sha256_map() {
+    let map = CdcMap {
+        hash_algorithm_id: SHA256_ID,
+        records: vec![make_record(2)],
+    };
+    let bytes = write_cdc_map(&map).expect("write sha256");
+    let parsed = parse_cdc_map(&bytes, 100).expect("parse sha256");
+    assert_eq!(parsed.hash_algorithm_id, SHA256_ID);
+    assert_eq!(parsed.records, map.records);
 }
 
 #[test]
 fn record_fields_preserved() {
     let record = CdcMapRecord {
         hash: [0xAB; 32],
-        partition_id: 0x1234,
+        partition_id: 0x1234_5678,
         absolute_offset: 0x0102_0304_0506_0708,
-        compressed_size: 0x8877_6655_4433_2211,
+        compressed_size: 0x8877_6655,
     };
     let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
         records: vec![record.clone()],
     };
     let bytes = write_cdc_map(&map).expect("write");
@@ -152,8 +199,8 @@ fn record_fields_preserved() {
 
 #[test]
 fn malformed_bytes_rejected_by_parse() {
-    // 49 bytes — not a multiple of 50.
-    let bytes = vec![0u8; 49];
+    // 15 bytes — too short for the 16-byte header.
+    let bytes = vec![0u8; 15];
     assert!(matches!(
         parse_cdc_map(&bytes, 100),
         Err(CdcError::Malformed(_))
@@ -162,7 +209,11 @@ fn malformed_bytes_rejected_by_parse() {
 
 #[test]
 fn parse_limit_exceeded_rejected() {
-    let bytes = vec![0u8; CDC_MAP_RECORD_LEN * 3];
+    let map = CdcMap {
+        hash_algorithm_id: BLAKE3_ID,
+        records: (0u8..3).map(make_record).collect(),
+    };
+    let bytes = write_cdc_map(&map).expect("write");
     assert!(matches!(
         parse_cdc_map(&bytes, 2),
         Err(CdcError::LimitExceeded(_))

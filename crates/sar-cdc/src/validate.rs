@@ -81,31 +81,44 @@ pub fn validate_cdc_algo_id(id: u8) -> Result<(), CdcError> {
     }
 }
 
-/// Validates the raw bytes of a CDC_MAP TLV value.
+/// Validates a `Hash_Algorithm_ID` value for CDC_MAP records against the SAR
+/// hash algorithm registry (spec section 9.4).
 ///
-/// Checks that `bytes.len()` is a multiple of the wire record length
-/// (`CDC_MAP_RECORD_LEN = 50`), and that the total record count does not
-/// exceed `max_records`.
+/// * `0x30` (SHA-256) — supported.
+/// * `0x31` (BLAKE3)  — supported (required for M9a).
+/// * `0x32` (SHA3-256) — assigned but not yet implemented; returns `Unsupported`.
+/// * All other values — returns `ReservedValue`.
 ///
 /// # Errors
 ///
-/// Returns [`CdcError::Malformed`] when length is not a multiple of 50.
-/// Returns [`CdcError::LimitExceeded`] when the record count exceeds
-/// `max_records`.
+/// Returns [`CdcError::Unsupported`] for assigned-but-unsupported IDs and
+/// [`CdcError::ReservedValue`] for unassigned or reserved IDs.
+pub fn validate_cdc_map_hash_algo_id(id: u8) -> Result<(), CdcError> {
+    match id {
+        0x30 => Ok(()),
+        0x31 => Ok(()),
+        0x32 => Err(CdcError::Unsupported(
+            "SHA3-256 hash algorithm not implemented for CDC_MAP",
+        )),
+        _ => Err(CdcError::ReservedValue(
+            "reserved hash algorithm ID in CDC_MAP header",
+        )),
+    }
+}
+
+/// Validates the raw bytes of a CDC_MAP v1 TLV value structurally.
+///
+/// This is a convenience wrapper around [`crate::map::parse_cdc_map`] that
+/// discards the parsed result.  Use `parse_cdc_map` directly when you need
+/// the parsed [`CdcMap`].
+///
+/// # Errors
+///
+/// Returns [`CdcError`] for any structural violation (short header, bad
+/// version, non-zero flags/reserved, wrong record size, length mismatch, or
+/// record-count limit exceeded).
 pub fn validate_cdc_map_bytes(bytes: &[u8], max_records: usize) -> Result<(), CdcError> {
-    use crate::types::CDC_MAP_RECORD_LEN;
-    if !bytes.len().is_multiple_of(CDC_MAP_RECORD_LEN) {
-        return Err(CdcError::Malformed(
-            "CDC_MAP byte length is not a multiple of the record size (50)",
-        ));
-    }
-    let count = bytes.len() / CDC_MAP_RECORD_LEN;
-    if count > max_records {
-        return Err(CdcError::LimitExceeded(
-            "CDC_MAP record count exceeds configured limit",
-        ));
-    }
-    Ok(())
+    crate::map::parse_cdc_map(bytes, max_records).map(|_| ())
 }
 
 /// Validates a parsed [`CdcMap`].

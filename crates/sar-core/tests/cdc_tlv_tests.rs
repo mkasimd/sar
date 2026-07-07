@@ -101,7 +101,10 @@ fn cdc_custom_tlv_is_parsed_and_preserved() {
 #[test]
 fn archive_writer_auto_sets_cdc_support_for_cdc_metadata() {
     let mut out = Vec::new();
-    let cdc_map = sar_core::CdcMap { records: vec![] };
+    let cdc_map = sar_core::CdcMap {
+        hash_algorithm_id: 0x31, // BLAKE3
+        records: vec![],
+    };
     let cd_metadata = vec![make_cdc_map_tlv(&cdc_map, &unlimited_limits()).expect("cdc map tlv")];
 
     let mut writer = ArchiveWriter::new_with_cd_metadata(

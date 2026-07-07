@@ -222,17 +222,17 @@ fn cdc_metadata_bytes_resource_limit_enforced() {
 
 #[test]
 fn cdc_map_tlv_invalid_length_rejected() {
-    // 49 bytes is not a multiple of CDC_MAP_RECORD_LEN (50)
-    let bad_value = vec![0u8; 49];
+    // Fewer than 16 bytes — cannot contain the v1 header.
+    let bad_value = vec![0u8; 10];
     let tlvs = vec![Tlv {
         type_id: 0x40,
         value: bad_value,
     }];
     let err = sar_core::cdc::parse_entry_cdc_map(&tlvs, &ResourceLimits::default())
-        .expect_err("must fail for non-aligned length");
+        .expect_err("must fail for payload shorter than the 16-byte v1 header");
     assert!(
         matches!(err, SarError::Malformed(_)),
-        "expected Malformed for bad CDC_MAP length, got {err:?}"
+        "expected Malformed for truncated CDC_MAP payload, got {err:?}"
     );
 }
 
@@ -245,6 +245,7 @@ fn cdc_map_round_trip() {
     use sar_cdc::{CdcMap, CdcMapRecord};
 
     let map = CdcMap {
+        hash_algorithm_id: 0x31, // BLAKE3
         records: vec![CdcMapRecord {
             hash: [0xABu8; 32],
             partition_id: 7,

@@ -129,7 +129,7 @@ pub fn parse_cdc_ext_provider_tlv(
 
 /// Validates one CDC metadata TLV according to the updated registry.
 ///
-/// * `0x40` (`CDC_MAP`) — parsed structurally.
+/// * `0x40` (`CDC_MAP`) — parsed structurally (v1 header + records).
 /// * `0x41` (`CDC_EXT_PROVIDER`) — parsed as inert UTF-8 URI metadata only.
 /// * `0x42–0x4E` — rejected as reserved.
 /// * `0x4F` (`CDC_CUSTOM`) — preserved as implementation-defined opaque bytes.
