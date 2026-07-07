@@ -1,0 +1,36 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sar-core",
+  "crates/sar-compression",
+  "crates/sar-crypto",
+  "crates/sar-cdc",
+  "crates/sar-delta",
+  "crates/sar-fec",
+  "crates/sar-fragmentation",
+  "crates/sar-partition",
+  "crates/sar-sparse",
+  "crates/sar-loss-tolerant",
+  "crates/sar-stream",
+  "crates/sar-transport",
+  "crates/sar-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+bitflags = "2.6"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+walkdir = "2.5"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
