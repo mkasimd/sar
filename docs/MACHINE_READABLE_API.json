@@ -22,8 +22,8 @@
       "features": [
         "FASTCDC algorithm (deterministic, two-level gear-hash; local-profile because spec parameters/domain are incomplete)",
         "CDC algorithm ID registry (LITERAL=0x00, RABIN=0x01 optional unsupported, FASTCDC=0x02, BUZHASH=0x03 optional unsupported, CUSTOM=0xF0-0xFF unsupported)",
-        "CdcChunk, CdcMetadata, CdcMapRecord, CdcMap public data structures",
-        "CDC_MAP TLV binary parse/write (50-byte local-profile records; parseable without boundary regeneration)",
+        "CdcChunk, CdcMetadata, CdcMapRecord, CdcMapHeader, CdcMap public data structures",
+        "CDC_MAP TLV v1 binary parse/write (16-byte header + 48-byte records; self-describing via Hash_Algorithm_ID; parseable without boundary regeneration)",
         "Recipe Mode structural validation (32-byte hash array only; no portable boundary-regeneration verification claim)",
         "CdcError enum with Malformed/Unsupported/ReservedValue/LimitExceeded variants"
       ],
@@ -119,26 +119,58 @@
               "implemented": true
             },
             {
+              "name": "CdcMapHeader",
+              "kind": "struct",
+              "signature": "pub struct CdcMapHeader { pub map_version: u8, pub hash_algorithm_id: u8, pub flags: u16, pub record_count: u32, pub record_size: u16 }",
+              "description": "CDC_MAP v1 header (16 bytes): Map_Version(1) + Hash_Algorithm_ID(1) + Flags(2) + Record_Count(4) + Record_Size(2) + Reserved(6). Makes CDC_MAP self-describing.",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
               "name": "CdcMapRecord",
               "kind": "struct",
-              "signature": "pub struct CdcMapRecord { pub hash: [u8; 32], pub partition_id: u16, pub absolute_offset: u64, pub compressed_size: u64 }",
-              "description": "Single CDC_MAP TLV record (50-byte local-profile layout; field widths remain spec-ambiguous)",
+              "signature": "pub struct CdcMapRecord { pub hash: [u8; 32], pub partition_id: u32, pub absolute_offset: u64, pub compressed_size: u32 }",
+              "description": "Single CDC_MAP v1 TLV record (48-byte layout: Hash 32B + Partition_ID u32 4B + Absolute_Offset u64 8B + Compressed_Size u32 4B)",
               "since_milestone": "9a",
               "implemented": true
             },
             {
               "name": "CdcMap",
               "kind": "struct",
-              "signature": "pub struct CdcMap { pub records: Vec<CdcMapRecord> }",
-              "description": "Parsed CDC_MAP TLV content using the current local-profile record layout",
+              "signature": "pub struct CdcMap { pub hash_algorithm_id: u8, pub records: Vec<CdcMapRecord> }",
+              "description": "Parsed CDC_MAP TLV v1 content; includes Hash_Algorithm_ID from header",
               "since_milestone": "9a",
               "implemented": true
             },
             {
               "name": "CDC_MAP_RECORD_LEN",
               "kind": "const",
-              "signature": "pub const CDC_MAP_RECORD_LEN: usize = 50;",
-              "description": "Byte length of a single CDC_MAP record in the current local-profile layout (32+2+8+8)",
+              "signature": "pub const CDC_MAP_RECORD_LEN: usize = 48;",
+              "description": "Byte length of a single CDC_MAP v1 record (32+4+8+4)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_MAP_HEADER_SIZE",
+              "kind": "const",
+              "signature": "pub const CDC_MAP_HEADER_SIZE: usize = 16;",
+              "description": "Byte length of the CDC_MAP v1 header",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_MAP_V1_RECORD_SIZE",
+              "kind": "const",
+              "signature": "pub const CDC_MAP_V1_RECORD_SIZE: u16 = 48;",
+              "description": "Record_Size field value for CDC_MAP v1 (must match CDC_MAP_RECORD_LEN)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_MAP_VERSION_V1",
+              "kind": "const",
+              "signature": "pub const CDC_MAP_VERSION_V1: u8 = 0x01;",
+              "description": "Map_Version value for CDC_MAP v1",
               "since_milestone": "9a",
               "implemented": true
             }
@@ -167,7 +199,7 @@
               "name": "validate_cdc_map_bytes",
               "kind": "function",
               "signature": "pub fn validate_cdc_map_bytes(bytes: &[u8], max_records: usize) -> Result<(), CdcError>",
-              "description": "Validates CDC_MAP TLV byte slice (length must be multiple of 50)",
+              "description": "Validates CDC_MAP v1 TLV byte slice by delegating to parse_cdc_map; performs full structural validation including header, flags, reserved bytes, record_size, and length consistency",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -180,8 +212,13 @@
               "implemented": true
             },
             {
-              "name": "validate_cdc_map",
+              "name": "validate_cdc_map_hash_algo_id",
               "kind": "function",
+              "signature": "pub fn validate_cdc_map_hash_algo_id(id: u8) -> Result<(), CdcError>",
+              "description": "Validates a CDC_MAP Hash_Algorithm_ID: 0x30 (SHA-256) and 0x31 (BLAKE3) return Ok; 0x32 (SHA3-256, assigned but unsupported) returns Unsupported; all other values return ReservedValue",
+              "since_milestone": "9a",
+              "implemented": true
+            },
               "signature": "pub fn validate_cdc_map(map: &CdcMap, max_records: usize) -> Result<(), CdcError>",
               "description": "Validates parsed CDC_MAP records (count limit and non-zero compressed_size)",
               "since_milestone": "9a",
@@ -213,7 +250,7 @@
               "name": "parse_cdc_map",
               "kind": "function",
               "signature": "pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcError>",
-              "description": "Parse stored CDC_MAP TLV binary payload into CdcMap without regenerating FASTCDC boundaries",
+              "description": "Parse stored CDC_MAP v1 TLV binary payload into CdcMap. Validates header (version, hash algo ID, flags, reserved, record_size, length), then parses all records. Does not regenerate FASTCDC boundaries.",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -221,7 +258,15 @@
               "name": "write_cdc_map",
               "kind": "function",
               "signature": "pub fn write_cdc_map(map: &CdcMap) -> Result<Vec<u8>, CdcError>",
-              "description": "Serialize CdcMap into CDC_MAP TLV binary payload",
+              "description": "Serialize CdcMap into CDC_MAP v1 TLV binary payload with 16-byte header and 48-byte records",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "verify_cdc_map_record_hash",
+              "kind": "function",
+              "signature": "pub fn verify_cdc_map_record_hash(record: &CdcMapRecord, hash_algorithm_id: u8, archive_bytes: &[u8]) -> Result<bool, CdcError>",
+              "description": "Verify that a CDC_MAP record hash matches the bytes at [Absolute_Offset, Absolute_Offset+Compressed_Size) in archive_bytes using the given hash algorithm (0x30=SHA-256, 0x31=BLAKE3). Uses checked arithmetic. Does not claim FASTCDC boundary-regeneration verification.",
               "since_milestone": "9a",
               "implemented": true
             }

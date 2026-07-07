@@ -2965,21 +2965,80 @@ To resolve Recipes, SAR implementations require a Catalog mapping content hashes
 For self-contained archives, the Catalog is stored as a Metadata TLV block in the Central Dictionary using the CDC metadata TLV Type ID assigned in Section 9.5.
 
 * **TLV Type ID**: `0x40` (`CDC_MAP`)
-* **Structure**: A sequence of `[Hash, Partition_ID, Absolute_Offset, Compressed_Size]` records.
+* **Structure**: A 16-byte `CDC_MAP_Header` followed by `Record_Count` 48-byte `CDC_MAP_Record` entries.
 * **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, this TLV SHOULD be present.
-* **Verification Scope**: Structural validation of stored CDC metadata is always permitted. Portable regeneration-and-match verification of CDC boundaries requires the full CDC parameter profile and transformation domain to be normatively specified or encoded.
+* **Verification Scope**: Structural validation of stored CDC metadata is always permitted. Hash verification over stored byte ranges is permitted when the hash algorithm is supported and archive bounds are available.
+
+`CDC_MAP` is **self-describing** via the `Hash_Algorithm_ID` field in its header.  Parsers MUST read `Hash_Algorithm_ID` from the header to determine which hash algorithm is used for record hashes.  Parsers MUST NOT hard-code an unnamed hash algorithm or treat the LFH `CDC Algo ID` (chunking algorithm) as the hash algorithm for CDC_MAP records.
+
+FASTCDC determines chunk *boundaries*.  `Hash_Algorithm_ID` determines how chunk *hashes* are computed.  These are independent.
+
+#### CDC_MAP TLV v1 value layout
+
+```text
+CDC_MAP_Header (16 bytes) || CDC_MAP_Record[Record_Count] (Record_Count × 48 bytes)
+```
+
+TLV Length MUST equal `16 + Record_Count × Record_Size`.  Both the multiplication and the addition MUST use checked arithmetic.  All multi-byte fields are little-endian.
+
+#### CDC_MAP_Header v1 (16 bytes)
+
+| Field               | Size    | Description                                                           |
+| ------------------- | ------- | --------------------------------------------------------------------- |
+| `Map_Version`       | 1 byte  | MUST be `0x01`.                                                       |
+| `Hash_Algorithm_ID` | 1 byte  | SAR hash algorithm registry ID used for all record hashes.            |
+| `Flags`             | 2 bytes | MUST be zero for v1. Non-zero bits are reserved and MUST be rejected. |
+| `Record_Count`      | 4 bytes | Number of records following the header.                               |
+| `Record_Size`       | 2 bytes | MUST be `48` for v1 with 32-byte hashes.                              |
+| `Reserved`          | 6 bytes | MUST be zero when written and MUST be rejected when read.             |
+
+#### CDC_MAP_Record v1 (48 bytes)
+
+| Field             | Size     | Description                                                                     |
+| ----------------- | -------- | ------------------------------------------------------------------------------- |
+| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID`.                   |
+| `Partition_ID`    | 4 bytes  | Partition identifier containing the referenced chunk.                           |
+| `Absolute_Offset` | 8 bytes  | Absolute byte offset of the referenced chunk from the beginning of the archive. |
+| `Compressed_Size` | 4 bytes  | Size in bytes of the referenced stored chunk payload.                           |
+
+#### CDC_MAP hash algorithm registry
+
+`Hash_Algorithm_ID` uses the SAR hash algorithm registry (Section 9.4):
+
+| ID   | Name     | Status for CDC_MAP                |
+|------|----------|-----------------------------------|
+| 0x30 | SHA-256  | SHOULD be supported               |
+| 0x31 | BLAKE3   | MUST be supported                 |
+| 0x32 | SHA3-256 | assigned, unsupported → `SAR_ERR_UNSUPPORTED` |
+| other| —        | reserved → `SAR_ERR_RESERVED_VALUE` |
+
+#### CDC_MAP structural validation
+
+Structural validation MAY always be performed and includes:
+
+* TLV length is at least 16;
+* `Map_Version` is supported;
+* `Flags` are zero;
+* `Reserved` bytes are zero;
+* `Record_Size` is correct;
+* TLV Length equals `16 + Record_Count × Record_Size`;
+* all arithmetic is checked;
+* `Hash_Algorithm_ID` is in the registry.
+
+#### CDC_MAP hash verification
+
+Hash verification MAY be performed only if:
+
+* `Hash_Algorithm_ID` is supported;
+* the referenced byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)` is readable;
+* archive bounds are available.
+
+`Absolute_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within archive bounds when archive bounds are available.
+
+CDC_MAP hash verification is over the exact stored byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)`.  This is **not** the same as FASTCDC boundary-regeneration verification.
 
 A parser does not require knowledge of the CDC chunking algorithm (as defined by the LFH `CDC Algo ID` in Section 8.5) to parse the `CDC_MAP` structure itself. The CDC algorithm determines how chunks are produced, but the `CDC_MAP` is a catalog of already materialized chunk metadata.
 
-However, a parser MUST know the hash algorithm and field layout used within the `CDC_MAP` in order to correctly interpret and utilize the records. Therefore, this section MUST normatively define:
-
-* The hash algorithm used for the `Hash` field.
-* The byte width and encoding of each field (`Hash`, `Partition_ID`, `Absolute_Offset`, `Compressed_Size`).
-* The endianness of all multi-byte fields.
-* The method for determining the number of records (e.g., implicit via TLV Length or explicit count field).
-* Any alignment or padding requirements within the record sequence.
-
-Without these definitions, portable parsing and interoperability of `CDC_MAP` data cannot be guaranteed.
 
 ### 21.2 External Database Integration (`CDC_EXT_PROVIDER`)
 

@@ -41,7 +41,10 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - FASTCDC: deterministic two-level gear-hash chunking with SHA-256 per-chunk hashes; no zero-length chunks; no unbounded allocation; **treated as implementation-defined/local-profile until the spec fully defines or encodes normative parameters**
   - `0x31` remains `DATA_HASH/BLAKE3`, **not** CDC metadata
   - CDC metadata registry: `0x40` = `CDC_MAP`, `0x41` = inert `CDC_EXT_PROVIDER`, `0x42–0x4E` = reserved, `0x4F` = `CDC_CUSTOM`
-  - `CDC_MAP` parse/write is available; for M9a the stored archive catalog is authoritative for parsing and interpretation, so readers validate stored metadata directly and do **not** need to regenerate FASTCDC boundaries merely to parse or use `CDC_MAP`
+  - `CDC_MAP` uses a **v1 header format** (16 bytes: `Map_Version`, `Hash_Algorithm_ID`, `Flags`, `Record_Count`, `Record_Size`, `Reserved`) followed by 48-byte records (`Hash` 32 B + `Partition_ID` u32 4 B + `Absolute_Offset` u64 8 B + `Compressed_Size` u32 4 B)
+  - `CDC_MAP` is **self-describing** via `Hash_Algorithm_ID` in the header; BLAKE3 (`0x31`) is required, SHA-256 (`0x30`) is supported; parsers MUST NOT hard-code an unnamed hash algorithm
+  - FASTCDC controls chunk **boundaries**; `Hash_Algorithm_ID` controls how CDC_MAP record hashes are computed — these are independent fields
+  - `CDC_MAP` parse/write/hash-verification available; readers validate stored metadata directly and do **not** need to regenerate FASTCDC boundaries to parse or use `CDC_MAP`; CDC_MAP hash verification (`verify_cdc_map_record_hash`) verifies stored chunk hashes against archive bytes and is **not** FASTCDC boundary-regeneration verification
   - `CDC_EXT_PROVIDER` is parsed as UTF-8 URI metadata only; external provider/CAS recipe resolution remains unsupported unless the provider protocol, hash algorithm, record layout, and CDC transformation domain are normatively specified
   - Recipe Mode: `validate_recipe_payload` and `recipe_hashes` for ordered 32-byte chunk hash lists; recipe-hash verification is unavailable because the spec does not yet fully define the recipe-hash algorithm and portable external resolution contract
   - `ResourceLimits`: `max_cdc_chunk_count` and `max_cdc_metadata_bytes` fields added; all CDC parse paths are bounded

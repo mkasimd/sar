@@ -1017,6 +1017,19 @@ A standalone `sar-cdc` crate provides the CDC algorithm and data model, independ
 
 Unsupported algorithm IDs (0x01, 0x03) return `SarError::Unsupported`. Reserved IDs (0x04–0xEF) return `SarError::ReservedValue`. Custom IDs (0xF0–0xFF) return `SarError::Unsupported`.
 
+#### CDC_MAP v1 hash algorithm registry
+
+`Hash_Algorithm_ID` in the CDC_MAP header uses the SAR hash algorithm registry.
+Do not confuse this with the LFH `CDC Algo ID` (chunking algorithm).
+FASTCDC controls chunk *boundaries*; `Hash_Algorithm_ID` controls how chunk *hashes* are computed.
+
+| ID   | Name     | Status for CDC_MAP                              |
+|------|----------|-------------------------------------------------|
+| 0x30 | SHA-256  | supported                                       |
+| 0x31 | BLAKE3   | **required** (must be supported for M9a)        |
+| 0x32 | SHA3-256 | assigned, unsupported → `SAR_ERR_UNSUPPORTED`   |
+| other| —        | reserved → `SAR_ERR_RESERVED_VALUE`             |
+
 #### Public types
 
 ```rust
@@ -1034,18 +1047,34 @@ pub struct CdcMetadata {
     pub chunks: Vec<CdcChunk>,
 }
 
-pub struct CdcMapRecord {
-    pub hash: [u8; 32],          // 32 bytes
-    pub partition_id: u16,        // 2 bytes LE (assumed — spec does not specify width)
-    pub absolute_offset: u64,     // 8 bytes LE (assumed — spec does not specify width)
-    pub compressed_size: u64,     // 8 bytes LE (assumed — spec does not specify width)
+/// CDC_MAP v1 header (16 bytes on the wire).
+pub struct CdcMapHeader {
+    pub map_version: u8,         // MUST be 0x01
+    pub hash_algorithm_id: u8,   // SAR hash registry ID
+    pub flags: u16,              // MUST be 0 for v1
+    pub record_count: u32,
+    pub record_size: u16,        // MUST be 48 for v1
+    pub reserved: [u8; 6],      // MUST be 0
 }
 
+/// CDC_MAP v1 record (48 bytes on the wire).
+pub struct CdcMapRecord {
+    pub hash: [u8; 32],          // 32 bytes — hash using Hash_Algorithm_ID
+    pub partition_id: u32,        // 4 bytes LE
+    pub absolute_offset: u64,     // 8 bytes LE — from archive start
+    pub compressed_size: u32,     // 4 bytes LE — stored payload size
+}
+
+/// Parsed CDC_MAP catalog.
 pub struct CdcMap {
+    pub hash_algorithm_id: u8,   // from the v1 header
     pub records: Vec<CdcMapRecord>,
 }
 
-pub const CDC_MAP_RECORD_LEN: usize = 50;  // 32 + 2 + 8 + 8
+pub const CDC_MAP_HEADER_SIZE: usize = 16;
+pub const CDC_MAP_RECORD_LEN: usize = 48;   // 32 + 4 + 8 + 4
+pub const CDC_MAP_V1_RECORD_SIZE: u16 = 48;
+pub const CDC_MAP_VERSION_V1: u8 = 0x01;
 ```
 
 #### FASTCDC algorithm
@@ -1063,7 +1092,7 @@ Properties:
 - Deterministic: identical input always produces identical chunk boundaries.
 - No zero-length chunks.
 - Final chunk may be smaller than `min_size` only at EOF.
-- Chunks include SHA-256 hash (computed over the chunk's logical bytes).
+- Chunks include hash (computed over the chunk's logical bytes; not tied to CDC_MAP `Hash_Algorithm_ID`).
 - Two-level masking: phase 1 from `min_size` to `avg_size` uses `mask_s`; phase 2 from `avg_size` to `max_size` uses `mask_l`.
 - Gear table: 256 entries, `xorshift64*` PRNG seeded at `0x9e3779b97f4a7c15`.
 
@@ -1073,24 +1102,41 @@ Properties:
 // Validates a cdc_algo_id byte; returns Err for reserved or unsupported IDs.
 pub fn validate_cdc_algo_id(id: u8) -> Result<(), CdcError>
 
-// Validates CDC_MAP TLV bytes (must be a multiple of CDC_MAP_RECORD_LEN).
+// Validates a Hash_Algorithm_ID for CDC_MAP headers.
+pub fn validate_cdc_map_hash_algo_id(id: u8) -> Result<(), CdcError>
+
+// Structural validation of raw CDC_MAP v1 TLV bytes (wraps parse_cdc_map).
 pub fn validate_cdc_map_bytes(bytes: &[u8], max_records: usize) -> Result<(), CdcError>
 
 // Validates a CdcMetadata struct (no zero-length chunks, no gaps, etc.).
 pub fn validate_cdc_metadata(meta: &CdcMetadata, file_size: u64, ...) -> Result<(), CdcError>
 ```
 
-#### CDC_MAP parse/write
+#### CDC_MAP parse/write/verify
 
 ```rust
-// Parse stored CDC_MAP TLV binary payload into CdcMap; does not regenerate chunk boundaries.
+// Parse stored CDC_MAP v1 TLV binary payload (header + records) into CdcMap.
+// Does not regenerate FASTCDC boundaries; operates on stored records only.
 pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcError>
 
-// Serialize CdcMap into CDC_MAP TLV binary payload.
+// Serialize CdcMap into CDC_MAP v1 TLV binary payload (header + records).
 pub fn write_cdc_map(map: &CdcMap) -> Result<Vec<u8>, CdcError>
+
+// Verify the stored hash of one CdcMapRecord against archive bytes.
+// Uses hash_algorithm_id (from the CDC_MAP header), not the CDC chunking algorithm.
+// Verification is over [absolute_offset, absolute_offset + compressed_size).
+pub fn verify_cdc_map_record_hash(
+    record: &CdcMapRecord,
+    hash_algorithm_id: u8,
+    archive_bytes: &[u8],
+) -> Result<bool, CdcError>
 ```
 
 For M9a, stored CDC metadata is authoritative for parsing and interpretation. Readers validate the stored `CDC_MAP` / catalog bytes directly and do **not** need to regenerate FASTCDC boundaries merely to parse or use the map.
+
+CDC_MAP hash verification is over the exact stored byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)`. This is **not** FASTCDC boundary-regeneration verification.
+
+External provider resolution and recipe reconstruction remain unsupported in M9a.
 
 ### `sar-core` CDC bridge module
 
@@ -1127,11 +1173,11 @@ pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]>
 
 ### CDC ResourceLimits
 
-Two new fields are added to `ResourceLimits`:
+Two fields in `ResourceLimits` bound CDC parsing:
 
 | Field                    | Default   | Description                            |
 |--------------------------|-----------|----------------------------------------|
-| `max_cdc_chunk_count`    | 1,000,000 | Maximum chunks in a recipe or CDC_MAP  |
+| `max_cdc_chunk_count`    | 1,000,000 | Maximum records in a recipe or CDC_MAP |
 | `max_cdc_metadata_bytes` | 52,428,800| Maximum CDC metadata bytes (50 MiB)    |
 
 Helper methods:
@@ -1174,7 +1220,7 @@ pub struct VerificationReport {
 ### Updated CDC TLV registry
 
 - `0x31` is `DATA_HASH/BLAKE3`, not CDC metadata.
-- `0x40` is `CDC_MAP`.
+- `0x40` is `CDC_MAP` (v1 header + records format; self-describing via `Hash_Algorithm_ID`).
 - `0x41` is `CDC_EXT_PROVIDER` and is exposed as inert UTF-8 URI metadata only.
 - `0x42–0x4E` are reserved CDC metadata TLVs and return `SarError::ReservedValue`.
 - `0x4F` is `CDC_CUSTOM` and is parsed/preserved only as implementation-defined opaque metadata.
@@ -1185,8 +1231,9 @@ CDC chunk boundaries and recipe hashes are treated in this implementation as ope
 
 ### CDC interoperability semantics
 
-- **Parseable/interpretable CDC metadata:** readers can parse and use stored CDC metadata records directly when they are well-formed and self-consistent.
+- **Parseable/interpretable CDC metadata:** readers can parse and use stored CDC metadata records directly when they are well-formed and self-consistent. `CDC_MAP` is self-describing via `Hash_Algorithm_ID`.
 - **Structural CDC verification:** checks possible from stored records only, such as metadata parsing, bounds/resource-limit checks, reserved/unsupported ID handling, and internal consistency.
+- **CDC_MAP hash verification:** verifying that stored chunk hashes match the bytes at `[Absolute_Offset, Absolute_Offset + Compressed_Size)`. Supported for BLAKE3 (0x31) and SHA-256 (0x30) when archive bytes are available. This is **not** FASTCDC boundary-regeneration verification.
 - **Boundary-regeneration CDC verification:** re-running a CDC algorithm and proving the stored boundaries/hashes match. M9a does **not** claim this portably because the required FASTCDC parameters and transformation domain are not fully normative or encoded.
 - **Cross-writer deterministic CDC chunking:** multiple implementations independently producing the same boundaries for the same logical file. M9a does **not** require this for `CDC_MAP` parsing.
 - **External CAS recipe resolution:** reconstructing recipe-mode content from an external provider. M9a does **not** implement or claim this portably.

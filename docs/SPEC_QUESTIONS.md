@@ -148,10 +148,12 @@ The items below are derived from the current code audit. They document places wh
 ## Milestone 9a — Content-Defined Chunking (CDC) spec ambiguities
 
 - **Spec section:** CDC_MAP TLV record field widths (spec section 21.1)
-  - **Issue:** Section 21.1 defines CDC_MAP as a sequence of `[Hash, Partition_ID, Absolute_Offset, Compressed_Size]` records but does not give byte widths or endianness for the per-record fields.
-  - **Current conservative implementation:** assumed layout `[hash: 32 bytes][partition_id: u16 LE][absolute_offset: u64 LE][compressed_size: u64 LE]` = 50 bytes per record. `CDC_MAP_RECORD_LEN = 50`. Readers use this stored-record layout directly; they do **not** need fixed FASTCDC parameters merely to parse a `CDC_MAP`.
-  - **Interoperability risk:** high. If the spec intended different widths (e.g., u32 for partition_id), all CDC_MAP records would be misaligned.
-  - **Follow-up needed:** spec must normatively state field widths and endianness for all CDC_MAP record fields.
+  - **Status: RESOLVED in M9a (CDC_MAP v1 header format)**
+  - Section 21.1 now defines a `CDC_MAP_Header v1` with normative field widths. The record layout for v1 is `[Hash: 32 B][Partition_ID: 4 B u32 LE][Absolute_Offset: 8 B u64 LE][Compressed_Size: 4 B u32 LE]` = 48 bytes per record. The header carries `Hash_Algorithm_ID` so parsers do not need to guess the hash algorithm. `CDC_MAP_RECORD_LEN = 48`. This resolves the previous conservative assumed layout of 50 bytes.
+
+- **Spec section:** CDC_MAP Hash_Algorithm_ID (spec section 21.1)
+  - **Status: RESOLVED in M9a (CDC_MAP v1 header format)**
+  - `Hash_Algorithm_ID` in the v1 header identifies the SAR hash algorithm used for all record hashes. BLAKE3 (`0x31`) is required; SHA-256 (`0x30`) is supported. The LFH `CDC Algo ID` is the chunking algorithm; `Hash_Algorithm_ID` is the record hash algorithm. These are independent fields.
 
 - **Spec section:** Recipe Mode hash algorithm (spec sections 8.5 and 20)
   - **Issue:** Section 8.5 states that when `cdc_algo_id > 0` the payload (after decryption/decompression) is an ordered array of 32-byte chunk hashes, and that the hash is "determined by DEDUPLICATION (Bit 29)". Section 20 does not name the hash algorithm.
