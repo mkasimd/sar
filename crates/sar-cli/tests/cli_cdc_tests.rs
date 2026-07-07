@@ -5,8 +5,12 @@ use std::fs;
 use assert_cmd::Command;
 use predicates::str::contains;
 use sar_core::{
-    GlobalFlags,
-    format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
+    GlobalFlags, ResourceLimits,
+    format::{
+        CentralDictionary, Footer, GlobalHeader, LocalFileHeader, write_central_dictionary,
+        write_footer, write_global_header, write_lfh,
+    },
+    make_cdc_ext_provider_tlv,
 };
 use serde_json::Value;
 use tempfile::tempdir;
@@ -35,6 +39,46 @@ fn build_cdc_archive_file(
     bytes.extend_from_slice(payload);
 
     let path = dir.join("cdc_test.sar");
+    fs::write(&path, &bytes).expect("write archive");
+    path
+}
+
+fn build_indexed_cdc_provider_archive_file(dir: &std::path::Path) -> std::path::PathBuf {
+    let flags = GlobalFlags::OPT_PRESENT | GlobalFlags::CDC_SUPPORT;
+    let mut bytes = write_global_header(&GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    })
+    .expect("header");
+
+    let lfh_offset = bytes.len() as u64;
+    let lfh = LocalFileHeader::minimal_store(b"test.bin".to_vec(), 5);
+    let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
+    bytes.extend_from_slice(&lfh_bytes);
+    bytes.extend_from_slice(b"hello");
+
+    let cd_offset = bytes.len() as u64;
+    let cd = CentralDictionary {
+        version: 1,
+        file_count: 1,
+        partition_info: None,
+        global_crc32: None,
+        metadata: vec![
+            make_cdc_ext_provider_tlv(
+                "sarp+https://chunks.example/v1",
+                &ResourceLimits::unlimited(),
+            )
+            .expect("provider tlv"),
+        ],
+        offsets: vec![lfh_offset],
+    };
+    bytes.extend_from_slice(&write_central_dictionary(&cd, flags).expect("cd"));
+    bytes.extend_from_slice(&write_footer(Footer { cd_offset }));
+
+    let path = dir.join("cdc_provider_test.sar");
     fs::write(&path, &bytes).expect("write archive");
     path
 }
@@ -147,6 +191,19 @@ fn verify_cdc_succeeds_on_valid_cdc_archive() {
         .stdout(contains("cdc_support=true"));
 }
 
+#[test]
+fn verify_cdc_reports_recipe_hash_verification_unavailable() {
+    let td = tempdir().expect("tmp");
+    let archive = build_cdc_archive_file(td.path(), 0x02, b"valid cdc payload");
+
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args(["verify", archive.to_str().expect("str"), "--cdc"])
+        .assert()
+        .success()
+        .stdout(contains("recipe_hash_verification=unavailable"));
+}
+
 // ---------------------------------------------------------------------------
 // verify --cdc on archive without CDC_SUPPORT reports cdc_support=false
 // ---------------------------------------------------------------------------
@@ -226,4 +283,29 @@ fn inspect_text_mode_reports_entry_cdc_algo() {
         .assert()
         .success()
         .stdout(contains("cdc_algo_id=0x00"));
+}
+
+#[test]
+fn inspect_json_reports_cdc_ext_provider_metadata() {
+    let td = tempdir().expect("tmp");
+    let archive = build_indexed_cdc_provider_archive_file(td.path());
+
+    let out = Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args(["inspect", archive.to_str().expect("str"), "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let v: Value = serde_json::from_slice(&out).expect("json");
+    let tlvs = v["cdc_metadata_tlvs"]
+        .as_array()
+        .expect("cdc metadata tlvs");
+    assert_eq!(tlvs.len(), 1);
+    assert_eq!(tlvs[0]["type_id"], "0x41");
+    assert_eq!(tlvs[0]["kind"], "cdc_ext_provider");
+    assert_eq!(tlvs[0]["uri"], "sarp+https://chunks.example/v1");
+    assert_eq!(tlvs[0]["resolution"], "not_implemented");
 }

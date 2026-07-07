@@ -14,17 +14,17 @@
     {
       "name": "sar-cdc",
       "path": "crates/sar-cdc",
-      "purpose": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0 Milestone 9a.",
+      "purpose": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0 Milestone 9a; FASTCDC and CDC_MAP behavior remain implementation-defined where the spec is incomplete.",
       "status": "implemented",
       "milestones": [
         "9a"
       ],
       "features": [
-        "FASTCDC algorithm (deterministic, two-level gear-hash)",
+        "FASTCDC algorithm (deterministic, two-level gear-hash; local-profile because spec parameters are incomplete)",
         "CDC algorithm ID registry (LITERAL=0x00, FASTCDC=0x02)",
         "CdcChunk, CdcMetadata, CdcMapRecord, CdcMap data structs",
-        "CDC_MAP TLV binary parse/write (50-byte records)",
-        "Recipe Mode validation (32-byte hash array)",
+        "CDC_MAP TLV binary parse/write (50-byte local-profile records)",
+        "Recipe Mode structural validation (32-byte hash array)",
         "CdcError enum with Malformed/Unsupported/ReservedValue/LimitExceeded variants"
       ],
       "modules": [
@@ -89,7 +89,7 @@
             {
               "name": "CdcMetadata",
               "kind": "struct",
-              "signature": "pub struct CdcMetadata { pub algorithm_id: u16, pub min_size: u32, pub avg_size: u32, pub max_size: u32, pub chunks: Vec<CdcChunk> }",
+              "signature": "pub struct CdcMetadata { pub algorithm_id: u8, pub min_size: u32, pub avg_size: u32, pub max_size: u32, pub chunks: Vec<CdcChunk> }",
               "description": "Complete CDC metadata for a file",
               "since_milestone": "9a",
               "implemented": true
@@ -98,7 +98,7 @@
               "name": "CdcMapRecord",
               "kind": "struct",
               "signature": "pub struct CdcMapRecord { pub hash: [u8; 32], pub partition_id: u16, pub absolute_offset: u64, pub compressed_size: u64 }",
-              "description": "Single CDC_MAP TLV record (50 bytes; field widths assumed \u2014 spec does not specify)",
+              "description": "Single CDC_MAP TLV record (50-byte local-profile layout; field widths remain spec-ambiguous)",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -106,7 +106,7 @@
               "name": "CdcMap",
               "kind": "struct",
               "signature": "pub struct CdcMap { pub records: Vec<CdcMapRecord> }",
-              "description": "Parsed CDC_MAP TLV content",
+              "description": "Parsed CDC_MAP TLV content using the current local-profile record layout",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -114,7 +114,7 @@
               "name": "CDC_MAP_RECORD_LEN",
               "kind": "const",
               "signature": "pub const CDC_MAP_RECORD_LEN: usize = 50;",
-              "description": "Byte length of a single CDC_MAP record (assumed layout: 32+2+8+8)",
+              "description": "Byte length of a single CDC_MAP record in the current local-profile layout (32+2+8+8)",
               "since_milestone": "9a",
               "implemented": true
             }
@@ -127,7 +127,7 @@
             {
               "name": "CdcError",
               "kind": "enum",
-              "description": "CDC-specific error type with variants: Malformed, Unsupported, ReservedValue, LimitExceeded, InvalidLength, InvalidChunk",
+              "description": "CDC-specific error type with variants: Unsupported, ReservedValue, Overflow, Bounds, Malformed, LimitExceeded, InvalidLength",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -187,7 +187,7 @@
               "name": "FastCdcOptions",
               "kind": "struct",
               "signature": "pub struct FastCdcOptions { pub min_size: u32, pub avg_size: u32, pub max_size: u32 }",
-              "description": "FASTCDC chunking parameters (defaults: 2KiB/8KiB/64KiB)",
+              "description": "FASTCDC chunking parameters (defaults: 2KiB/8KiB/64KiB; not standardized by the current spec)",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -195,7 +195,7 @@
               "name": "chunk_data",
               "kind": "function",
               "signature": "pub fn chunk_data(data: &[u8], opts: &FastCdcOptions) -> Vec<CdcChunk>",
-              "description": "Chunk data using FASTCDC; deterministic and bounded",
+              "description": "Chunk data using deterministic FASTCDC; bounded but not claimed as portable standard-profile interoperability",
               "since_milestone": "9a",
               "implemented": true
             }
@@ -217,7 +217,8 @@
         "8",
         "stage-2",
         "stage-3",
-        "stage-4"
+        "stage-4",
+        "9a"
       ],
       "features": [],
       "modules": [
@@ -806,7 +807,7 @@
               "signature": "pub fn ArchiveWriter<W>::add_entry(&mut self, entry: EntryInput) -> Result<EntryWritten, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Add one archive entry to the writer.",
+              "description": "Add one archive entry. When the writer was created with CDC metadata, LFH cdc_algo_id is emitted as LITERAL_MODE (0x00) to keep CDC_SUPPORT archives internally consistent.",
               "parameters": [],
               "returns": "Result<EntryWritten, SarError>",
               "errors": [
@@ -853,7 +854,7 @@
               "signature": "pub fn ArchiveWriter<W>::finish(self) -> Result<ArchiveSummary, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Finalize the archive and optionally write the CD/footer.",
+              "description": "Finalize the archive and optionally write the CD/footer, including any configured Central Dictionary metadata.",
               "parameters": [],
               "returns": "Result<ArchiveSummary, SarError>",
               "errors": [
@@ -890,6 +891,29 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Needs opaque output handle wrapper."
+            },
+            {
+              "name": "ArchiveWriter::new_with_cd_metadata",
+              "kind": "function",
+              "signature": "pub fn ArchiveWriter<W>::new_with_cd_metadata(writer: W, options: ArchiveWriterOptions, cd_metadata: Vec<Tlv>) -> Result<Self, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Create an indexed writer with explicit Central Dictionary metadata. Supplying CDC metadata auto-enables OPT_PRESENT and CDC_SUPPORT and keeps entry LFHs in LITERAL_MODE.",
+              "parameters": [],
+              "returns": "Result<ArchiveWriter<W>, SarError>",
+              "errors": [
+                "SarError::FlagConflict \u2014 CD metadata supplied for NO_INDEX output",
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Needs opaque output handle wrapper and a machine-readable metadata description."
             },
             {
               "name": "ArchiveWriter::new_with_compression",
@@ -5591,7 +5615,7 @@
         "name": "inspect",
         "usage": "sar inspect <archive.sar> [--json]",
         "status": "partial",
-        "description": "Inspect archive metadata and FEC summaries in plaintext or JSON form.",
+        "description": "Inspect archive metadata, including CDC metadata summaries, in plaintext or JSON form.",
         "options": [
           {
             "name": "--json",
@@ -5615,7 +5639,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Implemented for unencrypted archives and current FEC metadata; no password option exists for encrypted inspect flows."
+        "notes": "Implemented for unencrypted archives and current FEC/CDC metadata; JSON includes cdc_metadata_tlvs and legacy cdc_map_tlvs. No password option exists for encrypted inspect flows."
       },
       {
         "name": "list",
@@ -5643,9 +5667,9 @@
       },
       {
         "name": "verify",
-        "usage": "sar verify <archive.sar> [--password PASSWORD] [--recovery] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
+        "usage": "sar verify <archive.sar> [--password PASSWORD] [--recovery] [--cdc] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
         "status": "implemented",
-        "description": "Verify archive integrity. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts ResourceLimits override flags.",
+        "description": "Verify archive integrity. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts --cdc to validate CDC metadata structurally and report recipe-hash verification as unavailable.",
         "options": [
           {
             "name": "--password",
@@ -5654,6 +5678,10 @@
           {
             "name": "--recovery",
             "description": "Additionally validates fragmentation, sparse, and Data Recovery TLV metadata."
+          },
+          {
+            "name": "--cdc",
+            "description": "Additionally validates CDC metadata TLVs and reports recipe-hash verification as unavailable due to spec ambiguity."
           },
           {
             "name": "--max-archive-size BYTES",
@@ -5710,7 +5738,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "No dedicated repair workflow is exposed; verification is structural and metadata-oriented."
+        "notes": "Verification is structural and metadata-oriented. CDC verification does not attempt recipe reconstruction or external-provider resolution because the spec does not name the recipe-hash algorithm and M9a does not implement network-backed providers."
       },
       {
         "name": "version",

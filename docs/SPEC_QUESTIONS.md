@@ -147,8 +147,8 @@ The items below are derived from the current code audit. They document places wh
 
 ## Milestone 9a — Content-Defined Chunking (CDC) spec ambiguities
 
-- **Spec section:** CDC_MAP TLV record field widths (spec section 20)
-  - **Issue:** Section 20 defines CDC_MAP TLVs (type IDs 0x40–0x4F) but does not give byte widths or endianness for the per-record fields (Hash, Partition_ID, Absolute_Offset, Compressed_Size).
+- **Spec section:** CDC_MAP TLV record field widths (spec section 21.1)
+  - **Issue:** Section 21.1 defines CDC_MAP as a sequence of `[Hash, Partition_ID, Absolute_Offset, Compressed_Size]` records but does not give byte widths or endianness for the per-record fields.
   - **Current conservative implementation:** assumed layout `[hash: 32 bytes][partition_id: u16 LE][absolute_offset: u64 LE][compressed_size: u64 LE]` = 50 bytes per record. `CDC_MAP_RECORD_LEN = 50`.
   - **Interoperability risk:** high. If the spec intended different widths (e.g., u32 for partition_id), all CDC_MAP records would be misaligned.
   - **Follow-up needed:** spec must normatively state field widths and endianness for all CDC_MAP record fields.
@@ -159,17 +159,11 @@ The items below are derived from the current code audit. They document places wh
   - **Interoperability risk:** medium. If DEDUPLICATION Bit 29 selects BLAKE3 in some profiles, SHA-256 chunk hashes would not match.
   - **Follow-up needed:** spec must normatively name the hash algorithm for Recipe Mode chunk hashes, or reference an algorithm registry. This should be resolved when the DEDUPLICATION feature is specified in full.
 
-- **Spec section:** FastCDC parameters — minimum, average, maximum chunk size (spec section 21)
-  - **Issue:** Section 21 names FASTCDC as a required CDC algorithm (algorithm ID 0x02) but does not specify the minimum, average, or maximum chunk sizes, nor the gear hash polynomial, nor whether the algorithm should be the paper's two-level masking variant.
+- **Spec section:** FastCDC parameters — minimum, average, maximum chunk size (spec section 8.5)
+  - **Issue:** Section 8.5 names FASTCDC as a required CDC algorithm (algorithm ID 0x02) but does not specify the minimum, average, or maximum chunk sizes, normalization/masking level, gear hash table or seed, cut-point condition, fingerprint width, or EOF handling.
   - **Current conservative implementation:** implemented two-level FASTCDC with `min_size=2 KiB`, `avg_size=8 KiB`, `max_size=64 KiB`. Gear table generated via `xorshift64*` PRNG seeded at `0x9e3779b97f4a7c15`. Two-level masking: `mask_s = mask_for(avg/2)`, `mask_l = mask_for(avg)`.
   - **Interoperability risk:** high. Any difference in chunk sizes or gear table produces completely different chunk boundaries, breaking deduplication across implementations.
-  - **Follow-up needed:** spec must normatively specify FastCDC parameters (min/avg/max chunk sizes), the gear hash table polynomial or generation procedure, and the exact masking strategy. These values must be embedded in the archive or specified as mandatory defaults.
-
-- **Spec section:** TLV type 0x31 conflict (spec sections 5.3 and 21.2)
-  - **Issue:** Section 5.3 assigns type IDs 0x30–0x3F to DATA_HASH TLVs. Section 21.2 introduces `CDC_EXT_PROVIDER` with type ID 0x31. These ranges overlap.
-  - **Current conservative implementation:** treating 0x31 as DATA_HASH (part of the 0x30–0x3F range). CDC_EXT_PROVIDER TLVs at 0x31 are not parsed or generated.
-  - **Interoperability risk:** high. Any archive using type 0x31 for CDC_EXT_PROVIDER would be misinterpreted as DATA_HASH by implementations following section 5.3.
-  - **Follow-up needed:** spec must resolve the TLV type ID conflict. Either CDC_EXT_PROVIDER must be reassigned to an unused ID, or the DATA_HASH range must be clarified.
+  - **Follow-up needed:** spec must normatively specify FastCDC parameters (min/avg/max chunk sizes), normalization/masking strategy, gear table/seed, cut-point condition, and EOF behavior. These values must be embedded in the archive or specified as mandatory defaults.
 
 - **Spec section:** CDC chunking transformation domain (spec sections 8.5 and 21)
   - **Issue:** The spec does not explicitly state which byte domain CDC chunking operates on. Options include: logical file bytes, pre-compression bytes, post-compression bytes, pre-encryption bytes, or post-encryption bytes.

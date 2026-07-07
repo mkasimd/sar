@@ -74,6 +74,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `metadata()`
 - `ArchiveWriter<W>`
   - `new(writer, ArchiveWriterOptions)`
+  - `new_with_cd_metadata(writer, ArchiveWriterOptions, Vec<Tlv>)`
   - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
   - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
   - `add_entry(EntryInput)`
@@ -995,7 +996,7 @@ Candidate high-level operations:
 
 ### Overview
 
-Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits for CDC, and CLI support for `inspect --json` (reports `cdc_support` and per-entry `cdc_algo_id`) and `verify --cdc` (validates CDC metadata when active).
+Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits, and CLI support for `inspect --json` (reports `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`) and `verify --cdc` (validates CDC metadata structurally when active).
 
 Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is **not** implemented in M9a.
 
@@ -1026,7 +1027,7 @@ pub struct CdcChunk {
 }
 
 pub struct CdcMetadata {
-    pub algorithm_id: u16,
+    pub algorithm_id: u8,
     pub min_size: u32,
     pub avg_size: u32,
     pub max_size: u32,
@@ -1056,7 +1057,7 @@ Default parameters:
 - `avg_size = 8192` (8 KiB)
 - `max_size = 65536` (64 KiB)
 
-**Note:** The spec does not define the required FastCDC parameters. The above defaults are conservative and may not produce interoperable chunk boundaries with other implementations. See `docs/SPEC_QUESTIONS.md` for details.
+**Note:** The spec does not define the required FastCDC parameters. The above defaults are conservative and may not produce interoperable chunk boundaries with other implementations. Treat the current FASTCDC implementation as implementation-defined/local-profile behavior rather than a portable standard-profile interoperability guarantee. See `docs/SPEC_QUESTIONS.md` for details.
 
 Properties:
 - Deterministic: identical input always produces identical chunk boundaries.
@@ -1099,11 +1100,20 @@ pub fn write_cdc_map(map: &CdcMap) -> Result<Vec<u8>, CdcError>
 // Validates CDC algorithm ID; converts CdcError to SarError.
 pub fn validate_cdc_algo_id(id: u8) -> Result<(), SarError>
 
-// Extracts and parses the first CDC_MAP TLV (0x40–0x4F) from a TLV slice.
+// Parses an inert CDC_EXT_PROVIDER (0x41) URI TLV.
+pub fn parse_cdc_ext_provider_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<CdcExtProviderMetadata, SarError>
+
+// Validates one CDC metadata TLV using the updated registry.
+pub fn validate_cdc_metadata_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<(), SarError>
+
+// Extracts and parses the first CDC_MAP TLV (0x40) from a TLV slice.
 pub fn parse_entry_cdc_map(tlvs: &[Tlv], limits: &ResourceLimits) -> Result<Option<CdcMap>, SarError>
 
 // Serializes a CdcMap into a Tlv with type_id = 0x40.
 pub fn make_cdc_map_tlv(map: &CdcMap, limits: &ResourceLimits) -> Result<Tlv, SarError>
+
+// Serializes CDC_EXT_PROVIDER metadata into a Tlv with type_id = 0x41.
+pub fn make_cdc_ext_provider_tlv(uri: &str, limits: &ResourceLimits) -> Result<Tlv, SarError>
 
 // Validates a Recipe payload (ordered 32-byte chunk hashes).
 // Returns the number of hashes on success.
@@ -1159,22 +1169,37 @@ pub struct VerificationReport {
 | FEC                     | CDC_MAP TLVs are parsed after FEC recovery. CDC does not bypass FEC validation.   |
 | LOSS_TOLERANT           | CDC structural validation is still performed; recipe hash verification is skipped for degraded entries. |
 
+### Updated CDC TLV registry
+
+- `0x31` is `DATA_HASH/BLAKE3`, not CDC metadata.
+- `0x40` is `CDC_MAP`.
+- `0x41` is `CDC_EXT_PROVIDER` and is exposed as inert UTF-8 URI metadata only.
+- `0x42–0x4E` are reserved CDC metadata TLVs and return `SarError::ReservedValue`.
+- `0x4F` is `CDC_CUSTOM` and is parsed/preserved only as implementation-defined opaque metadata.
+
 ### CDC transformation domain
 
 CDC chunk boundaries and recipe hashes operate on logical reconstructed file bytes (after fragment reassembly, sparse reconstruction, decryption, and decompression). This is the conservative default; the spec does not explicitly state the domain. See `docs/SPEC_QUESTIONS.md`.
 
 ### CDC CLI behavior
 
-- `inspect <archive.sar> --json` — includes `cdc_support` (bool) and `cdc_map_tlvs` (array) at archive level; each entry includes `cdc_algo_id` (u8) when CDC_SUPPORT is active.
-- `verify <archive.sar> --cdc` — reports `cdc_support` and `cdc_entries` count; validates CDC algorithm IDs and CDC_MAP TLVs when active.
+- `inspect <archive.sar> --json` — includes `cdc_support` (bool), `cdc_metadata_tlvs` (array), and legacy `cdc_map_tlvs` (array) at archive level; each entry includes `cdc_algo_id` (u8) when CDC_SUPPORT is active.
+- `verify <archive.sar> --cdc` — reports `cdc_support` and `cdc_entries` count; validates CDC algorithm IDs and CDC metadata TLVs when active.
+- `verify <archive.sar> --cdc` reports recipe-hash verification as unavailable, not passed, because the spec does not name the recipe-hash algorithm.
 - Reserved or unsupported CDC algorithm IDs produce clear error output.
 - Resource-limit failures produce `SarError::LimitExceeded` with a descriptive message.
+
+### ArchiveWriter CDC behavior
+
+- `ArchiveWriter::new_with_cd_metadata(...)` auto-enables `OPT_PRESENT` and `CDC_SUPPORT` when CDC metadata TLVs are supplied for an indexed archive.
+- When `CDC_SUPPORT` is active in `ArchiveWriter`, normal entry-writing APIs emit LFH `cdc_algo_id = 0x00` (`LITERAL_MODE`) so archives are internally consistent.
+- `ArchiveWriter` does **not** implement recipe-mode archive writing or external-provider resolution in M9a.
 
 ### Not implemented in M9a
 
 - Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution)
 - Rabin fingerprinting (0x01) and BuzHash (0x03) CDC algorithms
 - Custom CDC algorithm IDs (0xF0–0xFF)
-- CDC_EXT_PROVIDER TLV (type 0x31 — see TLV conflict in `docs/SPEC_QUESTIONS.md`)
+- External provider resolution for `CDC_EXT_PROVIDER` (`0x41`)
 - Streaming CDC chunking APIs
 - `sar create --cdc fastcdc` CLI flag for creating CDC-annotated archives

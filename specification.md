@@ -759,7 +759,10 @@ The authoritative registry for the Type ID SHOULD solely be this specification a
 | 0x10 - 0x1F | `RECOVERY` | blob | Erasure Coding (EC) parity data. |
 | 0x20 - 0x2F | `SIGNATURE` | blob | Digital Signature data. |
 | 0x30 - 0x3F | `DATA_HASH` | struct | Hash of Data Area (REQUIRED if SIGNED). |
-| 0x40 - 0x4F | `CDC_MAP` | blob | CDC Map / Catalog. |
+| 0x40 | `CDC_MAP` | blob | CDC Map / Catalog. |
+| 0x41 | `CDC_EXT_PROVIDER` | string | UTF-8 URI for an external CDC provider. |
+| 0x42 - 0x4E | RESERVED | Reserved for future CDC metadata assignments. |
+| 0x4F | `CDC_CUSTOM` | blob | Implementation-defined CDC metadata extension. |
 | 0x50 - 0xFF | RESERVED | Reserved for future use. |
 
 When a string is carried within a TLV Value field, the TLV Length field defines the string length. No additional string-length field SHALL be present.
@@ -1709,7 +1712,7 @@ Implementations encountering an assigned but unsupported hashing algorithm ident
 
 Implementations encountering a reserved hashing algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
-### 9.5 CDC_MAP (ID 0x40 - 0x4F)
+### 9.5 CDC metadata (ID 0x40 - 0x4F)
 see section 21.
 
 ## 10. Error and Status Mapping
@@ -2942,11 +2945,16 @@ For self-contained archives, the Catalog is stored as a TLV block in the Central
 ### 21.2 External Database Integration
 In distributed environments (e.g., Edge-to-Cloud streaming), the Catalog MAY be maintained externally.
 
-* **TLV Type ID**: `0x31` (`CDC_EXT_PROVIDER`)
+* **TLV Type ID**: `0x41` (`CDC_EXT_PROVIDER`)
 * **Value**: A UTF-8 URI string pointing to the external chunk provider (e.g., `sarp+https://chunks.provider.net/v1`).
 * **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (19).
 
-### 21.3 Hybrid Deduplication Performance
+### 21.3 Reserved and Implementation-Defined CDC metadata
+
+* **Reserved**: `0x42–0x4E` are RESERVED for future CDC metadata assignments.
+* **Implementation-defined**: `0x4F` (`CDC_CUSTOM`) MAY be used for implementation-defined CDC metadata extensions.
+
+### 21.4 Hybrid Deduplication Performance
 Implementations SHOULD utilize Selective Deduplication to optimize streaming throughput.
 * **Intros/Outros/Ads**: Marked with `CDC Algo ID > 0`. These are pulled from the local edge cache via the Recipe.
 * **Movie/Main Content**: Marked with `CDC Algo ID = 0x00`. These flow as Literal Mode data, avoiding the CPU overhead of fingerprinting or catalog lookups.

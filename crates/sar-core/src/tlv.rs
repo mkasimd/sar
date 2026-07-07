@@ -32,9 +32,8 @@ fn classify_type(type_id: u8) -> Result<(), SarError> {
             "SIGNATURE TLV not implemented in M1-M3",
         )),
         0x30..=0x3F => Ok(()),
-        // CDC_MAP TLV range 0x40..=0x4F: accepted structurally; content is
-        // validated by the CDC module when CDC_SUPPORT is active.
-        0x40..=0x4F => Ok(()),
+        0x40 | 0x41 | 0x4F => Ok(()),
+        0x42..=0x4E => Err(SarError::ReservedValue("reserved CDC metadata TLV type")),
         0x50..=0xFF => Err(SarError::ReservedValue("reserved TLV type")),
         _ => Ok(()),
     }

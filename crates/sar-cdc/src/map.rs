@@ -16,7 +16,7 @@ use crate::{
     validate::{CdcError, validate_cdc_map_bytes},
 };
 
-/// Parses the raw TLV value bytes of a `CDC_MAP` (type IDs 0x40–0x4F) into a
+/// Parses the raw TLV value bytes of a `CDC_MAP` (type ID 0x40) into a
 /// [`CdcMap`].
 ///
 /// # Errors

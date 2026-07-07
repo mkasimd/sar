@@ -72,7 +72,7 @@ pub struct CdcMapRecord {
 /// Byte length of one serialised [`CdcMapRecord`] on the wire.
 pub const CDC_MAP_RECORD_LEN: usize = 32 + 2 + 8 + 8; // = 50
 
-/// A parsed CDC_MAP catalog (TLV type IDs 0x40–0x4F).
+/// A parsed CDC_MAP catalog (TLV type ID 0x40).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CdcMap {
     /// Ordered list of catalog records.

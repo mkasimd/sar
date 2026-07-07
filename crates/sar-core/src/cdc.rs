@@ -8,6 +8,8 @@
 //!   (section 8.5);
 //! * [`parse_entry_cdc_map`] — CDC_MAP TLV extraction from a CD metadata set;
 //! * [`make_cdc_map_tlv`] — serialise a [`CdcMap`] into a Tlv;
+//! * [`parse_cdc_ext_provider_tlv`] — inert `CDC_EXT_PROVIDER` URI parsing;
+//! * [`validate_cdc_metadata_tlv`] — per-TLV CDC metadata validation;
 //! * CDC recipe hash validation helpers.
 
 use sar_cdc::{
@@ -15,6 +17,7 @@ use sar_cdc::{
     map::{parse_cdc_map, write_cdc_map},
     validate::{CdcError, validate_cdc_algo_id as cdc_validate_algo},
 };
+use serde::Serialize;
 
 use crate::{SarError, limits::ResourceLimits, tlv::Tlv};
 
@@ -26,6 +29,26 @@ pub use sar_cdc::{
         CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
     },
 };
+
+/// DATA_HASH/BLAKE3 TLV type ID.
+pub const TLV_DATA_HASH_BLAKE3: u8 = 0x31;
+/// CDC_MAP TLV type ID.
+pub const TLV_CDC_MAP: u8 = 0x40;
+/// CDC_EXT_PROVIDER TLV type ID.
+pub const TLV_CDC_EXT_PROVIDER: u8 = 0x41;
+/// First reserved CDC metadata TLV type ID.
+pub const TLV_CDC_RESERVED_START: u8 = 0x42;
+/// Last reserved CDC metadata TLV type ID.
+pub const TLV_CDC_RESERVED_END: u8 = 0x4E;
+/// CDC_CUSTOM TLV type ID.
+pub const TLV_CDC_CUSTOM: u8 = 0x4F;
+
+/// Inert parsed `CDC_EXT_PROVIDER` metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CdcExtProviderMetadata {
+    /// UTF-8 URI string carried by the TLV value.
+    pub uri: String,
+}
 
 /// Typed CDC algorithm identifier; wraps the raw `u8` stored in the LFH.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +97,84 @@ pub fn validate_cdc_algo_id(id: u8) -> Result<(), SarError> {
     cdc_validate_algo(id).map_err(cdc_err_to_sar)
 }
 
-/// Extracts and parses the first CDC_MAP TLV (type IDs 0x40–0x4F) found in
+/// Returns true when `type_id` is within the CDC metadata registry block.
+#[must_use]
+pub fn is_cdc_metadata_tlv_type(type_id: u8) -> bool {
+    (TLV_CDC_MAP..=TLV_CDC_CUSTOM).contains(&type_id)
+}
+
+/// Parses a `CDC_EXT_PROVIDER` TLV as an inert UTF-8 URI string.
+///
+/// # Errors
+///
+/// Returns [`SarError::Unsupported`] when `tlv.type_id` is not `0x41`,
+/// [`SarError::LimitExceeded`] when the value exceeds `max_cdc_metadata_bytes`,
+/// and [`SarError::Malformed`] when the value is not valid UTF-8.
+pub fn parse_cdc_ext_provider_tlv(
+    tlv: &Tlv,
+    limits: &ResourceLimits,
+) -> Result<CdcExtProviderMetadata, SarError> {
+    if tlv.type_id != TLV_CDC_EXT_PROVIDER {
+        return Err(SarError::Unsupported(
+            "TLV is not CDC_EXT_PROVIDER (expected type 0x41)",
+        ));
+    }
+    limits.check_cdc_metadata_bytes(tlv.value.len())?;
+    let uri = std::str::from_utf8(&tlv.value)
+        .map_err(|_| SarError::Malformed("CDC_EXT_PROVIDER value must be valid UTF-8"))?;
+    Ok(CdcExtProviderMetadata {
+        uri: uri.to_owned(),
+    })
+}
+
+/// Validates one CDC metadata TLV according to the updated registry.
+///
+/// * `0x40` (`CDC_MAP`) — parsed structurally.
+/// * `0x41` (`CDC_EXT_PROVIDER`) — parsed as inert UTF-8 URI metadata only.
+/// * `0x42–0x4E` — rejected as reserved.
+/// * `0x4F` (`CDC_CUSTOM`) — preserved as implementation-defined opaque bytes.
+///
+/// # Errors
+///
+/// Returns [`SarError::ReservedValue`] for reserved CDC TLV IDs and the
+/// corresponding parse/limit error for assigned CDC metadata types.
+pub fn validate_cdc_metadata_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<(), SarError> {
+    match tlv.type_id {
+        TLV_CDC_MAP => {
+            limits.check_cdc_metadata_bytes(tlv.value.len())?;
+            let max_records = limits.max_cdc_chunk_count;
+            let _ = parse_cdc_map(&tlv.value, max_records).map_err(cdc_err_to_sar)?;
+            Ok(())
+        }
+        TLV_CDC_EXT_PROVIDER => parse_cdc_ext_provider_tlv(tlv, limits).map(|_| ()),
+        TLV_CDC_RESERVED_START..=TLV_CDC_RESERVED_END => {
+            Err(SarError::ReservedValue("reserved CDC metadata TLV type"))
+        }
+        TLV_CDC_CUSTOM => {
+            limits.check_cdc_metadata_bytes(tlv.value.len())?;
+            Ok(())
+        }
+        _ => Err(SarError::Unsupported(
+            "TLV is not in the CDC metadata registry",
+        )),
+    }
+}
+
+/// Builds a `CDC_EXT_PROVIDER` TLV with type ID `0x41`.
+///
+/// # Errors
+///
+/// Returns [`SarError`] if the URI exceeds configured CDC metadata limits.
+pub fn make_cdc_ext_provider_tlv(uri: &str, limits: &ResourceLimits) -> Result<Tlv, SarError> {
+    let value = uri.as_bytes().to_vec();
+    limits.check_cdc_metadata_bytes(value.len())?;
+    Ok(Tlv {
+        type_id: TLV_CDC_EXT_PROVIDER,
+        value,
+    })
+}
+
+/// Extracts and parses the first CDC_MAP TLV (type ID `0x40`) found in
 /// `tlvs`, returning the parsed [`CdcMap`] or `None` if none is present.
 ///
 /// # Errors
@@ -87,7 +187,7 @@ pub fn parse_entry_cdc_map(
     limits.check_cdc_metadata_bytes(0)?; // fast-fail if limit is 0
 
     for tlv in tlvs {
-        if (0x40..=0x4F).contains(&tlv.type_id) {
+        if tlv.type_id == TLV_CDC_MAP {
             limits.check_cdc_metadata_bytes(tlv.value.len())?;
             let max_records = limits.max_cdc_chunk_count;
             let map = parse_cdc_map(&tlv.value, max_records).map_err(cdc_err_to_sar)?;
@@ -106,7 +206,7 @@ pub fn make_cdc_map_tlv(map: &CdcMap, limits: &ResourceLimits) -> Result<Tlv, Sa
     let value = write_cdc_map(map).map_err(cdc_err_to_sar)?;
     limits.check_cdc_metadata_bytes(value.len())?;
     Ok(Tlv {
-        type_id: 0x40,
+        type_id: TLV_CDC_MAP,
         value,
     })
 }

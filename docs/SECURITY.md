@@ -179,7 +179,7 @@ When a stable ABI is introduced later, security design should explicitly cover:
 
 ### CDC does not bypass AEAD authentication
 
-CDC metadata (CDC_MAP TLVs, recipe payloads) is parsed from the Central Dictionary and the decrypted/decompressed payload. The CDC parsing layer never operates on raw encrypted bytes. AEAD authentication is enforced before any CDC validation occurs.
+CDC metadata (`CDC_MAP` at `0x40`, inert `CDC_EXT_PROVIDER` at `0x41`, `CDC_CUSTOM` at `0x4F`, and recipe payloads) is parsed from the Central Dictionary and the decrypted/decompressed payload. The CDC parsing layer never operates on raw encrypted bytes. AEAD authentication is enforced before any CDC validation occurs.
 
 ### CDC resource limits prevent denial-of-service
 
@@ -197,6 +197,13 @@ A malformed archive with an excessively large CDC_MAP TLV or Recipe payload will
 ### No unchecked u64→usize casts in CDC paths
 
 All `u64` to `usize` conversions in CDC code use `usize::try_from(...).ok()` or are guarded by resource-limit checks that ensure the value fits in a `usize` on the target platform.
+
+### CDC TLV registry fails closed
+
+- `0x31` remains `DATA_HASH/BLAKE3` and is not interpreted as CDC metadata.
+- `0x42–0x4E` are rejected with `SarError::ReservedValue`.
+- `0x41` (`CDC_EXT_PROVIDER`) is parsed as a UTF-8 URI string only; invalid UTF-8 fails closed with `SarError::Malformed`.
+- `0x4F` (`CDC_CUSTOM`) is treated as opaque implementation-defined metadata and is parsed/preserved only.
 
 ### CDC_MAP record alignment checked before iteration
 
@@ -216,4 +223,8 @@ No fallback behavior is attempted for unknown CDC algorithms.
 
 ### Recipe hashes are not verified against file content in M9a
 
-Recipe payloads are validated for structure (32-byte alignment, resource limits) but the SHA-256 hashes within them are not verified against the logical file bytes. This is a known limitation. Verification cannot be performed portably until the spec normatively names the hash algorithm for recipe hashes.
+Recipe payloads are validated for structure (32-byte alignment, resource limits) but the recipe hashes are not verified against the logical file bytes. This is a known limitation. Verification cannot be performed portably until the spec normatively names the recipe-hash algorithm.
+
+### CDC_EXT_PROVIDER is inert in M9a
+
+`CDC_EXT_PROVIDER` values are exposed as inert parsed metadata only. The implementation does not perform network access, does not contact external CAS providers, and does not attempt provider-driven recipe resolution in M9a.
