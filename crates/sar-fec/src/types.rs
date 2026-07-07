@@ -1,6 +1,6 @@
 //! Shared FEC types and the [`FecCodec`] trait.
 
-use sar_core::SarError;
+use crate::error::FecError;
 
 /// Algorithm identifier for Reed-Solomon FEC.
 pub const FEC_ALGO_RS: u8 = 0x11;
@@ -88,30 +88,29 @@ pub trait FecCodec {
     ///
     /// # Errors
     ///
-    /// Returns [`SarError`] on overflow, length mismatch, or unsupported
+    /// Returns [`FecError`] on overflow, length mismatch, or unsupported
     /// configuration.
-    fn encode_recovery(&self, protected: &[u8], options: FecOptions)
-        -> Result<FecValue, SarError>;
+    fn encode_recovery(&self, protected: &[u8], options: FecOptions) -> Result<FecValue, FecError>;
 
     /// Performs erasure recovery and returns the fully-recovered protected
     /// byte sequence truncated to `input.original_protected_len`.
     ///
     /// # Errors
     ///
-    /// * [`SarError::EcFailed`] when too many erasures in one stripe/group.
-    /// * [`SarError::RecoveryUnavailable`] when erasure positions are unknown.
-    /// * [`SarError::Malformed`] / [`SarError::InvalidLength`] on corrupt FEC
+    /// * [`FecError::EcFailed`] when too many erasures in one stripe/group.
+    /// * [`FecError::RecoveryUnavailable`] when erasure positions are unknown.
+    /// * [`FecError::Malformed`] / [`FecError::InvalidLength`] on corrupt FEC
     ///   metadata.
-    fn recover(&self, input: FecRecoverInput<'_>) -> Result<Vec<u8>, SarError>;
+    fn recover(&self, input: FecRecoverInput<'_>) -> Result<Vec<u8>, FecError>;
 
     /// Validates the FEC value bytes without performing recovery.  Checks that
     /// config, counts, and parity data length are self-consistent.
     ///
     /// # Errors
     ///
-    /// Returns [`SarError::InvalidLength`] or [`SarError::Malformed`] on
+    /// Returns [`FecError::InvalidLength`] or [`FecError::Malformed`] on
     /// inconsistencies.
-    fn validate(&self, fec_value_data: &[u8]) -> Result<(), SarError>;
+    fn validate(&self, fec_value_data: &[u8]) -> Result<(), FecError>;
 }
 
 // ---------------------------------------------------------------------------

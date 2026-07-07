@@ -55,6 +55,10 @@ pub struct EntryMetadata {
     pub compression_algorithm: &'static str,
     /// True when entry mode actively applied compression.
     pub is_compressed: bool,
+    /// FEC metadata summary (omits parity blob).  `None` when Selective FEC
+    /// is disabled or this entry has `FEC Algo ID == 0x00`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fec: Option<crate::fec::FecSummary>,
 }
 
 /// Entry payload reader result.
@@ -428,6 +432,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
             ));
         }
 
+        let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
+            let algo_id = lfh.fec_algo_id.unwrap_or(0);
+            crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value)?
+        } else {
+            None
+        };
+
         let metadata = EntryMetadata {
             lfh_offset: self.next_offset,
             name: String::from_utf8_lossy(&lfh.name).into_owned(),
@@ -441,6 +452,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             compression_algo_id: effective_comp_algo_id,
             compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
             is_compressed: is_effectively_compressed,
+            fec,
         };
 
         self.next_offset = payload_end;
@@ -492,6 +504,15 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     return Err(SarError::FlagConflict(
                         "SIGNED requires DATA_HASH TLV in metadata",
                     ));
+                }
+            }
+
+            // Validate any RECOVERY TLVs present in CD metadata.
+            if global.flags.contains(GlobalFlags::HAS_GLOBAL_EC) {
+                for tlv in &cd.metadata {
+                    if (0x10..=0x1F).contains(&tlv.type_id) {
+                        crate::fec::validate_recovery_tlv(tlv.type_id, &tlv.value)?;
+                    }
                 }
             }
         }

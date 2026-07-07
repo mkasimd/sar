@@ -1,12 +1,14 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–5).
+//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–7).
 
 /// Archive reader/writer APIs.
 pub mod archive;
 /// SAR error and status mapping types.
 pub mod error;
+/// FEC metadata validation and Data Recovery TLV support (Section 9.2).
+pub mod fec;
 /// Global and entry flag models and validators.
 pub mod flags;
 /// Binary format structures and parser/writer functions.
@@ -26,6 +28,7 @@ pub use archive::{
     EntryReader, EntryWritten, VerificationReport,
 };
 pub use error::{SarError, SarStatus};
+pub use fec::{FecSummary, parse_lfh_fec_value, validate_recovery_tlv};
 pub use flags::{
     EntryMode, GlobalFlags, validate_entry_mode_against_global, validate_global_flags,
 };

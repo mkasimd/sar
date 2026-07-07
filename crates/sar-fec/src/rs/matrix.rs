@@ -1,6 +1,6 @@
 //! GF(2^8) matrix operations used for Reed-Solomon erasure decoding.
 
-use sar_core::SarError;
+use crate::error::FecError;
 
 use super::gf::{gf_add, gf_div, gf_mul};
 
@@ -18,7 +18,10 @@ pub(crate) struct GfMatrix {
 impl GfMatrix {
     /// Creates a new zero matrix of dimension `size × size`.
     pub(crate) fn zeroes(size: usize) -> Self {
-        Self { size, data: vec![0u8; size * size] }
+        Self {
+            size,
+            data: vec![0u8; size * size],
+        }
     }
 
     #[inline]
@@ -53,9 +56,9 @@ impl GfMatrix {
 ///
 /// # Errors
 ///
-/// Returns [`SarError::EcFailed`] if the matrix is singular (decode matrix
+/// Returns [`FecError::EcFailed`] if the matrix is singular (decode matrix
 /// is rank-deficient; too many erasures or degenerate configuration).
-pub(crate) fn invert(m: &GfMatrix) -> Result<GfMatrix, SarError> {
+pub(crate) fn invert(m: &GfMatrix) -> Result<GfMatrix, FecError> {
     let n = m.size;
 
     // Build augmented matrix [M | I].
@@ -72,9 +75,11 @@ pub(crate) fn invert(m: &GfMatrix) -> Result<GfMatrix, SarError> {
     // Forward elimination with partial pivoting.
     for col in 0..n {
         // Find pivot row: first non-zero in this column at or below `col`.
-        let pivot = (col..n).find(|&r| aug[r * aug_cols + col] != 0).ok_or(
-            SarError::EcFailed("RS decode: singular matrix (too many erasures)"),
-        )?;
+        let pivot = (col..n)
+            .find(|&r| aug[r * aug_cols + col] != 0)
+            .ok_or(FecError::EcFailed(
+                "RS decode: singular matrix (too many erasures)",
+            ))?;
 
         if pivot != col {
             // Swap rows `col` and `pivot`.
@@ -154,7 +159,11 @@ mod tests {
         for r in 0..3 {
             for c in 0..3 {
                 let expected = if r == c { 1 } else { 0 };
-                assert_eq!(inv.get(r, c), expected, "identity inverse wrong at ({r},{c})");
+                assert_eq!(
+                    inv.get(r, c),
+                    expected,
+                    "identity inverse wrong at ({r},{c})"
+                );
             }
         }
     }
@@ -162,7 +171,7 @@ mod tests {
     #[test]
     fn invert_singular_fails() {
         let m = GfMatrix::zeroes(3); // all-zero matrix is singular
-        assert!(matches!(invert(&m), Err(SarError::EcFailed(_))));
+        assert!(matches!(invert(&m), Err(FecError::EcFailed(_))));
     }
 
     #[test]

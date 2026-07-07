@@ -29,7 +29,7 @@
 mod gf;
 mod matrix;
 
-use sar_core::SarError;
+use crate::error::FecError;
 
 use self::{
     gf::{gf_add, gf_mul, gf_pow},
@@ -54,30 +54,36 @@ const MAX_PARITY_COUNT: u8 = 32;
 // Header parsing
 // ---------------------------------------------------------------------------
 
-fn parse_header(data: &[u8]) -> Result<(u8, u8, u32, u64, u32), SarError> {
+fn parse_header(data: &[u8]) -> Result<(u8, u8, u32, u64, u32), FecError> {
     if data.len() < HEADER_SIZE {
-        return Err(SarError::Truncated("RS FEC value too short for header"));
+        return Err(FecError::Truncated("RS FEC value too short for header"));
     }
     let k = data[0];
     let parity_count = data[1]; // n - k
 
     if k == 0 {
-        return Err(SarError::ReservedValue("RS k=0 is reserved"));
+        return Err(FecError::ReservedValue("RS k=0 is reserved"));
     }
     if parity_count == 0 {
-        return Err(SarError::ReservedValue("RS parity_count=0 is reserved"));
+        return Err(FecError::ReservedValue("RS parity_count=0 is reserved"));
     }
 
-    let sym_bytes: [u8; 4] = data[2..6].try_into().map_err(|_| SarError::Truncated("RS SymbolSize"))?;
+    let sym_bytes: [u8; 4] = data[2..6]
+        .try_into()
+        .map_err(|_| FecError::Truncated("RS SymbolSize"))?;
     let symbol_size = u32::from_le_bytes(sym_bytes);
     if symbol_size == 0 {
-        return Err(SarError::Malformed("RS symbol size must be > 0"));
+        return Err(FecError::Malformed("RS symbol size must be > 0"));
     }
 
-    let opl_bytes: [u8; 8] = data[6..14].try_into().map_err(|_| SarError::Truncated("RS OPL"))?;
+    let opl_bytes: [u8; 8] = data[6..14]
+        .try_into()
+        .map_err(|_| FecError::Truncated("RS OPL"))?;
     let original_len = u64::from_le_bytes(opl_bytes);
 
-    let gc_bytes: [u8; 4] = data[14..18].try_into().map_err(|_| SarError::Truncated("RS GroupCount"))?;
+    let gc_bytes: [u8; 4] = data[14..18]
+        .try_into()
+        .map_err(|_| FecError::Truncated("RS GroupCount"))?;
     let group_count = u32::from_le_bytes(gc_bytes);
 
     Ok((k, parity_count, symbol_size, original_len, group_count))
@@ -87,31 +93,35 @@ fn parse_header(data: &[u8]) -> Result<(u8, u8, u32, u64, u32), SarError> {
 // Checked arithmetic
 // ---------------------------------------------------------------------------
 
-fn ceil_div_u64(a: u64, b: u64) -> Result<u64, SarError> {
+fn ceil_div_u64(a: u64, b: u64) -> Result<u64, FecError> {
     if b == 0 {
-        return Err(SarError::Overflow("RS ceil_div by zero"));
+        return Err(FecError::Overflow("RS ceil_div by zero"));
     }
     a.checked_add(b - 1)
-        .ok_or(SarError::Overflow("RS ceil_div overflow"))?
+        .ok_or(FecError::Overflow("RS ceil_div overflow"))?
         .checked_div(b)
-        .ok_or(SarError::Overflow("RS ceil_div"))
+        .ok_or(FecError::Overflow("RS ceil_div"))
 }
 
-fn expected_group_count(original_len: u64, k: u8, symbol_size: u32) -> Result<u32, SarError> {
+fn expected_group_count(original_len: u64, k: u8, symbol_size: u32) -> Result<u32, FecError> {
     let group_size = u64::from(k)
         .checked_mul(u64::from(symbol_size))
-        .ok_or(SarError::Overflow("RS group size overflow"))?;
+        .ok_or(FecError::Overflow("RS group size overflow"))?;
     let gc = ceil_div_u64(original_len, group_size)?;
-    u32::try_from(gc).map_err(|_| SarError::Overflow("RS group count exceeds u32"))
+    u32::try_from(gc).map_err(|_| FecError::Overflow("RS group count exceeds u32"))
 }
 
-fn parity_data_len(group_count: u32, parity_count: u8, symbol_size: u32) -> Result<usize, SarError> {
+fn parity_data_len(
+    group_count: u32,
+    parity_count: u8,
+    symbol_size: u32,
+) -> Result<usize, FecError> {
     let pl = u64::from(group_count)
         .checked_mul(u64::from(parity_count))
-        .ok_or(SarError::Overflow("RS parity count × group overflow"))?
+        .ok_or(FecError::Overflow("RS parity count × group overflow"))?
         .checked_mul(u64::from(symbol_size))
-        .ok_or(SarError::Overflow("RS parity length overflow"))?;
-    usize::try_from(pl).map_err(|_| SarError::Overflow("RS parity length exceeds usize"))
+        .ok_or(FecError::Overflow("RS parity length overflow"))?;
+    usize::try_from(pl).map_err(|_| FecError::Overflow("RS parity length exceeds usize"))
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +144,7 @@ fn build_vandermonde_rect(k: usize, parity_count: usize) -> Vec<u8> {
     let mut g = vec![0u8; parity_count * k];
     for r in 0..parity_count {
         for c in 0..k {
-            let exp = ((r + 1) as u64)
-                .wrapping_mul(c as u64)
-                .wrapping_rem(255);
+            let exp = ((r + 1) as u64).wrapping_mul(c as u64).wrapping_rem(255);
             g[r * k + c] = if exp == 0 { 1 } else { gf_pow(exp as u32) };
         }
     }
@@ -223,7 +231,7 @@ fn extract_parity_symbol(
 /// # Errors
 ///
 /// Returns [`SarError`] on structural violations.
-pub fn parse_rs_meta(data: &[u8]) -> Result<RsMeta, SarError> {
+pub fn parse_rs_meta(data: &[u8]) -> Result<RsMeta, FecError> {
     let (k, parity_count, symbol_size, original_len, group_count) = parse_header(data)?;
     let pl = parity_data_len(group_count, parity_count, symbol_size)?;
     Ok(RsMeta {
@@ -256,24 +264,28 @@ impl RsCodec {
     ///
     /// # Errors
     ///
-    /// Returns [`SarError::ReservedValue`] for `k=0` or `parity_count=0`.
-    /// Returns [`SarError::LimitExceeded`] when `parity_count > 32`.
-    pub fn new(k: u8, parity_count: u8, symbol_size: u32) -> Result<Self, SarError> {
+    /// Returns [`FecError::ReservedValue`] for `k=0` or `parity_count=0`.
+    /// Returns [`FecError::LimitExceeded`] when `parity_count > 32`.
+    pub fn new(k: u8, parity_count: u8, symbol_size: u32) -> Result<Self, FecError> {
         if k == 0 {
-            return Err(SarError::ReservedValue("RS k=0 is reserved"));
+            return Err(FecError::ReservedValue("RS k=0 is reserved"));
         }
         if parity_count == 0 {
-            return Err(SarError::ReservedValue("RS parity_count=0 is reserved"));
+            return Err(FecError::ReservedValue("RS parity_count=0 is reserved"));
         }
         if parity_count > MAX_PARITY_COUNT {
-            return Err(SarError::LimitExceeded(
+            return Err(FecError::LimitExceeded(
                 "RS parity count exceeds implementation limit of 32",
             ));
         }
         if symbol_size == 0 {
-            return Err(SarError::Malformed("RS symbol size must be > 0"));
+            return Err(FecError::Malformed("RS symbol size must be > 0"));
         }
-        Ok(Self { k, parity_count, symbol_size })
+        Ok(Self {
+            k,
+            parity_count,
+            symbol_size,
+        })
     }
 
     /// Constructs an [`RsCodec`] by peeking at the first 6 bytes of a raw
@@ -281,15 +293,17 @@ impl RsCodec {
     ///
     /// # Errors
     ///
-    /// Returns [`SarError::Truncated`] if `data` has fewer than 6 bytes, or
+    /// Returns [`FecError::Truncated`] if `data` has fewer than 6 bytes, or
     /// the same errors as [`RsCodec::new`].
-    pub fn from_fec_value(data: &[u8]) -> Result<Self, SarError> {
+    pub fn from_fec_value(data: &[u8]) -> Result<Self, FecError> {
         if data.len() < 6 {
-            return Err(SarError::Truncated("RS FEC value too short for config"));
+            return Err(FecError::Truncated("RS FEC value too short for config"));
         }
         let k = data[0];
         let parity_count = data[1];
-        let sym: [u8; 4] = data[2..6].try_into().map_err(|_| SarError::Truncated("RS sym"))?;
+        let sym: [u8; 4] = data[2..6]
+            .try_into()
+            .map_err(|_| FecError::Truncated("RS sym"))?;
         let symbol_size = u32::from_le_bytes(sym);
         Self::new(k, parity_count, symbol_size)
     }
@@ -300,19 +314,25 @@ impl FecCodec for RsCodec {
         crate::registry::FEC_ALGO_REED_SOLOMON
     }
 
-    fn encode_recovery(&self, protected: &[u8], _options: FecOptions) -> Result<FecValue, SarError> {
+    fn encode_recovery(
+        &self,
+        protected: &[u8],
+        _options: FecOptions,
+    ) -> Result<FecValue, FecError> {
         let k = self.k as usize;
         let pc = self.parity_count as usize;
         let ss = self.symbol_size as usize;
 
         let original_len = u64::try_from(protected.len())
-            .map_err(|_| SarError::Overflow("RS protected length exceeds u64"))?;
+            .map_err(|_| FecError::Overflow("RS protected length exceeds u64"))?;
         let group_count = expected_group_count(original_len, self.k, self.symbol_size)?;
         let gc = group_count as usize;
 
         let pl = parity_data_len(group_count, self.parity_count, self.symbol_size)?;
         if pl > MAX_PARITY_SIZE {
-            return Err(SarError::LimitExceeded("RS parity exceeds implementation limit"));
+            return Err(FecError::LimitExceeded(
+                "RS parity exceeds implementation limit",
+            ));
         }
 
         let vandermonde = build_vandermonde_rect(k, pc);
@@ -341,10 +361,13 @@ impl FecCodec for RsCodec {
         data.extend_from_slice(&group_count.to_le_bytes());
         data.extend_from_slice(&parity_blob);
 
-        Ok(FecValue { algo_id: self.algorithm_id(), data })
+        Ok(FecValue {
+            algo_id: self.algorithm_id(),
+            data,
+        })
     }
 
-    fn recover(&self, input: FecRecoverInput<'_>) -> Result<Vec<u8>, SarError> {
+    fn recover(&self, input: FecRecoverInput<'_>) -> Result<Vec<u8>, FecError> {
         let (k_cfg, pc_cfg, sym_size, original_len, group_count) =
             parse_header(input.fec_value_data)?;
         let _ = (k_cfg, pc_cfg, sym_size); // used via self.* fields for consistency
@@ -352,7 +375,7 @@ impl FecCodec for RsCodec {
         self.validate(input.fec_value_data)?;
 
         if original_len != input.original_protected_len {
-            return Err(SarError::InvalidLength(
+            return Err(FecError::InvalidLength(
                 "RS recovery: original_protected_len mismatch",
             ));
         }
@@ -401,7 +424,7 @@ impl FecCodec for RsCodec {
 
             let t = erased_data.len();
             if t > pc {
-                return Err(SarError::EcFailed(
+                return Err(FecError::EcFailed(
                     "RS: erased data symbols exceed parity count for this group",
                 ));
             }
@@ -472,23 +495,23 @@ impl FecCodec for RsCodec {
 
         // Truncate to original length.
         let orig_len = usize::try_from(original_len)
-            .map_err(|_| SarError::Overflow("RS original_len exceeds usize"))?;
+            .map_err(|_| FecError::Overflow("RS original_len exceeds usize"))?;
         out.truncate(orig_len);
         Ok(out)
     }
 
-    fn validate(&self, fec_value_data: &[u8]) -> Result<(), SarError> {
+    fn validate(&self, fec_value_data: &[u8]) -> Result<(), FecError> {
         let (k, parity_count, symbol_size, original_len, group_count) =
             parse_header(fec_value_data)?;
 
         // Config must match this codec.
         if k != self.k || parity_count != self.parity_count || symbol_size != self.symbol_size {
-            return Err(SarError::InvalidLength("RS config mismatch in validate"));
+            return Err(FecError::InvalidLength("RS config mismatch in validate"));
         }
 
         // Parity count limit.
         if parity_count > MAX_PARITY_COUNT {
-            return Err(SarError::LimitExceeded(
+            return Err(FecError::LimitExceeded(
                 "RS parity count exceeds implementation limit of 32",
             ));
         }
@@ -496,7 +519,7 @@ impl FecCodec for RsCodec {
         // Validate group count.
         let expected_gc = expected_group_count(original_len, k, symbol_size)?;
         if group_count != expected_gc {
-            return Err(SarError::InvalidLength(
+            return Err(FecError::InvalidLength(
                 "RS group count does not match expected value",
             ));
         }
@@ -504,11 +527,13 @@ impl FecCodec for RsCodec {
         // Validate parity data length.
         let pl = parity_data_len(group_count, parity_count, symbol_size)?;
         if pl > MAX_PARITY_SIZE {
-            return Err(SarError::LimitExceeded("RS parity exceeds implementation limit"));
+            return Err(FecError::LimitExceeded(
+                "RS parity exceeds implementation limit",
+            ));
         }
         let available = fec_value_data.len().saturating_sub(HEADER_SIZE);
         if available != pl {
-            return Err(SarError::InvalidLength(
+            return Err(FecError::InvalidLength(
                 "RS parity data length does not match Group Count × (n-k) × Symbol Size",
             ));
         }
@@ -522,7 +547,7 @@ impl FecCodec for RsCodec {
 /// # Errors
 ///
 /// Returns [`SarError`] on any structural violation.
-pub fn validate_rs_fec_value(data: &[u8]) -> Result<(), SarError> {
+pub fn validate_rs_fec_value(data: &[u8]) -> Result<(), FecError> {
     let codec = RsCodec::from_fec_value(data)?;
     codec.validate(data)
 }
@@ -538,17 +563,26 @@ mod tests {
 
     #[test]
     fn rs_reserved_k_zero() {
-        assert!(matches!(RsCodec::new(0, 4, 1024), Err(SarError::ReservedValue(_))));
+        assert!(matches!(
+            RsCodec::new(0, 4, 1024),
+            Err(FecError::ReservedValue(_))
+        ));
     }
 
     #[test]
     fn rs_reserved_parity_zero() {
-        assert!(matches!(RsCodec::new(4, 0, 1024), Err(SarError::ReservedValue(_))));
+        assert!(matches!(
+            RsCodec::new(4, 0, 1024),
+            Err(FecError::ReservedValue(_))
+        ));
     }
 
     #[test]
     fn rs_limit_exceeded_parity_33() {
-        assert!(matches!(RsCodec::new(4, 33, 1024), Err(SarError::LimitExceeded(_))));
+        assert!(matches!(
+            RsCodec::new(4, 33, 1024),
+            Err(FecError::LimitExceeded(_))
+        ));
     }
 
     #[test]
@@ -626,7 +660,7 @@ mod tests {
                 Erasure { index: 2 },
             ],
         };
-        assert!(matches!(codec.recover(input), Err(SarError::EcFailed(_))));
+        assert!(matches!(codec.recover(input), Err(FecError::EcFailed(_))));
     }
 
     #[test]
@@ -667,17 +701,17 @@ mod tests {
         let mut fec = codec.encode_recovery(&data, FecOptions).expect("test");
         // Corrupt group count field (bytes 14..18)
         fec.data[14] = 0xFF;
-        assert!(matches!(codec.validate(&fec.data), Err(SarError::InvalidLength(_))));
+        assert!(matches!(
+            codec.validate(&fec.data),
+            Err(FecError::InvalidLength(_))
+        ));
     }
 
     #[test]
     fn rs_symbol_sizes_1024_4096_16384() {
         for ss in [1024u32, 4096, 16384] {
             let codec = make_codec(4, 2, ss);
-            let data: Vec<u8> = (1u8..=255)
-                .cycle()
-                .take((4 * ss) as usize)
-                .collect();
+            let data: Vec<u8> = (1u8..=255).cycle().take((4 * ss) as usize).collect();
             let fec = codec.encode_recovery(&data, FecOptions).expect("test");
             assert!(codec.validate(&fec.data).is_ok(), "symbol_size={ss} failed");
         }

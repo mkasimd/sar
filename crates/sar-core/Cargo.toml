@@ -11,6 +11,7 @@ thiserror.workspace = true
 zeroize.workspace = true
 sar-compression = { path = "../sar-compression" }
 sar-crypto = { path = "../sar-crypto" }
+sar-fec = { path = "../sar-fec" }
 
 [dev-dependencies]
 serde_json.workspace = true

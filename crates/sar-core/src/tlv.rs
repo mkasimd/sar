@@ -25,11 +25,8 @@ fn classify_type(type_id: u8) -> Result<(), SarError> {
     match type_id {
         0x00 => Err(SarError::ReservedValue("TLV type 0x00 is reserved")),
         0x01..=0x04 => Ok(()),
-        0x10 => Err(SarError::ReservedValue("RECOVERY type 0x10 is reserved")),
-        0x11..=0x16 => Err(SarError::Unsupported(
-            "RECOVERY TLV not implemented in M1-M3",
-        )),
-        0x17..=0x1F => Err(SarError::ReservedValue("reserved RECOVERY subtype")),
+        // RECOVERY TLV range 0x10..=0x1F: dispatched to fec module.
+        0x10..=0x1F => crate::fec::classify_recovery_tlv_id(type_id),
         0x20..=0x2F => Err(SarError::Unsupported(
             "SIGNATURE TLV not implemented in M1-M3",
         )),

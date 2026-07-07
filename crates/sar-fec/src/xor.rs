@@ -16,7 +16,7 @@
 //! Parity Data Length == Stripe Count × Block Size
 //! ```
 
-use sar_core::SarError;
+use crate::error::FecError;
 
 use crate::types::{FecCodec, FecOptions, FecRecoverInput, FecValue, XorMeta};
 
@@ -47,35 +47,39 @@ const HEADER_SIZE: usize = 14;
 // Helper: block size from index
 // ---------------------------------------------------------------------------
 
-fn block_size_for_index(index: u8) -> Result<u32, SarError> {
+fn block_size_for_index(index: u8) -> Result<u32, FecError> {
     for (idx, size) in BLOCK_SIZE_TABLE {
         if idx == index {
             return Ok(size);
         }
     }
-    Err(SarError::ReservedValue("XOR block size index is reserved"))
+    Err(FecError::ReservedValue("XOR block size index is reserved"))
 }
 
 // ---------------------------------------------------------------------------
 // Helper: parse header (without parity)
 // ---------------------------------------------------------------------------
 
-fn parse_header(data: &[u8]) -> Result<(u8, u32, u64, u32), SarError> {
+fn parse_header(data: &[u8]) -> Result<(u8, u32, u64, u32), FecError> {
     if data.len() < HEADER_SIZE {
-        return Err(SarError::Truncated("XOR FEC value too short for header"));
+        return Err(FecError::Truncated("XOR FEC value too short for header"));
     }
     let stripe_size = data[0];
     let block_size_index = data[1];
 
     if stripe_size == 0x00 {
-        return Err(SarError::ReservedValue("XOR stripe size 0x00 is reserved"));
+        return Err(FecError::ReservedValue("XOR stripe size 0x00 is reserved"));
     }
     let block_size = block_size_for_index(block_size_index)?;
 
-    let opl_bytes: [u8; 8] = data[2..10].try_into().map_err(|_| SarError::Truncated("XOR OPL"))?;
+    let opl_bytes: [u8; 8] = data[2..10]
+        .try_into()
+        .map_err(|_| FecError::Truncated("XOR OPL"))?;
     let original_len = u64::from_le_bytes(opl_bytes);
 
-    let sc_bytes: [u8; 4] = data[10..14].try_into().map_err(|_| SarError::Truncated("XOR StripeCount"))?;
+    let sc_bytes: [u8; 4] = data[10..14]
+        .try_into()
+        .map_err(|_| FecError::Truncated("XOR StripeCount"))?;
     let stripe_count = u32::from_le_bytes(sc_bytes);
 
     Ok((stripe_size, block_size, original_len, stripe_count))
@@ -91,7 +95,7 @@ fn parse_header(data: &[u8]) -> Result<(u8, u32, u64, u32), SarError> {
 ///
 /// Returns [`SarError`] when the header is truncated, reserved, or the
 /// declared counts do not match.
-pub fn parse_xor_meta(data: &[u8]) -> Result<XorMeta, SarError> {
+pub fn parse_xor_meta(data: &[u8]) -> Result<XorMeta, FecError> {
     let (stripe_size, block_size, original_len, stripe_count) = parse_header(data)?;
     let parity_data_len = parity_len(stripe_count, block_size)?;
     Ok(XorMeta {
@@ -108,29 +112,33 @@ pub fn parse_xor_meta(data: &[u8]) -> Result<XorMeta, SarError> {
 // ---------------------------------------------------------------------------
 
 /// ceil(a / b) with overflow checking.
-fn ceil_div(a: u64, b: u64) -> Result<u64, SarError> {
+fn ceil_div(a: u64, b: u64) -> Result<u64, FecError> {
     if b == 0 {
-        return Err(SarError::Overflow("XOR ceil_div by zero"));
+        return Err(FecError::Overflow("XOR ceil_div by zero"));
     }
     a.checked_add(b - 1)
-        .ok_or(SarError::Overflow("XOR ceil_div overflow"))?
+        .ok_or(FecError::Overflow("XOR ceil_div overflow"))?
         .checked_div(b)
-        .ok_or(SarError::Overflow("XOR ceil_div"))
+        .ok_or(FecError::Overflow("XOR ceil_div"))
 }
 
-fn expected_stripe_count(original_len: u64, stripe_size: u8, block_size: u32) -> Result<u32, SarError> {
+fn expected_stripe_count(
+    original_len: u64,
+    stripe_size: u8,
+    block_size: u32,
+) -> Result<u32, FecError> {
     let effective = u64::from(stripe_size)
         .checked_mul(u64::from(block_size))
-        .ok_or(SarError::Overflow("XOR effective stripe size overflow"))?;
+        .ok_or(FecError::Overflow("XOR effective stripe size overflow"))?;
     let sc = ceil_div(original_len, effective)?;
-    u32::try_from(sc).map_err(|_| SarError::Overflow("XOR stripe count exceeds u32"))
+    u32::try_from(sc).map_err(|_| FecError::Overflow("XOR stripe count exceeds u32"))
 }
 
-fn parity_len(stripe_count: u32, block_size: u32) -> Result<usize, SarError> {
+fn parity_len(stripe_count: u32, block_size: u32) -> Result<usize, FecError> {
     let pl = u64::from(stripe_count)
         .checked_mul(u64::from(block_size))
-        .ok_or(SarError::Overflow("XOR parity length overflow"))?;
-    usize::try_from(pl).map_err(|_| SarError::Overflow("XOR parity length exceeds usize"))
+        .ok_or(FecError::Overflow("XOR parity length overflow"))?;
+    usize::try_from(pl).map_err(|_| FecError::Overflow("XOR parity length exceeds usize"))
 }
 
 // ---------------------------------------------------------------------------
@@ -153,15 +161,19 @@ impl XorCodec {
     ///
     /// # Errors
     ///
-    /// Returns [`SarError::ReservedValue`] for `stripe_size == 0x00` or a
+    /// Returns [`FecError::ReservedValue`] for `stripe_size == 0x00` or a
     /// reserved `block_size_index`.
-    /// Returns [`SarError::LimitExceeded`] for valid but unsupported indices.
-    pub fn new(stripe_size: u8, block_size_index: u8) -> Result<Self, SarError> {
+    /// Returns [`FecError::LimitExceeded`] for valid but unsupported indices.
+    pub fn new(stripe_size: u8, block_size_index: u8) -> Result<Self, FecError> {
         if stripe_size == 0x00 {
-            return Err(SarError::ReservedValue("XOR stripe size 0x00 is reserved"));
+            return Err(FecError::ReservedValue("XOR stripe size 0x00 is reserved"));
         }
         let block_size = block_size_for_index(block_size_index)?;
-        Ok(Self { stripe_size, block_size, block_size_index })
+        Ok(Self {
+            stripe_size,
+            block_size,
+            block_size_index,
+        })
     }
 
     /// Constructs an [`XorCodec`] by peeking at the first two config bytes of
@@ -169,11 +181,11 @@ impl XorCodec {
     ///
     /// # Errors
     ///
-    /// Returns [`SarError::Truncated`] if `data` has fewer than 2 bytes, or
+    /// Returns [`FecError::Truncated`] if `data` has fewer than 2 bytes, or
     /// the same errors as [`XorCodec::new`].
-    pub fn from_fec_value(data: &[u8]) -> Result<Self, SarError> {
+    pub fn from_fec_value(data: &[u8]) -> Result<Self, FecError> {
         if data.len() < 2 {
-            return Err(SarError::Truncated("XOR FEC value too short for config"));
+            return Err(FecError::Truncated("XOR FEC value too short for config"));
         }
         Self::new(data[0], data[1])
     }
@@ -211,13 +223,19 @@ impl FecCodec for XorCodec {
         crate::registry::FEC_ALGO_XOR
     }
 
-    fn encode_recovery(&self, protected: &[u8], _options: FecOptions) -> Result<FecValue, SarError> {
+    fn encode_recovery(
+        &self,
+        protected: &[u8],
+        _options: FecOptions,
+    ) -> Result<FecValue, FecError> {
         let original_len = u64::try_from(protected.len())
-            .map_err(|_| SarError::Overflow("XOR protected length exceeds u64"))?;
+            .map_err(|_| FecError::Overflow("XOR protected length exceeds u64"))?;
         let stripe_count = expected_stripe_count(original_len, self.stripe_size, self.block_size)?;
         let pl = parity_len(stripe_count, self.block_size)?;
         if pl > MAX_PARITY_SIZE {
-            return Err(SarError::LimitExceeded("XOR parity exceeds implementation limit"));
+            return Err(FecError::LimitExceeded(
+                "XOR parity exceeds implementation limit",
+            ));
         }
 
         let ss = self.stripe_size as usize;
@@ -244,10 +262,13 @@ impl FecCodec for XorCodec {
         data.extend_from_slice(&stripe_count.to_le_bytes());
         data.extend_from_slice(&parity);
 
-        Ok(FecValue { algo_id: self.algorithm_id(), data })
+        Ok(FecValue {
+            algo_id: self.algorithm_id(),
+            data,
+        })
     }
 
-    fn recover(&self, input: FecRecoverInput<'_>) -> Result<Vec<u8>, SarError> {
+    fn recover(&self, input: FecRecoverInput<'_>) -> Result<Vec<u8>, FecError> {
         let (stripe_size, block_size, original_len, stripe_count) =
             parse_header(input.fec_value_data)?;
         let _ = stripe_size; // already embedded in self
@@ -256,7 +277,7 @@ impl FecCodec for XorCodec {
         self.validate(input.fec_value_data)?;
 
         if original_len != input.original_protected_len {
-            return Err(SarError::InvalidLength(
+            return Err(FecError::InvalidLength(
                 "XOR recovery: original_protected_len mismatch",
             ));
         }
@@ -293,7 +314,7 @@ impl FecCodec for XorCodec {
                 .collect();
 
             if stripe_erasures.len() > 1 {
-                return Err(SarError::EcFailed(
+                return Err(FecError::EcFailed(
                     "XOR: more than one erasure per stripe cannot be recovered",
                 ));
             }
@@ -328,24 +349,23 @@ impl FecCodec for XorCodec {
 
         // Truncate to original length
         let orig_len = usize::try_from(original_len)
-            .map_err(|_| SarError::Overflow("XOR original_len exceeds usize"))?;
+            .map_err(|_| FecError::Overflow("XOR original_len exceeds usize"))?;
         out.truncate(orig_len);
         Ok(out)
     }
 
-    fn validate(&self, fec_value_data: &[u8]) -> Result<(), SarError> {
-        let (stripe_size, block_size, original_len, stripe_count) =
-            parse_header(fec_value_data)?;
+    fn validate(&self, fec_value_data: &[u8]) -> Result<(), FecError> {
+        let (stripe_size, block_size, original_len, stripe_count) = parse_header(fec_value_data)?;
 
         // Validate config matches this codec instance
         if stripe_size != self.stripe_size || block_size != self.block_size {
-            return Err(SarError::InvalidLength("XOR config mismatch in validate"));
+            return Err(FecError::InvalidLength("XOR config mismatch in validate"));
         }
 
         // Validate stripe count
         let expected_sc = expected_stripe_count(original_len, stripe_size, block_size)?;
         if stripe_count != expected_sc {
-            return Err(SarError::InvalidLength(
+            return Err(FecError::InvalidLength(
                 "XOR stripe count does not match expected value",
             ));
         }
@@ -353,11 +373,13 @@ impl FecCodec for XorCodec {
         // Validate parity data length
         let pl = parity_len(stripe_count, block_size)?;
         if pl > MAX_PARITY_SIZE {
-            return Err(SarError::LimitExceeded("XOR parity exceeds implementation limit"));
+            return Err(FecError::LimitExceeded(
+                "XOR parity exceeds implementation limit",
+            ));
         }
         let available = fec_value_data.len().saturating_sub(HEADER_SIZE);
         if available != pl {
-            return Err(SarError::InvalidLength(
+            return Err(FecError::InvalidLength(
                 "XOR parity data length does not match Stripe Count × Block Size",
             ));
         }
@@ -375,7 +397,7 @@ impl FecCodec for XorCodec {
 /// # Errors
 ///
 /// Returns [`SarError`] on any structural violation.
-pub fn validate_xor_fec_value(data: &[u8]) -> Result<(), SarError> {
+pub fn validate_xor_fec_value(data: &[u8]) -> Result<(), FecError> {
     let codec = XorCodec::from_fec_value(data)?;
     codec.validate(data)
 }
@@ -393,7 +415,7 @@ mod tests {
     fn xor_reserved_stripe_size() {
         assert!(matches!(
             XorCodec::new(0, 0),
-            Err(SarError::ReservedValue(_))
+            Err(FecError::ReservedValue(_))
         ));
     }
 
@@ -401,7 +423,7 @@ mod tests {
     fn xor_reserved_block_size_index() {
         assert!(matches!(
             XorCodec::new(1, 0xFF),
-            Err(SarError::ReservedValue(_))
+            Err(FecError::ReservedValue(_))
         ));
     }
 
@@ -410,9 +432,7 @@ mod tests {
         // 3 blocks × 256 bytes = 768 bytes
         let data: Vec<u8> = (0u8..=255).cycle().take(768).collect();
         let codec = make_codec(3, 0x00); // stripe_size=3, block_size=256
-        let fec = codec
-            .encode_recovery(&data, FecOptions)
-            .expect("encode");
+        let fec = codec.encode_recovery(&data, FecOptions).expect("encode");
 
         // No erasures: recover should return identical data
         let input = FecRecoverInput {
@@ -479,7 +499,7 @@ mod tests {
             fec_value_data: &fec.data,
             erasures: &[Erasure { index: 0 }, Erasure { index: 1 }],
         };
-        assert!(matches!(codec.recover(input), Err(SarError::EcFailed(_))));
+        assert!(matches!(codec.recover(input), Err(FecError::EcFailed(_))));
     }
 
     #[test]
@@ -518,7 +538,10 @@ mod tests {
         let mut fec = codec.encode_recovery(&data, FecOptions).expect("test");
         // Corrupt stripe count field (bytes 10..14)
         fec.data[10] = 0xFF;
-        assert!(matches!(codec.validate(&fec.data), Err(SarError::InvalidLength(_))));
+        assert!(matches!(
+            codec.validate(&fec.data),
+            Err(FecError::InvalidLength(_))
+        ));
     }
 
     #[test]
