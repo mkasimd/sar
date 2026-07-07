@@ -79,6 +79,14 @@ pub struct EntryMetadata {
     /// the sparse map is empty.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
+    /// Per-file CRC32.  `None` when `PER_FILE_CRC` global flag is not set
+    /// or the field contains zero.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_crc32: Option<u32>,
+    /// Content hash (32 bytes).  `None` when `DEDUPLICATION` global flag is
+    /// not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<[u8; 32]>,
 }
 
 /// Entry payload reader result.
@@ -499,29 +507,49 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
+        // For sparse entries, `uncompressed_size` is the final logical file size
+        // (including holes), not the decoded payload byte count.  The decoded
+        // payload equals the sum of sparse extent lengths, which may be much
+        // smaller than the logical size.  Pass a permissive upper bound so the
+        // decompressor does not refuse to run.
+        let is_sparse =
+            header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
+        let decode_expected = if is_sparse {
+            // We don't want the decompressor to be bounded by logical_size;
+            // max_decoded_entry_size is already the correct upper bound.
+            self.options.max_decoded_entry_size
+        } else {
+            lfh.uncompressed_size
+        };
+
         let decoded = decode_payload_v2(
             &encoded_payload,
             DecodingPlanV2 {
                 is_compressed: is_effectively_compressed,
                 comp_algo_id: effective_comp_algo_id,
-                expected_output_size: lfh.uncompressed_size,
+                expected_output_size: decode_expected,
                 max_output_size: self.options.max_decoded_entry_size,
                 crypto,
             },
         )?;
 
-        if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
-            != lfh.uncompressed_size
-        {
-            return Err(SarError::InvalidLength(
-                "decoded payload size does not match LFH Uncompressed Size",
-            ));
-        }
-        if !is_effectively_compressed && !is_encrypted && lfh.payload_size != lfh.uncompressed_size
-        {
-            return Err(SarError::InvalidLength(
-                "STORE mode requires Payload Size == Uncompressed Size",
-            ));
+        if !is_sparse {
+            if u64::try_from(decoded.len())
+                .map_err(|_| SarError::Overflow("decoded payload len"))?
+                != lfh.uncompressed_size
+            {
+                return Err(SarError::InvalidLength(
+                    "decoded payload size does not match LFH Uncompressed Size",
+                ));
+            }
+            if !is_effectively_compressed
+                && !is_encrypted
+                && lfh.payload_size != lfh.uncompressed_size
+            {
+                return Err(SarError::InvalidLength(
+                    "STORE mode requires Payload Size == Uncompressed Size",
+                ));
+            }
         }
 
         let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
@@ -564,6 +592,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
             } else {
                 None
             },
+            file_crc32: lfh.file_crc32,
+            content_hash: lfh.content_hash,
         };
 
         self.next_offset = payload_end;
@@ -673,11 +703,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
     ///
     /// # Sparse logical-size derivation
     ///
-    /// The logical size for sparse reconstruction is derived as the maximum of
-    /// `extent.offset + extent.length` across all extents for that entry.  If
-    /// the file has a trailing sparse hole that is not covered by any extent,
-    /// the derived size will be smaller than the true logical size.  This is a
-    /// known spec gap; see `docs/SPEC_QUESTIONS.md`.
+    /// The logical size for sparse reconstruction is taken from the LFH
+    /// `Uncompressed Size` field, which the spec defines as the full logical
+    /// file size including trailing holes.  Any gap after the final sparse
+    /// extent up to `Uncompressed Size` is reconstructed as `0x00` bytes.
+    /// Trailing sparse holes are not a spec gap when `Uncompressed Size` is
+    /// available.
     ///
     /// Sparse logical sizes are capped to
     /// [`ArchiveReaderOptions::max_decoded_entry_size`].
@@ -722,26 +753,47 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         // Preserve insertion order of first-seen fragment IDs.
         let mut frag_order: Vec<u32> = Vec::new();
-        // fragment_id → (first_seen_name, Vec<EntryReader>)
-        let mut frag_groups: HashMap<u32, (String, Vec<EntryReader>)> = HashMap::new();
+
+        /// Accumulator for one logical-file fragment group.
+        struct FragGroup {
+            /// Name taken from the first-seen fragment entry.
+            name: String,
+            /// All fragment entries collected so far.
+            entries: Vec<EntryReader>,
+        }
+
+        // fragment_id → FragGroup
+        let mut frag_groups: HashMap<u32, FragGroup> = HashMap::new();
         let mut result: Vec<LogicalFile> = Vec::new();
 
         for entry in all_entries {
+            // Empty Areas (Name Length == 0, IS_FRAGMENT == 0) must not appear
+            // in logical file output.  They do not participate in sparse
+            // reconstruction, hashing, delta, or fragmentation.
+            if entry.metadata.name.is_empty() && !entry.metadata.is_fragment {
+                continue;
+            }
+
             if entry.metadata.is_fragment {
                 let fid = entry.metadata.fragment_id.ok_or(SarError::Malformed(
                     "IS_FRAGMENT set but fragment_id is absent",
                 ))?;
                 let group = frag_groups.entry(fid).or_insert_with(|| {
                     frag_order.push(fid);
-                    (entry.metadata.name.clone(), Vec::new())
+                    FragGroup {
+                        name: entry.metadata.name.clone(),
+                        entries: Vec::new(),
+                    }
                 });
-                group.1.push(entry);
+                group.entries.push(entry);
             } else {
                 let name = entry.metadata.name.clone();
                 let sparse = entry.metadata.sparse_extents.clone();
+                let uncompressed_size = entry.metadata.uncompressed_size;
                 let data = Self::apply_sparse_if_needed(
                     entry.payload,
                     &sparse,
+                    uncompressed_size,
                     self.options.max_decoded_entry_size,
                 )?;
                 result.push(LogicalFile {
@@ -755,11 +807,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         // Reconstruct each fragment group in first-seen order.
         for fid in frag_order {
-            let (name, group_entries) = frag_groups
+            let FragGroup {
+                name,
+                entries: group_entries,
+            } = frag_groups
                 .remove(&fid)
                 .expect("fid must be present in map");
 
-            // Compute logical size = max(descriptor.absolute_offset + descriptor.fragment_size).
+            // Compute logical size from FragmentDescriptors: max(descriptor.absolute_offset +
+            // descriptor.fragment_size). Fragment groups don't have a separate authoritative
+            // logical-size field in the LFH (unlike sparse files, which use Uncompressed Size);
+            // the union of fragment extents defines the reconstructed file size.
             let mut logical_size: u64 = 0;
             for e in &group_entries {
                 if let Some(desc) = &e.metadata.fragment_descriptor {
@@ -812,13 +870,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// Applies sparse reconstruction when `sparse_extents` is `Some` and
     /// non-empty; otherwise returns `payload` unchanged.
     ///
-    /// The sparse logical size is derived as the maximum of
-    /// `extent.offset + extent.length` across all extents.  If that value
-    /// exceeds `max_size`, an [`SarError::Overflow`] is returned to prevent
-    /// unbounded allocation.
+    /// `uncompressed_size` is the LFH `Uncompressed Size` field, which the
+    /// spec defines as the full logical file size including trailing holes.
+    /// The sparse payload bytes (sum of extent lengths) may be smaller.
+    ///
+    /// Returns [`SarError::Overflow`] when `uncompressed_size` exceeds
+    /// `max_size`, preventing unbounded allocation.
     fn apply_sparse_if_needed(
         payload: Vec<u8>,
         sparse_extents: &Option<Vec<crate::sparse::SparseExtent>>,
+        uncompressed_size: u64,
         max_size: u64,
     ) -> Result<Vec<u8>, SarError> {
         let Some(extents) = sparse_extents else {
@@ -828,21 +889,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
             return Ok(payload);
         }
 
-        // Compute logical size = max extent end.
-        let logical_size = extents
-            .iter()
-            .filter_map(|e| e.offset.checked_add(e.length))
-            .max()
-            .unwrap_or(0);
-
-        if logical_size > max_size {
+        // Use LFH Uncompressed Size as the authoritative logical file size.
+        // This correctly handles trailing sparse holes that extend beyond the
+        // last extent.
+        if uncompressed_size > max_size {
             return Err(SarError::Overflow(
                 "sparse logical file size exceeds max_decoded_entry_size limit",
             ));
         }
 
-        crate::sparse::validate_sparse_extents(extents, logical_size)?;
-        crate::sparse::apply_sparse_reconstruction(&payload, extents, logical_size)
+        crate::sparse::validate_sparse_extents(extents, uncompressed_size)?;
+        crate::sparse::apply_sparse_reconstruction(&payload, extents, uncompressed_size)
     }
 }
 

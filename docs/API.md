@@ -244,7 +244,8 @@ Reads all entries, assembles fragment groups, applies sparse reconstruction, and
 - Overlapping fragment descriptors → `SarError::InvalidMap`.
 - AEAD authentication failures are **never** suppressed by `allow_lossy`.
 - Format errors are **never** suppressed by `allow_lossy`.
-- Sparse logical size is derived from `max(extent.offset + extent.length)`; large holes are capped by `ArchiveReaderOptions::max_decoded_entry_size`.
+- **Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size.** Trailing holes after the final sparse extent are filled with zero bytes up to `Uncompressed Size`. Large logical sizes are capped by `ArchiveReaderOptions::max_decoded_entry_size`.
+- **Empty Areas** (entries with `Name Length == 0` and `IS_FRAGMENT == 0`) are excluded from the returned list; they do not participate in sparse reconstruction, hashing, delta, or fragmentation.
 
 ### `sar_core::sparse`
 
@@ -257,13 +258,24 @@ Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
 #### Public functions
 
 - `parse_sparse_map(bytes: &[u8], is_64bit: bool) -> Result<Vec<SparseExtent>, SarError>`
-  — decodes the raw sparse map from an LFH; 8 bytes per entry in 32-bit mode, 16 bytes in 64-bit mode
+  — decodes the raw sparse map from an LFH; 8 bytes per entry in 32-bit mode, 16 bytes in 64-bit mode; returns `SarError::InvalidLength` when byte count is not a multiple of entry size
 - `write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>`
   — serializes extents back to the wire format
 - `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64) -> Result<(), SarError>`
-  — checks that extents are sorted, non-overlapping, and within bounds; returns `SarError::InvalidMap` on violation
+  — checks that extents are sorted, non-overlapping, and within `logical_size` bounds; returns `SarError::InvalidMap` on violation, `SarError::Overflow` on arithmetic overflow
 - `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64) -> Result<Vec<u8>, SarError>`
-  — creates a zero-filled buffer of `logical_size` and writes each extent slice at its offset; returns `SarError::InvalidMap` if `offset + length > logical_size`
+  — creates a zero-filled buffer of exactly `logical_size` bytes (the LFH `Uncompressed Size`) and writes each extent slice from `payload` at its declared offset; trailing holes beyond the final extent are filled with `0x00`; returns `SarError::InvalidMap` if an extent exceeds `logical_size` or if payload has excess bytes; returns `SarError::Truncated` if payload is too short for the declared extents
+
+**Transformation ordering:**
+
+Sparse reconstruction occurs after all prior transformations in this order:
+1. Fragment Reassembly (if `FILE_FRAGMENTATION`)
+2. Decryption (if `ENCRYPTED`) — authentication failure is never suppressed
+3. Decompression (if `COMPRESSED`)
+4. Delta Application (if `HAS_DELTA`) — not yet implemented
+5. Sparse Reconstruction (if `SPARSE_FILES`)
+
+The Sparse Map describes the layout of the **fully reconstructed logical payload**, not individual fragments or compressed bytes.
 
 ### `sar_core::fragment`
 

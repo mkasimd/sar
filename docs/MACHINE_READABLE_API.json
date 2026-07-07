@@ -507,7 +507,7 @@
               "signature": "pub fn ArchiveReader<R>::read_all_logical_files(&mut self, allow_lossy: bool) -> Result<Vec<LogicalFile>, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed.",
+              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list.",
               "parameters": [
                 {"name": "allow_lossy", "type": "bool", "description": "Permit degraded (LOSS_TOLERANT) fragment group output."}
               ],
@@ -843,10 +843,10 @@
             {
               "name": "EntryMetadata",
               "kind": "struct",
-              "signature": "pub struct EntryMetadata { ... }",
+              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Human-readable metadata summary for one entry.",
+              "description": "Human-readable metadata summary for one entry. sparse_extents is populated for SPARSE_FILES entries. file_crc32 is populated when GlobalFlags::PER_FILE_CRC is set. content_hash is populated when GlobalFlags::DEDUPLICATION is set. Both fields contain the values from the LFH; they are parsed but not yet verified inline during extraction.",
               "parameters": [],
               "returns": "",
               "errors": [],

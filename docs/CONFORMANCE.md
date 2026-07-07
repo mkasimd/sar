@@ -31,10 +31,12 @@ maintainability cleanup pass.
   - CLI create/list/verify/inspect/extract coverage for current Selective FEC archives
 - **Milestone 8 sparse file support**
   - `parse_sparse_map` / `write_sparse_map` for 32-bit and 64-bit sparse map formats
-  - `validate_sparse_extents` — overlap and bounds checking
-  - `apply_sparse_reconstruction` — scatter-gather into zero-filled logical-size buffer
+  - `validate_sparse_extents` — overlap, bounds, and arithmetic overflow checking
+  - `apply_sparse_reconstruction` — scatter-gather into zero-filled logical-size buffer; rejects excess or insufficient payload bytes
   - `EntryMetadata.sparse_extents` populated from LFH sparse map bytes
-  - `ArchiveReader::read_all_logical_files` applies sparse reconstruction automatically
+  - `ArchiveReader::read_all_logical_files` applies sparse reconstruction automatically using **LFH `Uncompressed Size`** as the final logical file size
+  - Trailing sparse holes beyond the final extent are reconstructed as `0x00` bytes up to `Uncompressed Size`
+  - Empty Areas (`Name Length == 0`, `IS_FRAGMENT == 0`) are excluded from logical file output and do not participate in sparse reconstruction, hashing, delta, or fragmentation
 - **Milestone 8 fragment reassembly**
   - `FragmentDescriptor`, `FragmentEntry` types (with named fields, no tuple structs)
   - `LfhFragmentDescriptor` named struct in `LocalFileHeader` (replaces `Option<(u64, u32)>` tuple)
@@ -68,7 +70,12 @@ maintainability cleanup pass.
   - CLI encryption tests
   - CLI FEC tests for XOR and Reed-Solomon
   - M8: fragment reassembly tests, sparse map tests, loss-tolerant tests, recovery orchestration tests, CLI M8 integration tests
-  - M8 closeout: `logical_file_tests` — fragment group reconstruction, missing fragment errors, loss-tolerant degraded output, sparse zero-fill, overlapping sparse extents, large-hole allocation cap, cursor reset
+  - M8 closeout: `logical_file_tests` — fragment group reconstruction, missing fragment errors, loss-tolerant degraded output, sparse zero-fill with correct `Uncompressed Size`, overlapping sparse extents, large-hole allocation cap, cursor reset
+  - M8 closeout: `sparse_tests` — descriptor parsing, scatter-gather, trailing/leading/middle holes, excess/short payload rejection, zero-length descriptors
+  - M8 closeout: `sparse_conformance_tests` — spec-mandated trailing-hole and multi-hole vectors, compression+sparse pipeline, fragmentation+sparse ordering, allocation cap, malformed sparse map, loss-tolerant non-suppression
+  - M8 closeout: `empty_area_tests` — empty-area filtering in `read_all_logical_files`, empty areas not in fragment groups, empty areas not in sparse reconstruction
+  - M8 closeout: `sparse_hash_crc_tests` — `file_crc32`/`content_hash` preserved in `EntryMetadata`; reconstructed-file includes holes; different sparse maps produce different reconstructed output
+  - M8 closeout: `cli_sparse_tests` — CLI extraction of sparse holes, trailing holes, malformed sparse maps, inspection of sparse archives
 
 ## Partial
 
@@ -83,9 +90,9 @@ maintainability cleanup pass.
   - returns `RecoveryUnavailable` for non-block-aligned erasures (spec gap; see SPEC_QUESTIONS.md)
   - CLI `repair` command implemented with temp-file safety pattern
 - **Sparse logical-size derivation**
-  - logical size for sparse reconstruction is derived from `max(extent.offset + extent.length)` across all extents
-  - files with a trailing sparse hole not covered by any extent may have their logical size underestimated
-  - the spec does not define a separate explicit logical-size field for sparse entries; see SPEC_QUESTIONS.md
+  - Logical size for sparse reconstruction is taken from the LFH `Uncompressed Size` field, which the spec defines as the full logical file size including trailing holes
+  - Trailing holes after the final sparse extent are filled with zero bytes
+  - Sparse payload bytes (sum of extent lengths) may be smaller than `Uncompressed Size`; the difference is the trailing hole region
 - **Loss-tolerant extraction**
   - LOSS_TOLERANT flag parsed and surfaced in `EntryMetadata`
   - `reconstruct_fragments` respects LOSS_TOLERANT and returns degraded flag
@@ -125,7 +132,7 @@ maintainability cleanup pass.
 - Public flag and format definitions cover more protocol surface than the currently implemented behaviors.
 - `sar-core::profile` still reflects an older subset of behavior and should not be treated as a definitive conformance oracle.
 - Archive-level repair for non-block-aligned erasures returns `RecoveryUnavailable`; the spec does not define a normative byte-to-block mapping for this case.
-- Sparse logical file size is derived from extent metadata; a trailing sparse hole beyond the last extent is not recoverable without an explicit logical-size field (spec gap).
+- Automatic CRC32 and Content Hash verification of the reconstructed sparse file is not yet wired into `next_entry` or `read_all_logical_files`; the fields are parsed and preserved in `EntryMetadata` but not verified inline. This is a pipeline completion gap, not a spec gap.
 - `ArchiveWriter` does not yet write sparse entries; the sparse write path is not round-trip tested through the high-level writer API.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.

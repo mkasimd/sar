@@ -315,7 +315,10 @@ fn sparse_extents_reconstruct_with_zero_holes() {
     let sparse_map_bytes = write_sparse_map(&extents, false);
     let payload = b"DATAEXTS"; // 8 bytes of data
 
+    // uncompressed_size must be the full logical file size (12), not the
+    // sparse payload byte count (8).
     let mut lfh = LocalFileHeader::minimal_store(b"sparse.bin".to_vec(), payload.len() as u64);
+    lfh.uncompressed_size = 12; // logical file size including the hole
     lfh.sparse_map = sparse_map_bytes;
     let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
     archive.extend_from_slice(&lfh_bytes);
@@ -400,7 +403,9 @@ fn large_sparse_hole_capped_by_max_size() {
     let sparse_map_bytes = write_sparse_map(&extents_huge, false);
     let payload = b"ABCD";
 
+    // uncompressed_size must be the full logical file size (1_000_004).
     let mut lfh = LocalFileHeader::minimal_store(b"huge.bin".to_vec(), payload.len() as u64);
+    lfh.uncompressed_size = 1_000_004;
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);

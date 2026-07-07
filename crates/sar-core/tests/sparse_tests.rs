@@ -93,6 +93,137 @@ fn extract_sparse_file_safely() {
     assert_eq!(&out[..], b"hello world!");
 }
 
+/// Trailing hole: final size is Uncompressed Size (10), last extent ends at 5.
+/// Bytes [5..10) must be 0x00.
+///
+/// ```text
+/// Uncompressed Size: 10
+/// Sparse Map:  offset=2, length=3
+/// Stored Payload: ABC
+/// Expected: 00 00 41 42 43 00 00 00 00 00
+/// ```
+#[test]
+fn reconstruct_trailing_hole_uses_logical_size() {
+    let payload = b"ABC";
+    let extents = vec![SparseExtent {
+        offset: 2,
+        length: 3,
+    }];
+    let out = apply_sparse_reconstruction(payload, &extents, 10).expect("reconstruct");
+    assert_eq!(out.len(), 10);
+    assert_eq!(&out[0..2], &[0u8; 2]); // leading hole
+    assert_eq!(&out[2..5], b"ABC"); // data
+    assert_eq!(&out[5..10], &[0u8; 5]); // trailing hole
+}
+
+/// Leading + middle + trailing hole.
+///
+/// ```text
+/// Uncompressed Size: 12
+/// Sparse Map:  offset=2, length=3 | offset=8, length=2
+/// Stored Payload: ABCDE
+/// Expected: 00 00 A B C 00 00 00 D E 00 00
+/// ```
+#[test]
+fn reconstruct_leading_middle_trailing_holes() {
+    let payload = b"ABCDE";
+    let extents = vec![
+        SparseExtent {
+            offset: 2,
+            length: 3,
+        },
+        SparseExtent {
+            offset: 8,
+            length: 2,
+        },
+    ];
+    let out = apply_sparse_reconstruction(payload, &extents, 12).expect("reconstruct");
+    assert_eq!(out.len(), 12);
+    assert_eq!(&out[0..2], &[0u8; 2]); // leading hole
+    assert_eq!(&out[2..5], b"ABC");
+    assert_eq!(&out[5..8], &[0u8; 3]); // middle hole
+    assert_eq!(&out[8..10], b"DE");
+    assert_eq!(&out[10..12], &[0u8; 2]); // trailing hole
+}
+
+/// Payload longer than sum of extent lengths must fail.
+#[test]
+fn reconstruct_rejects_excess_payload() {
+    // extents consume 3 bytes, payload is 5 bytes
+    let payload = b"ABCDE";
+    let extents = vec![SparseExtent {
+        offset: 0,
+        length: 3,
+    }];
+    let err = apply_sparse_reconstruction(payload, &extents, 10)
+        .expect_err("should fail with excess payload");
+    assert!(
+        matches!(err, SarError::InvalidMap(_)),
+        "expected InvalidMap for excess payload, got {err:?}"
+    );
+}
+
+/// Payload shorter than sum of extent lengths must fail.
+#[test]
+fn reconstruct_rejects_short_payload() {
+    // extents claim 8 bytes but payload is only 4
+    let payload = b"ABCD";
+    let extents = vec![SparseExtent {
+        offset: 0,
+        length: 8,
+    }];
+    let err = apply_sparse_reconstruction(payload, &extents, 10)
+        .expect_err("should fail with short payload");
+    assert!(
+        matches!(err, SarError::Truncated(_)),
+        "expected Truncated, got {err:?}"
+    );
+}
+
+/// descriptor offset + length > Uncompressed Size must fail.
+///
+/// ```text
+/// Uncompressed Size: 10
+/// Sparse Map:  offset=8, length=3  (end=11 > 10)
+/// Expected: SAR_ERR_INVALID_MAP
+/// ```
+#[test]
+fn reconstruct_rejects_extent_beyond_logical_size_in_apply() {
+    let payload = b"ABC";
+    let extents = vec![SparseExtent {
+        offset: 8,
+        length: 3,
+    }];
+    let err = apply_sparse_reconstruction(payload, &extents, 10)
+        .expect_err("should fail with extent beyond logical size");
+    assert!(
+        matches!(err, SarError::InvalidMap(_)),
+        "expected InvalidMap, got {err:?}"
+    );
+}
+
+/// Zero-length descriptors should be tolerated (they contribute no payload
+/// bytes and produce no output bytes).
+#[test]
+fn reconstruct_accepts_zero_length_descriptor() {
+    let payload = b"ABC";
+    let extents = vec![
+        SparseExtent {
+            offset: 0,
+            length: 0,
+        }, // zero-length noop
+        SparseExtent {
+            offset: 2,
+            length: 3,
+        },
+    ];
+    let out = apply_sparse_reconstruction(payload, &extents, 10).expect("reconstruct");
+    assert_eq!(out.len(), 10);
+    assert_eq!(&out[0..2], &[0u8; 2]);
+    assert_eq!(&out[2..5], b"ABC");
+    assert_eq!(&out[5..10], &[0u8; 5]);
+}
+
 // ---------------------------------------------------------------------------
 // Validation errors
 // ---------------------------------------------------------------------------

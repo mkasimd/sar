@@ -20,6 +20,8 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - FEC validation and CLI create/inspect/verify/extract coverage for current FEC archives
 - **Milestone 8**: sparse files, fragmentation reassembly, loss-tolerant semantics, archive-level repair
   - Sparse file map parsing, writing, validation, and scatter-gather reconstruction
+  - Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size; trailing holes beyond the last extent are filled with `0x00`
+  - Empty Areas (`Name Length == 0`, `IS_FRAGMENT == 0`) excluded from logical file output
   - Fragment group reassembly with `FragmentDescriptor`-based absolute-offset placement
   - LOSS_TOLERANT degraded reconstruction (zero-fill gaps, `WarnIncomplete`); AEAD auth not bypassed
   - Archive-level Data Recovery TLV inspection (`inspect_recovery_metadata`)

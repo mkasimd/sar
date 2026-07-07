@@ -60,7 +60,16 @@ Notes:
 - AEAD authentication of individual fragment payloads must succeed before plaintext is released, regardless of LOSS_TOLERANT
 - LOSS_TOLERANT permits degraded logical file output only for *missing* fragments, not for *corrupted* (authentication-failed) fragments
 
-## Filesystem and parsing safety
+## Sparse file reconstruction security
+
+- Sparse reconstruction occurs **after** fragment reassembly, AEAD authentication (decryption), and decompression. It never runs on unauthenticated or still-encrypted bytes.
+- Sparse descriptor arithmetic uses checked arithmetic; overflow in `offset + length` or an extent exceeding `Uncompressed Size` returns `SarError::InvalidMap`.
+- Overlapping descriptors are rejected before reconstruction begins.
+- Sparse payload length is validated: it must exactly equal the sum of all extent lengths. Excess bytes (possible padding forgery) and short payload (truncated payload) both return an error.
+- The zero-filled reconstruction buffer is bounded by `ArchiveReaderOptions::max_decoded_entry_size` to prevent denial-of-service via large `Uncompressed Size` values.
+- CRC32 and Content Hash, where verified, are computed over the fully reconstructed sparse file including zero-filled holes; they are not computed over the stored sparse payload bytes alone.
+
+
 
 - Extraction rejects absolute paths.
 - Extraction rejects `..` traversal.

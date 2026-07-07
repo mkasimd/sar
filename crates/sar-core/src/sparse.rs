@@ -171,5 +171,10 @@ pub fn apply_sparse_reconstruction(
         output[dst_start..dst_end].copy_from_slice(&payload[payload_pos..src_end]);
         payload_pos = src_end;
     }
+    if payload_pos != payload.len() {
+        return Err(SarError::InvalidMap(
+            "sparse payload has excess bytes beyond declared extents",
+        ));
+    }
     Ok(output)
 }
