@@ -10,7 +10,10 @@ use clap::{ArgAction, Parser, Subcommand};
 use serde_json::json;
 use walkdir::WalkDir;
 
-use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, SarError};
+use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
+use sar_core::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput, SarError,
+};
 
 const SAR_SPEC_VERSION: &str = "1.0";
 const SAR_CD_VERSION: &str = "1";
@@ -20,6 +23,19 @@ const SAR_CD_VERSION: &str = "1";
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
+}
+
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum CompressionChoice {
+    Store,
+    Deflate,
+    Zstd,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CreateCompression {
+    algo_id: u8,
+    level: Option<u8>,
 }
 
 #[derive(Subcommand)]
@@ -36,6 +52,21 @@ enum Command {
         /// Force NO_INDEX mode.
         #[arg(long, action = ArgAction::SetTrue)]
         no_index: bool,
+        /// Compression algorithm for entries.
+        #[arg(long, value_enum)]
+        compression: Option<CompressionChoice>,
+        /// Use zstd compression.
+        #[arg(short = 'Z', action = ArgAction::SetTrue)]
+        zstd: bool,
+        /// Use deflate compression.
+        #[arg(short = 'z', action = ArgAction::SetTrue)]
+        deflate: bool,
+        /// Force STORE/no compression.
+        #[arg(short = 'S', action = ArgAction::SetTrue)]
+        store: bool,
+        /// Compression level (0-9), supports shorthand like `-9`.
+        #[arg(long = "compression-level", value_parser = clap::value_parser!(u8).range(0..=9))]
+        compression_level: Option<u8>,
     },
     /// Extract archive to output directory.
     Extract {
@@ -71,11 +102,11 @@ fn main() {
     let result = if let Some(outcome) = try_handle_shorthand(&args) {
         outcome
     } else {
-        handle_normal_cli()
+        handle_normal_cli(&normalize_level_shorthand(&args))
     };
 
     if let Err(error) = result {
-        eprintln!("error ({:?}): {error}", error.status());
+        eprintln!("error ({}): {error}", error.status());
         std::process::exit(1);
     }
 }
@@ -113,9 +144,12 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
                 .map(PathBuf::from)
                 .ok_or(SarError::Malformed("-c requires <input>"));
             let output = value_after_flag(args, "-f");
-            Some(match (input, output) {
-                (Ok(input), Ok(output)) => create_archive(input, output, false),
-                (Err(e), _) | (_, Err(e)) => Err(e),
+            let compression = resolve_shorthand_compression(args);
+            Some(match (input, output, compression) {
+                (Ok(input), Ok(output), Ok(compression)) => {
+                    create_archive(input, output, false, compression)
+                }
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
             })
         }
         "-x" => {
@@ -132,6 +166,74 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
     }
 }
 
+fn resolve_shorthand_compression(args: &[String]) -> Result<CreateCompression, SarError> {
+    let algo_flags = [
+        ("-S", CompressionChoice::Store),
+        ("-z", CompressionChoice::Deflate),
+        ("-Z", CompressionChoice::Zstd),
+    ];
+    let selected: Vec<CompressionChoice> = algo_flags
+        .iter()
+        .filter_map(|(flag, value)| args.iter().any(|arg| arg == *flag).then_some(*value))
+        .collect();
+    if selected.len() > 1 {
+        return Err(SarError::Malformed(
+            "ambiguous compression shorthand: choose one of -S/-z/-Z",
+        ));
+    }
+    let level = parse_level_shorthand(args)?;
+    Ok(CreateCompression {
+        algo_id: compression_to_algo_id(
+            selected
+                .first()
+                .copied()
+                .unwrap_or(CompressionChoice::Store),
+        ),
+        level,
+    })
+}
+
+fn parse_level_shorthand(args: &[String]) -> Result<Option<u8>, SarError> {
+    let levels: Vec<u8> = args
+        .iter()
+        .filter_map(|arg| {
+            if arg.len() == 2 && arg.starts_with('-') {
+                arg.chars()
+                    .nth(1)
+                    .and_then(|c| c.to_digit(10))
+                    .map(|d| d as u8)
+            } else {
+                None
+            }
+        })
+        .collect();
+    if levels.len() > 1 {
+        return Err(SarError::Malformed(
+            "multiple compression levels specified; choose one of -0..-9",
+        ));
+    }
+    Ok(levels.first().copied())
+}
+
+fn normalize_level_shorthand(args: &[String]) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            if arg.len() == 2
+                && arg.starts_with('-')
+                && arg
+                    .chars()
+                    .nth(1)
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+            {
+                format!("--compression-level={}", &arg[1..])
+            } else {
+                arg.clone()
+            }
+        })
+        .collect()
+}
+
 fn value_after_flag(args: &[String], flag: &str) -> Result<PathBuf, SarError> {
     let idx = args
         .iter()
@@ -143,21 +245,28 @@ fn value_after_flag(args: &[String], flag: &str) -> Result<PathBuf, SarError> {
     Ok(PathBuf::from(value))
 }
 
-fn handle_normal_cli() -> Result<(), SarError> {
-    let cli = Cli::parse();
+fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
+    let cli = Cli::parse_from(args);
     match cli.command.unwrap_or(Command::Version) {
         Command::Create {
             input,
             output,
             indexed,
             no_index,
+            compression,
+            zstd,
+            deflate,
+            store,
+            compression_level,
         } => {
             if indexed && no_index {
                 return Err(SarError::Malformed(
                     "--indexed and --no-index cannot be used together",
                 ));
             }
-            create_archive(input, output, no_index && !indexed)
+            let compression =
+                resolve_create_compression(compression, zstd, deflate, store, compression_level)?;
+            create_archive(input, output, no_index && !indexed, compression)
         }
         Command::Extract {
             archive,
@@ -168,6 +277,55 @@ fn handle_normal_cli() -> Result<(), SarError> {
         Command::Inspect { archive, json } => inspect_archive(archive, json),
         Command::Version => print_version(),
     }
+}
+
+fn compression_to_algo_id(compression: CompressionChoice) -> u8 {
+    match compression {
+        CompressionChoice::Store => COMP_ALGO_STORE,
+        CompressionChoice::Deflate => COMP_ALGO_DEFLATE,
+        CompressionChoice::Zstd => COMP_ALGO_ZSTD,
+    }
+}
+
+fn default_compression() -> CreateCompression {
+    CreateCompression {
+        algo_id: COMP_ALGO_STORE,
+        level: None,
+    }
+}
+
+fn resolve_create_compression(
+    compression: Option<CompressionChoice>,
+    zstd: bool,
+    deflate: bool,
+    store: bool,
+    compression_level: Option<u8>,
+) -> Result<CreateCompression, SarError> {
+    let mut selected = Vec::new();
+    if let Some(explicit) = compression {
+        selected.push(explicit);
+    }
+    if zstd {
+        selected.push(CompressionChoice::Zstd);
+    }
+    if deflate {
+        selected.push(CompressionChoice::Deflate);
+    }
+    if store {
+        selected.push(CompressionChoice::Store);
+    }
+    let Some(first) = selected.first().copied() else {
+        return Ok(default_compression());
+    };
+    if selected.iter().any(|value| *value != first) {
+        return Err(SarError::Malformed(
+            "conflicting compression selectors; choose one of --compression/-Z/-z/-S",
+        ));
+    }
+    Ok(CreateCompression {
+        algo_id: compression_to_algo_id(first),
+        level: compression_level,
+    })
 }
 
 fn print_version() -> Result<(), SarError> {
@@ -182,9 +340,21 @@ fn print_version() -> Result<(), SarError> {
     .map_err(SarError::Io)
 }
 
-fn create_archive(input: PathBuf, output: PathBuf, no_index: bool) -> Result<(), SarError> {
+fn create_archive(
+    input: PathBuf,
+    output: PathBuf,
+    no_index: bool,
+    compression: CreateCompression,
+) -> Result<(), SarError> {
     let file = File::create(output)?;
-    let mut writer = ArchiveWriter::new(file, ArchiveWriterOptions { no_index })?;
+    let mut writer = ArchiveWriter::new_with_compression(
+        file,
+        ArchiveWriterOptions { no_index },
+        CompressionSettings {
+            algo_id: compression.algo_id,
+            level: compression.level,
+        },
+    )?;
 
     if input.is_file() {
         let name = input
@@ -224,7 +394,13 @@ fn list_archive(archive: PathBuf) -> Result<(), SarError> {
     let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
     let _ = reader.read_global_header()?;
     while let Some(entry) = reader.next_entry()? {
-        println!("{}", entry.metadata.name);
+        println!(
+            "{}\t{}\tencoded={}\tuncompressed={}",
+            entry.metadata.name,
+            entry.metadata.compression_algorithm,
+            entry.metadata.payload_size,
+            entry.metadata.uncompressed_size
+        );
     }
     Ok(())
 }

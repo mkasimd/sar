@@ -11,6 +11,11 @@ Implemented milestones:
 - **Milestone 3**: minimal archive reader/writer for **STORE-only** payloads in:
   - sequential `NO_INDEX` mode;
   - minimal indexed mode with Central Dictionary + Footer.
+- **Milestone 4**: compression + transform-pipeline foundation:
+  - STORE (`0x00`), DEFLATE (`0x01`), ZSTD (`0x02`) implemented;
+  - assigned unsupported compression IDs return `SAR_ERR_UNSUPPORTED`;
+  - reserved compression IDs return `SAR_ERR_RESERVED_VALUE`;
+  - bounded decompression by configured maximum decoded entry size.
 - **MVP CLI** (`sar-cli`) built on `sar-core`.
 
 ## Workspace layout
@@ -40,7 +45,7 @@ Placeholder crates compile but intentionally do not implement future milestones.
 ## CLI
 
 ```text
-sar create <input> <output.sar> [--indexed|--no-index]
+sar create <input> <output.sar> [--indexed|--no-index] [--compression store|deflate|zstd] [--compression-level 0..9]
 sar extract <archive.sar> <output-dir>
 sar list <archive.sar>
 sar verify <archive.sar>
@@ -53,6 +58,11 @@ sar -x -f <archive.sar> -C <dir>
 sar -t -f <archive.sar>
 sar -v -f <archive.sar>
 sar -V
+
+# create compression shortcuts:
+sar create <input> <output.sar> -S
+sar create <input> <output.sar> -z
+sar create <input> <output.sar> -Z -9
 ```
 
 ## Examples
@@ -67,8 +77,15 @@ cargo run -p sar-cli -- inspect ./archive.sar --json
 
 ## Limitations (intentional for Milestones 1–3)
 
-- STORE only (no DEFLATE/ZSTD/etc).
 - No encryption/decryption, KMS execution, signatures, FEC recovery, CDC, delta reconstruction, sparse reconstruction, fragmentation reassembly, stream transport.
 - Unsupported/reserved features fail closed with SAR-specific errors.
+
+## CI
+
+GitHub Actions CI lives at `.github/workflows/ci.yml` and runs on pull requests only:
+
+- `cargo fmt --check`
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- `cargo test --workspace --all-features`
 
 See `docs/CONFORMANCE.md` for implemented vs planned scope.

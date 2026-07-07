@@ -69,5 +69,5 @@ fn unsupported_features_fail_clearly() {
         .args(["list", archive.to_str().expect("str")])
         .assert()
         .failure()
-        .stderr(contains("ErrUnsupported"));
+        .stderr(contains("SAR_ERR_UNSUPPORTED"));
 }

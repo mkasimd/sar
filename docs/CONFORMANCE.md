@@ -9,8 +9,14 @@
 - Header-size and bounds validation logic.
 - Central Dictionary + Footer parsing/writing for minimal indexed archives.
 - TLV parsing/writing with 8-byte alignment and zero-padding checks.
-- STORE-only archive reader/writer for `NO_INDEX` and indexed modes.
+- Archive reader/writer with compression support for `NO_INDEX` and indexed modes.
+  - STORE (`0x00`)
+  - DEFLATE (`0x01`)
+  - ZSTD (`0x02`)
+  - assigned unsupported and reserved compression IDs fail with SAR registry errors.
 - CLI MVP commands and shorthand aliases.
+- Full Section 10 status/error/warning registry values in `sar-core`.
+- PR-only CI workflow (`on: pull_request`) for fmt/clippy/tests.
 
 ## Partial
 
@@ -19,7 +25,6 @@
 
 ## Unsupported (explicitly rejected)
 
-- Compression beyond STORE.
 - Encrypted payload decoding and cryptographic key handling.
 - FEC decode/repair, CDC resolution, delta patch execution.
 - Sparse reconstruction, fragmentation reassembly, lossy modes.

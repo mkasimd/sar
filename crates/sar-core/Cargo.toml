@@ -8,6 +8,7 @@ license.workspace = true
 bitflags.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+sar-compression = { path = "../sar-compression" }
 
 [dev-dependencies]
 serde_json.workspace = true

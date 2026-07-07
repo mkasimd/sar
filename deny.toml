@@ -1,0 +1,96 @@
+# deny.toml — cargo-deny configuration for the sar-rust workspace.
+# Docs: https://embarkstudios.github.io/cargo-deny/
+
+# ── Advisories (RustSec) ──────────────────────────────────────────────────────
+[advisories]
+# Fail the build if any crate has an unpatched security advisory.
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# If you need to temporarily accept a specific advisory while waiting for an
+# upstream fix, add it here with a comment explaining why and when to revisit:
+#
+# ignore = [
+#   { id = "RUSTSEC-XXXX-XXXX", reason = "No fix available yet; tracked in #123" },
+# ]
+
+# ── Licenses ──────────────────────────────────────────────────────────────────
+[licenses]
+version = 2
+# Only licenses listed in `allow` are permitted; everything else is denied.
+# Unlicensed crates and any license not in this list are automatically rejected.
+
+allow = [
+  # Apache
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+
+  # BSD
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+
+  # MIT
+  "MIT",
+  "MIT-0",
+
+  # Public domain / Unlicense
+  "Unlicense",
+
+  # ISC
+  "ISC",
+
+  # Python Software Foundation
+  "PSF-2.0",
+
+  # Zlib
+  "Zlib",
+
+  # Mozilla
+  "MPL-2.0",
+
+  # Unicode
+  "Unicode-3.0",
+
+  # OpenSSL — commonly needed by TLS/crypto crates.
+  "OpenSSL",
+]
+
+# If a crate uses a dual-license expression (e.g. MIT OR Apache-2.0), cargo-deny
+# only needs ONE of the listed licenses to match — no extra config required.
+
+# Add crate-level license exceptions here when a known-good crate uses a license
+# not in the allow list above:
+#
+# [[licenses.exceptions]]
+# name = "some-crate"
+# version = "*"
+# allow = ["LicenseRef-SomeProprietary"]
+
+# ── Bans ──────────────────────────────────────────────────────────────────────
+[bans]
+# Warn on duplicate versions of the same crate; set to "deny" for strict mode.
+multiple-versions = "warn"
+# Deny crates that have been explicitly banned.
+deny = []
+# Allow list for crates that are allowed even if they have multiple versions
+# (common for foundational crates that the ecosystem hasn't fully migrated):
+#
+# skip = [
+#   { name = "some-crate", version = "=1.0.0" },
+# ]
+#
+# To allow all versions of a transitively duplicated crate:
+#
+# skip-tree = [
+#   { name = "some-crate" },
+# ]
+
+# ── Sources ───────────────────────────────────────────────────────────────────
+[sources]
+# Only allow crates from crates.io and the workspace itself.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# If you use private registries or internal git sources, add them here:
+#
+# allow-git = ["https://github.com/your-org/private-crate"]
