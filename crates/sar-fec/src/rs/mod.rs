@@ -124,6 +124,10 @@ fn parity_data_len(
     usize::try_from(pl).map_err(|_| FecError::Overflow("RS parity length exceeds usize"))
 }
 
+fn u64_to_usize(value: u64, context: &'static str) -> Result<usize, FecError> {
+    usize::try_from(value).map_err(|_| FecError::Overflow(context))
+}
+
 // ---------------------------------------------------------------------------
 // Vandermonde generator matrix
 // ---------------------------------------------------------------------------
@@ -319,14 +323,16 @@ impl FecCodec for RsCodec {
         protected: &[u8],
         _options: FecOptions,
     ) -> Result<FecValue, FecError> {
-        let k = self.k as usize;
-        let pc = self.parity_count as usize;
-        let ss = self.symbol_size as usize;
+        let k = usize::from(self.k);
+        let pc = usize::from(self.parity_count);
+        let ss = usize::try_from(self.symbol_size)
+            .map_err(|_| FecError::Overflow("RS symbol size exceeds usize"))?;
 
         let original_len = u64::try_from(protected.len())
             .map_err(|_| FecError::Overflow("RS protected length exceeds u64"))?;
         let group_count = expected_group_count(original_len, self.k, self.symbol_size)?;
-        let gc = group_count as usize;
+        let gc = usize::try_from(group_count)
+            .map_err(|_| FecError::Overflow("RS group count exceeds usize"))?;
 
         let pl = parity_data_len(group_count, self.parity_count, self.symbol_size)?;
         if pl > MAX_PARITY_SIZE {
@@ -336,7 +342,11 @@ impl FecCodec for RsCodec {
         }
 
         let vandermonde = build_vandermonde_rect(k, pc);
-        let mut parity_blob = vec![0u8; gc * pc * ss];
+        let parity_blob_len = gc
+            .checked_mul(pc)
+            .and_then(|value| value.checked_mul(ss))
+            .ok_or(FecError::Overflow("RS parity allocation overflow"))?;
+        let mut parity_blob = vec![0u8; parity_blob_len];
         let mut sym_buf = vec![0u8; ss];
 
         for g in 0..gc {
@@ -380,10 +390,12 @@ impl FecCodec for RsCodec {
             ));
         }
 
-        let k = self.k as usize;
-        let pc = self.parity_count as usize;
-        let ss = self.symbol_size as usize;
-        let gc = group_count as usize;
+        let k = usize::from(self.k);
+        let pc = usize::from(self.parity_count);
+        let ss = usize::try_from(self.symbol_size)
+            .map_err(|_| FecError::Overflow("RS symbol size exceeds usize"))?;
+        let gc = usize::try_from(group_count)
+            .map_err(|_| FecError::Overflow("RS group count exceeds usize"))?;
         let _n = k + pc;
 
         let pl = parity_data_len(group_count, self.parity_count, self.symbol_size)?;
@@ -393,7 +405,10 @@ impl FecCodec for RsCodec {
 
         // Build output: initially a copy of available_data, then fill in
         // recovered symbols.
-        let total_data_len = gc * k * ss;
+        let total_data_len = gc
+            .checked_mul(k)
+            .and_then(|value| value.checked_mul(ss))
+            .ok_or(FecError::Overflow("RS output length overflow"))?;
         let mut out = vec![0u8; total_data_len];
         let copy_len = out.len().min(input.available_data.len());
         out[..copy_len].copy_from_slice(&input.available_data[..copy_len]);
@@ -403,15 +418,25 @@ impl FecCodec for RsCodec {
         for g in 0..gc {
             // Determine which data-symbol indices (0..k) are erased in this
             // group.
-            let group_sym_start = (g * k) as u64;
-            let group_sym_end = ((g + 1) * k) as u64;
+            let group_sym_start = u64::try_from(
+                g.checked_mul(k)
+                    .ok_or(FecError::Overflow("RS group symbol start overflow"))?,
+            )
+            .map_err(|_| FecError::Overflow("RS group symbol start exceeds u64"))?;
+            let group_sym_end = u64::try_from(
+                (g + 1)
+                    .checked_mul(k)
+                    .ok_or(FecError::Overflow("RS group symbol end overflow"))?,
+            )
+            .map_err(|_| FecError::Overflow("RS group symbol end exceeds u64"))?;
 
             let erased_data: Vec<usize> = input
                 .erasures
                 .iter()
                 .filter_map(|e| {
                     if e.index >= group_sym_start && e.index < group_sym_end {
-                        Some((e.index - group_sym_start) as usize)
+                        u64_to_usize(e.index - group_sym_start, "RS erasure index exceeds usize")
+                            .ok()
                     } else {
                         None
                     }
@@ -531,7 +556,10 @@ impl FecCodec for RsCodec {
                 "RS parity exceeds implementation limit",
             ));
         }
-        let available = fec_value_data.len().saturating_sub(HEADER_SIZE);
+        let available = fec_value_data
+            .len()
+            .checked_sub(HEADER_SIZE)
+            .ok_or(FecError::Truncated("RS FEC value shorter than header"))?;
         if available != pl {
             return Err(FecError::InvalidLength(
                 "RS parity data length does not match Group Count × (n-k) × Symbol Size",

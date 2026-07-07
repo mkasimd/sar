@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::error::SarError;
+use crate::{error::SarError, limits::ResourceLimits};
 
 /// A single contiguous data extent within a sparse logical file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -22,7 +22,12 @@ pub struct SparseExtent {
 ///
 /// Returns [`SarError::InvalidLength`] when `bytes` is not a multiple of the
 /// entry size.
-pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool) -> Result<Vec<SparseExtent>, SarError> {
+pub fn parse_sparse_map(
+    bytes: &[u8],
+    is_64bit: bool,
+    limits: &ResourceLimits,
+) -> Result<Vec<SparseExtent>, SarError> {
+    limits.check_sparse_map_bytes(bytes.len())?;
     let entry_size: usize = if is_64bit { 16 } else { 8 };
     if !bytes.len().is_multiple_of(entry_size) {
         return Err(SarError::InvalidLength(
@@ -30,6 +35,7 @@ pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool) -> Result<Vec<SparseExtent
         ));
     }
     let count = bytes.len() / entry_size;
+    limits.check_sparse_descriptor_count(count)?;
     let mut extents = Vec::with_capacity(count);
     let mut pos = 0;
     for _ in 0..count {
@@ -99,8 +105,11 @@ pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8> {
 pub fn validate_sparse_extents(
     extents: &[SparseExtent],
     logical_size: u64,
+    limits: &ResourceLimits,
 ) -> Result<(), SarError> {
+    limits.check_sparse_descriptor_count(extents.len())?;
     let mut last_end: u64 = 0;
+    let mut total_length: u64 = 0;
     for extent in extents {
         let end = extent
             .offset
@@ -114,8 +123,12 @@ pub fn validate_sparse_extents(
         if extent.offset < last_end {
             return Err(SarError::InvalidMap("sparse extents overlap"));
         }
+        total_length = total_length
+            .checked_add(extent.length)
+            .ok_or(SarError::Overflow("sparse extent length sum overflow"))?;
         last_end = end;
     }
+    let _ = total_length;
     Ok(())
 }
 
@@ -137,9 +150,13 @@ pub fn apply_sparse_reconstruction(
     payload: &[u8],
     extents: &[SparseExtent],
     logical_size: u64,
+    limits: &ResourceLimits,
 ) -> Result<Vec<u8>, SarError> {
+    limits.check_decoded_entry_size(logical_size)?;
+    limits.check_allocation_bytes(logical_size)?;
     let logical_size_usize =
         usize::try_from(logical_size).map_err(|_| SarError::Overflow("logical size usize"))?;
+    validate_sparse_extents(extents, logical_size, limits)?;
     let mut output = vec![0u8; logical_size_usize];
     let mut payload_pos: usize = 0;
 

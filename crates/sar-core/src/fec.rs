@@ -7,7 +7,7 @@
 use sar_fec::{FecError, FecMeta, parse_fec_value, validate_fec_algo_id};
 use serde::Serialize;
 
-use crate::error::SarError;
+use crate::{error::SarError, limits::ResourceLimits};
 
 // ---------------------------------------------------------------------------
 // FecError → SarError conversion
@@ -127,13 +127,18 @@ impl FecSummary {
 ///
 /// Returns [`SarError`] for reserved/unsupported algo IDs, or when the value
 /// bytes are structurally invalid.
-pub fn validate_recovery_tlv(type_id: u8, value: &[u8]) -> Result<FecSummary, SarError> {
+pub fn validate_recovery_tlv(
+    type_id: u8,
+    value: &[u8],
+    limits: &ResourceLimits,
+) -> Result<FecSummary, SarError> {
     classify_recovery_tlv_id(type_id)?;
     if type_id == 0x00 {
         return Err(SarError::Malformed(
             "RECOVERY TLV must have non-zero type ID",
         ));
     }
+    limits.check_fec_value_bytes(value.len())?;
     let meta = parse_fec_value(type_id, value).map_err(SarError::from)?;
     Ok(FecSummary::from_meta(type_id, &meta))
 }
@@ -158,7 +163,11 @@ pub fn validate_lfh_fec_algo_id(algo_id: u8) -> Result<(), SarError> {
 /// # Errors
 ///
 /// Returns [`SarError`] for reserved/unsupported algo IDs or malformed values.
-pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8]) -> Result<Option<FecSummary>, SarError> {
+pub fn parse_lfh_fec_value(
+    algo_id: u8,
+    fec_value: &[u8],
+    limits: &ResourceLimits,
+) -> Result<Option<FecSummary>, SarError> {
     if algo_id == 0x00 {
         return Ok(None);
     }
@@ -168,6 +177,7 @@ pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8]) -> Result<Option<FecSu
             "LFH FEC value must be non-empty for non-zero algo ID",
         ));
     }
+    limits.check_fec_value_bytes(fec_value.len())?;
     let meta = parse_fec_value(algo_id, fec_value).map_err(SarError::from)?;
     Ok(Some(FecSummary::from_meta(algo_id, &meta)))
 }

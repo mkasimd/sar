@@ -153,6 +153,10 @@ pub struct ResourceLimits {
     /// Maximum working-set byte size for archive-level repair operations.
     /// Default: 2 GiB.
     pub max_repair_working_set: u64,
+
+    /// Enables optional runtime-memory-budget enforcement in addition to the
+    /// configured static limits. Default: false.
+    pub use_runtime_memory_budget: bool,
 }
 
 impl Default for ResourceLimits {
@@ -178,6 +182,7 @@ impl Default for ResourceLimits {
             max_fec_value_bytes: 256 * 1024 * 1024,
             max_recovery_protected_range: 16 * 1024 * 1024 * 1024,
             max_repair_working_set: 2 * 1024 * 1024 * 1024,
+            use_runtime_memory_budget: false,
         }
     }
 }
@@ -211,6 +216,7 @@ impl ResourceLimits {
             max_fec_value_bytes: usize::MAX,
             max_recovery_protected_range: u64::MAX,
             max_repair_working_set: u64::MAX,
+            use_runtime_memory_budget: false,
         }
     }
 
@@ -369,6 +375,34 @@ impl ResourceLimits {
             ));
         }
         Ok(())
+    }
+
+    /// Checks that cumulative pipeline memory does not exceed
+    /// `max_total_pipeline_memory`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SarError::LimitExceeded`] when `bytes >
+    /// max_total_pipeline_memory`.
+    pub fn check_total_pipeline_memory(&self, bytes: u64) -> Result<(), SarError> {
+        if bytes > self.max_total_pipeline_memory {
+            return Err(SarError::LimitExceeded(
+                "total pipeline memory exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that a single buffer allocation fits the configured per-buffer
+    /// and pipeline-wide limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SarError::LimitExceeded`] when the requested byte count
+    /// exceeds any configured allocation limit.
+    pub fn check_allocation_bytes(&self, bytes: u64) -> Result<(), SarError> {
+        self.check_in_memory_buffer(bytes)?;
+        self.check_total_pipeline_memory(bytes)
     }
 
     /// Checks that a sparse map byte length does not exceed

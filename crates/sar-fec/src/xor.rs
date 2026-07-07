@@ -141,6 +141,10 @@ fn parity_len(stripe_count: u32, block_size: u32) -> Result<usize, FecError> {
     usize::try_from(pl).map_err(|_| FecError::Overflow("XOR parity length exceeds usize"))
 }
 
+fn u64_to_usize(value: u64, context: &'static str) -> Result<usize, FecError> {
+    usize::try_from(value).map_err(|_| FecError::Overflow(context))
+}
+
 // ---------------------------------------------------------------------------
 // XOR codec
 // ---------------------------------------------------------------------------
@@ -196,17 +200,21 @@ impl XorCodec {
 
     /// Returns the bytes of block `block_idx` from `data`, zero-padding to
     /// `block_size`.  Returns all-zero if `block_idx` is beyond the data.
-    fn block_bytes(&self, data: &[u8], block_idx: usize, buf: &mut [u8]) {
-        let bs = self.block_size as usize;
+    fn block_bytes(&self, data: &[u8], block_idx: usize, buf: &mut [u8]) -> Result<(), FecError> {
+        let bs = usize::try_from(self.block_size)
+            .map_err(|_| FecError::Overflow("XOR block size exceeds usize"))?;
         debug_assert_eq!(buf.len(), bs);
-        let start = block_idx.saturating_mul(bs);
+        let start = block_idx
+            .checked_mul(bs)
+            .ok_or(FecError::Overflow("XOR block start overflow"))?;
         if start >= data.len() {
             buf.fill(0);
-            return;
+            return Ok(());
         }
         let end = (start + bs).min(data.len());
         buf[..end - start].copy_from_slice(&data[start..end]);
         buf[end - start..].fill(0);
+        Ok(())
     }
 
     /// XORs `src` into `dst` in place.
@@ -238,18 +246,23 @@ impl FecCodec for XorCodec {
             ));
         }
 
-        let ss = self.stripe_size as usize;
-        let bs = self.block_size as usize;
-        let sc = stripe_count as usize;
+        let ss = usize::from(self.stripe_size);
+        let bs = usize::try_from(self.block_size)
+            .map_err(|_| FecError::Overflow("XOR block size exceeds usize"))?;
+        let sc = usize::try_from(stripe_count)
+            .map_err(|_| FecError::Overflow("XOR stripe count exceeds usize"))?;
 
-        let mut parity = vec![0u8; sc * bs];
+        let parity_len = sc
+            .checked_mul(bs)
+            .ok_or(FecError::Overflow("XOR parity allocation overflow"))?;
+        let mut parity = vec![0u8; parity_len];
         let mut block_buf = vec![0u8; bs];
 
         for stripe in 0..sc {
             let p_slice = &mut parity[stripe * bs..(stripe + 1) * bs];
             for i in 0..ss {
                 let block_idx = stripe * ss + i;
-                self.block_bytes(protected, block_idx, &mut block_buf);
+                self.block_bytes(protected, block_idx, &mut block_buf)?;
                 Self::xor_into(p_slice, &block_buf);
             }
         }
@@ -282,15 +295,20 @@ impl FecCodec for XorCodec {
             ));
         }
 
-        let sc = stripe_count as usize;
-        let ss = self.stripe_size as usize;
-        let bs = block_size as usize;
+        let sc = usize::try_from(stripe_count)
+            .map_err(|_| FecError::Overflow("XOR stripe count exceeds usize"))?;
+        let ss = usize::from(self.stripe_size);
+        let bs = usize::try_from(block_size)
+            .map_err(|_| FecError::Overflow("XOR block size exceeds usize"))?;
 
         let pl = parity_len(stripe_count, block_size)?;
         let parity = &input.fec_value_data[HEADER_SIZE..HEADER_SIZE + pl];
 
         // Build a mutable output buffer initialised from available_data.
-        let total_data_len = sc * ss * bs;
+        let total_data_len = sc
+            .checked_mul(ss)
+            .and_then(|value| value.checked_mul(bs))
+            .ok_or(FecError::Overflow("XOR output length overflow"))?;
         let mut out = vec![0u8; total_data_len];
         let copy_len = out.len().min(input.available_data.len());
         out[..copy_len].copy_from_slice(&input.available_data[..copy_len]);
@@ -299,14 +317,24 @@ impl FecCodec for XorCodec {
 
         for stripe in 0..sc {
             // Collect erasures in this stripe.
-            let stripe_start = (stripe * ss) as u64;
-            let stripe_end = ((stripe + 1) * ss) as u64;
+            let stripe_start = u64::try_from(
+                stripe
+                    .checked_mul(ss)
+                    .ok_or(FecError::Overflow("XOR stripe start overflow"))?,
+            )
+            .map_err(|_| FecError::Overflow("XOR stripe start exceeds u64"))?;
+            let stripe_end = u64::try_from(
+                (stripe + 1)
+                    .checked_mul(ss)
+                    .ok_or(FecError::Overflow("XOR stripe end overflow"))?,
+            )
+            .map_err(|_| FecError::Overflow("XOR stripe end exceeds u64"))?;
             let stripe_erasures: Vec<usize> = input
                 .erasures
                 .iter()
                 .filter_map(|e| {
                     if e.index >= stripe_start && e.index < stripe_end {
-                        Some((e.index - stripe_start) as usize)
+                        u64_to_usize(e.index - stripe_start, "XOR erasure index exceeds usize").ok()
                     } else {
                         None
                     }
@@ -335,7 +363,7 @@ impl FecCodec for XorCodec {
                     continue;
                 }
                 let block_idx = stripe * ss + i;
-                self.block_bytes(input.available_data, block_idx, &mut block_buf);
+                self.block_bytes(input.available_data, block_idx, &mut block_buf)?;
                 Self::xor_into(&mut recovered, &block_buf);
             }
 
@@ -377,7 +405,10 @@ impl FecCodec for XorCodec {
                 "XOR parity exceeds implementation limit",
             ));
         }
-        let available = fec_value_data.len().saturating_sub(HEADER_SIZE);
+        let available = fec_value_data
+            .len()
+            .checked_sub(HEADER_SIZE)
+            .ok_or(FecError::Truncated("XOR FEC value shorter than header"))?;
         if available != pl {
             return Err(FecError::InvalidLength(
                 "XOR parity data length does not match Stripe Count × Block Size",

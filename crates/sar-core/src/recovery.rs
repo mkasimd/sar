@@ -17,6 +17,7 @@ use crate::{
     fec::{FecSummary, validate_recovery_tlv},
     flags::GlobalFlags,
     format::{parse_central_dictionary, parse_footer, parse_global_header},
+    limits::ResourceLimits,
 };
 
 // ---------------------------------------------------------------------------
@@ -126,8 +127,13 @@ struct ArchiveLayout {
     recovery_tlvs: Vec<(u8, Vec<u8>)>, // (type_id, value)
 }
 
-fn parse_archive_layout(archive_bytes: &[u8]) -> Result<ArchiveLayout, SarError> {
-    let (global_header, _header_len) = parse_global_header(archive_bytes)?;
+fn parse_archive_layout(
+    archive_bytes: &[u8],
+    limits: &ResourceLimits,
+) -> Result<ArchiveLayout, SarError> {
+    limits
+        .check_archive_size(u64::try_from(archive_bytes.len()).map_err(|_| SarError::Overflow("archive size"))?)?;
+    let (global_header, _header_len) = parse_global_header(archive_bytes, limits)?;
     let flags = global_header.flags;
 
     if flags.contains(GlobalFlags::NO_INDEX) {
@@ -144,15 +150,21 @@ fn parse_archive_layout(archive_bytes: &[u8]) -> Result<ArchiveLayout, SarError>
     let footer_bytes = &archive_bytes[archive_bytes.len() - 8..];
     let footer = parse_footer(footer_bytes)?;
     let cd_off = footer.cd_offset;
-
-    let cd_len = archive_bytes
+    let archive_end = archive_bytes
         .len()
         .checked_sub(8)
-        .and_then(|end| end.checked_sub(usize::try_from(cd_off).ok()?))
-        .ok_or(SarError::Bounds("CD offset outside archive"))?;
+        .ok_or(SarError::Bounds("archive too short for CD/footer layout"))?;
     let cd_start = usize::try_from(cd_off).map_err(|_| SarError::Overflow("cd offset usize"))?;
+    if cd_start >= archive_end {
+        return Err(SarError::Bounds("CD offset outside archive"));
+    }
+
+    let cd_len = archive_end
+        .checked_sub(cd_start)
+        .ok_or(SarError::Bounds("CD offset outside archive"))?;
+    limits.check_cd_bytes(u64::try_from(cd_len).map_err(|_| SarError::Overflow("CD length"))?)?;
     let cd_bytes = &archive_bytes[cd_start..cd_start + cd_len];
-    let (cd, _) = parse_central_dictionary(cd_bytes, flags)?;
+    let (cd, _) = parse_central_dictionary(cd_bytes, flags, limits)?;
 
     let recovery_tlvs: Vec<(u8, Vec<u8>)> = cd
         .metadata
@@ -180,18 +192,24 @@ fn parse_archive_layout(archive_bytes: &[u8]) -> Result<ArchiveLayout, SarError>
 /// # Errors
 ///
 /// Returns [`SarError`] on malformed archive structure.
-pub fn inspect_recovery_metadata(archive_bytes: &[u8]) -> Result<RecoveryMetadata, SarError> {
-    let layout = parse_archive_layout(archive_bytes)?;
+pub fn inspect_recovery_metadata(
+    archive_bytes: &[u8],
+    limits: &ResourceLimits,
+) -> Result<RecoveryMetadata, SarError> {
+    let layout = parse_archive_layout(archive_bytes, limits)?;
     let has_global_ec = layout.global_flags.contains(GlobalFlags::HAS_GLOBAL_EC);
 
     // Compute protected range when CD exists
     let (protected_range, recovery_tlvs) = if let Some(cd_off) = layout.cd_offset {
-        let prot_len = cd_off.saturating_sub(GLOBAL_FLAGS_OFFSET);
+        let prot_len = cd_off
+            .checked_sub(GLOBAL_FLAGS_OFFSET)
+            .ok_or(SarError::Bounds("CD offset lies before Global Flags"))?;
+        limits.check_recovery_protected_range(prot_len)?;
 
         // Parse and validate all RECOVERY TLVs
         let mut summaries = Vec::new();
         for (type_id, value) in &layout.recovery_tlvs {
-            match validate_recovery_tlv(*type_id, value) {
+            match validate_recovery_tlv(*type_id, value, limits) {
                 Ok(summary) => summaries.push(summary),
                 Err(_) => {
                     // Structurally invalid TLV — include raw placeholder
@@ -260,8 +278,9 @@ pub fn inspect_recovery_metadata(archive_bytes: &[u8]) -> Result<RecoveryMetadat
 pub fn plan_archive_repair(
     archive_bytes: &[u8],
     erasures: ErasureInput,
+    limits: &ResourceLimits,
 ) -> Result<RecoveryPlan, SarError> {
-    let meta = inspect_recovery_metadata(archive_bytes)?;
+    let meta = inspect_recovery_metadata(archive_bytes, limits)?;
 
     if !meta.repair_possible {
         return Err(SarError::RecoveryUnavailable(
@@ -275,7 +294,7 @@ pub fn plan_archive_repair(
     ))?;
 
     // Determine block/symbol size from the first valid TLV
-    let (algo_id, block_size_bytes) = block_size_from_tlv(archive_bytes, &protected_range)?;
+    let (algo_id, block_size_bytes) = block_size_from_tlv(archive_bytes, &protected_range, limits)?;
 
     let prot_end = protected_range
         .offset
@@ -324,10 +343,11 @@ pub fn plan_archive_repair(
 fn block_size_from_tlv(
     archive_bytes: &[u8],
     _protected_range: &ProtectedRange,
+    limits: &ResourceLimits,
 ) -> Result<(u8, u64), SarError> {
-    let layout = parse_archive_layout(archive_bytes)?;
+    let layout = parse_archive_layout(archive_bytes, limits)?;
     for (type_id, value) in &layout.recovery_tlvs {
-        if let Ok(summary) = validate_recovery_tlv(*type_id, value) {
+        if let Ok(summary) = validate_recovery_tlv(*type_id, value, limits) {
             let block_size: u64 = match &summary {
                 FecSummary::Xor { block_size, .. } => u64::from(*block_size),
                 FecSummary::ReedSolomon { symbol_size, .. } => u64::from(*symbol_size),
@@ -363,17 +383,18 @@ fn block_size_from_tlv(
 pub fn repair_archive(
     archive_bytes: &[u8],
     plan: &RecoveryPlan,
+    limits: &ResourceLimits,
 ) -> Result<(Vec<u8>, RepairReport), SarError> {
     use sar_fec::{Erasure, FecCodec, FecRecoverInput, RsCodec, XorCodec};
 
     // Re-parse to find the TLV value bytes
-    let layout = parse_archive_layout(archive_bytes)?;
+    let layout = parse_archive_layout(archive_bytes, limits)?;
 
     let (tlv_value, tlv_algo_id) = layout
         .recovery_tlvs
         .iter()
         .find(|(type_id, _)| *type_id == plan.algo_id)
-        .map(|(tid, val)| (val.clone(), *tid))
+        .map(|(tid, val)| (val.as_slice(), *tid))
         .ok_or(SarError::RecoveryUnavailable(
             "RECOVERY TLV with matching algo ID not found in archive",
         ))?;
@@ -387,9 +408,21 @@ pub fn repair_archive(
         return Err(SarError::Bounds("protected range exceeds archive length"));
     }
     let protected_bytes = &archive_bytes[prot_start..prot_start + prot_len];
+    limits.check_recovery_protected_range(plan.protected_range.length)?;
+    let repair_working_set = u64::try_from(archive_bytes.len())
+        .map_err(|_| SarError::Overflow("archive repair working set"))?
+        .checked_add(plan.protected_range.length)
+        .and_then(|value| {
+            value.checked_add(
+                u64::try_from(tlv_value.len()).ok()?,
+            )
+        })
+        .and_then(|value| value.checked_add(plan.protected_range.length))
+        .ok_or(SarError::Overflow("archive repair working set"))?;
+    limits.check_repair_working_set(repair_working_set)?;
 
     // Build erasure list (block indices)
-    let block_size = block_size_from_algo(tlv_algo_id, &tlv_value)?;
+    let block_size = block_size_from_algo(tlv_algo_id, tlv_value)?;
     let mut erasure_indices: Vec<Erasure> = Vec::new();
     for er in &plan.erasures.archive_ranges {
         let rel_off = er.offset - plan.protected_range.offset;
@@ -406,23 +439,23 @@ pub fn repair_archive(
     // Perform FEC recovery
     let recovered = match tlv_algo_id {
         0x14 => {
-            let codec = XorCodec::from_fec_value(&tlv_value).map_err(SarError::from)?;
+            let codec = XorCodec::from_fec_value(tlv_value).map_err(SarError::from)?;
             codec
                 .recover(FecRecoverInput {
                     original_protected_len: plan.protected_range.length,
                     available_data: protected_bytes,
-                    fec_value_data: &tlv_value,
+                    fec_value_data: tlv_value,
                     erasures: &erasure_indices,
                 })
                 .map_err(SarError::from)?
         }
         0x11 => {
-            let codec = RsCodec::from_fec_value(&tlv_value).map_err(SarError::from)?;
+            let codec = RsCodec::from_fec_value(tlv_value).map_err(SarError::from)?;
             codec
                 .recover(FecRecoverInput {
                     original_protected_len: plan.protected_range.length,
                     available_data: protected_bytes,
-                    fec_value_data: &tlv_value,
+                    fec_value_data: tlv_value,
                     erasures: &erasure_indices,
                 })
                 .map_err(SarError::from)?
@@ -436,6 +469,10 @@ pub fn repair_archive(
 
     // Rebuild archive bytes: prefix + recovered_protected + remainder (CD + footer)
     let cd_start = prot_start + prot_len;
+    limits.check_repair_working_set(
+        u64::try_from(archive_bytes.len())
+            .map_err(|_| SarError::Overflow("repaired archive size"))?,
+    )?;
     let mut repaired = Vec::with_capacity(archive_bytes.len());
     repaired.extend_from_slice(&archive_bytes[..prot_start]);
     repaired.extend_from_slice(&recovered[..prot_len.min(recovered.len())]);

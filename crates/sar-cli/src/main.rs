@@ -15,7 +15,7 @@ use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
     EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider, KmsContext, KmsParams,
-    SarError, SecretBytes, fec::validate_recovery_tlv, fragment::FragmentDescriptor,
+    ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv, fragment::FragmentDescriptor,
     fragment::FragmentEntry, fragment::validate_fragment_group, inspect_recovery_metadata,
     plan_archive_repair, repair_archive, sparse::validate_sparse_extents,
 };
@@ -653,6 +653,7 @@ fn verify_archive(
     password: Option<String>,
     recovery: bool,
 ) -> Result<(), SarError> {
+    let limits = ResourceLimits::default();
     let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
     let header = reader.read_global_header()?;
     if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
@@ -680,7 +681,9 @@ fn verify_archive(
             if entry
                 .sparse_extents
                 .as_ref()
-                .is_some_and(|ext| validate_sparse_extents(ext, entry.uncompressed_size).is_err())
+                .is_some_and(|ext| {
+                    validate_sparse_extents(ext, entry.uncompressed_size, &limits).is_err()
+                })
             {
                 eprintln!("recovery verify: sparse extent error in '{}'", entry.name);
                 sparse_errors += 1;
@@ -721,12 +724,15 @@ fn verify_archive(
                 .map(|f| {
                     f.descriptor
                         .absolute_offset
-                        .saturating_add(u64::from(f.descriptor.fragment_size))
+                        .checked_add(u64::from(f.descriptor.fragment_size))
+                        .ok_or(SarError::Overflow("fragment descriptor end"))
                 })
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
                 .max()
                 .unwrap_or(0);
 
-            if let Err(err) = validate_fragment_group(&frag_entries, max_offset) {
+            if let Err(err) = validate_fragment_group(&frag_entries, max_offset, &limits) {
                 eprintln!("recovery verify: fragment group {fid} error: {err}");
                 frag_errors += 1;
             }
@@ -734,7 +740,7 @@ fn verify_archive(
 
         // Validate recovery TLVs and check repair_possible
         let archive_bytes = fs::read(&archive)?;
-        let rec_meta = inspect_recovery_metadata(&archive_bytes)?;
+        let rec_meta = inspect_recovery_metadata(&archive_bytes, &limits)?;
 
         println!(
             "recovery verify: sparse_errors={sparse_errors} fragment_group_errors={frag_errors}"
@@ -760,6 +766,7 @@ fn verify_archive(
 }
 
 fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
+    let limits = ResourceLimits::default();
     let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
     let header = reader.read_global_header()?;
 
@@ -780,7 +787,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 .iter()
                 .filter(|tlv| (0x10..=0x1F).contains(&tlv.type_id))
                 .map(|tlv| {
-                    let summary = validate_recovery_tlv(tlv.type_id, &tlv.value).ok();
+                    let summary = validate_recovery_tlv(tlv.type_id, &tlv.value, &limits).ok();
                     (tlv.type_id, tlv.value.len(), summary)
                 })
                 .collect()
@@ -908,6 +915,7 @@ fn repair_cmd(
     fec: bool,
     erasures_path: Option<PathBuf>,
 ) -> Result<(), SarError> {
+    let limits = ResourceLimits::default();
     if !fec {
         return Err(SarError::Malformed("repair requires --fec"));
     }
@@ -924,7 +932,7 @@ fn repair_cmd(
     let archive_bytes = fs::read(&archive)?;
 
     // Inspect metadata
-    let rec_meta = inspect_recovery_metadata(&archive_bytes)?;
+    let rec_meta = inspect_recovery_metadata(&archive_bytes, &limits)?;
     if !rec_meta.repair_possible {
         let reason = rec_meta
             .repair_unavailable_reason
@@ -936,7 +944,7 @@ fn repair_cmd(
     }
 
     // Plan repair
-    let plan = match plan_archive_repair(&archive_bytes, erasures) {
+    let plan = match plan_archive_repair(&archive_bytes, erasures, &limits) {
         Ok(plan) => plan,
         Err(SarError::RecoveryUnavailable(msg)) => {
             eprintln!("repair: planning failed — {msg}");
@@ -946,7 +954,7 @@ fn repair_cmd(
     };
 
     // Execute repair
-    let (repaired_bytes, report) = match repair_archive(&archive_bytes, &plan) {
+    let (repaired_bytes, report) = match repair_archive(&archive_bytes, &plan, &limits) {
         Ok(pair) => pair,
         Err(SarError::EcFailed(msg)) => {
             eprintln!("repair: FEC repair failed (too many erasures) — {msg}");

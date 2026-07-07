@@ -9,6 +9,10 @@ use sar_core::{
     tlv::{Tlv, parse_tlvs, write_tlvs},
 };
 
+fn unlimited_limits() -> sar_core::ResourceLimits {
+    sar_core::ResourceLimits::unlimited()
+}
+
 #[test]
 fn valid_indexed_archive_roundtrip_offsets_verify() {
     let mut out = Vec::new();
@@ -142,7 +146,7 @@ fn tlv_alignment_and_zero_padding_roundtrip() {
     }])
     .expect("encode");
     assert_eq!(encoded.len() % 8, 0);
-    let parsed = parse_tlvs(&encoded).expect("parse");
+    let parsed = parse_tlvs(&encoded, &unlimited_limits()).expect("parse");
     assert_eq!(parsed[0].value, vec![1, 2, 3]);
 }
 
@@ -151,7 +155,7 @@ fn tlv_reserved_length_rejected() {
     let mut bytes = Vec::new();
     bytes.push(0x30);
     bytes.extend_from_slice(&u32::MAX.to_le_bytes());
-    let err = parse_tlvs(&bytes).expect_err("must fail");
+    let err = parse_tlvs(&bytes, &unlimited_limits()).expect_err("must fail");
     assert!(matches!(err, SarError::ReservedValue(_)));
 }
 
@@ -160,13 +164,13 @@ fn tlv_reserved_and_unsupported_types() {
     let mut reserved = vec![0x00];
     reserved.extend_from_slice(&0u32.to_le_bytes());
     reserved.extend_from_slice(&[0, 0, 0]);
-    let err = parse_tlvs(&reserved).expect_err("reserved type");
+    let err = parse_tlvs(&reserved, &unlimited_limits()).expect_err("reserved type");
     assert!(matches!(err, SarError::ReservedValue(_)));
 
     let mut unsupported = vec![0x20];
     unsupported.extend_from_slice(&0u32.to_le_bytes());
     unsupported.extend_from_slice(&[0, 0, 0]);
-    let err = parse_tlvs(&unsupported).expect_err("unsupported type");
+    let err = parse_tlvs(&unsupported, &unlimited_limits()).expect_err("unsupported type");
     assert!(matches!(err, SarError::Unsupported(_)));
 }
 
@@ -189,7 +193,9 @@ fn parse_write_cd_helpers() {
         offsets: vec![8],
     };
     let bytes = write_central_dictionary(&cd, GlobalFlags::empty()).expect("write");
-    let (parsed, consumed) = parse_central_dictionary(&bytes, GlobalFlags::empty()).expect("parse");
+    let (parsed, consumed) =
+        parse_central_dictionary(&bytes, GlobalFlags::empty(), &unlimited_limits())
+            .expect("parse");
     assert_eq!(consumed, bytes.len());
     assert_eq!(parsed.offsets, vec![8]);
 }

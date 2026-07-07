@@ -2,6 +2,7 @@ use crate::{
     error::SarError,
     flags::{EntryMode, GlobalFlags, validate_entry_mode_against_global, validate_global_flags},
     io::{BinaryWriter, ParseCursor},
+    limits::ResourceLimits,
     tlv::{Tlv, parse_tlvs, write_tlvs},
 };
 
@@ -202,7 +203,10 @@ fn write_size(writer: &mut BinaryWriter, flags: GlobalFlags, value: u64) -> Resu
 }
 
 /// Parses the global header from a byte slice.
-pub fn parse_global_header(input: &[u8]) -> Result<(GlobalHeader, usize), SarError> {
+pub fn parse_global_header(
+    input: &[u8],
+    limits: &ResourceLimits,
+) -> Result<(GlobalHeader, usize), SarError> {
     let mut cursor = ParseCursor::new(input);
     let magic = cursor.read_bytes(4)?;
     if magic != MAGIC {
@@ -224,6 +228,7 @@ pub fn parse_global_header(input: &[u8]) -> Result<(GlobalHeader, usize), SarErr
     if flags_size < 4 {
         return Err(SarError::InvalidLength("global flags size must be >= 4"));
     }
+    limits.check_global_flags_bytes(flags_size)?;
     let flags_bytes = cursor.read_bytes(flags_size)?.to_vec();
 
     let mut low = [0u8; 4];
@@ -268,6 +273,7 @@ pub fn parse_global_header(input: &[u8]) -> Result<(GlobalHeader, usize), SarErr
         }
         let payload_len = usize::try_from(cursor.read_u32_le()?)
             .map_err(|_| SarError::Overflow("KMS payload length"))?;
+        limits.check_kms_payload_bytes(payload_len)?;
         let payload = cursor.read_bytes(payload_len)?.to_vec();
         Some(KmsData { mode_id, payload })
     } else {
@@ -441,11 +447,16 @@ pub fn compute_lfh_size(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<u6
 }
 
 /// Parses an LFH from the current archive offset.
-pub fn parse_lfh(input: &[u8], flags: &GlobalFlags) -> Result<(LocalFileHeader, usize), SarError> {
+pub fn parse_lfh(
+    input: &[u8],
+    flags: &GlobalFlags,
+    limits: &ResourceLimits,
+) -> Result<(LocalFileHeader, usize), SarError> {
     let mut cursor = ParseCursor::new(input);
     let header_size_u32 = cursor.read_u32_le()?;
     let header_size =
         usize::try_from(header_size_u32).map_err(|_| SarError::Overflow("header size"))?;
+    limits.check_lfh_header_bytes(header_size)?;
     if header_size > input.len() {
         return Err(SarError::Truncated("LFH header exceeds available input"));
     }
@@ -579,6 +590,27 @@ pub fn parse_lfh(input: &[u8], flags: &GlobalFlags) -> Result<(LocalFileHeader, 
     } else {
         0
     };
+
+    let total_path_bytes = name_len
+        .checked_add(path_len)
+        .ok_or(SarError::Overflow("LFH path byte count"))?;
+    limits.check_path_bytes(total_path_bytes)?;
+    limits.check_sparse_map_bytes(sparse_len)?;
+    limits.check_fec_value_bytes(fec_len)?;
+
+    let trailing_bytes = total_path_bytes
+        .checked_add(sparse_len)
+        .and_then(|value| value.checked_add(fec_len))
+        .ok_or(SarError::Overflow("LFH trailing field bytes"))?;
+    let trailing_end = hdr_cursor
+        .position()
+        .checked_add(trailing_bytes)
+        .ok_or(SarError::Overflow("LFH trailing field end"))?;
+    if trailing_end != header_size {
+        return Err(SarError::InvalidLength(
+            "computed LFH trailing field size does not match Header Size",
+        ));
+    }
 
     let name = if name_len > 0 {
         hdr_cursor.read_bytes(name_len)?.to_vec()
@@ -745,7 +777,9 @@ pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, 
 pub fn parse_central_dictionary(
     input: &[u8],
     flags: GlobalFlags,
+    limits: &ResourceLimits,
 ) -> Result<(CentralDictionary, usize), SarError> {
+    limits.check_cd_bytes(u64::try_from(input.len()).map_err(|_| SarError::Overflow("CD size"))?)?;
     let mut cursor = ParseCursor::new(input);
     let version = cursor.read_u8()?;
     if version != SUPPORTED_CD_VERSION {
@@ -773,14 +807,18 @@ pub fn parse_central_dictionary(
     let metadata = if flags.contains(GlobalFlags::OPT_PRESENT) {
         let meta_size = usize::try_from(cursor.read_u32_le()?)
             .map_err(|_| SarError::Overflow("CD metadata size"))?;
+        limits.check_allocation_bytes(
+            u64::try_from(meta_size).map_err(|_| SarError::Overflow("CD metadata size"))?,
+        )?;
         let meta_bytes = cursor.read_bytes(meta_size)?;
-        parse_tlvs(meta_bytes)?
+        parse_tlvs(meta_bytes, limits)?
     } else {
         Vec::new()
     };
 
     let file_count_usize = usize::try_from(file_count)
         .map_err(|_| SarError::Overflow("CD file count does not fit usize"))?;
+    limits.check_entry_count(file_count_usize)?;
     let mut offsets = Vec::with_capacity(file_count_usize);
     for _ in 0..file_count_usize {
         offsets.push(read_size(&mut cursor, flags)?);
@@ -943,26 +981,44 @@ pub fn fec_size_field_offset(flags: GlobalFlags) -> usize {
 /// `FEC Size` and `FEC Value` be excluded from the AEAD AAD.  If `SELECTIVE_FEC` is not
 /// active, or `fec_algo_id` is zero, the full `lfh_bytes` slice is returned unchanged.
 ///
-/// # Panics
+/// # Errors
 ///
-/// Panics in debug builds if `lfh_bytes` is shorter than expected.
+/// Returns [`SarError::InvalidLength`] when the supplied LFH bytes are too
+/// short for the declared FEC exclusion range, and [`SarError::Overflow`] for
+/// checked arithmetic failures while computing the excluded region.
 pub fn lfh_bytes_for_aad(
     flags: GlobalFlags,
     lfh_bytes: &[u8],
     fec_algo_id: u8,
     fec_value_len: usize,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, SarError> {
     if !flags.contains(GlobalFlags::SELECTIVE_FEC) || fec_algo_id == 0 {
-        return lfh_bytes.to_vec();
+        return Ok(lfh_bytes.to_vec());
     }
     let fec_size_off = fec_size_field_offset(flags);
-    let fec_size_end = fec_size_off + 3;
-    let fec_value_start = lfh_bytes.len().saturating_sub(fec_value_len);
-    debug_assert!(fec_size_end <= fec_value_start);
-    debug_assert!(fec_value_start <= lfh_bytes.len());
+    let fec_size_end = fec_size_off
+        .checked_add(3)
+        .ok_or(SarError::Overflow("FEC size field end"))?;
+    let fec_value_start = lfh_bytes
+        .len()
+        .checked_sub(fec_value_len)
+        .ok_or(SarError::InvalidLength("FEC value length exceeds LFH length"))?;
+    if fec_size_end > fec_value_start || fec_value_start > lfh_bytes.len() {
+        return Err(SarError::InvalidLength(
+            "LFH FEC fields exceed available LFH bytes",
+        ));
+    }
 
-    let mut out = Vec::with_capacity(lfh_bytes.len().saturating_sub(3 + fec_value_len));
+    let out_len = lfh_bytes
+        .len()
+        .checked_sub(
+            3usize
+                .checked_add(fec_value_len)
+                .ok_or(SarError::Overflow("LFH AAD exclusion length"))?,
+        )
+        .ok_or(SarError::InvalidLength("LFH AAD exclusion exceeds LFH length"))?;
+    let mut out = Vec::with_capacity(out_len);
     out.extend_from_slice(&lfh_bytes[..fec_size_off]);
     out.extend_from_slice(&lfh_bytes[fec_size_end..fec_value_start]);
-    out
+    Ok(out)
 }

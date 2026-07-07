@@ -1,6 +1,7 @@
 use crate::{
     error::SarError,
     io::{BinaryWriter, ParseCursor},
+    limits::ResourceLimits,
 };
 
 /// Global metadata TLV block.
@@ -40,11 +41,16 @@ fn classify_type(type_id: u8) -> Result<(), SarError> {
 }
 
 /// Parses a sequence of TLV blocks with 8-byte alignment.
-pub fn parse_tlvs(input: &[u8]) -> Result<Vec<Tlv>, SarError> {
+pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, SarError> {
     let mut out = Vec::new();
     let mut cursor = ParseCursor::new(input);
 
     while cursor.remaining() > 0 {
+        limits.check_tlv_count(
+            out.len()
+                .checked_add(1)
+                .ok_or(SarError::Overflow("TLV count"))?,
+        )?;
         let start = cursor.position();
         let type_id = cursor.read_u8()?;
         classify_type(type_id)?;
@@ -53,13 +59,21 @@ pub fn parse_tlvs(input: &[u8]) -> Result<Vec<Tlv>, SarError> {
             return Err(SarError::ReservedValue("TLV length 0xFFFFFFFF is reserved"));
         }
         let length_usize = usize::try_from(length).map_err(|_| SarError::Overflow("TLV length"))?;
+        limits.check_tlv_bytes(length_usize)?;
         let value = cursor.read_bytes(length_usize)?.to_vec();
 
         let consumed = cursor
             .position()
             .checked_sub(start)
             .ok_or(SarError::Overflow("TLV consumed length"))?;
-        let pad = (8 - (consumed % 8)) % 8;
+        let rem = consumed % 8;
+        let pad = if rem == 0 {
+            0
+        } else {
+            8usize
+                .checked_sub(rem)
+                .ok_or(SarError::Overflow("TLV padding"))?
+        };
         if pad > 0 {
             let padding = cursor.read_bytes(pad)?;
             if padding.iter().any(|byte| *byte != 0) {

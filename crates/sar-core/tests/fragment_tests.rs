@@ -7,6 +7,10 @@ use sar_core::{
     fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group},
 };
 
+fn unlimited_limits() -> sar_core::ResourceLimits {
+    sar_core::ResourceLimits::unlimited()
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -70,7 +74,7 @@ fn parse_write_fragment_metadata() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let lfh = make_frag_lfh(&flags, 0xAB, 2, 1024, 512, false, false, 512);
     let bytes = write_lfh(&flags, &lfh).expect("write LFH");
-    let (parsed, _) = parse_lfh(&bytes, &flags).expect("parse LFH");
+    let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse LFH");
 
     assert_eq!(parsed.fragment_id, Some(0xAB));
     assert_eq!(parsed.fragment_index, Some(2));
@@ -115,7 +119,8 @@ fn reconstruct_complete_fragment_set() {
             payload: b"BBBBBBBB".to_vec(),
         },
     ];
-    let (data, degraded) = reconstruct_fragments(frags, 16).expect("reconstruct");
+    let (data, degraded) =
+        reconstruct_fragments(frags, 16, &unlimited_limits()).expect("reconstruct");
     assert!(!degraded);
     assert_eq!(&data[..8], b"AAAAAAAA");
     assert_eq!(&data[8..], b"BBBBBBBB");
@@ -146,7 +151,8 @@ fn accept_out_of_order_fragments() {
             payload: b"CCCC".to_vec(),
         },
     ];
-    let (data, degraded) = reconstruct_fragments(frags, 8).expect("reconstruct");
+    let (data, degraded) =
+        reconstruct_fragments(frags, 8, &unlimited_limits()).expect("reconstruct");
     assert!(!degraded);
     assert_eq!(&data[..4], b"CCCC");
     assert_eq!(&data[4..], b"DDDD");
@@ -181,7 +187,8 @@ fn reject_overlapping_fragments() {
             payload: vec![0u8; 8],
         },
     ];
-    let err = validate_fragment_group(&frags, 12).expect_err("should fail");
+    let err =
+        validate_fragment_group(&frags, 12, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
@@ -201,7 +208,8 @@ fn reject_invalid_fragment_bounds() {
         },
         payload: vec![0u8; 100],
     }];
-    let err = validate_fragment_group(&frags, 50).expect_err("should fail");
+    let err =
+        validate_fragment_group(&frags, 50, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::Bounds(_)),
         "expected Bounds, got {err:?}"
@@ -233,7 +241,8 @@ fn reject_missing_fragments_no_loss_tolerant() {
             payload: vec![0u8; 4],
         },
     ];
-    let err = reconstruct_fragments(frags, 12).expect_err("should fail");
+    let err =
+        reconstruct_fragments(frags, 12, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::FragmentGap(_)),
         "expected FragmentGap, got {err:?}"
@@ -267,7 +276,8 @@ fn loss_tolerant_gap_returns_warn_incomplete() {
             payload: b"CCCC".to_vec(),
         },
     ];
-    let (data, degraded) = reconstruct_fragments(frags, 12).expect("reconstruct");
+    let (data, degraded) =
+        reconstruct_fragments(frags, 12, &unlimited_limits()).expect("reconstruct");
     assert!(degraded, "expected degraded=true");
     // Bytes [0..4] = AAAA, [4..8] = zeros (missing fragment), [8..12] = CCCC
     assert_eq!(&data[..4], b"AAAA");

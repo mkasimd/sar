@@ -5,6 +5,10 @@ use sar_core::{
     fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
 };
 
+fn unlimited_limits() -> sar_core::ResourceLimits {
+    sar_core::ResourceLimits::unlimited()
+}
+
 // ---------------------------------------------------------------------------
 // Core LOSS_TOLERANT rules
 // ---------------------------------------------------------------------------
@@ -35,7 +39,8 @@ fn missing_data_fails_by_default() {
             payload: vec![3u8; 4],
         },
     ];
-    let err = reconstruct_fragments(frags, 12).expect_err("should fail");
+    let err =
+        reconstruct_fragments(frags, 12, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::FragmentGap(_)),
         "expected FragmentGap, got {err:?}"
@@ -55,7 +60,7 @@ fn explicit_loss_tolerant_required() {
         },
         payload: vec![0u8; 4],
     }];
-    let err = reconstruct_fragments(frags, 4).expect_err("should fail");
+    let err = reconstruct_fragments(frags, 4, &unlimited_limits()).expect_err("should fail");
     assert!(
         matches!(err, SarError::FragmentGap(_)),
         "expected FragmentGap, got {err:?}"
@@ -88,7 +93,8 @@ fn degraded_output_is_marked() {
             payload: b"IJKL".to_vec(),
         },
     ];
-    let (data, degraded) = reconstruct_fragments(frags, 12).expect("reconstruct");
+    let (data, degraded) =
+        reconstruct_fragments(frags, 12, &unlimited_limits()).expect("reconstruct");
     assert!(degraded, "is_degraded must be true for gapped output");
     assert_eq!(&data[0..4], b"ABCD");
     assert_eq!(&data[4..8], &[0u8; 4]); // hole

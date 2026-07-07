@@ -11,6 +11,10 @@ use sar_core::{
     tlv::Tlv,
 };
 
+fn unlimited_limits() -> sar_core::ResourceLimits {
+    sar_core::ResourceLimits::unlimited()
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -107,7 +111,7 @@ fn build_archive_with_global_ec() -> Vec<u8> {
 #[test]
 fn inspect_recovery_metadata_no_ec() {
     let archive = build_archive_no_ec();
-    let meta = inspect_recovery_metadata(&archive).expect("inspect");
+    let meta = inspect_recovery_metadata(&archive, &unlimited_limits()).expect("inspect");
     assert!(!meta.has_global_ec);
     assert!(!meta.repair_possible);
     assert!(meta.recovery_tlvs.is_empty());
@@ -117,7 +121,7 @@ fn inspect_recovery_metadata_no_ec() {
 #[test]
 fn inspect_recovery_metadata_with_ec() {
     let archive = build_archive_with_global_ec();
-    let meta = inspect_recovery_metadata(&archive).expect("inspect");
+    let meta = inspect_recovery_metadata(&archive, &unlimited_limits()).expect("inspect");
     assert!(meta.has_global_ec);
     assert_eq!(meta.recovery_tlvs.len(), 1);
     assert!(meta.protected_range.is_some());
@@ -134,7 +138,7 @@ fn plan_repair_requires_explicit_erasures() {
     // When no archive_ranges are provided, planning should still succeed
     // (caller is responsible for providing erasures).
     let archive = build_archive_with_global_ec();
-    let meta = inspect_recovery_metadata(&archive).expect("inspect");
+    let meta = inspect_recovery_metadata(&archive, &unlimited_limits()).expect("inspect");
     let pr = meta.protected_range.as_ref().expect("protected_range");
 
     // Block-aligned erasure at the start of the protected range.
@@ -146,7 +150,7 @@ fn plan_repair_requires_explicit_erasures() {
         }],
     };
     // This should succeed (block-aligned).
-    let plan_result = plan_archive_repair(&archive, erasures);
+    let plan_result = plan_archive_repair(&archive, erasures, &unlimited_limits());
     // plan_archive_repair may succeed or return RecoveryUnavailable depending on
     // whether the protected range is large enough.  For this small archive the
     // protected range is only 4 bytes, so 256 bytes would exceed it.
@@ -164,7 +168,8 @@ fn plan_repair_unavailable_without_ec() {
         entries: Vec::new(),
         archive_ranges: Vec::new(),
     };
-    let err = plan_archive_repair(&archive, erasures).expect_err("should fail");
+    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
+        .expect_err("should fail");
     assert!(
         matches!(err, SarError::RecoveryUnavailable(_)),
         "expected RecoveryUnavailable, got {err:?}"
@@ -200,6 +205,7 @@ fn plan_repair_unavailable_for_no_index_archive() {
             entries: Vec::new(),
             archive_ranges: Vec::new(),
         },
+        &unlimited_limits(),
     )
     .expect_err("should fail");
     assert!(matches!(err, SarError::RecoveryUnavailable(_)));
@@ -208,7 +214,7 @@ fn plan_repair_unavailable_for_no_index_archive() {
 #[test]
 fn plan_repair_rejects_out_of_range_erasures() {
     let archive = build_archive_with_global_ec();
-    let meta = inspect_recovery_metadata(&archive).expect("inspect");
+    let meta = inspect_recovery_metadata(&archive, &unlimited_limits()).expect("inspect");
     let pr = meta.protected_range.as_ref().expect("protected_range");
 
     // Erasure at offset 0 (before protected range starts at 8)
@@ -219,7 +225,8 @@ fn plan_repair_rejects_out_of_range_erasures() {
             length: 256,
         }],
     };
-    let err = plan_archive_repair(&archive, erasures).expect_err("should fail");
+    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
+        .expect_err("should fail");
     assert!(matches!(err, SarError::RecoveryUnavailable(_)));
     let _ = pr;
 }
@@ -227,7 +234,7 @@ fn plan_repair_rejects_out_of_range_erasures() {
 #[test]
 fn plan_repair_rejects_unaligned_erasures() {
     let archive = build_archive_with_global_ec();
-    let meta = inspect_recovery_metadata(&archive).expect("inspect");
+    let meta = inspect_recovery_metadata(&archive, &unlimited_limits()).expect("inspect");
     let pr = meta.protected_range.as_ref().expect("protected_range");
 
     // Erasure starts at protected_range.offset+1 (not block-aligned)
@@ -238,7 +245,8 @@ fn plan_repair_rejects_unaligned_erasures() {
             length: 256,
         }],
     };
-    let err = plan_archive_repair(&archive, erasures).expect_err("should fail");
+    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
+        .expect_err("should fail");
     assert!(matches!(err, SarError::RecoveryUnavailable(_)));
 }
 
@@ -247,7 +255,7 @@ fn archive_level_repair_unavailable_when_spec_incomplete() {
     // When erasures cannot be block-aligned due to spec ambiguity, we must
     // get RecoveryUnavailable with the documented message.
     let archive = build_archive_with_global_ec();
-    let meta = inspect_recovery_metadata(&archive).expect("inspect");
+    let meta = inspect_recovery_metadata(&archive, &unlimited_limits()).expect("inspect");
     let pr = meta.protected_range.as_ref().expect("protected_range");
 
     let erasures = ErasureInput {
@@ -257,7 +265,8 @@ fn archive_level_repair_unavailable_when_spec_incomplete() {
             length: 3,             // not a multiple of 256
         }],
     };
-    let err = plan_archive_repair(&archive, erasures).expect_err("should fail");
+    let err = plan_archive_repair(&archive, erasures, &unlimited_limits())
+        .expect_err("should fail");
     assert!(
         matches!(err, SarError::RecoveryUnavailable(_)),
         "expected RecoveryUnavailable for spec-incomplete case"
@@ -288,7 +297,7 @@ fn repair_archive_fails_without_tlv() {
         },
         algo_id: 0x14,
     };
-    let err = repair_archive(&archive, &plan).expect_err("should fail");
+    let err = repair_archive(&archive, &plan, &unlimited_limits()).expect_err("should fail");
     assert!(matches!(
         err,
         SarError::RecoveryUnavailable(_) | SarError::Bounds(_)
