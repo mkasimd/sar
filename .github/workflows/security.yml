@@ -79,11 +79,8 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: actions
-          # Rust is supported via the "compiled" extractor.
-          # Switch to `languages: cpp` if CodeQL's Rust support is not yet
-          # available for your plan, or leave as `actions` and add `cpp` once
-          # Rust support becomes generally available.
+          # GitHub CodeQL supports Rust natively as of late 2024.
+          languages: rust
 
       # Build the workspace so CodeQL can trace the compilation.
       - name: Build workspace (for CodeQL tracing)
@@ -92,4 +89,4 @@ jobs:
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
         with:
-          category: "/language:actions"
+          category: "/language:rust"
