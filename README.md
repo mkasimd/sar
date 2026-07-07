@@ -35,6 +35,10 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with validation; round-trips through reader
   - `ArchiveWriterOptions::sparse` field — enables `SPARSE_FILES` global flag
   - CRC32 verification in `read_all_logical_files` — verified over fully reconstructed bytes including sparse holes
+- **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
+  - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
+  - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
+  - checked arithmetic and checked conversions now gate LFH, TLV, sparse, fragment, and recovery parsing paths
 
 ## Workspace layout
 
@@ -92,6 +96,7 @@ Notes:
 - `extract --allow-lossy` permits archives with LOSS_TOLERANT entries (warns if present).
 - `verify --recovery` additionally validates fragmentation, sparse, and Data Recovery TLV metadata.
 - `repair` applies archive-level XOR/RS erasure repair using explicit erasure positions from `--erasures`.
+- reader, verify, and repair paths use the default `ResourceLimits` safety caps unless the embedding API supplies tighter limits
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
 
 ## Validation

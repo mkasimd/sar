@@ -819,6 +819,9 @@ pub fn parse_central_dictionary(
     let file_count_usize = usize::try_from(file_count)
         .map_err(|_| SarError::Overflow("CD file count does not fit usize"))?;
     limits.check_entry_count(file_count_usize)?;
+    if file_count_usize > isize::MAX as usize / std::mem::size_of::<u64>() {
+        return Err(SarError::Overflow("CD offsets allocation"));
+    }
     let mut offsets = Vec::with_capacity(file_count_usize);
     for _ in 0..file_count_usize {
         offsets.push(read_size(&mut cursor, flags)?);

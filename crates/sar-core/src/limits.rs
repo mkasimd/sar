@@ -405,6 +405,23 @@ impl ResourceLimits {
         self.check_total_pipeline_memory(bytes)
     }
 
+    /// Validates a byte count for use as a `Vec<u8>` length and returns the
+    /// checked `usize`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SarError::LimitExceeded`] when allocation limits are exceeded,
+    /// and [`SarError::Overflow`] when the requested length cannot be
+    /// represented safely for a Rust allocation.
+    pub fn allocation_len(&self, bytes: u64, context: &'static str) -> Result<usize, SarError> {
+        self.check_allocation_bytes(bytes)?;
+        let len = usize::try_from(bytes).map_err(|_| SarError::Overflow(context))?;
+        if len > isize::MAX as usize {
+            return Err(SarError::Overflow(context));
+        }
+        Ok(len)
+    }
+
     /// Checks that a sparse map byte length does not exceed
     /// `max_sparse_map_bytes`.
     ///

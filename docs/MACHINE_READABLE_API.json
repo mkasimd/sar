@@ -573,7 +573,7 @@
             {
               "name": "ArchiveReaderOptions",
               "kind": "struct",
-              "signature": "pub struct ArchiveReaderOptions { pub max_decoded_entry_size: u64 }",
+              "signature": "pub struct ArchiveReaderOptions { pub limits: ResourceLimits }",
               "visibility": "public",
               "stability": "stable",
               "description": "Reader-side decode limits.",
@@ -1238,7 +1238,7 @@
             {
               "name": "parse_lfh_fec_value",
               "kind": "function",
-              "signature": "pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8]) -> Result<Option<FecSummary>, SarError>",
+              "signature": "pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8], limits: &ResourceLimits) -> Result<Option<FecSummary>, SarError>",
               "visibility": "public",
               "stability": "stable",
               "description": "Parse and validate an LFH FEC value.",
@@ -1282,7 +1282,7 @@
             {
               "name": "validate_recovery_tlv",
               "kind": "function",
-              "signature": "pub fn validate_recovery_tlv(type_id: u8, value: &[u8]) -> Result<FecSummary, SarError>",
+              "signature": "pub fn validate_recovery_tlv(type_id: u8, value: &[u8], limits: &ResourceLimits) -> Result<FecSummary, SarError>",
               "visibility": "public",
               "stability": "stable",
               "description": "Validate a recovery TLV and summarize its metadata.",
@@ -1721,7 +1721,7 @@
             {
               "name": "lfh_bytes_for_aad",
               "kind": "function",
-              "signature": "pub fn lfh_bytes_for_aad(flags: GlobalFlags, lfh_bytes: &[u8], fec_algo_id: u8, fec_value_len: usize) -> Vec<u8>",
+              "signature": "pub fn lfh_bytes_for_aad(flags: GlobalFlags, lfh_bytes: &[u8], fec_algo_id: u8, fec_value_len: usize) -> Result<Vec<u8>, SarError>",
               "visibility": "public",
               "stability": "internal_public",
               "description": "Construct LFH bytes used for AEAD AAD generation.",
@@ -1763,7 +1763,7 @@
             {
               "name": "parse_central_dictionary",
               "kind": "function",
-              "signature": "pub fn parse_central_dictionary(input: &[u8], flags: GlobalFlags) -> Result<(CentralDictionary, usize), SarError>",
+              "signature": "pub fn parse_central_dictionary(input: &[u8], flags: GlobalFlags, limits: &ResourceLimits) -> Result<(CentralDictionary, usize), SarError>",
               "visibility": "public",
               "stability": "stable",
               "description": "Parse a central dictionary from bytes.",
@@ -1807,7 +1807,7 @@
             {
               "name": "parse_global_header",
               "kind": "function",
-              "signature": "pub fn parse_global_header(input: &[u8]) -> Result<(GlobalHeader, usize), SarError>",
+              "signature": "pub fn parse_global_header(input: &[u8], limits: &ResourceLimits) -> Result<(GlobalHeader, usize), SarError>",
               "visibility": "public",
               "stability": "stable",
               "description": "Parse a global header from bytes.",
@@ -1829,7 +1829,7 @@
             {
               "name": "parse_lfh",
               "kind": "function",
-              "signature": "pub fn parse_lfh(input: &[u8], flags: &GlobalFlags) -> Result<(LocalFileHeader, usize), SarError>",
+              "signature": "pub fn parse_lfh(input: &[u8], flags: &GlobalFlags, limits: &ResourceLimits) -> Result<(LocalFileHeader, usize), SarError>",
               "visibility": "public",
               "stability": "stable",
               "description": "Parse an LFH from bytes.",
@@ -2449,7 +2449,7 @@
             {
               "name": "parse_tlvs",
               "kind": "function",
-              "signature": "pub fn parse_tlvs(input: &[u8]) -> Result<Vec<Tlv>, SarError>",
+              "signature": "pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, SarError>",
               "visibility": "public",
               "stability": "stable",
               "description": "Parse a sequence of TLV blocks with alignment checks.",

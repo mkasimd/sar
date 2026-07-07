@@ -3,8 +3,9 @@ use std::io::Cursor;
 use sar_core::{
     ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
     format::{
-        CentralDictionary, LocalFileHeader, lfh_bytes_for_aad, parse_central_dictionary,
-        parse_global_header, parse_lfh, write_central_dictionary, write_lfh,
+        CentralDictionary, GlobalHeader, LocalFileHeader, lfh_bytes_for_aad,
+        parse_central_dictionary, parse_global_header, parse_lfh, write_central_dictionary,
+        write_global_header, write_lfh,
     },
     fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
     sparse::{SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents},
@@ -17,6 +18,57 @@ fn base_limits() -> ResourceLimits {
 
 fn unlimited_limits() -> ResourceLimits {
     ResourceLimits::unlimited()
+}
+
+fn build_xor_tlv_value(protected_len: u64) -> Vec<u8> {
+    let stripe_size = 1u8;
+    let block_size = 256u64;
+    let stripe_count = protected_len.div_ceil(block_size);
+    let mut value = vec![stripe_size, 0x00];
+    value.extend_from_slice(&protected_len.to_le_bytes());
+    value.extend_from_slice(&(u32::try_from(stripe_count).expect("stripe count")).to_le_bytes());
+    value.extend(vec![0u8; usize::try_from(stripe_count * block_size).expect("parity len")]);
+    value
+}
+
+fn build_archive_with_global_ec() -> Vec<u8> {
+    let flags = GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
+    let header = write_global_header(&GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    })
+    .expect("header");
+    let cd_offset = u64::try_from(header.len()).expect("cd offset");
+    let recovery_tlv = Tlv {
+        type_id: 0x14,
+        value: build_xor_tlv_value(cd_offset - 8),
+    };
+    let cd = CentralDictionary {
+        version: 1,
+        file_count: 0,
+        partition_info: None,
+        global_crc32: None,
+        metadata: vec![recovery_tlv],
+        offsets: Vec::new(),
+    };
+    let mut archive = header;
+    archive.extend_from_slice(&write_central_dictionary(&cd, flags).expect("cd"));
+    archive.extend_from_slice(&u64::to_le_bytes(cd_offset));
+    archive
+}
+
+fn minimal_global_header(flags: GlobalFlags) -> Vec<u8> {
+    write_global_header(&GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    })
+    .expect("header")
 }
 
 #[test]
@@ -59,6 +111,28 @@ fn excessive_lfh_header_size_fails() {
     };
 
     let err = parse_lfh(&bytes, &flags, &limits).expect_err("must fail");
+    assert!(matches!(err, SarError::LimitExceeded(_)));
+}
+
+#[test]
+fn excessive_payload_size_fails_before_allocation() {
+    let mut archive = minimal_global_header(GlobalFlags::NO_INDEX);
+    let lfh = LocalFileHeader::minimal_store(b"entry.bin".to_vec(), 8);
+    archive.extend_from_slice(&write_lfh(&GlobalFlags::NO_INDEX, &lfh).expect("lfh"));
+    archive.extend_from_slice(&[0; 8]);
+
+    let mut reader = ArchiveReader::with_options(
+        Cursor::new(archive),
+        ArchiveReaderOptions {
+            limits: ResourceLimits {
+                max_in_memory_buffer: 4,
+                ..base_limits()
+            },
+        },
+    )
+    .expect("reader");
+    reader.read_global_header().expect("header");
+    let err = reader.next_entry().expect_err("must fail");
     assert!(matches!(err, SarError::LimitExceeded(_)));
 }
 
@@ -266,6 +340,39 @@ fn excessive_fragment_count_fails() {
 }
 
 #[test]
+fn excessive_loss_tolerant_gap_fails() {
+    let fragments = vec![
+        FragmentEntry {
+            fragment_index: 0,
+            is_last_fragment: false,
+            is_loss_tolerant: true,
+            descriptor: FragmentDescriptor {
+                absolute_offset: 0,
+                fragment_size: 1,
+            },
+            payload: vec![1],
+        },
+        FragmentEntry {
+            fragment_index: 2,
+            is_last_fragment: true,
+            is_loss_tolerant: true,
+            descriptor: FragmentDescriptor {
+                absolute_offset: 10,
+                fragment_size: 1,
+            },
+            payload: vec![2],
+        },
+    ];
+    let limits = ResourceLimits {
+        max_loss_tolerant_gap: 4,
+        ..base_limits()
+    };
+
+    let err = reconstruct_fragments(fragments, 11, &limits).expect_err("must fail");
+    assert!(matches!(err, SarError::LimitExceeded(_)));
+}
+
+#[test]
 fn excessive_fec_value_size_fails() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::SELECTIVE_FEC;
     let mut lfh = LocalFileHeader::minimal_store(b"fec.bin".to_vec(), 1);
@@ -303,4 +410,25 @@ fn unsafe_u64_to_usize_conversion_fails_safely() {
     let err = apply_sparse_reconstruction(&[1], &extents, u64::MAX, &unlimited_limits())
         .expect_err("must fail");
     assert!(matches!(err, SarError::Overflow(_)));
+}
+
+#[test]
+fn repair_working_set_limit_fails() {
+    let archive = build_archive_with_global_ec();
+    let plan = sar_core::plan_archive_repair(
+        &archive,
+        sar_core::ErasureInput {
+            entries: Vec::new(),
+            archive_ranges: Vec::new(),
+        },
+        &unlimited_limits(),
+    )
+    .expect("plan");
+    let limits = ResourceLimits {
+        max_repair_working_set: 1,
+        ..base_limits()
+    };
+
+    let err = sar_core::repair_archive(&archive, &plan, &limits).expect_err("must fail");
+    assert!(matches!(err, SarError::LimitExceeded(_)));
 }

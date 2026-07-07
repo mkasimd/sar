@@ -47,11 +47,15 @@ maintainability cleanup pass.
   - `ArchiveReader::read_all_logical_files` assembles fragment groups automatically
   - `LogicalFile` type exposes `name`, `data`, `fragment_id`, `is_degraded`
 - **Milestone 8 archive-level Data Recovery TLV support**
-  - `inspect_recovery_metadata` — parse CD for RECOVERY TLVs (type IDs 0x10–0x1F), compute protected range
+  - `inspect_recovery_metadata` — parse CD for RECOVERY TLVs (type IDs 0x10–0x1F), compute protected range, enforce configured `ResourceLimits`
   - `plan_archive_repair` — validate erasures within protected range and against FEC block boundaries
-  - `repair_archive` — XOR and RS erasure repair on protected range when erasures are block-aligned
+  - `repair_archive` — XOR and RS erasure repair on protected range when erasures are block-aligned and within repair working-set limits
   - `RecoveryMetadata`, `RecoveryPlan`, `RepairReport`, `ErasureInput` public types
   - Returns `RecoveryUnavailable` for unaligned erasures and documents spec gap in SPEC_QUESTIONS.md
+- **Stage 2 resource-limit hardening**
+  - unified `ResourceLimits` model threaded through archive reader, LFH parsing, TLV parsing, sparse reconstruction, fragment reassembly, and recovery/repair helpers
+  - configured limits are enforced before dangerous allocations for global flags, KMS payloads, LFH headers, payload buffers, TLV values/counts, Central Dictionary regions, sparse maps, fragment groups, and repair working buffers
+  - resource-limit failures return `SAR_ERR_LIMIT_EXCEEDED`
 - **Milestone 8 CLI additions**
   - `sar repair <archive> <output> --fec [--erasures erasures.json]` command
   - `sar extract` uses `read_all_logical_files` — automatically reconstructs fragment groups and applies sparse reconstruction
@@ -140,4 +144,3 @@ maintainability cleanup pass.
 - Content Hash verification is not implemented. The archive format stores a 32-byte content hash when `DEDUPLICATION` is set, but does not encode the hash algorithm identifier in the LFH or any other fixed-format field. The spec refers to "e.g., BLAKE3" without normatively specifying the algorithm field encoding. Verification cannot be performed without knowing the algorithm. This is an **implementation gap** (not a spec gap): once the spec normatively defines the algorithm encoding, verification can be added. See also `docs/SPEC_QUESTIONS.md`.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.
-

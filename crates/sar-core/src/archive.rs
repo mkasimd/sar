@@ -427,8 +427,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 .ok_or(SarError::Overflow("CD region length"))?;
             self.options.limits.check_cd_bytes(cd_region_len)?;
             self.options.limits.check_allocation_bytes(cd_region_len)?;
-            let cd_len_usize = usize::try_from(cd_region_len)
-                .map_err(|_| SarError::Overflow("CD region length usize"))?;
+            let cd_len_usize = self
+                .options
+                .limits
+                .allocation_len(cd_region_len, "CD region length usize")?;
 
             self.reader.seek(SeekFrom::Start(cd_offset))?;
             let mut cd_bytes = vec![0u8; cd_len_usize];
@@ -515,9 +517,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         self.reader.seek(SeekFrom::Start(payload_start))?;
-        self.options.limits.check_allocation_bytes(lfh.payload_size)?;
-        let payload_len = usize::try_from(lfh.payload_size)
-            .map_err(|_| SarError::Overflow("payload length usize"))?;
+        let payload_len = self
+            .options
+            .limits
+            .allocation_len(lfh.payload_size, "payload length usize")?;
         let mut encoded_payload = vec![0u8; payload_len];
         self.reader.read_exact(&mut encoded_payload)?;
 

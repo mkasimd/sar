@@ -36,6 +36,9 @@ pub fn parse_sparse_map(
     }
     let count = bytes.len() / entry_size;
     limits.check_sparse_descriptor_count(count)?;
+    if count > isize::MAX as usize / std::mem::size_of::<SparseExtent>() {
+        return Err(SarError::Overflow("sparse descriptor allocation"));
+    }
     let mut extents = Vec::with_capacity(count);
     let mut pos = 0;
     for _ in 0..count {
@@ -153,9 +156,7 @@ pub fn apply_sparse_reconstruction(
     limits: &ResourceLimits,
 ) -> Result<Vec<u8>, SarError> {
     limits.check_decoded_entry_size(logical_size)?;
-    limits.check_allocation_bytes(logical_size)?;
-    let logical_size_usize =
-        usize::try_from(logical_size).map_err(|_| SarError::Overflow("logical size usize"))?;
+    let logical_size_usize = limits.allocation_len(logical_size, "logical size usize")?;
     validate_sparse_extents(extents, logical_size, limits)?;
     let mut output = vec![0u8; logical_size_usize];
     let mut payload_pos: usize = 0;

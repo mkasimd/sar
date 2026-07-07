@@ -111,10 +111,8 @@ pub fn reconstruct_fragments(
     limits.check_fragment_count(fragments.len())?;
     limits.check_fragment_group_span(logical_size)?;
     limits.check_decoded_entry_size(logical_size)?;
-    limits.check_allocation_bytes(logical_size)?;
     if fragments.is_empty() {
-        let buf_size =
-            usize::try_from(logical_size).map_err(|_| SarError::Overflow("logical size"))?;
+        let buf_size = limits.allocation_len(logical_size, "logical size")?;
         return Ok((vec![0u8; buf_size], false));
     }
 
@@ -164,8 +162,7 @@ pub fn reconstruct_fragments(
     }
 
     // Allocate logical output buffer
-    let buf_size =
-        usize::try_from(logical_size).map_err(|_| SarError::Overflow("logical size usize"))?;
+    let buf_size = limits.allocation_len(logical_size, "logical size usize")?;
     let mut output = vec![0u8; buf_size];
 
     // Scatter-gather: each fragment's payload goes to its absolute offset

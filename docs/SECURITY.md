@@ -9,9 +9,12 @@ This document reflects current implemented behavior only.
 
 ## Resource bounds and allocation limits
 
-- `ArchiveReaderOptions.max_decoded_entry_size` defaults to `1 GiB` and bounds decompression output.
+- `ArchiveReaderOptions` now carries a unified `ResourceLimits` struct; configured limits are the primary safety mechanism for parsing untrusted archives.
+- `ResourceLimits::default()` applies conservative caps to archive size, entry count, LFH header bytes, path bytes, TLV bytes/count, Central Dictionary bytes, sparse maps, fragment groups, FEC value bytes, recovery protected ranges, and repair working buffers.
+- `ArchiveReaderOptions.limits.max_decoded_entry_size` defaults to `1 GiB` and bounds decompression output.
 - `sar-compression` enforces a caller-provided maximum decoded size to reduce decompression-bomb risk.
 - `sar-fec` bounds parity allocations to `256 MiB` for both XOR and Reed-Solomon helpers.
+- Parsing rejects configured-limit violations before dangerous allocation and returns `SAR_ERR_LIMIT_EXCEEDED`.
 - KMS parsing enforces conservative limits, including PBKDF2 and Argon2 DoS ceilings.
 
 ## Crypto and secret handling
@@ -49,13 +52,14 @@ stored payload -> FEC repair over ciphertext bytes (if applicable)
 Notes:
 
 - current writer-side integration computes Selective FEC over ciphertext bytes when encryption is enabled
-- archive-level/global EC is validated structurally; `repair_archive` applies XOR/RS repair for block-aligned erasures
+- archive-level/global EC is validated structurally; `repair_archive` applies XOR/RS repair for block-aligned erasures while enforcing `max_recovery_protected_range` and `max_repair_working_set`
 - LOSS_TOLERANT flag never bypasses AEAD authentication — if AEAD verification fails, the entry is rejected regardless of the LOSS_TOLERANT setting
 - archive-level repair applies FEC repair to ciphertext bytes within the protected range; AEAD tags within that range are repaired before authentication
 
 ## Fragmentation and loss-tolerant semantics
 
 - `reconstruct_fragments` fills gap regions in the logical output buffer with zero bytes when LOSS_TOLERANT is set, and sets `is_degraded = true`
+- loss-tolerant fragment gaps are bounded by `ResourceLimits.max_loss_tolerant_gap`
 - without LOSS_TOLERANT, any missing fragment index returns `FragmentGap` error and no data is released
 - AEAD authentication of individual fragment payloads must succeed before plaintext is released, regardless of LOSS_TOLERANT
 - LOSS_TOLERANT permits degraded logical file output only for *missing* fragments, not for *corrupted* (authentication-failed) fragments
@@ -66,7 +70,7 @@ Notes:
 - Sparse descriptor arithmetic uses checked arithmetic; overflow in `offset + length` or an extent exceeding `Uncompressed Size` returns `SarError::InvalidMap`.
 - Overlapping descriptors are rejected before reconstruction begins.
 - Sparse payload length is validated: it must exactly equal the sum of all extent lengths. Excess bytes (possible padding forgery) and short payload (truncated payload) both return an error.
-- The zero-filled reconstruction buffer is bounded by `ArchiveReaderOptions::max_decoded_entry_size` to prevent denial-of-service via large `Uncompressed Size` values.
+- The zero-filled reconstruction buffer is bounded by `ArchiveReaderOptions.limits.max_decoded_entry_size` and the general in-memory allocation limits to prevent denial-of-service via large `Uncompressed Size` values.
 - **CRC32 verification** is now active in `read_all_logical_files`. CRC32 is computed over the fully reconstructed sparse file including zero-filled holes; it is not computed over the stored sparse payload bytes alone. A CRC mismatch returns `SarError::CrcMismatch`. This ensures that tampering with sparse map offsets (changing where data lands in the logical file without changing the stored payload) is detected when the LFH carries a CRC32.
 - **Content Hash is not verified** because the archive format does not encode the hash algorithm identifier. The 32-byte `content_hash` field is parsed and preserved in `EntryMetadata`, but no verification is performed. See `docs/CONFORMANCE.md` Known Gaps.
 - **Sparse Map placement**: in a fragmented archive, a Sparse Map on any non-zero fragment index returns `SarError::InvalidMap` immediately and is never suppressed by `allow_lossy`, preventing a malformed archive from triggering undefined reconstruction ordering.
