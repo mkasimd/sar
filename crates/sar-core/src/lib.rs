@@ -17,6 +17,8 @@ pub mod format;
 pub mod fragment;
 /// Checked binary parsing/writing primitives.
 pub mod io;
+/// Unified resource-limit model for the parse/read/write pipeline.
+pub mod limits;
 /// Compliance profile checks.
 pub mod profile;
 /// Archive-level Data Recovery TLV inspection, planning, and repair.
@@ -47,6 +49,7 @@ pub use format::{
 pub use fragment::{
     FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
 };
+pub use limits::ResourceLimits;
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
 pub use recovery::{
     EntryErasure, ErasureInput, ErasureRange, ProtectedRange, RecoveryMetadata, RecoveryPlan,

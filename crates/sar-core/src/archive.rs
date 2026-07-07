@@ -15,13 +15,14 @@ use serde::Serialize;
 
 use crate::{
     error::SarError,
-    flags::{GlobalFlags, validate_global_flags},
+    flags::{EntryMode, GlobalFlags, validate_global_flags},
     format::{
         CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION,
         global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary,
         parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
         write_global_header,
     },
+    limits::ResourceLimits,
     tlv::Tlv,
     transform::{
         DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
@@ -258,17 +259,22 @@ pub struct SparseWriteOptions {
 }
 
 /// Reader-side limits.
-#[derive(Debug, Clone, Copy)]
+///
+/// Pass a [`ResourceLimits`] value to configure all resource caps uniformly.
+/// The [`ArchiveReaderOptions::max_decoded_entry_size`] method provides
+/// backward-compatible access to the corresponding limit value.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct ArchiveReaderOptions {
-    /// Maximum allowed uncompressed bytes per decoded entry.
-    pub max_decoded_entry_size: u64,
+    /// Unified resource limits for parsing and reconstruction.
+    pub limits: ResourceLimits,
 }
 
-impl Default for ArchiveReaderOptions {
-    fn default() -> Self {
-        Self {
-            max_decoded_entry_size: 1024 * 1024 * 1024,
-        }
+impl ArchiveReaderOptions {
+    /// Returns the effective maximum decoded entry size from the embedded
+    /// [`ResourceLimits`].
+    #[must_use]
+    pub fn max_decoded_entry_size(&self) -> u64 {
+        self.limits.max_decoded_entry_size
     }
 }
 
@@ -317,6 +323,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// Creates a new archive reader with configurable limits.
     pub fn with_options(mut reader: R, options: ArchiveReaderOptions) -> Result<Self, SarError> {
         let file_len = reader.seek(SeekFrom::End(0))?;
+        options.limits.check_archive_size(file_len)?;
         reader.seek(SeekFrom::Start(0))?;
         Ok(Self {
             reader,
@@ -349,6 +356,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         if flags_size < 4 {
             return Err(SarError::InvalidLength("global flags size must be >= 4"));
         }
+        self.options.limits.check_global_flags_bytes(flags_size)?;
 
         let mut header_bytes = Vec::with_capacity(8 + flags_size + 96 + 5);
         header_bytes.extend_from_slice(&fixed);
@@ -378,12 +386,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 kms_prefix[4],
             ]))
             .map_err(|_| SarError::Overflow("KMS payload length"))?;
+            self.options.limits.check_kms_payload_bytes(payload_len)?;
             let mut payload = vec![0u8; payload_len];
             self.reader.read_exact(&mut payload)?;
             header_bytes.extend_from_slice(&payload);
         }
 
-        let (header, consumed) = parse_global_header(&header_bytes)?;
+        let (header, consumed) = parse_global_header(&header_bytes, &self.options.limits)?;
         if let Some(kms) = &header.kms {
             let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
         }
@@ -400,7 +409,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             self.reader.read_exact(&mut footer_bytes)?;
             let Footer { cd_offset } = parse_footer(&footer_bytes)?;
 
-            if cd_offset >= self.file_len.saturating_sub(8) {
+            let indexed_end = self
+                .file_len
+                .checked_sub(8)
+                .ok_or(SarError::Truncated("indexed archive missing footer"))?;
+            if cd_offset >= indexed_end {
                 return Err(SarError::Bounds("CD offset points outside indexed range"));
             }
             if cd_offset < header_len {
@@ -412,13 +425,18 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 .checked_sub(8)
                 .and_then(|value| value.checked_sub(cd_offset))
                 .ok_or(SarError::Overflow("CD region length"))?;
-            let cd_len_usize = usize::try_from(cd_region_len)
-                .map_err(|_| SarError::Overflow("CD region length usize"))?;
+            self.options.limits.check_cd_bytes(cd_region_len)?;
+            self.options.limits.check_allocation_bytes(cd_region_len)?;
+            let cd_len_usize = self
+                .options
+                .limits
+                .allocation_len(cd_region_len, "CD region length usize")?;
 
             self.reader.seek(SeekFrom::Start(cd_offset))?;
             let mut cd_bytes = vec![0u8; cd_len_usize];
             self.reader.read_exact(&mut cd_bytes)?;
-            let (cd, consumed_cd) = parse_central_dictionary(&cd_bytes, header.flags)?;
+            let (cd, consumed_cd) =
+                parse_central_dictionary(&cd_bytes, header.flags, &self.options.limits)?;
             if consumed_cd > cd_bytes.len() {
                 return Err(SarError::Truncated("CD parse exceeded available bytes"));
             }
@@ -457,6 +475,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         self.reader.read_exact(&mut header_size_bytes)?;
         let header_size = usize::try_from(u32::from_le_bytes(header_size_bytes))
             .map_err(|_| SarError::Overflow("LFH header size"))?;
+        self.options.limits.check_lfh_header_bytes(header_size)?;
         if header_size < 4 {
             return Err(SarError::InvalidLength(
                 "LFH Header Size smaller than fixed prefix",
@@ -469,7 +488,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             self.reader.read_exact(&mut lfh_bytes[4..])?;
         }
 
-        let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags)?;
+        let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
         let is_effectively_compressed =
             header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
         let is_encrypted = lfh.entry_mode.is_encrypted();
@@ -498,8 +517,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         self.reader.seek(SeekFrom::Start(payload_start))?;
-        let payload_len = usize::try_from(lfh.payload_size)
-            .map_err(|_| SarError::Overflow("payload length usize"))?;
+        let payload_len = self
+            .options
+            .limits
+            .allocation_len(lfh.payload_size, "payload length usize")?;
         let mut encoded_payload = vec![0u8; payload_len];
         self.reader.read_exact(&mut encoded_payload)?;
 
@@ -520,7 +541,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // non-zero, FEC Size and FEC Value are excluded from the AAD.
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
             let aad_lfh_bytes =
-                lfh_bytes_for_aad(header.flags, &lfh_bytes, fec_algo_id, lfh.fec_value.len());
+                lfh_bytes_for_aad(header.flags, &lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
             let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             Some(EntryCryptoContext {
                 algo_id,
@@ -542,7 +563,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let decode_expected = if is_sparse {
             // We don't want the decompressor to be bounded by logical_size;
             // max_decoded_entry_size is already the correct upper bound.
-            self.options.max_decoded_entry_size
+            self.options.max_decoded_entry_size()
         } else {
             lfh.uncompressed_size
         };
@@ -553,7 +574,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 is_compressed: is_effectively_compressed,
                 comp_algo_id: effective_comp_algo_id,
                 expected_output_size: decode_expected,
-                max_output_size: self.options.max_decoded_entry_size,
+                max_output_size: self.options.max_decoded_entry_size(),
                 crypto,
             },
         )?;
@@ -579,7 +600,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
             let algo_id = lfh.fec_algo_id.unwrap_or(0);
-            crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value)?
+            crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
         } else {
             None
         };
@@ -613,7 +634,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 && !lfh.sparse_map.is_empty()
             {
                 let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
-                Some(crate::sparse::parse_sparse_map(&lfh.sparse_map, is_64bit)?)
+                Some(crate::sparse::parse_sparse_map(
+                    &lfh.sparse_map,
+                    is_64bit,
+                    &self.options.limits,
+                )?)
             } else {
                 None
             },
@@ -677,7 +702,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             if global.flags.contains(GlobalFlags::HAS_GLOBAL_EC) {
                 for tlv in &cd.metadata {
                     if (0x10..=0x1F).contains(&tlv.type_id) {
-                        crate::fec::validate_recovery_tlv(tlv.type_id, &tlv.value)?;
+                        crate::fec::validate_recovery_tlv(
+                            tlv.type_id,
+                            &tlv.value,
+                            &self.options.limits,
+                        )?;
                     }
                 }
             }
@@ -736,7 +765,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// available.
     ///
     /// Sparse logical sizes are capped to
-    /// [`ArchiveReaderOptions::max_decoded_entry_size`].
+    /// [`ResourceLimits::max_decoded_entry_size`].
     ///
     /// # Caller contract
     ///
@@ -860,6 +889,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         file_crc32: None,
                     }
                 });
+                self.options.limits.check_fragment_count(
+                    group
+                        .entries
+                        .len()
+                        .checked_add(1)
+                        .ok_or(SarError::Overflow("fragment count"))?,
+                )?;
 
                 // Capture sparse map, logical size, and CRC32 from fragment 0.
                 if entry.metadata.fragment_index == Some(0) {
@@ -877,10 +913,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 let uncompressed_size = entry.metadata.uncompressed_size;
                 let file_crc32 = entry.metadata.file_crc32;
                 let data = Self::apply_sparse_if_needed(
+                    &self.options.limits,
                     entry.payload,
                     &sparse,
                     uncompressed_size,
-                    self.options.max_decoded_entry_size,
                 )?;
                 // CRC32 verification over the fully reconstructed logical file
                 // (including sparse holes), per spec §17.5.
@@ -911,9 +947,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 sparse_extents: group_sparse_extents,
                 sparse_uncompressed_size: group_sparse_uncompressed_size,
                 file_crc32: group_file_crc32,
-            } = frag_groups
-                .remove(&fid)
-                .expect("fid must be present in map");
+            } = frag_groups.remove(&fid).ok_or(SarError::Malformed(
+                "fragment group ID vanished during reconstruction",
+            ))?;
 
             // Compute assembled-payload logical size from FragmentDescriptors:
             // max(descriptor.absolute_offset + descriptor.fragment_size).
@@ -948,7 +984,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 })
                 .collect();
 
-            let (raw, is_degraded) = reconstruct_fragments(frag_entries, assembled_size)?;
+            let (raw, is_degraded) =
+                reconstruct_fragments(frag_entries, assembled_size, &self.options.limits)?;
 
             // When the caller does not allow lossy and degraded output was
             // produced by a LOSS_TOLERANT group, surface it as an error.
@@ -962,16 +999,21 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // assembled fragment payload.  The sparse map and logical size come
             // from fragment index 0.
             let data = if let Some(ref extents) = group_sparse_extents {
-                if group_sparse_uncompressed_size > self.options.max_decoded_entry_size {
-                    return Err(SarError::Overflow(
-                        "sparse logical file size exceeds max_decoded_entry_size limit",
+                if group_sparse_uncompressed_size > self.options.max_decoded_entry_size() {
+                    return Err(SarError::LimitExceeded(
+                        "sparse logical file size exceeds configured limit",
                     ));
                 }
-                crate::sparse::validate_sparse_extents(extents, group_sparse_uncompressed_size)?;
+                crate::sparse::validate_sparse_extents(
+                    extents,
+                    group_sparse_uncompressed_size,
+                    &self.options.limits,
+                )?;
                 crate::sparse::apply_sparse_reconstruction(
                     &raw,
                     extents,
                     group_sparse_uncompressed_size,
+                    &self.options.limits,
                 )?
             } else {
                 raw
@@ -1011,10 +1053,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// Returns [`SarError::Overflow`] when `uncompressed_size` exceeds
     /// `max_size`, preventing unbounded allocation.
     fn apply_sparse_if_needed(
+        limits: &ResourceLimits,
         payload: Vec<u8>,
         sparse_extents: &Option<Vec<crate::sparse::SparseExtent>>,
         uncompressed_size: u64,
-        max_size: u64,
     ) -> Result<Vec<u8>, SarError> {
         let Some(extents) = sparse_extents else {
             return Ok(payload);
@@ -1026,14 +1068,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // Use LFH Uncompressed Size as the authoritative logical file size.
         // This correctly handles trailing sparse holes that extend beyond the
         // last extent.
-        if uncompressed_size > max_size {
-            return Err(SarError::Overflow(
-                "sparse logical file size exceeds max_decoded_entry_size limit",
-            ));
-        }
-
-        crate::sparse::validate_sparse_extents(extents, uncompressed_size)?;
-        crate::sparse::apply_sparse_reconstruction(&payload, extents, uncompressed_size)
+        limits.check_decoded_entry_size(uncompressed_size)?;
+        crate::sparse::validate_sparse_extents(extents, uncompressed_size, limits)?;
+        crate::sparse::apply_sparse_reconstruction(&payload, extents, uncompressed_size, limits)
     }
 }
 
@@ -1187,12 +1224,15 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
         if is_compressed {
-            lfh.entry_mode.0 |= 1 << 3;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::COMPRESSED);
         }
 
         // Pre-set FEC algo ID so it is included in the AEAD AAD (spec §13.2.1).
         if is_fec {
-            let fec_cfg = self.fec.as_ref().expect("is_fec checked");
+            let fec_cfg = self
+                .fec
+                .as_ref()
+                .ok_or(SarError::Internal("missing FEC settings"))?;
             lfh.fec_algo_id = Some(fec_cfg.algo_id);
             if is_encrypted {
                 let reserved_fec_len = compute_fec_value_len(fec_cfg, encoded_payload.len())?;
@@ -1218,7 +1258,7 @@ impl<W: Write> ArchiveWriter<W> {
             }
             lfh.encr_algo_id = Some(algo_id);
             lfh.iv_nonce = Some(nonce);
-            lfh.entry_mode.0 |= 1 << 2;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::ENCRYPTED);
 
             // Reserve the final FEC Value length before AEAD so Header Size in the
             // AAD matches the final on-wire LFH. Per spec §13.2.1, only FEC Size
@@ -1230,7 +1270,7 @@ impl<W: Write> ArchiveWriter<W> {
                 &provisional_lfh_bytes,
                 fec_algo_id,
                 lfh.fec_value.len(),
-            );
+            )?;
             let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             let key = self
                 .cek
@@ -1254,9 +1294,20 @@ impl<W: Write> ArchiveWriter<W> {
             if is_fec {
                 // Compute FEC over ciphertext only (exclude the 16-byte AEAD tag).
                 let tag_len = 16usize;
-                let ciphertext_len = encoded_payload.len().saturating_sub(tag_len);
+                let ciphertext_len =
+                    encoded_payload
+                        .len()
+                        .checked_sub(tag_len)
+                        .ok_or(SarError::InvalidLength(
+                            "encrypted payload shorter than AEAD tag",
+                        ))?;
                 let ciphertext = &encoded_payload[..ciphertext_len];
-                let fec_value = compute_fec_value(self.fec.as_ref().expect("is_fec"), ciphertext)?;
+                let fec_value = compute_fec_value(
+                    self.fec
+                        .as_ref()
+                        .ok_or(SarError::Internal("missing FEC settings"))?,
+                    ciphertext,
+                )?;
                 if fec_value.len() != lfh.fec_value.len() {
                     return Err(SarError::InvalidLength(
                         "computed FEC value length changed after AEAD",
@@ -1271,8 +1322,12 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             if is_fec {
                 // Compute FEC over the full encoded (unencrypted) payload.
-                let fec_value =
-                    compute_fec_value(self.fec.as_ref().expect("is_fec"), &encoded_payload)?;
+                let fec_value = compute_fec_value(
+                    self.fec
+                        .as_ref()
+                        .ok_or(SarError::Internal("missing FEC settings"))?,
+                    &encoded_payload,
+                )?;
                 lfh.fec_value = fec_value;
             }
             let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
@@ -1355,7 +1410,11 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         // Validate extents against logical_size (overlap and bounds).
-        crate::sparse::validate_sparse_extents(&sparse.extents, sparse.logical_size)?;
+        crate::sparse::validate_sparse_extents(
+            &sparse.extents,
+            sparse.logical_size,
+            &ResourceLimits::unlimited(),
+        )?;
 
         // Validate payload length equals sum of extent lengths.
         let mut total_extent_bytes: u64 = 0;
@@ -1407,11 +1466,14 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
         if is_compressed {
-            lfh.entry_mode.0 |= 1 << 3;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::COMPRESSED);
         }
 
         if is_fec {
-            let fec_cfg = self.fec.as_ref().expect("is_fec checked");
+            let fec_cfg = self
+                .fec
+                .as_ref()
+                .ok_or(SarError::Internal("missing FEC settings"))?;
             lfh.fec_algo_id = Some(fec_cfg.algo_id);
             if is_encrypted {
                 let reserved_fec_len = compute_fec_value_len(fec_cfg, encoded_payload.len())?;
@@ -1437,7 +1499,7 @@ impl<W: Write> ArchiveWriter<W> {
             }
             lfh.encr_algo_id = Some(algo_id);
             lfh.iv_nonce = Some(nonce);
-            lfh.entry_mode.0 |= 1 << 2;
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::ENCRYPTED);
 
             let provisional_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
@@ -1446,7 +1508,7 @@ impl<W: Write> ArchiveWriter<W> {
                 &provisional_lfh_bytes,
                 fec_algo_id,
                 lfh.fec_value.len(),
-            );
+            )?;
             let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
             let key = self
                 .cek
@@ -1469,9 +1531,20 @@ impl<W: Write> ArchiveWriter<W> {
 
             if is_fec {
                 let tag_len = 16usize;
-                let ciphertext_len = encoded_payload.len().saturating_sub(tag_len);
+                let ciphertext_len =
+                    encoded_payload
+                        .len()
+                        .checked_sub(tag_len)
+                        .ok_or(SarError::InvalidLength(
+                            "encrypted payload shorter than AEAD tag",
+                        ))?;
                 let ciphertext = &encoded_payload[..ciphertext_len];
-                let fec_value = compute_fec_value(self.fec.as_ref().expect("is_fec"), ciphertext)?;
+                let fec_value = compute_fec_value(
+                    self.fec
+                        .as_ref()
+                        .ok_or(SarError::Internal("missing FEC settings"))?,
+                    ciphertext,
+                )?;
                 if fec_value.len() != lfh.fec_value.len() {
                     return Err(SarError::InvalidLength(
                         "computed FEC value length changed after AEAD (sparse)",
@@ -1484,8 +1557,12 @@ impl<W: Write> ArchiveWriter<W> {
             self.write_entry(lfh, final_lfh_bytes, encoded_payload)
         } else {
             if is_fec {
-                let fec_value =
-                    compute_fec_value(self.fec.as_ref().expect("is_fec"), &encoded_payload)?;
+                let fec_value = compute_fec_value(
+                    self.fec
+                        .as_ref()
+                        .ok_or(SarError::Internal("missing FEC settings"))?,
+                    &encoded_payload,
+                )?;
                 lfh.fec_value = fec_value;
             }
             let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;

@@ -152,7 +152,7 @@ fn empty_area_does_not_participate_in_fragment_grouping() {
         } else {
             1u16 << 5
         };
-        lfh.entry_mode = EntryMode(mode);
+        lfh.entry_mode = EntryMode::from_bits(mode);
         lfh.fragment_id = Some(42);
         lfh.fragment_index = Some(idx);
         lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -241,7 +241,7 @@ fn empty_area_with_is_fragment_set_is_treated_as_fragment_not_silently_dropped()
 
     // IS_FRAGMENT set, no LAST_FRAGMENT → fragment group with no end marker.
     let mut lfh = LocalFileHeader::minimal_store(b"".to_vec(), 0);
-    lfh.entry_mode = EntryMode(1u16 << 5); // IS_FRAGMENT
+    lfh.entry_mode = EntryMode::from_bits(1u16 << 5); // IS_FRAGMENT
     // fragment_id defaults to 0 when written with FILE_FRAGMENTATION flag.
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
 

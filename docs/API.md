@@ -91,7 +91,30 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `logical_size: u64` — full apparent file size including holes; written to LFH `Uncompressed Size`
   - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
 - `ArchiveReaderOptions`
-  - `max_decoded_entry_size: u64` (default `1 GiB`)
+  - `limits: ResourceLimits`
+- `ResourceLimits`
+  - `max_archive_size`
+  - `max_entry_count`
+  - `max_lfh_header_bytes`
+  - `max_path_bytes`
+  - `max_global_flags_bytes`
+  - `max_kms_payload_bytes`
+  - `max_tlv_bytes`
+  - `max_tlv_count`
+  - `max_cd_bytes`
+  - `max_decoded_entry_size`
+  - `max_in_memory_buffer`
+  - `max_total_pipeline_memory`
+  - `max_sparse_map_bytes`
+  - `max_sparse_descriptors`
+  - `max_fragment_count`
+  - `max_fragment_group_span`
+  - `max_loss_tolerant_gap`
+  - `max_fec_value_bytes`
+  - `max_recovery_protected_range`
+  - `max_repair_working_set`
+  - `use_runtime_memory_budget`
+  - CLI defaults currently rely on `ResourceLimits::default()` unless the caller or CLI flags override them; the most relevant Stage 4 defaults are `max_archive_size = 16 GiB`, `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, and `max_repair_working_set = 2 GiB`
 - `CompressionSettings`
   - `store()` helper
 - `EncryptionSettings`
@@ -109,19 +132,22 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `LocalFileHeader.fragment_descriptor` is typed as `Option<LfhFragmentDescriptor>` (named-field struct; replaced the former `Option<(u64, u32)>` tuple in M8 closeout)
 - `LfhFragmentDescriptor { absolute_offset: u64, fragment_size: u32 }` — fragment descriptor stored inline in a `LocalFileHeader`
 - Parser/writer helpers:
-  - `parse_global_header`, `write_global_header`
-  - `parse_lfh`, `write_lfh`, `compute_lfh_size`, `lfh_to_bytes`, `lfh_bytes_for_aad`, `fec_size_field_offset`
-  - `parse_central_dictionary`, `write_central_dictionary`
+  - `parse_global_header(input, limits)`, `write_global_header`
+  - `parse_lfh(input, flags, limits)`, `write_lfh`, `compute_lfh_size`, `lfh_to_bytes`, `lfh_bytes_for_aad(flags, lfh_bytes, fec_algo_id, fec_value_len) -> Result<Vec<u8>, SarError>`, `fec_size_field_offset`
+  - `parse_central_dictionary(input, flags, limits)`, `write_central_dictionary`
   - `parse_footer`, `write_footer`
   - `global_header_flags_bytes`
 - TLV helpers:
   - `Tlv`
-  - `parse_tlvs`, `write_tlvs`
+  - `parse_tlvs(input, limits)`, `write_tlvs`
 
 #### Flags, status, and validation APIs
 
 - `GlobalFlags`
 - `EntryMode`
+  - `ENCRYPTED`, `COMPRESSED`, `FRAGMENT`, `LAST_FRAGMENT`, `LOSS_TOLERANT`
+  - `from_bits(bits)`
+  - `bits()`
   - `is_encrypted()`
   - `is_compressed()`
   - `is_fragment()`
@@ -150,9 +176,9 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 
 - `FecSummary`
 - `classify_recovery_tlv_id()`
-- `validate_recovery_tlv()`
+- `validate_recovery_tlv(type_id, value, limits)`
 - `validate_lfh_fec_algo_id()`
-- `parse_lfh_fec_value()`
+- `parse_lfh_fec_value(algo_id, fec_value, limits)`
 
 ### Low-level/internal-public helpers
 
@@ -166,6 +192,7 @@ These items are public today, but they are better treated as integration helpers
 ### Error behavior
 
 - Structural failures map into `SarError` and `SarStatus` values such as `SAR_ERR_TRUNCATED`, `SAR_ERR_MALFORMED`, `SAR_ERR_INVALID_LENGTH`, `SAR_ERR_BOUNDS`, and `SAR_ERR_FLAG_CONFLICT`.
+- Configured resource-limit failures map to `SAR_ERR_LIMIT_EXCEEDED`.
 - Compression, crypto, and FEC failures are normalized into SAR-specific errors.
 - Encrypted archives require a `KeyProvider`; missing credentials return `SAR_ERR_KEY_MISSING`.
 - Wrong passwords or invalid tags fail before plaintext is released and surface as `SAR_ERR_AUTH_FAILED` / `SAR_ERR_DECRYPT_FAILED` depending on path.
@@ -252,7 +279,8 @@ Reads all entries, assembles fragment groups, applies sparse reconstruction, and
 - Overlapping fragment descriptors → `SarError::InvalidMap`.
 - AEAD authentication failures are **never** suppressed by `allow_lossy`.
 - Format errors are **never** suppressed by `allow_lossy`.
-- **Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size.** Trailing holes after the final sparse extent are filled with zero bytes up to `Uncompressed Size`. Large logical sizes are capped by `ArchiveReaderOptions::max_decoded_entry_size`.
+- **Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size.** Trailing holes after the final sparse extent are filled with zero bytes up to `Uncompressed Size`. Large logical sizes are capped by `ArchiveReaderOptions.limits.max_decoded_entry_size`. **The implementation rejects oversized logical sizes before allocation (sparse expansion-bomb protection).**
+- **Sparse expansion-bomb protection**: a tiny stored payload combined with a huge `Uncompressed Size` and a sparse extent near the end (e.g., `Uncompressed Size=1025`, `max_decoded_entry_size=1024`, sparse map `{offset=1024, length=1}`, one stored byte) is rejected with `SAR_ERR_LIMIT_EXCEEDED` **before any large allocation is attempted**. This is not `SAR_ERR_INVALID_MAP` because the sparse map is structurally valid.
 - **CRC32 verification** (when `PER_FILE_CRC` is set and the LFH `file_crc32` field is present): CRC32 is computed over the fully reconstructed logical file bytes, **including sparse holes**. A wrong CRC returns `SarError::CrcMismatch`. Verification applies after fragment reassembly and sparse reconstruction. Content-hash verification is not implemented; see Known Limitations below.
 - **Empty Areas** (entries with `Name Length == 0` and `IS_FRAGMENT == 0`) are excluded from the returned list; they do not participate in sparse reconstruction, hashing, delta, or fragmentation.
 
@@ -266,13 +294,13 @@ Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
 
 #### Public functions
 
-- `parse_sparse_map(bytes: &[u8], is_64bit: bool) -> Result<Vec<SparseExtent>, SarError>`
+- `parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<Vec<SparseExtent>, SarError>`
   — decodes the raw sparse map from an LFH; 8 bytes per entry in 32-bit mode, 16 bytes in 64-bit mode; returns `SarError::InvalidLength` when byte count is not a multiple of entry size
 - `write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>`
   — serializes extents back to the wire format
-- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64) -> Result<(), SarError>`
-  — checks that extents are sorted, non-overlapping, and within `logical_size` bounds; returns `SarError::InvalidMap` on violation, `SarError::Overflow` on arithmetic overflow
-- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64) -> Result<Vec<u8>, SarError>`
+- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>`
+  — checks that extents are sorted, non-overlapping, within `logical_size` bounds, and within configured sparse-descriptor limits; returns `SarError::InvalidMap` on violation, `SarError::Overflow` on arithmetic overflow
+- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<Vec<u8>, SarError>`
   — creates a zero-filled buffer of exactly `logical_size` bytes (the LFH `Uncompressed Size`) and writes each extent slice from `payload` at its declared offset; trailing holes beyond the final extent are filled with `0x00`; returns `SarError::InvalidMap` if an extent exceeds `logical_size` or if payload has excess bytes; returns `SarError::Truncated` if payload is too short for the declared extents
 
 **Transformation ordering:**
@@ -329,11 +357,11 @@ Fragment group types and archival reassembly.
 
 #### Public functions
 
-- `validate_fragment_group(fragments: &[FragmentEntry], logical_size: u64) -> Result<(), SarError>`
-  — checks bounds (each fragment fits within `logical_size`) and fragment-level overlaps
-- `reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64) -> Result<(Vec<u8>, bool), SarError>`
+- `validate_fragment_group(fragments: &[FragmentEntry], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>`
+  — checks bounds (each fragment fits within `logical_size`), fragment-level overlaps, and configured fragment-count/span limits
+- `reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>`
   — sorts fragments by index, fills a `logical_size` zero buffer with each fragment's payload at `descriptor.absolute_offset`
-  — if a gap exists and `is_loss_tolerant` is set on any fragment, fills gap with zeros and returns `(data, true)` (degraded)
+  — if a gap exists and `is_loss_tolerant` is set on any fragment, fills gap with zeros and returns `(data, true)` (degraded), subject to `max_loss_tolerant_gap`
   — if a gap exists and no fragment has `is_loss_tolerant`, returns `SarError::FragmentGap`
 
 ### `sar_core::recovery`
@@ -352,13 +380,13 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 
 #### Public functions
 
-- `inspect_recovery_metadata(archive_bytes: &[u8]) -> Result<RecoveryMetadata, SarError>`
+- `inspect_recovery_metadata(archive_bytes: &[u8], limits: &ResourceLimits) -> Result<RecoveryMetadata, SarError>`
   — parses archive global header and CD, extracts RECOVERY TLVs (type IDs 0x10–0x1F), computes protected range `[GLOBAL_FLAGS_OFFSET, cd_offset)`
-- `plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput) -> Result<RecoveryPlan, SarError>`
+- `plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput, limits: &ResourceLimits) -> Result<RecoveryPlan, SarError>`
   — validates erasures within protected range and against FEC block boundaries
   — returns `SarError::RecoveryUnavailable` for unaligned erasures or missing TLV (see SPEC_QUESTIONS.md)
-- `repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan) -> Result<(Vec<u8>, RepairReport), SarError>`
-  — applies XOR or Reed-Solomon erasure repair to the protected range, returns repaired archive bytes and a report
+- `repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan, limits: &ResourceLimits) -> Result<(Vec<u8>, RepairReport), SarError>`
+  — applies XOR or Reed-Solomon erasure repair to the protected range, returns repaired archive bytes and a report, and enforces `max_recovery_protected_range` / `max_repair_working_set`
   — returns `SarError::EcFailed` if erasures exceed parity capacity
   — returns `SarError::RecoveryUnavailable` if repair is not supported for this TLV
 
@@ -635,6 +663,15 @@ Usage:
 
 ```text
 sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
 ```
 
 Behavior:
@@ -643,6 +680,9 @@ Behavior:
 - rejects absolute paths and `..` traversal during extraction
 - loads password from `--password`, then `SAR_PASSWORD`, then an interactive prompt if the archive is encrypted
 - `--allow-lossy`: permits extraction of archives containing LOSS_TOLERANT entries; prints a warning if any such entries are present; does not currently perform automatic degraded fragment reassembly
+- sparse extraction validates the final apparent size against `ResourceLimits.max_decoded_entry_size`, creates a temp file, sets the target file length, seeks to sparse extents, writes only gathered payload bytes, and renames to the final output only after success
+- fragmented sparse extraction reuses the same `ResourceLimits` model for fragment span/count checks and sparse output checks
+- resource-limit failures are printed as `resource-limit error (SAR_ERR_LIMIT_EXCEEDED)` and do not leave finalized output files behind
 
 #### `list`
 
@@ -668,6 +708,15 @@ Usage:
 
 ```text
 sar verify <archive.sar> [--password PASSWORD] [--recovery]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
 ```
 
 Behavior:
@@ -676,6 +725,7 @@ Behavior:
 - validates recovery TLV structure when archive-level FEC metadata exists
 - decrypts entries when needed, so encrypted verification requires a password/key provider
 - `--recovery`: additionally validates fragmentation metadata consistency, sparse extent validity, Data Recovery TLV structure, and reports `repair_possible` / unavailable reason; distinguishes file-level FEC metadata from archive-level recovery TLVs
+- recovery-mode archive reads that require `fs::read` are pre-checked against `max_archive_size` before allocating the archive byte buffer
 
 #### `inspect`
 
@@ -702,6 +752,17 @@ Usage:
 
 ```text
 sar repair <archive.sar> <output.sar> --fec [--erasures erasures.json]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
+    [--max-recovery-protected-range BYTES]
+    [--max-repair-working-set BYTES]
 ```
 
 Behavior:
@@ -712,10 +773,11 @@ Behavior:
 - calls `inspect_recovery_metadata` to check archive EC support
 - calls `plan_archive_repair`; if `RecoveryUnavailable`, prints message and does **not** create output file
 - calls `repair_archive` on success
-- writes repaired bytes to a temp file (`<output>.sar.tmp`) first
+- pre-checks the archive file length against `max_archive_size` before reading the archive into memory
+- writes repaired bytes to a temp sibling file (`<output>.tmp`) first
 - verifies temp file structure (parses, checks structure)
 - renames temp to final output only if verification passes
-- if any step fails, deletes temp file and does **not** create the final output file
+- if any step fails, including `SAR_ERR_LIMIT_EXCEEDED`, deletes temp file and does **not** create the final output file
 
 #### `version`
 

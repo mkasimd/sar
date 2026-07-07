@@ -322,7 +322,10 @@ fn sparse_allocation_bounded_by_max_size() {
     let mut reader = ArchiveReader::with_options(
         Cursor::new(archive),
         ArchiveReaderOptions {
-            max_decoded_entry_size: 512,
+            limits: sar_core::limits::ResourceLimits {
+                max_decoded_entry_size: 512,
+                ..sar_core::limits::ResourceLimits::default()
+            },
         },
     )
     .expect("reader");
@@ -330,8 +333,8 @@ fn sparse_allocation_bounded_by_max_size() {
         .read_all_logical_files(false)
         .expect_err("should fail");
     assert!(
-        matches!(err, SarError::Overflow(_)),
-        "expected Overflow, got {err:?}"
+        matches!(err, SarError::LimitExceeded(_)),
+        "expected LimitExceeded, got {err:?}"
     );
 }
 
@@ -389,7 +392,7 @@ fn sparse_with_compression_decompresses_then_scatters() {
 
     let mut lfh = LocalFileHeader::minimal_store(b"sparse.bin".to_vec(), compressed.len() as u64);
     lfh.comp_algo_id = Some(0x01); // DEFLATE
-    lfh.entry_mode = EntryMode(1u16 << 3); // IS_COMPRESSED
+    lfh.entry_mode = EntryMode::from_bits(1u16 << 3); // IS_COMPRESSED
     lfh.uncompressed_size = 12; // logical file size
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
@@ -445,7 +448,7 @@ fn sparse_descriptor_lengths_apply_to_decompressed_bytes() {
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), compressed.len() as u64);
     lfh.comp_algo_id = Some(0x01);
-    lfh.entry_mode = EntryMode(1u16 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1u16 << 3);
     lfh.uncompressed_size = 5; // logical size == data size (no holes)
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
@@ -479,7 +482,7 @@ fn corrupted_compressed_sparse_fails_before_scatter_gather() {
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), corrupted.len() as u64);
     lfh.comp_algo_id = Some(0x01);
-    lfh.entry_mode = EntryMode(1u16 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1u16 << 3);
     lfh.uncompressed_size = 5;
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
@@ -555,7 +558,7 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     // Sparse map MUST be on fragment index 0 only.
     let mut lfh0 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 3);
     lfh0.uncompressed_size = 10; // full logical file size including holes
-    lfh0.entry_mode = EntryMode(1u16 << 5); // IS_FRAGMENT
+    lfh0.entry_mode = EntryMode::from_bits(1u16 << 5); // IS_FRAGMENT
     lfh0.fragment_id = Some(99);
     lfh0.fragment_index = Some(0);
     lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -570,7 +573,7 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     // No sparse map (must not appear on non-zero fragment index).
     let mut lfh1 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 3);
     lfh1.uncompressed_size = 3;
-    lfh1.entry_mode = EntryMode((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
+    lfh1.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
     lfh1.fragment_id = Some(99);
     lfh1.fragment_index = Some(1);
     lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -649,7 +652,7 @@ fn sparse_missing_fragment_without_allow_lossy_fails() {
 
     // Only fragment 0; no LAST_FRAGMENT.
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
-    lfh.entry_mode = EntryMode(1u16 << 5); // IS_FRAGMENT
+    lfh.entry_mode = EntryMode::from_bits(1u16 << 5); // IS_FRAGMENT
     lfh.fragment_id = Some(77);
     lfh.fragment_index = Some(0);
     lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
@@ -685,7 +688,7 @@ fn sparse_missing_fragment_with_allow_lossy_and_loss_tolerant_succeeds() {
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
     // IS_FRAGMENT | LOSS_TOLERANT; no LAST_FRAGMENT.
-    lfh.entry_mode = EntryMode((1u16 << 5) | (1u16 << 7));
+    lfh.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 7));
     lfh.fragment_id = Some(78);
     lfh.fragment_index = Some(0);
     lfh.fragment_descriptor = Some(LfhFragmentDescriptor {

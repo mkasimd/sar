@@ -3,12 +3,16 @@ use sar_core::{
     format::{LfhFragmentDescriptor, LocalFileHeader, parse_lfh, write_lfh},
 };
 
+fn unlimited_limits() -> sar_core::ResourceLimits {
+    sar_core::ResourceLimits::unlimited()
+}
+
 #[test]
 fn parses_minimal_lfh() {
     let flags = GlobalFlags::NO_INDEX;
     let lfh = LocalFileHeader::minimal_store(b"a.txt".to_vec(), 3);
     let bytes = write_lfh(&flags, &lfh).expect("write lfh");
-    let (parsed, consumed) = parse_lfh(&bytes, &flags).expect("parse lfh");
+    let (parsed, consumed) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse lfh");
     assert_eq!(consumed, bytes.len());
     assert_eq!(parsed.name, b"a.txt");
     assert_eq!(parsed.payload_size, 3);
@@ -51,7 +55,7 @@ fn parses_lfh_with_conditional_fields() {
     lfh.fec_value = vec![7, 7, 7];
 
     let bytes = write_lfh(&flags, &lfh).expect("write");
-    let (parsed, _) = parse_lfh(&bytes, &flags).expect("parse");
+    let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse");
     assert_eq!(parsed.path, b"nested");
     assert_eq!(parsed.fec_value.len(), 3);
 }
@@ -62,7 +66,7 @@ fn rejects_incorrect_header_size() {
     let lfh = LocalFileHeader::minimal_store(b"b".to_vec(), 1);
     let mut bytes = write_lfh(&flags, &lfh).expect("write");
     bytes[0] = 0xFF;
-    let err = parse_lfh(&bytes, &flags).expect_err("must fail");
+    let err = parse_lfh(&bytes, &flags, &unlimited_limits()).expect_err("must fail");
     assert!(matches!(
         err,
         SarError::Truncated(_) | SarError::InvalidLength(_)
@@ -74,7 +78,7 @@ fn rejects_header_size_smaller_than_fixed_prefix() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = vec![0u8; 10];
     bytes[..4].copy_from_slice(&2u32.to_le_bytes());
-    let err = parse_lfh(&bytes, &flags).expect_err("must fail");
+    let err = parse_lfh(&bytes, &flags, &unlimited_limits()).expect_err("must fail");
     assert!(matches!(
         err,
         SarError::InvalidLength(_) | SarError::Truncated(_)
@@ -86,7 +90,7 @@ fn zero_name_length_omits_name_string() {
     let flags = GlobalFlags::NO_INDEX;
     let lfh = LocalFileHeader::minimal_store(Vec::new(), 0);
     let bytes = write_lfh(&flags, &lfh).expect("write");
-    let (parsed, _) = parse_lfh(&bytes, &flags).expect("parse");
+    let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse");
     assert!(parsed.name.is_empty());
 }
 
@@ -96,13 +100,18 @@ fn path_field_required_only_when_global_has_path() {
     lfh.path = b"p".to_vec();
 
     let without = write_lfh(&GlobalFlags::NO_INDEX, &lfh).expect("write without path");
-    let (parsed_without, _) = parse_lfh(&without, &GlobalFlags::NO_INDEX).expect("parse without");
+    let (parsed_without, _) =
+        parse_lfh(&without, &GlobalFlags::NO_INDEX, &unlimited_limits()).expect("parse without");
     assert!(parsed_without.path.is_empty());
 
     let with =
         write_lfh(&(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH), &lfh).expect("write with");
-    let (parsed_with, _) =
-        parse_lfh(&(with), &(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH)).expect("parse with");
+    let (parsed_with, _) = parse_lfh(
+        &(with),
+        &(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH),
+        &unlimited_limits(),
+    )
+    .expect("parse with");
     assert_eq!(parsed_with.path, b"p");
 }
 
@@ -112,7 +121,7 @@ fn supports_64bit_sizes() {
     let mut lfh = LocalFileHeader::minimal_store(b"big".to_vec(), u64::from(u32::MAX) + 1);
     lfh.uncompressed_size = u64::from(u32::MAX) + 1;
     let bytes = write_lfh(&flags, &lfh).expect("write");
-    let (parsed, _) = parse_lfh(&bytes, &flags).expect("parse");
+    let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse");
     assert_eq!(parsed.payload_size, u64::from(u32::MAX) + 1);
 }
 
@@ -120,7 +129,7 @@ fn supports_64bit_sizes() {
 fn rejects_invalid_global_entry_flag_combination() {
     let flags = GlobalFlags::NO_INDEX;
     let mut lfh = LocalFileHeader::minimal_store(b"x".to_vec(), 1);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     let err = write_lfh(&flags, &lfh).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }

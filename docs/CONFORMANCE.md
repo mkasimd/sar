@@ -47,14 +47,30 @@ maintainability cleanup pass.
   - `ArchiveReader::read_all_logical_files` assembles fragment groups automatically
   - `LogicalFile` type exposes `name`, `data`, `fragment_id`, `is_degraded`
 - **Milestone 8 archive-level Data Recovery TLV support**
-  - `inspect_recovery_metadata` — parse CD for RECOVERY TLVs (type IDs 0x10–0x1F), compute protected range
+  - `inspect_recovery_metadata` — parse CD for RECOVERY TLVs (type IDs 0x10–0x1F), compute protected range, enforce configured `ResourceLimits`
   - `plan_archive_repair` — validate erasures within protected range and against FEC block boundaries
-  - `repair_archive` — XOR and RS erasure repair on protected range when erasures are block-aligned
+  - `repair_archive` — XOR and RS erasure repair on protected range when erasures are block-aligned and within repair working-set limits
   - `RecoveryMetadata`, `RecoveryPlan`, `RepairReport`, `ErasureInput` public types
   - Returns `RecoveryUnavailable` for unaligned erasures and documents spec gap in SPEC_QUESTIONS.md
+- **Stage 2 resource-limit hardening**
+  - unified `ResourceLimits` model threaded through archive reader, LFH parsing, TLV parsing, sparse reconstruction, fragment reassembly, and recovery/repair helpers
+  - configured limits are enforced before dangerous allocations for global flags, KMS payloads, LFH headers, payload buffers, TLV values/counts, Central Dictionary regions, sparse maps, fragment groups, and repair working buffers
+  - resource-limit failures return `SAR_ERR_LIMIT_EXCEEDED`
+- **Stage 3 pipeline memory accounting and expansion-bomb protection**
+  - effective limit enforced as `min(max_decoded_entry_size, max_in_memory_buffer, max_total_pipeline_memory)` before any reconstruction buffer is allocated
+  - sparse expansion-bomb protection: `apply_sparse_reconstruction` and `read_all_logical_files` reject entries where `Uncompressed Size` exceeds configured limits **before** any allocation; the attack shape `tiny payload + huge Uncompressed Size + sparse extent near end` returns `SAR_ERR_LIMIT_EXCEEDED`, not `SAR_ERR_INVALID_MAP`
+  - fragmented sparse expansion bombs rejected via the same path using fragment-0's `Uncompressed Size`
+  - decompression output bounded by `max_decoded_entry_size` via `sar-compression`'s `max_output_size` parameter
+  - fragment group span bounded by `max_fragment_group_span` before assembly allocation
+  - fragment descriptor arithmetic overflow detected before any buffer is allocated
+  - loss-tolerant gap fill bounded by `max_loss_tolerant_gap`
+  - FEC/recovery working sets bounded by `max_fec_value_bytes` and `max_repair_working_set`
+  - all `u64 → usize` conversions go through `ResourceLimits::allocation_len` which performs checked conversion and limit checks atomically
+  - runtime memory budget not implemented by design; configured `ResourceLimits` are the deterministic protection
+  - `pipeline_memory_tests` test file added covering: sparse expansion-bomb reject, sparse bounded success, general memory-bound limits, sparse trailing hole tests, fragmentation tests, compression expansion tests, FEC/recovery working-set tests
 - **Milestone 8 CLI additions**
   - `sar repair <archive> <output> --fec [--erasures erasures.json]` command
-  - `sar extract` uses `read_all_logical_files` — automatically reconstructs fragment groups and applies sparse reconstruction
+  - `sar extract` supports sparse and fragmented extraction with temp-file finalization
   - `sar extract … --allow-lossy` flag permits LOSS_TOLERANT degraded output and reports it
   - `sar verify … --recovery` flag for recovery metadata validation
   - `sar inspect … --json` reports `global_ec`, `fragmentation`, `sparse_files`, per-entry fragment/sparse/loss-tolerant fields, and `recovery_tlvs`
@@ -62,9 +78,16 @@ maintainability cleanup pass.
   - M8 final pass: `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with LFH sparse map, `Uncompressed Size = logical_size`, gathered-payload write, overlap/bounds/length validation, round-trip through `ArchiveReader::read_all_logical_files`
   - M8 final pass: `ArchiveWriterOptions::sparse` field — sets `SPARSE_FILES` global flag at creation time; `write_sparse_entry` requires this flag
   - M8 final pass: CRC32 verification — `read_all_logical_files` verifies CRC32 (when `PER_FILE_CRC` set) over the fully reconstructed logical file (including sparse holes and trailing zeros), not over raw payload bytes; applies to both non-fragment and fragment-group paths
+- **Stage 4 CLI and file extraction resource-safety**
+  - `sar extract`, `sar verify`, and `sar repair` accept shared `ResourceLimits` override flags while keeping safe defaults when omitted
+  - CLI sparse extraction validates the apparent sparse size against `max_decoded_entry_size`, creates a temp file, sets final length, seeks to each sparse extent, and writes only gathered payload bytes
+  - CLI sparse extraction does not allocate `Uncompressed Size` bytes in memory and does not allocate zero buffers for sparse holes
+  - fragmented sparse extraction enforces fragment count/span and sparse output limits under the same `ResourceLimits` model
+  - CLI repair pre-checks archive-size limits before `fs::read`, enforces `max_repair_working_set`, and does not finalize outputs after limit failures
+  - CLI resource-limit failures are surfaced clearly as `SAR_ERR_LIMIT_EXCEEDED`
   - All SAR-owned public multi-field tuple types in protocol/domain code replaced with named-field structs
   - `LfhFragmentDescriptor { absolute_offset, fragment_size }` replaces the former `(u64, u32)` tuple in `LocalFileHeader.fragment_descriptor`
-  - `EntryMode` and `SarStatusParseError` opaque single-field newtypes retained as-is (intentionally private internals)
+  - `EntryMode` uses a private named `bits` field with explicit constructors/accessors; `SarStatusParseError` remains an opaque single-field error newtype
   - No `.0` / `.1` tuple access remains in SAR-owned protocol domain logic (only inside opaque newtype impls)
 - **Tests currently present**
   - unit and integration tests across `sar-core`, `sar-fec`, `sar-crypto`, and `sar-cli`
@@ -79,8 +102,10 @@ maintainability cleanup pass.
   - M8 closeout: `empty_area_tests` — empty-area filtering in `read_all_logical_files`, empty areas not in fragment groups, empty areas not in sparse reconstruction
   - M8 closeout: `sparse_hash_crc_tests` — `file_crc32`/`content_hash` preserved in `EntryMetadata`; CRC32 over reconstructed file passes; CRC32 over payload-only fails; reconstructed-file includes holes; different sparse maps produce different reconstructed output
   - M8 closeout: `cli_sparse_tests` — CLI extraction of sparse holes, trailing holes, malformed sparse maps, inspection of sparse archives
+  - Stage 4: `cli_resource_limit_tests` — default huge sparse-output rejection, explicit sparse expansion-bomb rejection, fragmented sparse span-limit rejection, sparse extraction success with a tight in-memory buffer, repair working-set rejection, and no-final-output guarantees
   - M8 final pass: `sparse_fragment_tests` — sparse map on fragment-0 applies to whole group; sparse map on non-zero fragment index returns `SAR_ERR_INVALID_MAP`; allow_lossy does not suppress `SAR_ERR_INVALID_MAP`; three-fragment scatter-gather via sparse map; trailing holes preserved across fragment boundaries; missing fragment without allow_lossy fails; missing fragment with allow_lossy+LOSS_TOLERANT succeeds with is_degraded=true; degraded sparse+fragment output is marked
   - M8 final pass: `sparse_writer_tests` — writer creates sparse entry with leading/middle/trailing holes; round-trips through reader; rejects overlapping extents; rejects extent beyond logical_size; rejects payload length mismatch (short and excess); requires sparse flag; edge cases (single full extent, empty extents, indexed archive)
+  - Stage 3: `pipeline_memory_tests` — 25 tests covering sparse expansion-bomb reject and bounded-success, general memory-bound limits (max_decoded_entry_size, max_in_memory_buffer, max_total_pipeline_memory), sparse trailing-hole limit enforcement, fragment descriptor overflow, huge fragment group span, loss-tolerant gap limit, fragmented sparse expansion bomb, decompression output limit, compressed bomb limit, FEC/recovery working-set limits, failed-repair non-output guarantee
 
 ## Partial
 
@@ -140,4 +165,3 @@ maintainability cleanup pass.
 - Content Hash verification is not implemented. The archive format stores a 32-byte content hash when `DEDUPLICATION` is set, but does not encode the hash algorithm identifier in the LFH or any other fixed-format field. The spec refers to "e.g., BLAKE3" without normatively specifying the algorithm field encoding. Verification cannot be performed without knowing the algorithm. This is an **implementation gap** (not a spec gap): once the spec normatively defines the algorithm encoding, verification can be added. See also `docs/SPEC_QUESTIONS.md`.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.
-

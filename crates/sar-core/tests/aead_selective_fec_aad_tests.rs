@@ -30,12 +30,17 @@ fn sample_lfh(fec_value: Vec<u8>) -> (GlobalFlags, LocalFileHeader, Vec<u8>) {
     (flags, lfh, bytes)
 }
 
+fn unlimited_limits() -> sar_core::ResourceLimits {
+    sar_core::ResourceLimits::unlimited()
+}
+
 #[test]
 fn lfh_aad_preserves_on_wire_header_size_and_excludes_only_fec_ranges() {
     let fec_value = vec![0xAB; 14];
     let (flags, lfh, lfh_bytes) = sample_lfh(fec_value.clone());
 
-    let aad_lfh_bytes = lfh_bytes_for_aad(flags, &lfh_bytes, FEC_ALGO_XOR, fec_value.len());
+    let aad_lfh_bytes =
+        lfh_bytes_for_aad(flags, &lfh_bytes, FEC_ALGO_XOR, fec_value.len()).expect("aad lfh");
     let fec_size_offset = fec_size_field_offset(flags);
 
     let mut expected = Vec::new();
@@ -58,8 +63,8 @@ fn fec_value_bytes_do_not_change_aad() {
     let (flags, _, first_lfh_bytes) = sample_lfh(vec![0x11; 14]);
     let (_, _, second_lfh_bytes) = sample_lfh(vec![0xEE; 14]);
 
-    let first = lfh_bytes_for_aad(flags, &first_lfh_bytes, FEC_ALGO_XOR, 14);
-    let second = lfh_bytes_for_aad(flags, &second_lfh_bytes, FEC_ALGO_XOR, 14);
+    let first = lfh_bytes_for_aad(flags, &first_lfh_bytes, FEC_ALGO_XOR, 14).expect("aad lfh");
+    let second = lfh_bytes_for_aad(flags, &second_lfh_bytes, FEC_ALGO_XOR, 14).expect("aad lfh");
 
     assert_eq!(first, second);
 }
@@ -71,7 +76,7 @@ fn changing_header_size_bytes_breaks_aead_authentication() {
 
     let aad = sar_crypto::aad::build_aead_aad(
         b"global-flags",
-        &lfh_bytes_for_aad(flags, &lfh_bytes, FEC_ALGO_XOR, lfh.fec_value.len()),
+        &lfh_bytes_for_aad(flags, &lfh_bytes, FEC_ALGO_XOR, lfh.fec_value.len()).expect("aad lfh"),
     );
     let encoded = encode_payload_v2(
         &payload,
@@ -98,7 +103,8 @@ fn changing_header_size_bytes_breaks_aead_authentication() {
             &tampered_lfh_bytes,
             FEC_ALGO_XOR,
             lfh.fec_value.len(),
-        ),
+        )
+        .expect("aad lfh"),
     );
 
     let err = decode_payload_v2(
@@ -190,8 +196,10 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
 fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
     let (archive, password, payload) = write_encrypted_selective_fec_archive();
 
-    let (header, global_len) = parse_global_header(&archive).expect("global header");
-    let (lfh, lfh_len) = parse_lfh(&archive[global_len..], &header.flags).expect("lfh");
+    let (header, global_len) =
+        parse_global_header(&archive, &unlimited_limits()).expect("global header");
+    let (lfh, lfh_len) =
+        parse_lfh(&archive[global_len..], &header.flags, &unlimited_limits()).expect("lfh");
     let final_lfh_bytes = &archive[global_len..global_len + lfh_len];
 
     let global_aad = global_header_flags_bytes(&header);
@@ -202,7 +210,8 @@ fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
             final_lfh_bytes,
             lfh.fec_algo_id.unwrap_or(0),
             lfh.fec_value.len(),
-        ),
+        )
+        .expect("aad lfh"),
     );
 
     let mut placeholder_lfh = lfh.clone();
@@ -216,7 +225,8 @@ fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
             &placeholder_lfh_bytes,
             placeholder_lfh.fec_algo_id.unwrap_or(0),
             placeholder_lfh.fec_value.len(),
-        ),
+        )
+        .expect("aad lfh"),
     );
 
     assert_eq!(writer_aad, reader_aad);
@@ -254,8 +264,10 @@ fn payload_data_starts_at_lfh_start_plus_header_size() {
         writer.finish().expect("finish");
     }
 
-    let (header, global_len) = parse_global_header(&archive).expect("global header");
-    let (lfh, lfh_len) = parse_lfh(&archive[global_len..], &header.flags).expect("lfh");
+    let (header, global_len) =
+        parse_global_header(&archive, &unlimited_limits()).expect("global header");
+    let (lfh, lfh_len) =
+        parse_lfh(&archive[global_len..], &header.flags, &unlimited_limits()).expect("lfh");
 
     let header_size = usize::try_from(lfh.header_size).expect("header size");
     let payload_start = global_len + header_size;

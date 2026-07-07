@@ -10,6 +10,7 @@ serde_json.workspace = true
 walkdir.workspace = true
 rpassword.workspace = true
 getrandom.workspace = true
+crc32fast.workspace = true
 sar-core = { path = "../sar-core" }
 sar-compression = { path = "../sar-compression" }
 sar-crypto = { path = "../sar-crypto" }

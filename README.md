@@ -35,6 +35,22 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with validation; round-trips through reader
   - `ArchiveWriterOptions::sparse` field — enables `SPARSE_FILES` global flag
   - CRC32 verification in `read_all_logical_files` — verified over fully reconstructed bytes including sparse holes
+- **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
+  - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
+  - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
+  - checked arithmetic and checked conversions now gate LFH, TLV, sparse, fragment, and recovery parsing paths
+- **Stage 3 pipeline memory accounting and expansion-bomb protection**
+  - in-memory reconstruction APIs enforce configured limits before allocating any reconstruction buffer
+  - **sparse expansion-bomb protection**: `tiny stored payload + huge Uncompressed Size + sparse extent near end` is rejected with `SAR_ERR_LIMIT_EXCEEDED` before any large allocation; this applies to non-fragmented and fragmented sparse entries alike
+  - decompression bounded by `max_decoded_entry_size` to prevent decompression-bomb attacks
+  - fragment group span, loss-tolerant gap filling, and FEC/recovery working sets are all bounded before allocation
+  - runtime memory budget not implemented by design; configured `ResourceLimits` are the deterministic protection
+- **Stage 4 CLI and file extraction resource-safety**
+  - `sar extract`, `sar verify`, and `sar repair` now accept shared `ResourceLimits` override flags and use safe defaults when not overridden
+  - CLI sparse extraction writes sparse files with bounded scatter-gather output to temp files instead of reconstructing the apparent sparse size in memory
+  - fragmented sparse extraction keeps fragment-span checks and sparse-output checks under the same `ResourceLimits` model
+  - CLI repair pre-checks archive size, enforces repair working-set limits, and never finalizes output after resource-limit failure
+  - CLI resource-limit failures are reported clearly as `resource-limit error (SAR_ERR_LIMIT_EXCEEDED)`
 
 ## Workspace layout
 
@@ -71,10 +87,40 @@ sar create <input> <output.sar> [--indexed|--no-index]
     [--fec xor|rs]
 
 sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
+
 sar list <archive.sar>
 sar verify <archive.sar> [--password PASSWORD] [--recovery]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
 sar inspect <archive.sar> [--json]
 sar repair <archive.sar> <output.sar> --fec [--erasures erasures.json]
+    [--max-archive-size BYTES]
+    [--max-decoded-entry-size BYTES]
+    [--max-in-memory-buffer BYTES]
+    [--max-total-pipeline-memory BYTES]
+    [--max-sparse-map-bytes BYTES]
+    [--max-sparse-descriptors COUNT]
+    [--max-fragment-count COUNT]
+    [--max-fragment-group-span BYTES]
+    [--max-loss-tolerant-gap BYTES]
+    [--max-recovery-protected-range BYTES]
+    [--max-repair-working-set BYTES]
 sar version
 
 # shorthand aliases
@@ -90,8 +136,11 @@ Notes:
 - `create` supports per-entry Selective FEC via `--fec xor|rs`.
 - `extract` and `verify` can load passwords from `--password`, `SAR_PASSWORD`, or an interactive prompt.
 - `extract --allow-lossy` permits archives with LOSS_TOLERANT entries (warns if present).
+- `extract` writes sparse outputs via temp files plus scatter-gather seeks, so sparse holes are not materialized as a full in-memory buffer before writing.
 - `verify --recovery` additionally validates fragmentation, sparse, and Data Recovery TLV metadata.
 - `repair` applies archive-level XOR/RS erasure repair using explicit erasure positions from `--erasures`.
+- `extract`, `verify`, and `repair` use default `ResourceLimits` safety caps unless CLI overrides are supplied. Relevant defaults include `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, `max_archive_size = 16 GiB`, and `max_repair_working_set = 2 GiB`.
+- sparse apparent-size failures and repair working-set failures return `SAR_ERR_LIMIT_EXCEEDED` and do not leave final output files behind
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
 
 ## Validation

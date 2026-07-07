@@ -101,7 +101,7 @@ fn global_compressed_with_inert_entry_mode_is_effective_store() {
 fn compressed_entry_without_global_compressed_fails_flag_conflict() {
     let flags = GlobalFlags::NO_INDEX;
     let mut lfh = LocalFileHeader::minimal_store(b"y.bin".to_vec(), 1);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     let err = write_lfh(&flags, &lfh).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -118,7 +118,7 @@ fn assigned_unsupported_compression_returns_unsupported() {
     })
     .expect("header");
     let mut lfh = LocalFileHeader::minimal_store(b"u.bin".to_vec(), 3);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     lfh.comp_algo_id = Some(0x03);
     let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
     bytes.extend_from_slice(&lfh_bytes);
@@ -140,7 +140,7 @@ fn reserved_compression_returns_reserved_value() {
     })
     .expect("header");
     let mut lfh = LocalFileHeader::minimal_store(b"r.bin".to_vec(), 3);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     lfh.comp_algo_id = Some(0x80);
     let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
     bytes.extend_from_slice(&lfh_bytes);
@@ -162,7 +162,7 @@ fn corrupted_deflate_data_returns_sar_error() {
     })
     .expect("header");
     let mut lfh = LocalFileHeader::minimal_store(b"d.bin".to_vec(), 4);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     lfh.comp_algo_id = Some(COMP_ALGO_DEFLATE);
     lfh.payload_size = 8;
     let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
@@ -194,7 +194,7 @@ fn corrupted_zstd_data_returns_sar_error() {
     })
     .expect("header");
     let mut lfh = LocalFileHeader::minimal_store(b"z.bin".to_vec(), 4);
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     lfh.comp_algo_id = Some(COMP_ALGO_ZSTD);
     lfh.payload_size = 8;
     let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
@@ -229,7 +229,7 @@ fn decompressed_length_mismatch_returns_invalid_length() {
         b"m.bin".to_vec(),
         u64::try_from(encoded.len()).expect("len"),
     );
-    lfh.entry_mode = EntryMode(1 << 3);
+    lfh.entry_mode = EntryMode::from_bits(1 << 3);
     lfh.comp_algo_id = Some(COMP_ALGO_DEFLATE);
     lfh.uncompressed_size = u64::try_from(payload.len() + 1).expect("len");
     let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
