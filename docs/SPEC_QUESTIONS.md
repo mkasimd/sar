@@ -108,4 +108,4 @@ The items below are derived from the current code audit. They document places wh
   - **Issue:** Future cross-language bindings will affect API shape, ownership rules, and interoperability claims.
   - **Current conservative implementation:** no FFI/C ABI is implemented in this pass.
   - **Interoperability risk:** later ABI choices could freeze semantics that do not map cleanly from the current generic Rust APIs.
-  - **Follow-up needed:** decide on opaque handles, `sar_status_t`, buffer ownership rules, key-provider callback rules, and version negotiation before Milestone 12 begins.
+  - **Follow-up needed:** decide first on opaque handles, `sar_status_t`, buffer ownership rules, and version negotiation, then finalize key-provider callback rules and other callback-heavy contracts before Milestone 12 begins.
