@@ -722,6 +722,7 @@ Used only when `CDC_SUPPORT` (Bit 5) is set. This ID is stored in the **CDC Algo
 * `0x01`: **RABIN** (Rabin Fingerprinting based CDC).
 * `0x02`: **FASTCDC** (Gear-hash based high-speed CDC).
 * `0x03`: **BUZHASH** (Buzhash based CDC).
+* `0x04 - 0xEF`: **RESERVED**
 * `0xF0–0xFF`: **CUSTOM** (Implementation-defined range).
 
 Implementations that support CDC processing (`CDC_SUPPORT`) MUST implement:
@@ -1709,8 +1710,25 @@ Implementations encountering an assigned but unsupported hashing algorithm ident
 
 Implementations encountering a reserved hashing algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
-### 9.5 CDC_MAP (ID 0x40 - 0x4F)
-see section 21.
+### 9.5 CDC Metadata (ID `0x40–0x4F`)
+
+The `0x40–0x4F` Metadata TLV range is reserved for CDC cataloging, recipe resolution, and external-provider metadata.
+
+The detailed semantics and value layouts for CDC metadata TLVs are defined in **Section 21, CDC Cataloging and Metadata**.
+
+The CDC metadata TLV Type IDs are assigned as follows:
+
+| TLV Type ID | Name               | Description                                       | Value layout            |
+| ----------- | ------------------ | ------------------------------------------------- | ----------------------- |
+| `0x40`      | `CDC_MAP`          | Embedded CDC catalog for self-contained archives. | See Section 21.1.       |
+| `0x41`      | `CDC_EXT_PROVIDER` | URI for an external chunk provider.               | See Section 21.2.       |
+| `0x42–0x4E` | RESERVED           | Reserved for future CDC metadata assignments.     | N/A                     |
+| `0x4F`      | `CDC_CUSTOM`       | Implementation-defined CDC metadata extension.    | Implementation-defined. |
+
+Implementations encountering an assigned but unsupported CDC metadata TLV Type ID MUST return `SAR_ERR_UNSUPPORTED`.
+
+Implementations encountering a reserved CDC metadata TLV Type ID MUST return `SAR_ERR_RESERVED_VALUE`.
+
 
 ## 10. Error and Status Mapping
 Standardized status, warning, and error return values for SAR API implementations and session status reporting:
@@ -2930,26 +2948,52 @@ The `CDC Algo ID` is the final stage of the decoding pipeline.
 4. **Final Reassembly**: Chunks are appended to the logical file.
 
 ## 21. CDC Cataloging and Metadata
-To resolve Recipes, SAR implementations require a Catalog mapping hashes to physical byte offsets.
+
+SAR CDC processing uses the LFH `CDC Algo ID` field to identify the chunking algorithm for an entry. The CDC algorithm registry is defined in **Section 8.5, CDC Algorithms (****`SAR_L_CDC`****)**.
+
+CDC cataloging and recipe-resolution metadata is carried in Metadata TLVs from the `0x40–0x4F` range. The CDC metadata TLV registry is defined in **Section 9.5, CDC Metadata (ID ****`0x40–0x4F`****)**.
+
+To resolve Recipes, SAR implementations require a Catalog mapping content hashes to physical byte locations or to an external provider.
 
 ### 21.1 Central Dictionary CDC Map (`CDC_MAP`)
-For self-contained archives, the Catalog is stored as a TLV block in the Central Dictionary.
 
-* **TLV Type ID**: `0x40`
+For self-contained archives, the Catalog is stored as a Metadata TLV block in the Central Dictionary using the CDC metadata TLV Type ID assigned in Section 9.5.
+
+* **TLV Type ID**: `0x40` (`CDC_MAP`)
 * **Structure**: A sequence of `[Hash, Partition_ID, Absolute_Offset, Compressed_Size]` records.
 * **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, this TLV SHOULD be present.
 
-### 21.2 External Database Integration
-In distributed environments (e.g., Edge-to-Cloud streaming), the Catalog MAY be maintained externally.
+A parser does not require knowledge of the CDC chunking algorithm (as defined by the LFH `CDC Algo ID` in Section 8.5) to parse the `CDC_MAP` structure itself. The CDC algorithm determines how chunks are produced, but the `CDC_MAP` is a catalog of already materialized chunk metadata.
 
-* **TLV Type ID**: `0x31` (`CDC_EXT_PROVIDER`)
-* **Value**: A UTF-8 URI string pointing to the external chunk provider (e.g., `sarp+https://chunks.provider.net/v1`).
-* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (19).
+However, a parser MUST know the hash algorithm and field layout used within the `CDC_MAP` in order to correctly interpret and utilize the records. Therefore, this section MUST normatively define:
+
+* The hash algorithm used for the `Hash` field.
+* The byte width and encoding of each field (`Hash`, `Partition_ID`, `Absolute_Offset`, `Compressed_Size`).
+* The endianness of all multi-byte fields.
+* The method for determining the number of records (e.g., implicit via TLV Length or explicit count field).
+* Any alignment or padding requirements within the record sequence.
+
+Without these definitions, portable parsing and interoperability of `CDC_MAP` data cannot be guaranteed.
+
+### 21.2 External Database Integration (`CDC_EXT_PROVIDER`)
+
+In distributed environments, such as Edge-to-Cloud streaming, the Catalog MAY be maintained externally.
+
+* **TLV Type ID**: `0x41` (`CDC_EXT_PROVIDER`)
+* **Value**: A UTF-8 URI string pointing to the external chunk provider, for example `sarp+https://chunks.provider.net/v1`.
+* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`19`).
+
+**Security Considerations**: The use of external provider URIs introduces potential security risks, including unauthorized data access, data exfiltration, or interaction with untrusted endpoints. Implementations SHOULD validate and sanitize all URIs before use. Implementations MAY restrict acceptable URI schemes, enforce allowlists of trusted domains, or apply other policy controls in an implementation-defined manner. Implementations SHOULD provide mechanisms to disable external provider resolution entirely or require explicit user consent before accessing external resources.
+
+Implementations MUST NOT emit `CDC_EXT_PROVIDER` using TLV Type ID `0x31`, because `0x31` is assigned to `DATA_HASH/BLAKE3` by Section 9.4.
 
 ### 21.3 Hybrid Deduplication Performance
+
 Implementations SHOULD utilize Selective Deduplication to optimize streaming throughput.
+
 * **Intros/Outros/Ads**: Marked with `CDC Algo ID > 0`. These are pulled from the local edge cache via the Recipe.
 * **Movie/Main Content**: Marked with `CDC Algo ID = 0x00`. These flow as Literal Mode data, avoiding the CPU overhead of fingerprinting or catalog lookups.
+
 
 ## 22. Implementation and Developer Guidance
 ### 22.1 Memory and I/O Optimization
