@@ -49,9 +49,29 @@ stored payload -> FEC repair over ciphertext bytes (if applicable)
 Notes:
 
 - current writer-side integration computes Selective FEC over ciphertext bytes when encryption is enabled
-- archive-level/global EC is validated structurally, not repaired automatically
+- archive-level/global EC is validated structurally; `repair_archive` applies XOR/RS repair for block-aligned erasures
+- LOSS_TOLERANT flag never bypasses AEAD authentication — if AEAD verification fails, the entry is rejected regardless of the LOSS_TOLERANT setting
+- archive-level repair applies FEC repair to ciphertext bytes within the protected range; AEAD tags within that range are repaired before authentication
 
-## Filesystem and parsing safety
+## Fragmentation and loss-tolerant semantics
+
+- `reconstruct_fragments` fills gap regions in the logical output buffer with zero bytes when LOSS_TOLERANT is set, and sets `is_degraded = true`
+- without LOSS_TOLERANT, any missing fragment index returns `FragmentGap` error and no data is released
+- AEAD authentication of individual fragment payloads must succeed before plaintext is released, regardless of LOSS_TOLERANT
+- LOSS_TOLERANT permits degraded logical file output only for *missing* fragments, not for *corrupted* (authentication-failed) fragments
+
+## Sparse file reconstruction security
+
+- Sparse reconstruction occurs **after** fragment reassembly, AEAD authentication (decryption), and decompression. It never runs on unauthenticated or still-encrypted bytes.
+- Sparse descriptor arithmetic uses checked arithmetic; overflow in `offset + length` or an extent exceeding `Uncompressed Size` returns `SarError::InvalidMap`.
+- Overlapping descriptors are rejected before reconstruction begins.
+- Sparse payload length is validated: it must exactly equal the sum of all extent lengths. Excess bytes (possible padding forgery) and short payload (truncated payload) both return an error.
+- The zero-filled reconstruction buffer is bounded by `ArchiveReaderOptions::max_decoded_entry_size` to prevent denial-of-service via large `Uncompressed Size` values.
+- **CRC32 verification** is now active in `read_all_logical_files`. CRC32 is computed over the fully reconstructed sparse file including zero-filled holes; it is not computed over the stored sparse payload bytes alone. A CRC mismatch returns `SarError::CrcMismatch`. This ensures that tampering with sparse map offsets (changing where data lands in the logical file without changing the stored payload) is detected when the LFH carries a CRC32.
+- **Content Hash is not verified** because the archive format does not encode the hash algorithm identifier. The 32-byte `content_hash` field is parsed and preserved in `EntryMetadata`, but no verification is performed. See `docs/CONFORMANCE.md` Known Gaps.
+- **Sparse Map placement**: in a fragmented archive, a Sparse Map on any non-zero fragment index returns `SarError::InvalidMap` immediately and is never suppressed by `allow_lossy`, preventing a malformed archive from triggering undefined reconstruction ordering.
+
+
 
 - Extraction rejects absolute paths.
 - Extraction rejects `..` traversal.
@@ -82,5 +102,6 @@ When a stable ABI is introduced later, security design should explicitly cover:
 
 - signature support
 - fuller interoperability and adversarial corpus testing
-- archive-level repair orchestration
+- complete archive-level repair orchestration for non-block-aligned erasures (pending spec clarification)
+- automatic end-to-end loss-tolerant extraction integration in `ArchiveReader`
 - stable FFI/C ABI with explicit status codes, opaque handles, and secret-handling rules

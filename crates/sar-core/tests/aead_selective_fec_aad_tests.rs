@@ -159,6 +159,7 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
             }),
         }),
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
 
     let mut archive = Vec::new();
@@ -240,6 +241,7 @@ fn payload_data_starts_at_lfh_start_plus_header_size() {
                 no_index: true,
                 encryption: None,
                 fec: Some(FecSettings::default_xor()),
+                sparse: false,
             },
         )
         .expect("writer");

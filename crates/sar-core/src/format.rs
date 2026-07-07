@@ -49,6 +49,18 @@ pub struct GlobalHeader {
     pub kms: Option<KmsData>,
 }
 
+/// Fragment descriptor stored inline in a Local File Header.
+///
+/// Records the absolute byte offset and declared byte size of this fragment's
+/// contribution within the fully reconstructed logical file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LfhFragmentDescriptor {
+    /// Absolute byte offset of this fragment within the logical file.
+    pub absolute_offset: u64,
+    /// Byte length of this fragment's contribution to the logical file.
+    pub fragment_size: u32,
+}
+
 /// Local file header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalFileHeader {
@@ -78,8 +90,8 @@ pub struct LocalFileHeader {
     pub fragment_id: Option<u32>,
     /// Fragment index (when global FILE_FRAGMENTATION).
     pub fragment_index: Option<u32>,
-    /// Fragment descriptor absolute offset and size.
-    pub fragment_descriptor: Option<(u64, u32)>,
+    /// Fragment descriptor absolute offset and size (when global FILE_FRAGMENTATION).
+    pub fragment_descriptor: Option<LfhFragmentDescriptor>,
     /// IV/nonce (when global ENCRYPTED).
     pub iv_nonce: Option<[u8; 24]>,
     /// Delta base hash (when global HAS_DELTA).
@@ -489,7 +501,12 @@ pub fn parse_lfh(input: &[u8], flags: &GlobalFlags) -> Result<(LocalFileHeader, 
         None
     };
     let fragment_descriptor = if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
-        Some((hdr_cursor.read_u64_le()?, hdr_cursor.read_u32_le()?))
+        let absolute_offset = hdr_cursor.read_u64_le()?;
+        let fragment_size = hdr_cursor.read_u32_le()?;
+        Some(LfhFragmentDescriptor {
+            absolute_offset,
+            fragment_size,
+        })
     } else {
         None
     };
@@ -667,7 +684,10 @@ pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, 
     if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
         writer.write_u32_le(lfh.fragment_id.unwrap_or(0));
         writer.write_u32_le(lfh.fragment_index.unwrap_or(0));
-        let (abs, sz) = lfh.fragment_descriptor.unwrap_or((0, 0));
+        let (abs, sz) = lfh
+            .fragment_descriptor
+            .as_ref()
+            .map_or((0u64, 0u32), |fd| (fd.absolute_offset, fd.fragment_size));
         writer.write_u64_le(abs);
         writer.write_u32_le(sz);
     }

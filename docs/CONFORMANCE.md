@@ -1,6 +1,7 @@
 # Conformance Statement
 
-This document reflects the current repository state after the Milestones 6–7 remediation/fix work visible in source.
+This document reflects the current repository state after the Milestone 8 closeout and
+maintainability cleanup pass.
 
 ## Implemented
 
@@ -28,21 +29,82 @@ This document reflects the current repository state after the Milestones 6–7 r
   - Selective FEC metadata in LFH
   - FEC metadata validation during archive verify/inspect
   - CLI create/list/verify/inspect/extract coverage for current Selective FEC archives
+- **Milestone 8 sparse file support**
+  - `parse_sparse_map` / `write_sparse_map` for 32-bit and 64-bit sparse map formats
+  - `validate_sparse_extents` — overlap, bounds, and arithmetic overflow checking
+  - `apply_sparse_reconstruction` — scatter-gather into zero-filled logical-size buffer; rejects excess or insufficient payload bytes
+  - `EntryMetadata.sparse_extents` populated from LFH sparse map bytes
+  - `ArchiveReader::read_all_logical_files` applies sparse reconstruction automatically using **LFH `Uncompressed Size`** as the final logical file size
+  - Trailing sparse holes beyond the final extent are reconstructed as `0x00` bytes up to `Uncompressed Size`
+  - Empty Areas (`Name Length == 0`, `IS_FRAGMENT == 0`) are excluded from logical file output and do not participate in sparse reconstruction, hashing, delta, or fragmentation
+- **Milestone 8 fragment reassembly**
+  - `FragmentDescriptor`, `FragmentEntry` types (with named fields, no tuple structs)
+  - `LfhFragmentDescriptor` named struct in `LocalFileHeader` (replaces `Option<(u64, u32)>` tuple)
+  - `validate_fragment_group` — bounds and overlap consistency
+  - `reconstruct_fragments` — sort by index, scatter-gather by Fragment Descriptor absolute offset
+  - Loss-tolerant semantics: returns `(data, is_degraded=true)` for gap with LOSS_TOLERANT; returns `FragmentGap` error without it
+  - `EntryMetadata` fragment fields populated from LFH
+  - `ArchiveReader::read_all_logical_files` assembles fragment groups automatically
+  - `LogicalFile` type exposes `name`, `data`, `fragment_id`, `is_degraded`
+- **Milestone 8 archive-level Data Recovery TLV support**
+  - `inspect_recovery_metadata` — parse CD for RECOVERY TLVs (type IDs 0x10–0x1F), compute protected range
+  - `plan_archive_repair` — validate erasures within protected range and against FEC block boundaries
+  - `repair_archive` — XOR and RS erasure repair on protected range when erasures are block-aligned
+  - `RecoveryMetadata`, `RecoveryPlan`, `RepairReport`, `ErasureInput` public types
+  - Returns `RecoveryUnavailable` for unaligned erasures and documents spec gap in SPEC_QUESTIONS.md
+- **Milestone 8 CLI additions**
+  - `sar repair <archive> <output> --fec [--erasures erasures.json]` command
+  - `sar extract` uses `read_all_logical_files` — automatically reconstructs fragment groups and applies sparse reconstruction
+  - `sar extract … --allow-lossy` flag permits LOSS_TOLERANT degraded output and reports it
+  - `sar verify … --recovery` flag for recovery metadata validation
+  - `sar inspect … --json` reports `global_ec`, `fragmentation`, `sparse_files`, per-entry fragment/sparse/loss-tolerant fields, and `recovery_tlvs`
+  - M8 final pass: sparse reconstruction across fragment groups — Sparse Map MUST appear on fragment index 0 and applies to the entire reassembled group; non-zero index with sparse map returns `SAR_ERR_INVALID_MAP`; this error is never suppressed by `allow_lossy`
+  - M8 final pass: `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with LFH sparse map, `Uncompressed Size = logical_size`, gathered-payload write, overlap/bounds/length validation, round-trip through `ArchiveReader::read_all_logical_files`
+  - M8 final pass: `ArchiveWriterOptions::sparse` field — sets `SPARSE_FILES` global flag at creation time; `write_sparse_entry` requires this flag
+  - M8 final pass: CRC32 verification — `read_all_logical_files` verifies CRC32 (when `PER_FILE_CRC` set) over the fully reconstructed logical file (including sparse holes and trailing zeros), not over raw payload bytes; applies to both non-fragment and fragment-group paths
+  - All SAR-owned public multi-field tuple types in protocol/domain code replaced with named-field structs
+  - `LfhFragmentDescriptor { absolute_offset, fragment_size }` replaces the former `(u64, u32)` tuple in `LocalFileHeader.fragment_descriptor`
+  - `EntryMode` and `SarStatusParseError` opaque single-field newtypes retained as-is (intentionally private internals)
+  - No `.0` / `.1` tuple access remains in SAR-owned protocol domain logic (only inside opaque newtype impls)
 - **Tests currently present**
   - unit and integration tests across `sar-core`, `sar-fec`, `sar-crypto`, and `sar-cli`
   - CLI round-trip tests for indexed and `NO_INDEX` flows
   - CLI compression tests
   - CLI encryption tests
   - CLI FEC tests for XOR and Reed-Solomon
+  - M8: fragment reassembly tests, sparse map tests, loss-tolerant tests, recovery orchestration tests, CLI M8 integration tests
+  - M8 closeout: `logical_file_tests` — fragment group reconstruction, missing fragment errors, loss-tolerant degraded output, sparse zero-fill with correct `Uncompressed Size`, overlapping sparse extents, large-hole allocation cap, cursor reset
+  - M8 closeout: `sparse_tests` — descriptor parsing, scatter-gather, trailing/leading/middle holes, excess/short payload rejection, zero-length descriptors
+  - M8 closeout: `sparse_conformance_tests` — spec-mandated trailing-hole and multi-hole vectors, compression+sparse pipeline, fragmentation+sparse ordering, allocation cap, malformed sparse map, loss-tolerant non-suppression
+  - M8 closeout: `empty_area_tests` — empty-area filtering in `read_all_logical_files`, empty areas not in fragment groups, empty areas not in sparse reconstruction
+  - M8 closeout: `sparse_hash_crc_tests` — `file_crc32`/`content_hash` preserved in `EntryMetadata`; CRC32 over reconstructed file passes; CRC32 over payload-only fails; reconstructed-file includes holes; different sparse maps produce different reconstructed output
+  - M8 closeout: `cli_sparse_tests` — CLI extraction of sparse holes, trailing holes, malformed sparse maps, inspection of sparse archives
+  - M8 final pass: `sparse_fragment_tests` — sparse map on fragment-0 applies to whole group; sparse map on non-zero fragment index returns `SAR_ERR_INVALID_MAP`; allow_lossy does not suppress `SAR_ERR_INVALID_MAP`; three-fragment scatter-gather via sparse map; trailing holes preserved across fragment boundaries; missing fragment without allow_lossy fails; missing fragment with allow_lossy+LOSS_TOLERANT succeeds with is_degraded=true; degraded sparse+fragment output is marked
+  - M8 final pass: `sparse_writer_tests` — writer creates sparse entry with leading/middle/trailing holes; round-trips through reader; rejects overlapping extents; rejects extent beyond logical_size; rejects payload length mismatch (short and excess); requires sparse flag; edge cases (single full extent, empty extents, indexed archive)
 
 ## Partial
 
 - **Compliance profiles**
-  - `validate_archive_profile()` exists, but current logic is limited and does not represent complete post–Milestones 6–7 conformance checking.
+  - `validate_archive_profile()` exists, but current logic is limited and does not represent complete post–Milestone 8 conformance checking.
   - `ComplianceProfile::Standard` reports that validation is not fully implemented.
 - **Archive-level FEC/global EC**
   - archive verification validates recovery TLV structure when present
-  - there is no full archive repair orchestration or CLI repair command
+  - `inspect_recovery_metadata` fully parses protected range and TLV summaries
+  - `plan_archive_repair` validates erasures within protected range and block boundaries
+  - `repair_archive` applies XOR/RS repair for block-aligned erasures
+  - returns `RecoveryUnavailable` for non-block-aligned erasures (spec gap; see SPEC_QUESTIONS.md)
+  - CLI `repair` command implemented with temp-file safety pattern
+- **Sparse logical-size derivation**
+  - Logical size for sparse reconstruction is taken from the LFH `Uncompressed Size` field, which the spec defines as the full logical file size including trailing holes
+  - Trailing holes after the final sparse extent are filled with zero bytes
+  - Sparse payload bytes (sum of extent lengths) may be smaller than `Uncompressed Size`; the difference is the trailing hole region
+- **Loss-tolerant extraction**
+  - LOSS_TOLERANT flag parsed and surfaced in `EntryMetadata`
+  - `reconstruct_fragments` respects LOSS_TOLERANT and returns degraded flag
+  - `ArchiveReader::read_all_logical_files(allow_lossy: bool)` wires LOSS_TOLERANT through the high-level path
+  - AEAD authentication failures are never suppressed by `allow_lossy`
+  - Format errors are never suppressed by `allow_lossy`
+  - End-to-end streaming/session semantics for loss-tolerant output remain out of scope until Milestone 10
 - **Asymmetric-wrap KMS**
   - public KMS structures and callback-based resolution exist
   - there is no built-in asymmetric wrapping implementation in the workspace
@@ -55,19 +117,18 @@ This document reflects the current repository state after the Milestones 6–7 r
 - full signature generation/verification
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
-- fragmentation reassembly
 - partition set reconstruction
-- sparse file reconstruction
 - streaming/session APIs
 - transport-layer APIs
 - stable C ABI / FFI layer
-- dedicated FEC repair command surface in the CLI
+- archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
 ## Planned
 
 - later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`, `sar-stream`, `sar-transport`) remain placeholders
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
+- **Milestone 10:** streaming/session APIs
 - **Milestone 12:** stable FFI / C ABI for C, C++, and other language bindings
 
 ## Known Gaps
@@ -75,6 +136,8 @@ This document reflects the current repository state after the Milestones 6–7 r
 - The repository does **not** currently satisfy full Standard Compliance Profile requirements.
 - Public flag and format definitions cover more protocol surface than the currently implemented behaviors.
 - `sar-core::profile` still reflects an older subset of behavior and should not be treated as a definitive conformance oracle.
-- Current CLI FEC support is limited to create/inspect/list/verify/extract of archives that already encode Selective FEC metadata; there is no explicit `repair` workflow.
+- Archive-level repair for non-block-aligned erasures returns `RecoveryUnavailable`; the spec does not define a normative byte-to-block mapping for this case.
+- Content Hash verification is not implemented. The archive format stores a 32-byte content hash when `DEDUPLICATION` is set, but does not encode the hash algorithm identifier in the LFH or any other fixed-format field. The spec refers to "e.g., BLAKE3" without normatively specifying the algorithm field encoding. Verification cannot be performed without knowing the algorithm. This is an **implementation gap** (not a spec gap): once the spec normatively defines the algorithm encoding, verification can be added. See also `docs/SPEC_QUESTIONS.md`.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.
+

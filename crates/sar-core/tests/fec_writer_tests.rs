@@ -65,6 +65,7 @@ fn xor_fec_roundtrip_no_index() {
         no_index: true,
         encryption: None,
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
     let results = write_and_read(opts, &[("hello.bin", payload.clone())]).expect("roundtrip");
 
@@ -89,6 +90,7 @@ fn xor_fec_roundtrip_indexed() {
         no_index: false,
         encryption: None,
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
     let results = write_and_read(opts, &[("data.txt", payload.clone())]).expect("roundtrip");
 
@@ -107,6 +109,7 @@ fn rs_fec_roundtrip_no_index() {
         no_index: true,
         encryption: None,
         fec: Some(FecSettings::default_rs()),
+        sparse: false,
     };
     let results = write_and_read(opts, &[("data.bin", payload.clone())]).expect("roundtrip");
 
@@ -130,6 +133,7 @@ fn xor_fec_with_compression_roundtrip() {
         no_index: true,
         encryption: None,
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
     let mut buf = Vec::new();
     {
@@ -210,6 +214,7 @@ fn xor_fec_with_aead_encryption_roundtrip() {
             kms_params,
         }),
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
 
     let password = sar_crypto::SecretString::new("test-password".to_string());
@@ -271,6 +276,7 @@ fn rs_fec_with_aead_encryption_roundtrip() {
             kms_params,
         }),
         fec: Some(FecSettings::default_rs()),
+        sparse: false,
     };
 
     let password = sar_crypto::SecretString::new("pass123".to_string());
@@ -317,6 +323,7 @@ fn verify_fec_archive_succeeds() {
         no_index: false,
         encryption: None,
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
     let payloads: &[(&str, Vec<u8>)] =
         &[("a.bin", make_payload(256)), ("b.bin", make_payload(512))];
@@ -351,6 +358,7 @@ fn selective_fec_flag_is_set_in_global_header() {
         no_index: true,
         encryption: None,
         fec: Some(FecSettings::default_xor()),
+        sparse: false,
     };
     let mut buf = Vec::new();
     {
@@ -387,6 +395,7 @@ fn all_entries_receive_fec_metadata() {
         no_index: true,
         encryption: None,
         fec: Some(FecSettings::default_rs()),
+        sparse: false,
     };
     let results = write_and_read(opts, &payloads).expect("roundtrip");
 
@@ -407,6 +416,7 @@ fn no_fec_when_option_is_none() {
         no_index: true,
         encryption: None,
         fec: None,
+        sparse: false,
     };
     let results = write_and_read(opts, &[("file.bin", payload.clone())]).expect("roundtrip");
     assert_eq!(results[0].1, payload);

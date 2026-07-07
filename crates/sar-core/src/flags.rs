@@ -79,6 +79,12 @@ impl EntryMode {
     pub const fn is_last_fragment(self) -> bool {
         self.0 & (1 << 6) != 0
     }
+
+    /// Returns true when entry permits degraded (loss-tolerant) reconstruction.
+    #[must_use]
+    pub const fn is_loss_tolerant(self) -> bool {
+        self.0 & (1 << 7) != 0
+    }
 }
 
 /// Validates global flag consistency.
@@ -130,6 +136,10 @@ pub fn validate_entry_mode_against_global(
 
     if entry_mode.is_last_fragment() && !entry_mode.is_fragment() {
         return Err(SarError::FlagConflict("LAST_FRAGMENT requires IS_FRAGMENT"));
+    }
+
+    if entry_mode.is_loss_tolerant() && !entry_mode.is_fragment() {
+        return Err(SarError::FlagConflict("LOSS_TOLERANT requires IS_FRAGMENT"));
     }
 
     Ok(())

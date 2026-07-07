@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 bitflags.workspace = true
+crc32fast.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true

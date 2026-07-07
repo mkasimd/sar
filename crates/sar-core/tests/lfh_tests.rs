@@ -1,6 +1,6 @@
 use sar_core::{
     EntryMode, GlobalFlags, SarError,
-    format::{LocalFileHeader, parse_lfh, write_lfh},
+    format::{LfhFragmentDescriptor, LocalFileHeader, parse_lfh, write_lfh},
 };
 
 #[test]
@@ -36,7 +36,10 @@ fn parses_lfh_with_conditional_fields() {
     lfh.fec_algo_id = Some(0);
     lfh.fragment_id = Some(1);
     lfh.fragment_index = Some(0);
-    lfh.fragment_descriptor = Some((0, 4));
+    lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
+        absolute_offset: 0,
+        fragment_size: 4,
+    });
     lfh.delta_base_hash = Some([1u8; 32]);
     lfh.file_crc32 = Some(0xAABBCCDD);
     lfh.content_hash = Some([2u8; 32]);

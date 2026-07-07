@@ -82,6 +82,7 @@ fn writer_reader_store_no_index_roundtrip() {
             no_index: true,
             encryption: None,
             fec: None,
+            sparse: false,
         },
     )
     .expect("writer");
