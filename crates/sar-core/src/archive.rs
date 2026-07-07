@@ -200,6 +200,9 @@ pub struct ArchiveWriterOptions {
     /// Optional FEC settings.  When set, `SELECTIVE_FEC` is enabled and every
     /// entry payload is FEC-encoded using the specified algorithm.
     pub fec: Option<FecSettings>,
+    /// If `true`, set the global `SPARSE_FILES` flag.  Required before calling
+    /// [`ArchiveWriter::write_sparse_entry`].
+    pub sparse: bool,
 }
 
 /// Archive writer compression settings.
@@ -228,8 +231,30 @@ impl Default for ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
+            sparse: false,
         }
     }
+}
+
+/// Options for writing a sparse entry with [`ArchiveWriter::write_sparse_entry`].
+///
+/// The caller supplies:
+/// * `logical_size` — full apparent file size including all sparse holes, stored as
+///   LFH `Uncompressed Size`.  Must be >= the end of every declared extent.
+/// * `extents` — ordered, non-overlapping sparse extents describing how
+///   `gathered_payload` maps into the logical file.  The sum of all
+///   `extent.length` values must equal the length of the `gathered_payload`
+///   slice passed to [`ArchiveWriter::write_sparse_entry`].
+///
+/// The writer validates all constraints before emitting any bytes.
+#[derive(Debug, Clone)]
+pub struct SparseWriteOptions {
+    /// Full logical file size, including all sparse holes.  This becomes the
+    /// LFH `Uncompressed Size` and is **required** to be set explicitly.
+    /// The writer will not derive this value from the extents alone.
+    pub logical_size: u64,
+    /// Ordered, non-overlapping sparse extents that describe the data regions.
+    pub extents: Vec<crate::sparse::SparseExtent>,
 }
 
 /// Reader-side limits.
@@ -729,6 +754,27 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// * [`SarError::Malformed`] — `IS_FRAGMENT` without a `fragment_id`.
     /// * Any error propagated from [`next_entry`].
     ///
+    /// # Sparse + fragmentation ordering
+    ///
+    /// When both `SPARSE_FILES` and `FILE_FRAGMENTATION` are active, this method
+    /// follows the spec-mandated order:
+    ///
+    /// ```text
+    /// Fragment Reassembly → Logical Payload → Sparse Reconstruction → Final File
+    /// ```
+    ///
+    /// The Sparse Map **must** appear only in the fragment with `Fragment Index = 0`
+    /// and describes the fully reassembled logical payload.  A Sparse Map on any
+    /// non-zero fragment index causes [`SarError::InvalidMap`].
+    ///
+    /// # CRC32 verification
+    ///
+    /// When the global `PER_FILE_CRC` flag is set and an entry carries a non-zero
+    /// `File CRC32` field, the CRC32 is verified against the **fully reconstructed**
+    /// logical file bytes (including sparse holes).  A mismatch returns
+    /// [`SarError::CrcMismatch`].  LOSS_TOLERANT semantics do not suppress
+    /// CRC32 mismatches on complete (non-degraded) output.
+    ///
     /// [`next_entry`]: Self::next_entry
     pub fn read_all_logical_files(
         &mut self,
@@ -741,6 +787,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
         if self.global_header.is_none() {
             self.read_global_header()?;
         }
+
+        let global = self
+            .global_header
+            .as_ref()
+            .ok_or(SarError::Malformed("global header missing after read"))?
+            .clone();
 
         // Reset cursor so callers may invoke this after prior next_entry calls.
         self.next_offset = self.header_len;
@@ -760,6 +812,15 @@ impl<R: Read + Seek> ArchiveReader<R> {
             name: String,
             /// All fragment entries collected so far.
             entries: Vec<EntryReader>,
+            /// Sparse extents from fragment index 0.  `None` when this group
+            /// has no sparse map.
+            sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
+            /// LFH `Uncompressed Size` from fragment index 0 for sparse
+            /// reconstruction.  Meaningful only when `sparse_extents.is_some()`.
+            sparse_uncompressed_size: u64,
+            /// File CRC32 from fragment index 0 for post-assembly verification.
+            /// `None` when the entry has no CRC32 field.
+            file_crc32: Option<u32>,
         }
 
         // fragment_id → FragGroup
@@ -778,24 +839,61 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 let fid = entry.metadata.fragment_id.ok_or(SarError::Malformed(
                     "IS_FRAGMENT set but fragment_id is absent",
                 ))?;
+
+                // Spec §13.7.6 / §19.6: Sparse Map MUST appear only in the
+                // fragment with Fragment Index = 0.  Any other placement is a
+                // hard error, even with allow_lossy.
+                let has_sparse = entry.metadata.sparse_extents.is_some();
+                if has_sparse && entry.metadata.fragment_index != Some(0) {
+                    return Err(SarError::InvalidMap(
+                        "sparse map present on non-zero fragment index; Sparse Map MUST appear only in fragment with Fragment Index = 0",
+                    ));
+                }
+
                 let group = frag_groups.entry(fid).or_insert_with(|| {
                     frag_order.push(fid);
                     FragGroup {
                         name: entry.metadata.name.clone(),
                         entries: Vec::new(),
+                        sparse_extents: None,
+                        sparse_uncompressed_size: 0,
+                        file_crc32: None,
                     }
                 });
+
+                // Capture sparse map, logical size, and CRC32 from fragment 0.
+                if entry.metadata.fragment_index == Some(0) {
+                    if has_sparse {
+                        group.sparse_extents = entry.metadata.sparse_extents.clone();
+                        group.sparse_uncompressed_size = entry.metadata.uncompressed_size;
+                    }
+                    group.file_crc32 = entry.metadata.file_crc32;
+                }
+
                 group.entries.push(entry);
             } else {
                 let name = entry.metadata.name.clone();
                 let sparse = entry.metadata.sparse_extents.clone();
                 let uncompressed_size = entry.metadata.uncompressed_size;
+                let file_crc32 = entry.metadata.file_crc32;
                 let data = Self::apply_sparse_if_needed(
                     entry.payload,
                     &sparse,
                     uncompressed_size,
                     self.options.max_decoded_entry_size,
                 )?;
+                // CRC32 verification over the fully reconstructed logical file
+                // (including sparse holes), per spec §17.5.
+                if global.flags.contains(GlobalFlags::PER_FILE_CRC)
+                    && let Some(expected_crc) = file_crc32
+                {
+                    let computed = crc32fast::hash(&data);
+                    if computed != expected_crc {
+                        return Err(SarError::CrcMismatch(
+                            "file CRC32 mismatch on reconstructed logical file",
+                        ));
+                    }
+                }
                 result.push(LogicalFile {
                     name,
                     fragment_id: None,
@@ -810,23 +908,27 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let FragGroup {
                 name,
                 entries: group_entries,
+                sparse_extents: group_sparse_extents,
+                sparse_uncompressed_size: group_sparse_uncompressed_size,
+                file_crc32: group_file_crc32,
             } = frag_groups
                 .remove(&fid)
                 .expect("fid must be present in map");
 
-            // Compute logical size from FragmentDescriptors: max(descriptor.absolute_offset +
-            // descriptor.fragment_size). Fragment groups don't have a separate authoritative
-            // logical-size field in the LFH (unlike sparse files, which use Uncompressed Size);
-            // the union of fragment extents defines the reconstructed file size.
-            let mut logical_size: u64 = 0;
+            // Compute assembled-payload logical size from FragmentDescriptors:
+            // max(descriptor.absolute_offset + descriptor.fragment_size).
+            // For sparse+fragment archives this is the intermediate gathered-
+            // payload size, not the final logical file size; sparse
+            // reconstruction expands it to `group_sparse_uncompressed_size`.
+            let mut assembled_size: u64 = 0;
             for e in &group_entries {
                 if let Some(desc) = &e.metadata.fragment_descriptor {
                     let end = desc
                         .absolute_offset
                         .checked_add(u64::from(desc.fragment_size))
                         .ok_or(SarError::Overflow("fragment descriptor end overflow"))?;
-                    if end > logical_size {
-                        logical_size = end;
+                    if end > assembled_size {
+                        assembled_size = end;
                     }
                 }
             }
@@ -846,7 +948,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 })
                 .collect();
 
-            let (raw, is_degraded) = reconstruct_fragments(frag_entries, logical_size)?;
+            let (raw, is_degraded) = reconstruct_fragments(frag_entries, assembled_size)?;
 
             // When the caller does not allow lossy and degraded output was
             // produced by a LOSS_TOLERANT group, surface it as an error.
@@ -856,10 +958,42 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 ));
             }
 
+            // Spec §13.7.6 / §19.6: apply sparse reconstruction over the fully
+            // assembled fragment payload.  The sparse map and logical size come
+            // from fragment index 0.
+            let data = if let Some(ref extents) = group_sparse_extents {
+                if group_sparse_uncompressed_size > self.options.max_decoded_entry_size {
+                    return Err(SarError::Overflow(
+                        "sparse logical file size exceeds max_decoded_entry_size limit",
+                    ));
+                }
+                crate::sparse::validate_sparse_extents(extents, group_sparse_uncompressed_size)?;
+                crate::sparse::apply_sparse_reconstruction(
+                    &raw,
+                    extents,
+                    group_sparse_uncompressed_size,
+                )?
+            } else {
+                raw
+            };
+
+            // CRC32 verification over the fully reconstructed logical file
+            // (after fragment reassembly and sparse reconstruction).
+            if global.flags.contains(GlobalFlags::PER_FILE_CRC)
+                && let Some(expected_crc) = group_file_crc32
+            {
+                let computed = crc32fast::hash(&data);
+                if computed != expected_crc {
+                    return Err(SarError::CrcMismatch(
+                        "file CRC32 mismatch on reconstructed fragment-group logical file",
+                    ));
+                }
+            }
+
             result.push(LogicalFile {
                 name,
                 fragment_id: Some(fid),
-                data: raw,
+                data,
                 is_degraded,
             });
         }
@@ -954,6 +1088,9 @@ impl<W: Write> ArchiveWriter<W> {
         }
         if options.fec.is_some() {
             flags |= GlobalFlags::SELECTIVE_FEC;
+        }
+        if options.sparse {
+            flags |= GlobalFlags::SPARSE_FILES;
         }
 
         let mut cek = None;
@@ -1171,6 +1308,189 @@ impl<W: Write> ArchiveWriter<W> {
             lfh_offset,
             total_bytes: written,
         })
+    }
+
+    /// Writes a sparse archive entry.
+    ///
+    /// The writer must have been created with
+    /// [`ArchiveWriterOptions::sparse`]` = true`.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` — entry name (UTF-8).
+    /// * `gathered_payload` — raw data bytes for all non-hole regions, stored
+    ///   sequentially in extent order.
+    /// * `sparse` — validated-on-call sparse options; see [`SparseWriteOptions`].
+    ///
+    /// # Validation
+    ///
+    /// Before writing any bytes, this method verifies:
+    ///
+    /// * `SPARSE_FILES` global flag is set.
+    /// * `sparse.logical_size` is `>= end` of every declared extent.
+    /// * No two extents overlap.
+    /// * All arithmetic is checked and does not overflow.
+    /// * `gathered_payload.len()` equals the sum of `extent.length` values.
+    ///
+    /// # Errors
+    ///
+    /// * [`SarError::Malformed`] — `SPARSE_FILES` flag not set.
+    /// * [`SarError::InvalidMap`] — overlapping extents, extent beyond
+    ///   `logical_size`, or payload length mismatch.
+    /// * [`SarError::Overflow`] — arithmetic overflow in extent validation.
+    /// * Any I/O error from writing.
+    pub fn write_sparse_entry(
+        &mut self,
+        name: &str,
+        gathered_payload: &[u8],
+        sparse: SparseWriteOptions,
+    ) -> Result<EntryWritten, SarError> {
+        if self.finished {
+            return Err(SarError::Malformed("archive writer already finished"));
+        }
+        if !self.flags.contains(GlobalFlags::SPARSE_FILES) {
+            return Err(SarError::Malformed(
+                "write_sparse_entry requires ArchiveWriterOptions::sparse = true",
+            ));
+        }
+
+        // Validate extents against logical_size (overlap and bounds).
+        crate::sparse::validate_sparse_extents(&sparse.extents, sparse.logical_size)?;
+
+        // Validate payload length equals sum of extent lengths.
+        let mut total_extent_bytes: u64 = 0;
+        for extent in &sparse.extents {
+            total_extent_bytes = total_extent_bytes
+                .checked_add(extent.length)
+                .ok_or(SarError::Overflow("sparse extent length sum overflow"))?;
+        }
+        let payload_len_u64 = u64::try_from(gathered_payload.len())
+            .map_err(|_| SarError::Overflow("gathered payload length overflow"))?;
+        if payload_len_u64 != total_extent_bytes {
+            return Err(SarError::InvalidMap(
+                "gathered_payload length does not equal sum of sparse extent lengths",
+            ));
+        }
+
+        // Encode the gathered payload (compression / encryption if enabled).
+        let is_compressed = self.compression.algo_id != COMP_ALGO_STORE;
+        let mut encoded_payload = encode_payload_v2(
+            gathered_payload,
+            EncodingPlanV2 {
+                is_compressed,
+                comp_algo_id: self.compression.algo_id,
+                compression_level: self.compression.level,
+                crypto: None,
+            },
+        )?;
+        let is_encrypted = self.flags.contains(GlobalFlags::ENCRYPTED);
+        let is_fec = self.fec.is_some();
+
+        let encoded_len = if is_encrypted {
+            u64::try_from(encoded_payload.len())
+                .map_err(|_| SarError::Overflow("payload len"))?
+                .checked_add(16)
+                .ok_or(SarError::Overflow("encrypted payload len"))?
+        } else {
+            u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
+        };
+
+        // Build LFH: uncompressed_size = logical_size (full sparse extent including holes).
+        let is_64bit = self.flags.contains(GlobalFlags::SIZE_64BIT);
+        let sparse_map_bytes = crate::sparse::write_sparse_map(&sparse.extents, is_64bit);
+
+        let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), encoded_len);
+        lfh.uncompressed_size = sparse.logical_size;
+        lfh.sparse_map = sparse_map_bytes;
+
+        if self.flags.contains(GlobalFlags::COMPRESSED) {
+            lfh.comp_algo_id = Some(self.compression.algo_id);
+        }
+        if is_compressed {
+            lfh.entry_mode.0 |= 1 << 3;
+        }
+
+        if is_fec {
+            let fec_cfg = self.fec.as_ref().expect("is_fec checked");
+            lfh.fec_algo_id = Some(fec_cfg.algo_id);
+            if is_encrypted {
+                let reserved_fec_len = compute_fec_value_len(fec_cfg, encoded_payload.len())?;
+                lfh.fec_value = vec![0u8; reserved_fec_len];
+            }
+        }
+
+        if is_encrypted {
+            let algo_id = self
+                .encr_algo_id
+                .ok_or(SarError::Internal("missing writer encryption algorithm"))?;
+            let mut nonce = [0u8; 24];
+            let mut inserted = false;
+            for _ in 0..3 {
+                generate_nonce(algo_id, &mut nonce).map_err(SarError::from)?;
+                if self.used_nonces.insert(nonce) {
+                    inserted = true;
+                    break;
+                }
+            }
+            if !inserted {
+                return Err(SarError::NonceReuse("failed to generate a unique nonce"));
+            }
+            lfh.encr_algo_id = Some(algo_id);
+            lfh.iv_nonce = Some(nonce);
+            lfh.entry_mode.0 |= 1 << 2;
+
+            let provisional_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
+            let aad_lfh_bytes = lfh_bytes_for_aad(
+                self.flags,
+                &provisional_lfh_bytes,
+                fec_algo_id,
+                lfh.fec_value.len(),
+            );
+            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
+            let key = self
+                .cek
+                .as_ref()
+                .ok_or(SarError::KeyMissing("writer CEK is unavailable"))?;
+            encoded_payload = encode_payload_v2(
+                gathered_payload,
+                EncodingPlanV2 {
+                    is_compressed,
+                    comp_algo_id: self.compression.algo_id,
+                    compression_level: self.compression.level,
+                    crypto: Some(EntryCryptoContext {
+                        algo_id,
+                        iv_nonce: nonce,
+                        aad,
+                        key: key.clone(),
+                    }),
+                },
+            )?;
+
+            if is_fec {
+                let tag_len = 16usize;
+                let ciphertext_len = encoded_payload.len().saturating_sub(tag_len);
+                let ciphertext = &encoded_payload[..ciphertext_len];
+                let fec_value = compute_fec_value(self.fec.as_ref().expect("is_fec"), ciphertext)?;
+                if fec_value.len() != lfh.fec_value.len() {
+                    return Err(SarError::InvalidLength(
+                        "computed FEC value length changed after AEAD (sparse)",
+                    ));
+                }
+                lfh.fec_value = fec_value;
+            }
+
+            let final_lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            self.write_entry(lfh, final_lfh_bytes, encoded_payload)
+        } else {
+            if is_fec {
+                let fec_value =
+                    compute_fec_value(self.fec.as_ref().expect("is_fec"), &encoded_payload)?;
+                lfh.fec_value = fec_value;
+            }
+            let lfh_bytes = lfh_to_bytes(&lfh, self.flags)?;
+            self.write_entry(lfh, lfh_bytes, encoded_payload)
+        }
     }
 
     /// Finalizes archive and optionally writes CD/Footer.

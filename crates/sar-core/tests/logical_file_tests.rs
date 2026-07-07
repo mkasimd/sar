@@ -25,6 +25,7 @@ fn build_simple_archive(name: &str, payload: &[u8]) -> Vec<u8> {
             no_index: false,
             encryption: None,
             fec: None,
+            sparse: false,
         },
     )
     .expect("writer");
@@ -115,6 +116,7 @@ fn read_all_logical_files_multiple_entries() {
             no_index: false,
             encryption: None,
             fec: None,
+            sparse: false,
         },
     )
     .expect("writer");

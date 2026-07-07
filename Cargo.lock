@@ -781,6 +781,7 @@ name = "sar-core"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "crc32fast",
  "sar-compression",
  "sar-crypto",
  "sar-fec",

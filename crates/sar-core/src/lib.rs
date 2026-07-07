@@ -31,7 +31,7 @@ pub mod transform;
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, FecSettings, LogicalFile, VerificationReport,
+    EntryReader, EntryWritten, FecSettings, LogicalFile, SparseWriteOptions, VerificationReport,
 };
 pub use error::{SarError, SarStatus};
 pub use fec::{FecSummary, parse_lfh_fec_value, validate_recovery_tlv};

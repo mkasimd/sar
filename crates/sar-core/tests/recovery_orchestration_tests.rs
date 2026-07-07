@@ -44,6 +44,7 @@ fn build_archive_no_ec() -> Vec<u8> {
             no_index: false,
             encryption: None,
             fec: None,
+            sparse: false,
         },
     )
     .expect("writer");
@@ -181,6 +182,7 @@ fn plan_repair_unavailable_for_no_index_archive() {
             no_index: true,
             encryption: None,
             fec: None,
+            sparse: false,
         },
     )
     .expect("writer");

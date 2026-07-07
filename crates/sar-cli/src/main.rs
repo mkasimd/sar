@@ -519,6 +519,7 @@ fn create_archive(
                 no_index,
                 encryption: Some(settings),
                 fec: fec_settings,
+                sparse: false,
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -532,6 +533,7 @@ fn create_archive(
                 no_index,
                 encryption: None,
                 fec: fec_settings,
+                sparse: false,
             },
             CompressionSettings {
                 algo_id: compression.algo_id,

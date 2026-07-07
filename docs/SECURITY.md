@@ -67,7 +67,9 @@ Notes:
 - Overlapping descriptors are rejected before reconstruction begins.
 - Sparse payload length is validated: it must exactly equal the sum of all extent lengths. Excess bytes (possible padding forgery) and short payload (truncated payload) both return an error.
 - The zero-filled reconstruction buffer is bounded by `ArchiveReaderOptions::max_decoded_entry_size` to prevent denial-of-service via large `Uncompressed Size` values.
-- CRC32 and Content Hash, where verified, are computed over the fully reconstructed sparse file including zero-filled holes; they are not computed over the stored sparse payload bytes alone.
+- **CRC32 verification** is now active in `read_all_logical_files`. CRC32 is computed over the fully reconstructed sparse file including zero-filled holes; it is not computed over the stored sparse payload bytes alone. A CRC mismatch returns `SarError::CrcMismatch`. This ensures that tampering with sparse map offsets (changing where data lands in the logical file without changing the stored payload) is detected when the LFH carries a CRC32.
+- **Content Hash is not verified** because the archive format does not encode the hash algorithm identifier. The 32-byte `content_hash` field is parsed and preserved in `EntryMetadata`, but no verification is performed. See `docs/CONFORMANCE.md` Known Gaps.
+- **Sparse Map placement**: in a fragmented archive, a Sparse Map on any non-zero fragment index returns `SarError::InvalidMap` immediately and is never suppressed by `allow_lossy`, preventing a malformed archive from triggering undefined reconstruction ordering.
 
 
 

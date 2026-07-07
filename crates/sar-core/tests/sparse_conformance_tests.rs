@@ -503,9 +503,22 @@ fn corrupted_compressed_sparse_fails_before_scatter_gather() {
 // §5 Sparse + fragmentation — ordering tests
 // ---------------------------------------------------------------------------
 
-/// Fragment reassembly happens before sparse reconstruction.
-/// A two-fragment sparse file: after reassembly the logical payload is
-/// b"AABBCC" (6 bytes); sparse map scatters it into a 12-byte file.
+/// Fragment reassembly happens before sparse reconstruction (§13.7.6 / §19.6).
+///
+/// A two-fragment sparse file:
+/// * Fragment 0: payload b"AAB", absolute_offset=0, fragment_size=3.
+///   Carries the Sparse Map and the full logical file size in `uncompressed_size`.
+/// * Fragment 1: payload b"BCC", absolute_offset=3, fragment_size=3.  No sparse map.
+///
+/// After reassembly the gathered payload is b"AABBCC" (6 bytes).
+/// Sparse map: offset=0,len=2 | offset=4,len=2 | offset=8,len=2.
+/// Logical size (from fragment-0 `Uncompressed Size`): 10.
+///
+/// Expected reconstructed file (10 bytes):
+/// ```text
+/// AA 00 00 BB 00 00 CC 00
+/// ```
+/// → [A A 0 0 B B 0 0 C C]
 #[test]
 fn sparse_fragmentation_reassembly_before_scatter_gather() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
@@ -518,8 +531,9 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     })
     .expect("header");
 
-    // The full logical sparse payload is b"AABBCC" (6 bytes).
-    // Sparse map: offset=0,len=2 | offset=4,len=2 | offset=8,len=2 → size=10.
+    // Sparse map: offset=0,len=2 | offset=4,len=2 | offset=8,len=2.
+    // Sum of lengths = 6 = assembled gathered payload length.
+    // Full logical file size = 10 (includes hole regions).
     let extents = [
         SparseExtent {
             offset: 0,
@@ -537,9 +551,10 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     let sparse_map_bytes = write_sparse_map(&extents, false);
 
     // Fragment 0: first 3 bytes b"AAB" at absolute offset 0, fragment_size=3.
-    // Sparse map belongs only on fragment index 0.
+    // `uncompressed_size` = 10 = full logical file size including sparse holes.
+    // Sparse map MUST be on fragment index 0 only.
     let mut lfh0 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 3);
-    lfh0.uncompressed_size = 3;
+    lfh0.uncompressed_size = 10; // full logical file size including holes
     lfh0.entry_mode = EntryMode(1u16 << 5); // IS_FRAGMENT
     lfh0.fragment_id = Some(99);
     lfh0.fragment_index = Some(0);
@@ -552,6 +567,7 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     archive.extend_from_slice(b"AAB");
 
     // Fragment 1: next 3 bytes b"BCC" at absolute offset 3.
+    // No sparse map (must not appear on non-zero fragment index).
     let mut lfh1 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 3);
     lfh1.uncompressed_size = 3;
     lfh1.entry_mode = EntryMode((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
@@ -565,26 +581,20 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh1).expect("lfh1"));
     archive.extend_from_slice(b"BCC");
 
-    // NOTE: the current implementation stores sparse extents on individual
-    // fragment entries and uses entry.metadata.uncompressed_size from fragment
-    // entries for the logical file reassembly, not for sparse reconstruction.
-    // The fragment group path does not currently apply sparse reconstruction
-    // after reassembly (it would require per-group sparse map tracking).
-    // This test verifies that at minimum fragment reassembly produces the
-    // correct payload without crashing.
     let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].name, "f.bin");
-    // After reassembly the data is the raw concatenated payload (sparse reconstruction
-    // across fragment boundaries is not yet implemented; the full reassembled logical
-    // file contains exactly the fragment scatter-gathered bytes — 6 bytes total).
-    assert_eq!(
-        files[0].data.len(),
-        6,
-        "reassembled logical file must be 6 bytes"
-    );
-    assert_eq!(&files[0].data, b"AABBCC");
+
+    // After fragment reassembly + sparse reconstruction, the final file is
+    // 10 bytes with the three data regions scattered at offsets 0, 4, and 8.
+    let data = &files[0].data;
+    assert_eq!(data.len(), 10, "final size must equal logical_size = 10");
+    assert_eq!(&data[0..2], b"AA", "extent [0,2) must contain AA");
+    assert_eq!(&data[2..4], &[0u8; 2], "hole [2,4) must be zero");
+    assert_eq!(&data[4..6], b"BB", "extent [4,6) must contain BB");
+    assert_eq!(&data[6..8], &[0u8; 2], "hole [6,8) must be zero");
+    assert_eq!(&data[8..10], b"CC", "extent [8,10) must contain CC");
 }
 
 /// Sparse Map alignment error (non-multiple of descriptor size) is detected.
@@ -789,6 +799,7 @@ fn non_sparse_writer_roundtrip_unaffected() {
             no_index: false,
             encryption: None,
             fec: None,
+            sparse: false,
         },
     )
     .expect("writer");

@@ -6,10 +6,13 @@
 //!
 //! # Current implementation status
 //!
-//! Automatic CRC/hash verification of the reconstructed output is not yet
-//! performed in `next_entry` or `read_all_logical_files`.  These tests
-//! verify the structural properties that a future verification implementation
-//! must respect:
+//! CRC32 verification of the reconstructed output **is** implemented in
+//! `read_all_logical_files` as of M8.  Verification is triggered when the
+//! global `PER_FILE_CRC` flag is set and the LFH carries a non-None CRC32
+//! field.  Content-hash verification is not implemented because the archive
+//! format does not encode the hash algorithm; see docs/CONFORMANCE.md.
+//!
+//! # Tests
 //!
 //! 1. `EntryMetadata` preserves `file_crc32` and `content_hash` from the LFH.
 //! 2. The reconstructed sparse output (which includes holes) is different from
@@ -17,13 +20,8 @@
 //!    bytes would produce the wrong value.
 //! 3. Changing sparse map offsets without changing the stored payload changes
 //!    the reconstructed file content.
-//!
-//! # Limitation note
-//!
-//! Automatic CRC/hash verification after reconstruction is not implemented in
-//! this milestone.  The limitation is **not** related to trailing sparse holes
-//! (which are correctly reconstructed); it is simply that the verification
-//! step has not been added to the pipeline yet.
+//! 4. A correct CRC over reconstructed bytes passes verification.
+//! 5. A wrong CRC (computed over payload only) fails verification.
 
 use std::io::Cursor;
 
@@ -43,8 +41,13 @@ fn build_sparse_archive_with_crc(
     uncompressed_size: u64,
     file_crc32: Option<u32>,
 ) -> Vec<u8> {
-    // Include PER_FILE_CRC so the parser reads the file_crc32 field.
-    let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX | GlobalFlags::PER_FILE_CRC;
+    // Include PER_FILE_CRC only when a real CRC value is provided.
+    // When file_crc32 is None, omitting PER_FILE_CRC ensures the LFH has no
+    // CRC field and no verification is triggered.
+    let mut flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
+    if file_crc32.is_some() {
+        flags |= GlobalFlags::PER_FILE_CRC;
+    }
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
         flags_bytes: flags.bits().to_le_bytes().to_vec(),
@@ -198,12 +201,14 @@ fn different_sparse_offsets_produce_different_reconstructed_files() {
 /// computed over the fully reconstructed file.
 #[test]
 fn crc_over_payload_only_differs_from_crc_over_reconstructed() {
-    // Trailing-hole vector.
+    // Trailing-hole vector: stored payload = "ABC" (3 bytes),
+    // reconstructed = [0,0,A,B,C,0,0,0,0,0] (10 bytes).
     let payload = b"ABC"; // 3 bytes stored
     let extents = [SparseExtent {
         offset: 2,
         length: 3,
     }];
+    // No CRC provided — just verify that reconstruction includes holes.
     let archive = build_sparse_archive_with_crc(payload, &extents, 10, None);
 
     let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
@@ -220,4 +225,60 @@ fn crc_over_payload_only_differs_from_crc_over_reconstructed() {
     let mut expected = [0u8; 10];
     expected[2..5].copy_from_slice(b"ABC");
     assert_eq!(reconstructed.as_slice(), &expected[..]);
+
+    // CRC over stored payload differs from CRC over reconstructed file.
+    let crc_payload = crc32fast::hash(payload);
+    let crc_reconstructed = crc32fast::hash(reconstructed);
+    assert_ne!(
+        crc_payload, crc_reconstructed,
+        "CRC over payload-only must differ from CRC over reconstructed file with holes"
+    );
+}
+
+/// An archive with a correct CRC32 (computed over reconstructed bytes
+/// including holes) must pass verification.
+#[test]
+fn crc_over_reconstructed_bytes_passes_verification() {
+    let payload = b"HI"; // 2 bytes stored
+    let extents = [SparseExtent {
+        offset: 0,
+        length: 2,
+    }];
+    // Reconstructed = [H, I, 0, 0, 0] (5 bytes)
+    let mut reconstructed = [0u8; 5];
+    reconstructed[0..2].copy_from_slice(payload);
+    let correct_crc = crc32fast::hash(&reconstructed);
+
+    let archive = build_sparse_archive_with_crc(payload, &extents, 5, Some(correct_crc));
+    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    // CRC over reconstructed bytes matches → verification passes.
+    let files = reader
+        .read_all_logical_files(false)
+        .expect("correct CRC must pass");
+    assert_eq!(files[0].data.as_slice(), &reconstructed[..]);
+}
+
+/// An archive with a wrong CRC32 (computed over payload only, not
+/// reconstructed bytes) must fail with `CrcMismatch`.
+#[test]
+fn crc_over_payload_only_fails_verification() {
+    use sar_core::SarError;
+
+    let payload = b"HI"; // 2 bytes stored
+    let extents = [SparseExtent {
+        offset: 0,
+        length: 2,
+    }];
+    // Wrong: CRC over payload bytes only, not reconstructed (which includes trailing holes).
+    let wrong_crc = crc32fast::hash(payload);
+
+    let archive = build_sparse_archive_with_crc(payload, &extents, 5, Some(wrong_crc));
+    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let err = reader
+        .read_all_logical_files(false)
+        .expect_err("wrong CRC must fail");
+    assert!(
+        matches!(err, SarError::CrcMismatch(_)),
+        "expected CrcMismatch, got {err:?}"
+    );
 }

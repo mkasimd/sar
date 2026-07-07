@@ -507,7 +507,7 @@
               "signature": "pub fn ArchiveReader<R>::read_all_logical_files(&mut self, allow_lossy: bool) -> Result<Vec<LogicalFile>, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list.",
+              "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list.",
               "parameters": [
                 {"name": "allow_lossy", "type": "bool", "description": "Permit degraded (LOSS_TOLERANT) fragment group output."}
               ],
@@ -653,6 +653,29 @@
               "ffi_notes": "Good high-level FFI candidate."
             },
             {
+              "name": "ArchiveWriter::write_sparse_entry",
+              "kind": "function",
+              "signature": "pub fn ArchiveWriter<W>::write_sparse_entry(&mut self, name: &str, gathered_payload: &[u8], sparse: SparseWriteOptions) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Write a sparse entry. gathered_payload must have exactly sum(extent.length) bytes. sparse.logical_size is written to LFH Uncompressed Size. Requires ArchiveWriterOptions::sparse=true; returns Malformed otherwise. Validates extents (overlap, bounds, payload length mismatch) before writing. Applies compression/encryption/FEC from writer options.",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::Malformed — sparse flag not set",
+                "SarError::InvalidMap — overlapping extents, extent beyond logical_size, payload length mismatch"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": ["13.7.6"],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Requires gathered_payload as ptr+len and SparseWriteOptions as FFI-safe struct."
+            },
+            {
               "name": "ArchiveWriter::finish",
               "kind": "function",
               "signature": "pub fn ArchiveWriter<W>::finish(self) -> Result<ArchiveSummary, SarError>",
@@ -743,10 +766,10 @@
             {
               "name": "ArchiveWriterOptions",
               "kind": "struct",
-              "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings> }",
+              "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Writer options for indexing, encryption, and Selective FEC.",
+              "description": "Writer options for indexing, sparse, encryption, and Selective FEC. Set sparse=true to enable SPARSE_FILES in the global header and permit write_sparse_entry calls.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -761,7 +784,25 @@
               "ffi_notes": "Good create-options wrapper target."
             },
             {
-              "name": "CompressionSettings",
+              "name": "SparseWriteOptions",
+              "kind": "struct",
+              "signature": "pub struct SparseWriteOptions { pub logical_size: u64, pub extents: Vec<SparseExtent> }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Options for writing a sparse entry via ArchiveWriter::write_sparse_entry. logical_size is the full apparent file size including holes and is written to LFH Uncompressed Size. extents must be ordered, non-overlapping, and within logical_size bounds.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": ["13.7.6"],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Requires flattening Vec<SparseExtent> to a C-compatible pointer+len pair."
+            },
               "kind": "struct",
               "signature": "pub struct CompressionSettings { pub algo_id: u8, pub level: Option<u8> }",
               "visibility": "public",
@@ -846,7 +887,7 @@
               "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Human-readable metadata summary for one entry. sparse_extents is populated for SPARSE_FILES entries. file_crc32 is populated when GlobalFlags::PER_FILE_CRC is set. content_hash is populated when GlobalFlags::DEDUPLICATION is set. Both fields contain the values from the LFH; they are parsed but not yet verified inline during extraction.",
+              "description": "Human-readable metadata summary for one entry. sparse_extents is populated for SPARSE_FILES entries. file_crc32 is populated when GlobalFlags::PER_FILE_CRC is set and CRC32 verification has passed (read_all_logical_files verifies CRC32 over reconstructed bytes). content_hash is populated when GlobalFlags::DEDUPLICATION is set; content_hash bytes are preserved from the LFH but not verified (algorithm not determinable from archive format; see API.md Known Limitations).",
               "parameters": [],
               "returns": "",
               "errors": [],

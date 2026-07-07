@@ -77,14 +77,19 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
   - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
   - `add_entry(EntryInput)`
+  - `write_sparse_entry(name, gathered_payload, SparseWriteOptions)` *(new in M8 final pass)*
   - `finish()`
 
 #### Important public types
 
 - `ArchiveWriterOptions`
   - `no_index: bool`
+  - `sparse: bool` *(new in M8 final pass)* — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
   - `encryption: Option<EncryptionSettings>`
   - `fec: Option<FecSettings>`
+- `SparseWriteOptions` *(new in M8 final pass)*
+  - `logical_size: u64` — full apparent file size including holes; written to LFH `Uncompressed Size`
+  - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
 - `ArchiveReaderOptions`
   - `max_decoded_entry_size: u64` (default `1 GiB`)
 - `CompressionSettings`
@@ -239,12 +244,16 @@ Reads all entries, assembles fragment groups, applies sparse reconstruction, and
 **Behavior:**
 - Non-fragmented entries: returned as-is (with optional sparse reconstruction).
 - Fragment groups: sorted by `fragment_index`, scattered by `descriptor.absolute_offset`.
+  - **Sparse Map in a fragment group must appear only on the entry with `fragment_index == 0`**; presence on any other index returns `SarError::InvalidMap` immediately, even when `allow_lossy=true`.
+  - The Sparse Map from fragment index 0 applies to the **entire reassembled group payload**.
+  - Fragment reassembly always precedes sparse reconstruction (Fragment Reassembly → Logical Payload → Sparse Reconstruction → Final File).
 - Missing fragments + `allow_lossy=false` → `SarError::FragmentGap`.
 - Missing fragments + `allow_lossy=true` + `LOSS_TOLERANT` → degraded output, `is_degraded=true`.
 - Overlapping fragment descriptors → `SarError::InvalidMap`.
 - AEAD authentication failures are **never** suppressed by `allow_lossy`.
 - Format errors are **never** suppressed by `allow_lossy`.
 - **Sparse reconstruction uses LFH `Uncompressed Size` as the final logical file size.** Trailing holes after the final sparse extent are filled with zero bytes up to `Uncompressed Size`. Large logical sizes are capped by `ArchiveReaderOptions::max_decoded_entry_size`.
+- **CRC32 verification** (when `PER_FILE_CRC` is set and the LFH `file_crc32` field is present): CRC32 is computed over the fully reconstructed logical file bytes, **including sparse holes**. A wrong CRC returns `SarError::CrcMismatch`. Verification applies after fragment reassembly and sparse reconstruction. Content-hash verification is not implemented; see Known Limitations below.
 - **Empty Areas** (entries with `Name Length == 0` and `IS_FRAGMENT == 0`) are excluded from the returned list; they do not participate in sparse reconstruction, hashing, delta, or fragmentation.
 
 ### `sar_core::sparse`
@@ -276,6 +285,36 @@ Sparse reconstruction occurs after all prior transformations in this order:
 5. Sparse Reconstruction (if `SPARSE_FILES`)
 
 The Sparse Map describes the layout of the **fully reconstructed logical payload**, not individual fragments or compressed bytes.
+
+**Sparse Map placement in fragment groups:**
+
+When both `SPARSE_FILES` and `FILE_FRAGMENTATION` are enabled, the Sparse Map MUST appear only in the entry with `Fragment Index == 0`. Presence on any other fragment index returns `SarError::InvalidMap` immediately and is **never** suppressed by `allow_lossy`.
+
+#### `ArchiveWriter::write_sparse_entry` *(new in M8 final pass)*
+
+```rust
+pub fn write_sparse_entry(
+    &mut self,
+    name: &str,
+    gathered_payload: &[u8],
+    sparse: SparseWriteOptions,
+) -> Result<(), SarError>
+```
+
+Writes a sparse entry to the archive. `gathered_payload` must have exactly `sum(extent.length)` bytes; the extents describe where each gathered byte maps in the final logical file. `sparse.logical_size` is written to LFH `Uncompressed Size` and must be at least `max(extent.offset + extent.length)` across all extents.
+
+Validation before writing:
+- `ArchiveWriterOptions::sparse` must be `true`; otherwise returns `SarError::Malformed`.
+- Extents must be sorted, non-overlapping, and within `logical_size`; violations return `SarError::InvalidMap`.
+- `gathered_payload.len()` must equal `sum(extent.length)`; mismatch returns `SarError::InvalidMap`.
+
+Applies compression/encryption/FEC inherited from the writer options identically to `add_entry`.
+
+#### Known Limitations
+
+- **Content-hash verification** is not implemented. When `DEDUPLICATION` is set, the LFH carries a 32-byte `content_hash` field. The archive format does not encode the hash algorithm in any fixed LFH or global-header field; the spec refers to "e.g., BLAKE3" without normatively defining the algorithm encoding. Verification cannot be performed without knowing the algorithm. This is an implementation gap (not a spec gap); once the algorithm encoding is normatively defined, verification can be added. The `content_hash` bytes are parsed and preserved in `EntryMetadata.content_hash` for use by callers.
+- **CRC32 is verified in `read_all_logical_files` only**, not in `next_entry`. Callers using `next_entry` directly must verify `EntryMetadata.file_crc32` manually if needed.
+- `write_sparse_entry` does not yet support writing fragmented sparse entries (i.e., splitting a sparse logical file across multiple fragment-group LFHs). Use `add_entry` with manual fragment construction for that scenario.
 
 ### `sar_core::fragment`
 

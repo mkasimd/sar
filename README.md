@@ -30,6 +30,11 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - CLI `verify --recovery` for recovery metadata validation
   - CLI `extract --allow-lossy` for archives with LOSS_TOLERANT entries
   - Enhanced `inspect --json` output with fragment, sparse, and recovery metadata
+- **Milestone 8 final pass**: sparse+fragment, writer sparse, CRC32 verification
+  - Sparse reconstruction across fragment groups: Sparse Map must appear only on fragment index 0 and applies to the entire reassembled group; non-zero index returns `SAR_ERR_INVALID_MAP`
+  - `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with validation; round-trips through reader
+  - `ArchiveWriterOptions::sparse` field — enables `SPARSE_FILES` global flag
+  - CRC32 verification in `read_all_logical_files` — verified over fully reconstructed bytes including sparse holes
 
 ## Workspace layout
 

@@ -58,7 +58,10 @@ maintainability cleanup pass.
   - `sar extract … --allow-lossy` flag permits LOSS_TOLERANT degraded output and reports it
   - `sar verify … --recovery` flag for recovery metadata validation
   - `sar inspect … --json` reports `global_ec`, `fragmentation`, `sparse_files`, per-entry fragment/sparse/loss-tolerant fields, and `recovery_tlvs`
-- **Milestone 8 maintainability cleanup**
+  - M8 final pass: sparse reconstruction across fragment groups — Sparse Map MUST appear on fragment index 0 and applies to the entire reassembled group; non-zero index with sparse map returns `SAR_ERR_INVALID_MAP`; this error is never suppressed by `allow_lossy`
+  - M8 final pass: `ArchiveWriter::write_sparse_entry` — writer-side sparse creation with LFH sparse map, `Uncompressed Size = logical_size`, gathered-payload write, overlap/bounds/length validation, round-trip through `ArchiveReader::read_all_logical_files`
+  - M8 final pass: `ArchiveWriterOptions::sparse` field — sets `SPARSE_FILES` global flag at creation time; `write_sparse_entry` requires this flag
+  - M8 final pass: CRC32 verification — `read_all_logical_files` verifies CRC32 (when `PER_FILE_CRC` set) over the fully reconstructed logical file (including sparse holes and trailing zeros), not over raw payload bytes; applies to both non-fragment and fragment-group paths
   - All SAR-owned public multi-field tuple types in protocol/domain code replaced with named-field structs
   - `LfhFragmentDescriptor { absolute_offset, fragment_size }` replaces the former `(u64, u32)` tuple in `LocalFileHeader.fragment_descriptor`
   - `EntryMode` and `SarStatusParseError` opaque single-field newtypes retained as-is (intentionally private internals)
@@ -74,8 +77,10 @@ maintainability cleanup pass.
   - M8 closeout: `sparse_tests` — descriptor parsing, scatter-gather, trailing/leading/middle holes, excess/short payload rejection, zero-length descriptors
   - M8 closeout: `sparse_conformance_tests` — spec-mandated trailing-hole and multi-hole vectors, compression+sparse pipeline, fragmentation+sparse ordering, allocation cap, malformed sparse map, loss-tolerant non-suppression
   - M8 closeout: `empty_area_tests` — empty-area filtering in `read_all_logical_files`, empty areas not in fragment groups, empty areas not in sparse reconstruction
-  - M8 closeout: `sparse_hash_crc_tests` — `file_crc32`/`content_hash` preserved in `EntryMetadata`; reconstructed-file includes holes; different sparse maps produce different reconstructed output
+  - M8 closeout: `sparse_hash_crc_tests` — `file_crc32`/`content_hash` preserved in `EntryMetadata`; CRC32 over reconstructed file passes; CRC32 over payload-only fails; reconstructed-file includes holes; different sparse maps produce different reconstructed output
   - M8 closeout: `cli_sparse_tests` — CLI extraction of sparse holes, trailing holes, malformed sparse maps, inspection of sparse archives
+  - M8 final pass: `sparse_fragment_tests` — sparse map on fragment-0 applies to whole group; sparse map on non-zero fragment index returns `SAR_ERR_INVALID_MAP`; allow_lossy does not suppress `SAR_ERR_INVALID_MAP`; three-fragment scatter-gather via sparse map; trailing holes preserved across fragment boundaries; missing fragment without allow_lossy fails; missing fragment with allow_lossy+LOSS_TOLERANT succeeds with is_degraded=true; degraded sparse+fragment output is marked
+  - M8 final pass: `sparse_writer_tests` — writer creates sparse entry with leading/middle/trailing holes; round-trips through reader; rejects overlapping extents; rejects extent beyond logical_size; rejects payload length mismatch (short and excess); requires sparse flag; edge cases (single full extent, empty extents, indexed archive)
 
 ## Partial
 
@@ -132,8 +137,7 @@ maintainability cleanup pass.
 - Public flag and format definitions cover more protocol surface than the currently implemented behaviors.
 - `sar-core::profile` still reflects an older subset of behavior and should not be treated as a definitive conformance oracle.
 - Archive-level repair for non-block-aligned erasures returns `RecoveryUnavailable`; the spec does not define a normative byte-to-block mapping for this case.
-- Automatic CRC32 and Content Hash verification of the reconstructed sparse file is not yet wired into `next_entry` or `read_all_logical_files`; the fields are parsed and preserved in `EntryMetadata` but not verified inline. This is a pipeline completion gap, not a spec gap.
-- `ArchiveWriter` does not yet write sparse entries; the sparse write path is not round-trip tested through the high-level writer API.
+- Content Hash verification is not implemented. The archive format stores a 32-byte content hash when `DEDUPLICATION` is set, but does not encode the hash algorithm identifier in the LFH or any other fixed-format field. The spec refers to "e.g., BLAKE3" without normatively specifying the algorithm field encoding. Verification cannot be performed without knowing the algorithm. This is an **implementation gap** (not a spec gap): once the spec normatively defines the algorithm encoding, verification can be added. See also `docs/SPEC_QUESTIONS.md`.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.
 
