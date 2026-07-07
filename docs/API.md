@@ -996,7 +996,7 @@ Candidate high-level operations:
 
 ### Overview
 
-Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits, and CLI support for `inspect --json` (reports `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`) and `verify --cdc` (validates CDC metadata structurally when active).
+Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits, and CLI support for `inspect --json` (reports `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`) and `verify --cdc` (performs structural CDC validation when active).
 
 Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is **not** implemented in M9a.
 
@@ -1057,7 +1057,7 @@ Default parameters:
 - `avg_size = 8192` (8 KiB)
 - `max_size = 65536` (64 KiB)
 
-**Note:** The spec does not define the required FastCDC parameters. The above defaults are conservative and may not produce interoperable chunk boundaries with other implementations. Treat the current FASTCDC implementation as implementation-defined/local-profile behavior rather than a portable standard-profile interoperability guarantee. See `docs/SPEC_QUESTIONS.md` for details.
+**Note:** The spec does not define or encode the required FastCDC parameters. The above defaults are conservative and may not produce interoperable chunk boundaries with other implementations. Treat the current FASTCDC implementation as implementation-defined/local-profile behavior rather than a portable standard-profile interoperability guarantee. Different writers may therefore produce different valid CDC maps for the same logical file. See `docs/SPEC_QUESTIONS.md` for details.
 
 Properties:
 - Deterministic: identical input always produces identical chunk boundaries.
@@ -1083,12 +1083,14 @@ pub fn validate_cdc_metadata(meta: &CdcMetadata, file_size: u64, ...) -> Result<
 #### CDC_MAP parse/write
 
 ```rust
-// Parse CDC_MAP TLV binary payload into CdcMap.
+// Parse stored CDC_MAP TLV binary payload into CdcMap; does not regenerate chunk boundaries.
 pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcError>
 
 // Serialize CdcMap into CDC_MAP TLV binary payload.
 pub fn write_cdc_map(map: &CdcMap) -> Result<Vec<u8>, CdcError>
 ```
+
+For M9a, stored CDC metadata is authoritative for parsing and interpretation. Readers validate the stored `CDC_MAP` / catalog bytes directly and do **not** need to regenerate FASTCDC boundaries merely to parse or use the map.
 
 ### `sar-core` CDC bridge module
 
@@ -1179,13 +1181,22 @@ pub struct VerificationReport {
 
 ### CDC transformation domain
 
-CDC chunk boundaries and recipe hashes operate on logical reconstructed file bytes (after fragment reassembly, sparse reconstruction, decryption, and decompression). This is the conservative default; the spec does not explicitly state the domain. See `docs/SPEC_QUESTIONS.md`.
+CDC chunk boundaries and recipe hashes are treated in this implementation as operating on logical reconstructed file bytes (after fragment reassembly, sparse reconstruction, decryption, and decompression). This is the conservative local profile used for stored metadata interpretation, but the spec does not explicitly state the domain, so portable boundary regeneration and external recipe resolution cannot yet be claimed. See `docs/SPEC_QUESTIONS.md`.
+
+### CDC interoperability semantics
+
+- **Parseable/interpretable CDC metadata:** readers can parse and use stored CDC metadata records directly when they are well-formed and self-consistent.
+- **Structural CDC verification:** checks possible from stored records only, such as metadata parsing, bounds/resource-limit checks, reserved/unsupported ID handling, and internal consistency.
+- **Boundary-regeneration CDC verification:** re-running a CDC algorithm and proving the stored boundaries/hashes match. M9a does **not** claim this portably because the required FASTCDC parameters and transformation domain are not fully normative or encoded.
+- **Cross-writer deterministic CDC chunking:** multiple implementations independently producing the same boundaries for the same logical file. M9a does **not** require this for `CDC_MAP` parsing.
+- **External CAS recipe resolution:** reconstructing recipe-mode content from an external provider. M9a does **not** implement or claim this portably.
 
 ### CDC CLI behavior
 
 - `inspect <archive.sar> --json` — includes `cdc_support` (bool), `cdc_metadata_tlvs` (array), and legacy `cdc_map_tlvs` (array) at archive level; each entry includes `cdc_algo_id` (u8) when CDC_SUPPORT is active.
-- `verify <archive.sar> --cdc` — reports `cdc_support` and `cdc_entries` count; validates CDC algorithm IDs and CDC metadata TLVs when active.
-- `verify <archive.sar> --cdc` reports recipe-hash verification as unavailable, not passed, because the spec does not name the recipe-hash algorithm.
+- `verify <archive.sar> --cdc` — reports `cdc_support` and `cdc_entries` count; validates CDC algorithm IDs and CDC metadata TLVs structurally when active.
+- `verify <archive.sar> --cdc` does **not** claim it regenerated and verified FASTCDC boundaries. Until parameters and transformation domain are normative or encoded, verification is limited to checks possible from stored records.
+- `verify <archive.sar> --cdc` reports recipe-hash / external-provider verification as unavailable, not passed.
 - Reserved or unsupported CDC algorithm IDs produce clear error output.
 - Resource-limit failures produce `SarError::LimitExceeded` with a descriptive message.
 
@@ -1201,5 +1212,6 @@ CDC chunk boundaries and recipe hashes operate on logical reconstructed file byt
 - Rabin fingerprinting (0x01) and BuzHash (0x03) CDC algorithms
 - Custom CDC algorithm IDs (0xF0–0xFF)
 - External provider resolution for `CDC_EXT_PROVIDER` (`0x41`)
+- Portable boundary-regeneration verification across writers
 - Streaming CDC chunking APIs
 - `sar create --cdc fastcdc` CLI flag for creating CDC-annotated archives

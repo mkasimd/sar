@@ -734,6 +734,8 @@ Implementations encountering an assigned but unsupported CDC algorithm identifie
 
 Implementations encountering a reserved CDC algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
+A reader MUST distinguish CDC metadata parsing from CDC boundary regeneration. The stored CDC metadata present in the archive is authoritative for parsing and interpretation. A writer's choice of FASTCDC parameters or profile MUST NOT by itself cause a parsing failure so long as the stored CDC metadata is well-formed and self-consistent.
+
 ## 9. Metadata TLV Section (Global Scope)
 If `OPT_PRESENT` (Bit 2) is set, metadata is stored in Type-Length-Value blocks. Each block MUST follow this structure:
 
@@ -2933,7 +2935,7 @@ The `CDC Algo ID` is the final stage of the decoding pipeline.
 4. **Final Reassembly**: Chunks are appended to the logical file.
 
 ## 21. CDC Cataloging and Metadata
-To resolve Recipes, SAR implementations require a Catalog mapping hashes to physical byte offsets.
+To resolve Recipes, SAR implementations require a Catalog mapping hashes to physical byte offsets. For self-contained archives, the stored catalog metadata is authoritative: readers MUST parse and validate the stored records directly and need not regenerate CDC boundaries merely to use the catalog. Different writers MAY therefore produce different valid catalogs for the same logical file, provided each archive's stored CDC metadata is self-consistent.
 
 ### 21.1 Central Dictionary CDC Map (`CDC_MAP`)
 For self-contained archives, the Catalog is stored as a TLV block in the Central Dictionary.
@@ -2941,13 +2943,14 @@ For self-contained archives, the Catalog is stored as a TLV block in the Central
 * **TLV Type ID**: `0x40`
 * **Structure**: A sequence of `[Hash, Partition_ID, Absolute_Offset, Compressed_Size]` records.
 * **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, this TLV SHOULD be present.
+* **Verification Scope**: Structural validation of stored CDC metadata is always permitted. Portable regeneration-and-match verification of CDC boundaries requires the full CDC parameter profile and transformation domain to be normatively specified or encoded.
 
 ### 21.2 External Database Integration
 In distributed environments (e.g., Edge-to-Cloud streaming), the Catalog MAY be maintained externally.
 
 * **TLV Type ID**: `0x41` (`CDC_EXT_PROVIDER`)
 * **Value**: A UTF-8 URI string pointing to the external chunk provider (e.g., `sarp+https://chunks.provider.net/v1`).
-* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (19).
+* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (19). Cross-implementation recipe reconstruction against an external provider is not guaranteed unless the provider protocol, hash algorithm, record layout, and CDC transformation domain are also specified.
 
 ### 21.3 Reserved and Implementation-Defined CDC metadata
 

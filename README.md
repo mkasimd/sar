@@ -38,15 +38,15 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
 - **Milestone 9a — Content-Defined Chunking (CDC)**: CDC metadata parsing/writing/validation, FASTCDC algorithm, resource limits, CLI support
   - `CDC_SUPPORT` global flag (Bit 5) activates CDC: `cdc_algo_id` parsed from every LFH when active; validated against algorithm registry
   - Supported CDC algorithms: `LITERAL_MODE (0x00)` and `FASTCDC (0x02)`
-  - FASTCDC: deterministic two-level gear-hash chunking with SHA-256 per-chunk hashes; no zero-length chunks; no unbounded allocation; **treated as implementation-defined/local-profile until the spec fully defines normative parameters**
+  - FASTCDC: deterministic two-level gear-hash chunking with SHA-256 per-chunk hashes; no zero-length chunks; no unbounded allocation; **treated as implementation-defined/local-profile until the spec fully defines or encodes normative parameters**
   - `0x31` remains `DATA_HASH/BLAKE3`, **not** CDC metadata
   - CDC metadata registry: `0x40` = `CDC_MAP`, `0x41` = inert `CDC_EXT_PROVIDER`, `0x42–0x4E` = reserved, `0x4F` = `CDC_CUSTOM`
-  - `CDC_MAP` parse/write is available, but the 50-byte record layout remains implementation-defined because the spec does not fully define field widths/endianness
-  - `CDC_EXT_PROVIDER` is parsed as UTF-8 URI metadata only; external provider resolution/network access is not implemented
-  - Recipe Mode: `validate_recipe_payload` and `recipe_hashes` for ordered 32-byte chunk hash lists; recipe-hash verification is unavailable because the spec does not name the recipe-hash algorithm
+  - `CDC_MAP` parse/write is available; for M9a the stored archive catalog is authoritative for parsing and interpretation, so readers validate stored metadata directly and do **not** need to regenerate FASTCDC boundaries merely to parse or use `CDC_MAP`
+  - `CDC_EXT_PROVIDER` is parsed as UTF-8 URI metadata only; external provider/CAS recipe resolution remains unsupported unless the provider protocol, hash algorithm, record layout, and CDC transformation domain are normatively specified
+  - Recipe Mode: `validate_recipe_payload` and `recipe_hashes` for ordered 32-byte chunk hash lists; recipe-hash verification is unavailable because the spec does not yet fully define the recipe-hash algorithm and portable external resolution contract
   - `ResourceLimits`: `max_cdc_chunk_count` and `max_cdc_metadata_bytes` fields added; all CDC parse paths are bounded
   - `EntryMetadata.cdc_algo_id` exposes CDC algorithm per entry; `VerificationReport.cdc_support` and `cdc_entry_count` added
-  - `inspect --json` includes `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`; `verify --cdc` validates CDC metadata structurally and reports recipe-hash verification as unavailable
+  - `inspect --json` includes `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`; `verify --cdc` performs structural CDC validation only and does **not** claim boundary regeneration or external-CAS recipe verification
   - CDC does not bypass AEAD authentication, sparse reconstruction, fragment reassembly, or resource limits
   - Delta encoding (VCDIFF, BSDIFF) is **not** implemented in M9a
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
