@@ -14,17 +14,17 @@
     {
       "name": "sar-cdc",
       "path": "crates/sar-cdc",
-      "purpose": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0 Milestone 9a; FASTCDC and CDC_MAP behavior remain implementation-defined where the spec is incomplete.",
+      "purpose": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0 Milestone 9a; stored CDC metadata is authoritative for parsing, while FASTCDC boundary-regeneration interoperability remains implementation-defined where the spec is incomplete.",
       "status": "implemented",
       "milestones": [
         "9a"
       ],
       "features": [
-        "FASTCDC algorithm (deterministic, two-level gear-hash; local-profile because spec parameters are incomplete)",
-        "CDC algorithm ID registry (LITERAL=0x00, FASTCDC=0x02)",
-        "CdcChunk, CdcMetadata, CdcMapRecord, CdcMap data structs",
-        "CDC_MAP TLV binary parse/write (50-byte local-profile records)",
-        "Recipe Mode structural validation (32-byte hash array)",
+        "FASTCDC algorithm (deterministic, two-level gear-hash; local-profile because spec parameters/domain are incomplete)",
+        "CDC algorithm ID registry (LITERAL=0x00, RABIN=0x01 optional unsupported, FASTCDC=0x02, BUZHASH=0x03 optional unsupported, CUSTOM=0xF0-0xFF unsupported)",
+        "CdcChunk, CdcMetadata, CdcMapRecord, CdcMap public data structures",
+        "CDC_MAP TLV binary parse/write (50-byte local-profile records; parseable without boundary regeneration)",
+        "Recipe Mode structural validation (32-byte hash array only; no portable boundary-regeneration verification claim)",
         "CdcError enum with Malformed/Unsupported/ReservedValue/LimitExceeded variants"
       ],
       "modules": [
@@ -69,6 +69,30 @@
               "kind": "const",
               "signature": "pub const CDC_RECIPE_HASH_LEN: usize = 32;",
               "description": "Length of each recipe chunk hash in bytes",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_ALGO_CUSTOM_MIN",
+              "kind": "const",
+              "signature": "pub const CDC_ALGO_CUSTOM_MIN: u8 = 0xF0;",
+              "description": "First custom/vendor CDC algorithm ID in the implementation-defined range",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_ALGO_CUSTOM_MAX",
+              "kind": "const",
+              "signature": "pub const CDC_ALGO_CUSTOM_MAX: u8 = 0xFF;",
+              "description": "Last custom/vendor CDC algorithm ID in the implementation-defined range",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "algo_name",
+              "kind": "function",
+              "signature": "pub fn algo_name(id: u8) -> &'static str",
+              "description": "Display helper mapping known CDC IDs to short names; unknown/reserved IDs map to \"unknown\"",
               "since_milestone": "9a",
               "implemented": true
             }
@@ -150,8 +174,32 @@
             {
               "name": "validate_cdc_metadata",
               "kind": "function",
-              "signature": "pub fn validate_cdc_metadata(meta: &CdcMetadata, file_size: u64, ...) -> Result<(), CdcError>",
-              "description": "Validates full CdcMetadata (no zero-length chunks, coverage, ordering)",
+              "signature": "pub fn validate_cdc_metadata(meta: &CdcMetadata, logical_size: u64, max_chunks: usize) -> Result<(), CdcError>",
+              "description": "Validates CDC chunk metadata structure, contiguity, bounds, and chunk-count limits",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "validate_cdc_map",
+              "kind": "function",
+              "signature": "pub fn validate_cdc_map(map: &CdcMap, max_records: usize) -> Result<(), CdcError>",
+              "description": "Validates parsed CDC_MAP records (count limit and non-zero compressed_size)",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_MAP_MAX_RECORDS_DEFAULT",
+              "kind": "const",
+              "signature": "pub const CDC_MAP_MAX_RECORDS_DEFAULT: usize = 1_000_000;",
+              "description": "Default maximum accepted CDC_MAP record count for structural validation",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "CDC_CHUNK_MAX_DEFAULT",
+              "kind": "const",
+              "signature": "pub const CDC_CHUNK_MAX_DEFAULT: usize = 1_000_000;",
+              "description": "Default maximum accepted CDC chunk count for structural validation",
               "since_milestone": "9a",
               "implemented": true
             }
@@ -165,7 +213,7 @@
               "name": "parse_cdc_map",
               "kind": "function",
               "signature": "pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcError>",
-              "description": "Parse CDC_MAP TLV binary payload into CdcMap",
+              "description": "Parse stored CDC_MAP TLV binary payload into CdcMap without regenerating FASTCDC boundaries",
               "since_milestone": "9a",
               "implemented": true
             },
@@ -194,8 +242,16 @@
             {
               "name": "chunk_data",
               "kind": "function",
-              "signature": "pub fn chunk_data(data: &[u8], opts: &FastCdcOptions) -> Vec<CdcChunk>",
-              "description": "Chunk data using deterministic FASTCDC; bounded but not claimed as portable standard-profile interoperability",
+              "signature": "pub fn chunk_data(data: &[u8], opts: &FastCdcOptions, max_chunks: usize) -> Result<Vec<CdcChunk>, CdcError>",
+              "description": "Chunk data using deterministic FASTCDC with explicit chunk-count bounds; local-profile behavior is not a portable cross-writer guarantee",
+              "since_milestone": "9a",
+              "implemented": true
+            },
+            {
+              "name": "FastCdcOptions::validate",
+              "kind": "function",
+              "signature": "pub fn FastCdcOptions::validate(&self) -> Result<(), CdcError>",
+              "description": "Validates min/avg/max FASTCDC option ordering and floor constraints",
               "since_milestone": "9a",
               "implemented": true
             }
@@ -510,7 +566,8 @@
         "8",
         "stage-2",
         "stage-3",
-        "stage-4"
+        "stage-4",
+        "9a"
       ],
       "features": [],
       "modules": [
@@ -650,7 +707,7 @@
               "signature": "pub fn ArchiveReader<R>::verify(&mut self) -> Result<VerificationReport, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Verify archive structure and indexed offsets.",
+              "description": "Verify archive structure/index consistency and CDC metadata structural validity when CDC_SUPPORT is active.",
               "parameters": [],
               "returns": "Result<VerificationReport, SarError>",
               "errors": [
@@ -898,7 +955,7 @@
               "signature": "pub fn ArchiveWriter<W>::new_with_cd_metadata(writer: W, options: ArchiveWriterOptions, cd_metadata: Vec<Tlv>) -> Result<Self, SarError>",
               "visibility": "public",
               "stability": "experimental",
-              "description": "Create an indexed writer with explicit Central Dictionary metadata. Supplying CDC metadata auto-enables OPT_PRESENT and CDC_SUPPORT and keeps entry LFHs in LITERAL_MODE.",
+              "description": "Create indexed writer with explicit CD metadata. CDC metadata auto-enables OPT_PRESENT and CDC_SUPPORT; normal entry APIs emit LFH cdc_algo_id = LITERAL_MODE for consistency.",
               "parameters": [],
               "returns": "Result<ArchiveWriter<W>, SarError>",
               "errors": [
@@ -1084,17 +1141,17 @@
             {
               "name": "EntryMetadata",
               "kind": "struct",
-              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]> }",
+              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Human-readable metadata summary for one entry. sparse_extents is populated for SPARSE_FILES entries. file_crc32 is populated when GlobalFlags::PER_FILE_CRC is set and CRC32 verification has passed (read_all_logical_files verifies CRC32 over reconstructed bytes). content_hash is populated when GlobalFlags::DEDUPLICATION is set; content_hash bytes are preserved from the LFH but not verified (algorithm not determinable from archive format; see API.md Known Limitations).",
+              "description": "Human-readable metadata summary for one entry. sparse_extents is populated for SPARSE_FILES entries. file_crc32 is populated when GlobalFlags::PER_FILE_CRC is set and CRC32 verification has passed (read_all_logical_files verifies CRC32 over reconstructed bytes). content_hash is populated when GlobalFlags::DEDUPLICATION is set; content_hash bytes are preserved from the LFH but not verified (algorithm not determinable from archive format; see API.md Known Limitations). cdc_algo_id is populated when CDC_SUPPORT is active.",
               "parameters": [],
               "returns": "",
               "errors": [],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "3",
+              "since_milestone": "9a",
               "related_spec_sections": [],
               "implemented": true,
               "ffi_candidate": true,
@@ -1226,22 +1283,395 @@
             {
               "name": "VerificationReport",
               "kind": "struct",
-              "signature": "pub struct VerificationReport { pub valid: bool, pub entry_count: u64, pub indexed: bool }",
+              "signature": "pub struct VerificationReport { pub valid: bool, pub entry_count: u64, pub indexed: bool, pub cdc_entry_count: u64, pub cdc_support: bool }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Archive verification summary.",
+              "description": "Verification summary including CDC support and number of entries carrying cdc_algo_id",
               "parameters": [],
               "returns": "",
               "errors": [],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "3",
+              "since_milestone": "9a",
               "related_spec_sections": [],
               "implemented": true,
               "ffi_candidate": true,
-              "ffi_readiness": "ready",
-              "ffi_notes": "Simple result struct."
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Useful for CLI/FFI verify reporting."
+            }
+          ]
+        },
+        {
+          "name": "cdc",
+          "path": "src/cdc.rs",
+          "items": [
+            {
+              "name": "CdcAlgoId",
+              "kind": "struct",
+              "signature": "pub struct CdcAlgoId(pub u8)",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Typed wrapper for LFH CDC Algo ID with literal/recipe mode helpers",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Simple newtype; wrapper exposure optional."
+            },
+            {
+              "name": "CdcExtProviderMetadata",
+              "kind": "struct",
+              "signature": "pub struct CdcExtProviderMetadata { pub uri: String }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Inert parsed CDC_EXT_PROVIDER metadata; URI only, no provider resolution/network access",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "String wrapper; no I/O side effects."
+            },
+            {
+              "name": "TLV_DATA_HASH_BLAKE3",
+              "kind": "const",
+              "signature": "pub const TLV_DATA_HASH_BLAKE3: u8 = 0x31;",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "DATA_HASH/BLAKE3 TLV ID; explicitly not CDC metadata",
+              "parameters": [],
+              "returns": "u8",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TLV_CDC_MAP",
+              "kind": "const",
+              "signature": "pub const TLV_CDC_MAP: u8 = 0x40;",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "CDC_MAP metadata TLV ID",
+              "parameters": [],
+              "returns": "u8",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TLV_CDC_EXT_PROVIDER",
+              "kind": "const",
+              "signature": "pub const TLV_CDC_EXT_PROVIDER: u8 = 0x41;",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "CDC_EXT_PROVIDER metadata TLV ID (parsed inertly)",
+              "parameters": [],
+              "returns": "u8",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TLV_CDC_RESERVED_START",
+              "kind": "const",
+              "signature": "pub const TLV_CDC_RESERVED_START: u8 = 0x42;",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "First reserved CDC metadata TLV ID",
+              "parameters": [],
+              "returns": "u8",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TLV_CDC_RESERVED_END",
+              "kind": "const",
+              "signature": "pub const TLV_CDC_RESERVED_END: u8 = 0x4E;",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Last reserved CDC metadata TLV ID",
+              "parameters": [],
+              "returns": "u8",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TLV_CDC_CUSTOM",
+              "kind": "const",
+              "signature": "pub const TLV_CDC_CUSTOM: u8 = 0x4F;",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Implementation-defined CDC_CUSTOM metadata TLV ID",
+              "parameters": [],
+              "returns": "u8",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "validate_cdc_algo_id",
+              "kind": "function",
+              "signature": "pub fn validate_cdc_algo_id(id: u8) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates CDC algorithm ID and maps unsupported/reserved values to SarError",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::Unsupported",
+                "SarError::ReservedValue"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Simple status-mapping wrapper."
+            },
+            {
+              "name": "is_cdc_metadata_tlv_type",
+              "kind": "function",
+              "signature": "pub fn is_cdc_metadata_tlv_type(type_id: u8) -> bool",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Returns true for CDC metadata TLV IDs in range 0x40..=0x4F",
+              "parameters": [],
+              "returns": "bool",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "parse_cdc_ext_provider_tlv",
+              "kind": "function",
+              "signature": "pub fn parse_cdc_ext_provider_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<CdcExtProviderMetadata, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Parses CDC_EXT_PROVIDER as inert UTF-8 metadata only; no provider resolution/network access",
+              "parameters": [],
+              "returns": "Result<CdcExtProviderMetadata, SarError>",
+              "errors": [
+                "SarError::Unsupported",
+                "SarError::Malformed",
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [
+                "Fails closed on invalid UTF-8 or over-limit payloads."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Pure parse helper; safe to expose."
+            },
+            {
+              "name": "validate_cdc_metadata_tlv",
+              "kind": "function",
+              "signature": "pub fn validate_cdc_metadata_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates CDC metadata TLVs structurally: CDC_MAP parsed, CDC_EXT_PROVIDER inert UTF-8, 0x42-0x4E reserved errors, CDC_CUSTOM parsed/preserved only",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::ReservedValue",
+                "SarError::Unsupported",
+                "SarError::Malformed",
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Validation-only; no external I/O."
+            },
+            {
+              "name": "parse_entry_cdc_map",
+              "kind": "function",
+              "signature": "pub fn parse_entry_cdc_map(tlvs: &[Tlv], limits: &ResourceLimits) -> Result<Option<CdcMap>, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Extracts/parses first stored CDC_MAP TLV from metadata; does not regenerate FASTCDC boundaries",
+              "parameters": [],
+              "returns": "Result<Option<CdcMap>, SarError>",
+              "errors": [
+                "SarError::Malformed",
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Pure metadata parser."
+            },
+            {
+              "name": "make_cdc_map_tlv",
+              "kind": "function",
+              "signature": "pub fn make_cdc_map_tlv(map: &CdcMap, limits: &ResourceLimits) -> Result<Tlv, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Serializes CdcMap into CDC_MAP TLV payload with metadata-size limits",
+              "parameters": [],
+              "returns": "Result<Tlv, SarError>",
+              "errors": [
+                "SarError::Overflow",
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Writer-side metadata helper."
+            },
+            {
+              "name": "make_cdc_ext_provider_tlv",
+              "kind": "function",
+              "signature": "pub fn make_cdc_ext_provider_tlv(uri: &str, limits: &ResourceLimits) -> Result<Tlv, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Builds inert CDC_EXT_PROVIDER metadata TLV from UTF-8 URI bytes",
+              "parameters": [],
+              "returns": "Result<Tlv, SarError>",
+              "errors": [
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Metadata-construction helper; no network effects."
+            },
+            {
+              "name": "validate_recipe_payload",
+              "kind": "function",
+              "signature": "pub fn validate_recipe_payload(payload: &[u8], limits: &ResourceLimits) -> Result<usize, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Structural recipe validation only (32-byte alignment + limits); not recipe-content verification",
+              "parameters": [],
+              "returns": "Result<usize, SarError>",
+              "errors": [
+                "SarError::InvalidLength",
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Validation helper; does not perform hash matching."
+            },
+            {
+              "name": "recipe_hashes",
+              "kind": "function",
+              "signature": "pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Extracts ordered 32-byte hashes from a validated recipe payload",
+              "parameters": [],
+              "returns": "Vec<[u8; 32]>",
+              "errors": [],
+              "safety_notes": [
+                "Call validate_recipe_payload first for structure/limit checks."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
             }
           ]
         },
@@ -3137,10 +3567,10 @@
             {
               "name": "ResourceLimits",
               "kind": "struct",
-              "signature": "pub struct ResourceLimits { pub max_archive_size: u64, pub max_entry_count: u64, pub max_lfh_bytes: u64, pub max_path_bytes: u64, pub max_tlv_bytes: u64, pub max_tlv_count: u64, pub max_cd_bytes: u64, pub max_sparse_map_bytes: u64, pub max_sparse_descriptors: u64, pub max_fragment_count: u64, pub max_fragment_group_span: u64, pub max_loss_tolerant_gap: u64, pub max_fec_value_bytes: u64, pub max_recovery_protected_range: u64, pub max_repair_working_set: u64, pub max_decoded_entry_size: u64, pub max_in_memory_buffer: u64, pub max_total_pipeline_memory: u64, ... }",
+              "signature": "pub struct ResourceLimits { pub max_archive_size: u64, pub max_entry_count: u64, pub max_lfh_bytes: u64, pub max_path_bytes: u64, pub max_tlv_bytes: u64, pub max_tlv_count: u64, pub max_cd_bytes: u64, pub max_sparse_map_bytes: u64, pub max_sparse_descriptors: u64, pub max_fragment_count: u64, pub max_fragment_group_span: u64, pub max_loss_tolerant_gap: u64, pub max_fec_value_bytes: u64, pub max_recovery_protected_range: u64, pub max_repair_working_set: u64, pub max_decoded_entry_size: u64, pub max_in_memory_buffer: u64, pub max_total_pipeline_memory: u64, pub max_cdc_chunk_count: usize, pub max_cdc_metadata_bytes: usize, ... }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths. Configured limits are the primary protection against allocation-based DoS. All u64-to-usize conversions and large allocations go through ResourceLimits::allocation_len.",
+              "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -3164,7 +3594,7 @@
               "signature": "pub fn ResourceLimits::default() -> ResourceLimits",
               "visibility": "public",
               "stability": "stable",
-              "description": "Conservative safe defaults: max_decoded_entry_size = 1 GiB, max_archive_size = 16 GiB, max_repair_working_set = 2 GiB.",
+              "description": "Conservative safe defaults including max_cdc_chunk_count=1,000,000 and max_cdc_metadata_bytes=50 MiB.",
               "parameters": [],
               "returns": "ResourceLimits",
               "errors": [],
@@ -3223,6 +3653,50 @@
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not-applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "ResourceLimits::check_cdc_chunk_count",
+              "kind": "function",
+              "signature": "pub fn ResourceLimits::check_cdc_chunk_count(&self, count: usize) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Ensures CDC chunk/record count does not exceed max_cdc_chunk_count",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "ResourceLimits::check_cdc_metadata_bytes",
+              "kind": "function",
+              "signature": "pub fn ResourceLimits::check_cdc_metadata_bytes(&self, bytes: usize) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Ensures CDC metadata byte size does not exceed max_cdc_metadata_bytes",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "9a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
               "ffi_notes": ""
             }
           ]
@@ -5539,7 +6013,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Passwords fall back to `SAR_PASSWORD` and then an interactive prompt when encryption is enabled."
+        "notes": "Passwords fall back to `SAR_PASSWORD` and then an interactive prompt when encryption is enabled. `sar create --cdc ...` is not implemented in M9a."
       },
       {
         "name": "extract",
@@ -5639,7 +6113,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Implemented for unencrypted archives and current FEC/CDC metadata; JSON includes cdc_metadata_tlvs and legacy cdc_map_tlvs. No password option exists for encrypted inspect flows."
+        "notes": "Implemented for unencrypted archives and current FEC/CDC metadata; JSON includes cdc_support, cdc_metadata_tlvs, legacy cdc_map_tlvs, and per-entry cdc_algo_id. No password option exists for encrypted inspect flows."
       },
       {
         "name": "list",
@@ -5669,7 +6143,7 @@
         "name": "verify",
         "usage": "sar verify <archive.sar> [--password PASSWORD] [--recovery] [--cdc] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
         "status": "implemented",
-        "description": "Verify archive integrity. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts --cdc to validate CDC metadata structurally and report recipe-hash verification as unavailable.",
+        "description": "Verify archive integrity. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts --cdc for structural CDC validation only.",
         "options": [
           {
             "name": "--password",
@@ -5681,7 +6155,7 @@
           },
           {
             "name": "--cdc",
-            "description": "Additionally validates CDC metadata TLVs and reports recipe-hash verification as unavailable due to spec ambiguity."
+            "description": "Additionally validates CDC metadata structurally from stored records; does not claim FASTCDC boundary-regeneration verification or external-provider recipe resolution."
           },
           {
             "name": "--max-archive-size BYTES",
@@ -5738,7 +6212,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Verification is structural and metadata-oriented. CDC verification does not attempt recipe reconstruction or external-provider resolution because the spec does not name the recipe-hash algorithm and M9a does not implement network-backed providers."
+        "notes": "Verification is structural and metadata-oriented. CDC verification does not regenerate boundaries, does not attempt recipe reconstruction or external-provider resolution, and reports recipe-hash verification as unavailable while algorithm/profile/domain spec gaps remain."
       },
       {
         "name": "version",
@@ -5843,6 +6317,140 @@
       }
     ]
   },
+  "cdc_inventory": {
+    "scope": "milestone-9a",
+    "cdc_algorithm_registry": [
+      {
+        "id": "0x00",
+        "name": "LITERAL_MODE",
+        "status": "implemented",
+        "verification_behavior": "accepted as literal mode"
+      },
+      {
+        "id": "0x01",
+        "name": "RABIN",
+        "status": "optional_unsupported",
+        "verification_behavior": "returns SAR_ERR_UNSUPPORTED when encountered"
+      },
+      {
+        "id": "0x02",
+        "name": "FASTCDC",
+        "status": "implemented_local_profile",
+        "verification_behavior": "accepted; boundary regeneration portability not claimed"
+      },
+      {
+        "id": "0x03",
+        "name": "BUZHASH",
+        "status": "optional_unsupported",
+        "verification_behavior": "returns SAR_ERR_UNSUPPORTED when encountered"
+      },
+      {
+        "id": "0x04-0xEF",
+        "name": "RESERVED",
+        "status": "reserved",
+        "verification_behavior": "returns SAR_ERR_RESERVED_VALUE"
+      },
+      {
+        "id": "0xF0-0xFF",
+        "name": "CUSTOM",
+        "status": "implementation_defined_unsupported",
+        "verification_behavior": "returns SAR_ERR_UNSUPPORTED"
+      }
+    ],
+    "cdc_metadata_tlv_registry": [
+      {
+        "id": "0x31",
+        "name": "DATA_HASH/BLAKE3",
+        "cdc_metadata": false,
+        "status": "implemented_non_cdc"
+      },
+      {
+        "id": "0x40",
+        "name": "CDC_MAP",
+        "cdc_metadata": true,
+        "status": "implemented_structural_parse_write"
+      },
+      {
+        "id": "0x41",
+        "name": "CDC_EXT_PROVIDER",
+        "cdc_metadata": true,
+        "status": "implemented_inert_parse_only"
+      },
+      {
+        "id": "0x42-0x4E",
+        "name": "RESERVED_CDC_METADATA",
+        "cdc_metadata": true,
+        "status": "reserved_error"
+      },
+      {
+        "id": "0x4F",
+        "name": "CDC_CUSTOM",
+        "cdc_metadata": true,
+        "status": "parsed_preserved_only"
+      }
+    ],
+    "verification_scopes": {
+      "parseable_interpretable_cdc_metadata": "implemented from stored records",
+      "structural_cdc_verification": "implemented",
+      "boundary_regeneration_cdc_verification": "blocked_by_spec_gap",
+      "cross_writer_deterministic_cdc_chunking": "not_guaranteed",
+      "external_cas_recipe_resolution": "unsupported"
+    },
+    "conformance_status": {
+      "implemented": [
+        "CDC metadata parsing/writing",
+        "CDC structural verification",
+        "FASTCDC local-profile chunking",
+        "CDC ResourceLimits enforcement"
+      ],
+      "implementation_defined": [
+        "FASTCDC parameter profile",
+        "CDC_MAP 50-byte record layout interpretation"
+      ],
+      "parsed_preserved_only": [
+        "CDC_EXT_PROVIDER URI metadata",
+        "CDC_CUSTOM opaque metadata"
+      ],
+      "unsupported": [
+        "RABIN algorithm",
+        "BUZHASH algorithm",
+        "CUSTOM CDC algorithm execution",
+        "sar create --cdc flag"
+      ],
+      "blocked_by_spec_gap": [
+        "Portable boundary-regeneration verification",
+        "Portable external-provider recipe reconstruction",
+        "Portable cross-writer deterministic chunking guarantee",
+        "Portable recipe-hash verification when hash algorithm/profile/domain are unspecified"
+      ]
+    },
+    "error_behavior": [
+      {
+        "condition": "unsupported CDC algorithm (e.g. 0x01, 0x03, 0xF0-0xFF)",
+        "error": "SAR_ERR_UNSUPPORTED"
+      },
+      {
+        "condition": "reserved CDC algorithm (0x04-0xEF)",
+        "error": "SAR_ERR_RESERVED_VALUE"
+      },
+      {
+        "condition": "reserved CDC metadata TLV (0x42-0x4E)",
+        "error": "SAR_ERR_RESERVED_VALUE"
+      },
+      {
+        "condition": "recipe unresolved against catalog/provider",
+        "error": "SAR_ERR_RECIPE_UNRESOLVABLE"
+      },
+      {
+        "condition": "CDC metadata/chunk limits exceeded",
+        "error": "SAR_ERR_LIMIT_EXCEEDED"
+      },
+      {
+        "condition": "malformed CDC metadata bytes or UTF-8 provider TLV",
+        "error": "SAR_ERR_MALFORMED"
+      }
+    ]
+  },
   "security_notes": {
     "resource_limits": {
       "model": "unified ResourceLimits struct threaded through all parsing and reconstruction paths",
@@ -5884,6 +6492,13 @@
       "available": false,
       "reason": "spec gap \u2014 no normative byte-to-block mapping defined for arbitrary byte erasure positions",
       "behavior": "plan_archive_repair returns RecoveryUnavailable for non-block-aligned erasures"
+    },
+    "cdc": {
+      "external_provider_handling": "CDC_EXT_PROVIDER is parsed as inert metadata only; no network/provider access is performed in M9a.",
+      "recipe_hash_verification": "Unavailable as a portable claim while recipe hash algorithm/profile is not fully specified.",
+      "boundary_regeneration_verification": "Unavailable as a portable claim until FastCDC parameters and CDC transformation domain are normatively specified or encoded.",
+      "cdc_map_interpretation": "CDC_MAP is treated as stored metadata for parsing/structural validation; it is not proof of portable cross-writer deterministic chunking.",
+      "metadata_authority": "For M9a, stored CDC map/catalog metadata is authoritative for parsing and interpretation when self-consistent."
     }
   }
 }
