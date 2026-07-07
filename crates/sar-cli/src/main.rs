@@ -663,8 +663,26 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         println!("entries={}", entries.len());
         for entry in &entries {
             if let Some(fec) = &entry.fec {
-                let fec_json = serde_json::to_string(fec).unwrap_or_else(|_| "<error>".to_string());
-                println!("  entry={} fec={}", entry.name, fec_json);
+                let fec_line = match fec {
+                    sar_core::fec::FecSummary::Xor {
+                        stripe_size,
+                        block_size,
+                        parity_data_len,
+                        ..
+                    } => format!(
+                        "algo=xor stripe_size={stripe_size} block_size={block_size} parity_bytes={parity_data_len}"
+                    ),
+                    sar_core::fec::FecSummary::ReedSolomon {
+                        k,
+                        parity_count,
+                        symbol_size,
+                        parity_data_len,
+                        ..
+                    } => format!(
+                        "algo=reed-solomon k={k} parity_count={parity_count} symbol_size={symbol_size} parity_bytes={parity_data_len}"
+                    ),
+                };
+                println!("  entry={} fec={}", entry.name, fec_line);
             }
         }
         if !recovery_tlvs.is_empty() {

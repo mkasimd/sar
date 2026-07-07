@@ -880,7 +880,7 @@ pub fn fec_size_field_offset(flags: GlobalFlags) -> usize {
         off += 1; // CDC Algo ID
     }
     if flags.contains(GlobalFlags::SELECTIVE_FEC) {
-        off += 1; // FEC Algo ID (field 11, included in AAD)
+        off += 1; // FEC Algo ID (field 11) — included in AAD; only FEC Size/Value are excluded
     }
     if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
         off += 4 + 4 + 12; // Fragment ID + Index + Descriptor
