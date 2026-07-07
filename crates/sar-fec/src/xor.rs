@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn xor_recover_erased_first_block() {
         // 3 blocks × 256 bytes = 768 bytes, 1 stripe
-        let data: Vec<u8> = (0u8..255).cycle().take(768).collect();
+        let data: Vec<u8> = (0u8..=255).cycle().take(768).collect();
         let codec = make_codec(3, 0x00);
         let fec = codec.encode_recovery(&data, FecOptions).expect("test");
 
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn xor_recover_erased_last_block() {
         // 3 blocks × 256 bytes = 768 bytes, 1 stripe
-        let data: Vec<u8> = (0u8..255).cycle().take(768).collect();
+        let data: Vec<u8> = (0u8..=255).cycle().take(768).collect();
         let codec = make_codec(3, 0x00);
         let fec = codec.encode_recovery(&data, FecOptions).expect("test");
 
@@ -505,7 +505,7 @@ mod tests {
     #[test]
     fn xor_partial_last_block() {
         // 300 bytes: one full block (256) and one partial block (44)
-        let data: Vec<u8> = (0u8..255).cycle().take(300).collect();
+        let data: Vec<u8> = (0u8..=255).cycle().take(300).collect();
         let codec = make_codec(2, 0x00); // stripe_size=2, block_size=256
         let fec = codec.encode_recovery(&data, FecOptions).expect("test");
 
