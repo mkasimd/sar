@@ -5277,7 +5277,7 @@
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "STORE_PATCH",
+              "since_milestone": "9b",
               "related_spec_sections": ["8.4"],
               "implemented": true,
               "ffi_candidate": false,

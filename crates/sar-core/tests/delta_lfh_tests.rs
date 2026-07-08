@@ -422,13 +422,14 @@ fn entry_metadata_delta_fields_none_when_has_delta_not_set() {
 }
 
 // ---------------------------------------------------------------------------
-// No patch application during archive reader pipeline
+// STORE_PATCH application succeeds when payload length matches Uncompressed Size
 // ---------------------------------------------------------------------------
 
-/// Even with HAS_DELTA set and a payload present, the reader must not attempt
-/// to apply any patch.  The payload bytes must be returned as-is.
+/// With HAS_DELTA set and STORE_PATCH (0x00) as the algorithm, the reader
+/// applies the identity transform: the decoded payload is returned as the
+/// reconstructed target when its length equals LFH Uncompressed Size.
 #[test]
-fn archive_reader_does_not_apply_patch_to_payload() {
+fn archive_reader_applies_store_patch_when_payload_length_matches() {
     use sar_core::{
         ArchiveReader, ArchiveReaderOptions,
         format::{GlobalHeader, write_global_header},
@@ -447,7 +448,7 @@ fn archive_reader_does_not_apply_patch_to_payload() {
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
 
-    let mut lfh = LocalFileHeader::minimal_store(b"noapply.bin".to_vec(), payload.len() as u64);
+    let mut lfh = LocalFileHeader::minimal_store(b"apply.bin".to_vec(), payload.len() as u64);
     lfh.patch_algo_id = Some(0x00); // STORE_PATCH
     lfh.delta_base_hash = Some([0u8; 32]);
 
@@ -461,11 +462,11 @@ fn archive_reader_does_not_apply_patch_to_payload() {
     let _ = reader.read_global_header().expect("read global header");
     let entry = reader
         .next_entry()
-        .expect("must succeed — no patch is applied")
+        .expect("must succeed — STORE_PATCH identity transform")
         .expect("entry present");
 
     assert_eq!(
         entry.payload, payload,
-        "payload must be returned as-is; no patch must be applied"
+        "STORE_PATCH: payload must equal the declared target bytes"
     );
 }

@@ -615,9 +615,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         // STORE_PATCH resource-limit guard: reject before any allocation when the
         // declared Uncompressed Size exceeds the configured limit.  Non-sparse
-        // entries are already protected by the `expected_output_size` path inside
-        // `decode_payload_v2`, but sparse entries pass `max_decoded_entry_size` as
-        // the upper bound there; an explicit check is required for those too.
+        // entries are also protected by the `expected_output_size` path inside
+        // `decode_payload_v2`, but sparse entries use `max_decoded_entry_size` as
+        // `expected_output_size` there (since their logical size can exceed the
+        // decoded payload size); an explicit check is needed for those too.
         let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
         let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
         if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
