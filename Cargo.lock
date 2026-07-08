@@ -803,6 +803,7 @@ name = "sar-core"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "bzip2",
  "crc32fast",
  "sar-cdc",
  "sar-compression",

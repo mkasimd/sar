@@ -218,20 +218,20 @@ maintainability cleanup pass.
 
 ---
 
-## Milestone 9b — Delta Metadata and Patch Algorithm Registry
+## Milestone 9b — Delta Metadata, Patch Algorithm Registry, and Patch Application
 
-**Status: Partial (delta LFH field parsing/preservation and patch algorithm registry complete; patch application not implemented)**
+**Status: Complete (delta LFH field parsing/preservation, patch algorithm registry, STORE_PATCH, BSDIFF, and VCDIFF application implemented)**
 
 ### Implemented
 
 - **`HAS_DELTA` global flag:** parsed, exposed in `GlobalFlags`, tracked in the archive reader pipeline.
 - **LFH `Patch Algo ID` field:** parsed when `HAS_DELTA` is set; validated against the SAR patch algorithm registry; stored in `EntryMetadata.patch_algo_id` as `Option<u8>`.
 - **LFH `Delta Base Hash` field:** parsed when `HAS_DELTA` is set; preserved as opaque 32 bytes in `EntryMetadata.delta_base_hash` as `Option<[u8; 32]>`.
-- **Patch algorithm registry validation (`sar-delta`):**
-  - `0x00` `STORE_PATCH` — assigned; application implemented
-  - `0x01` `VCDIFF` — assigned; application unsupported
-  - `0x02` `BSDIFF` — assigned optional; application unsupported
-  - `0x03` `ZSTD_PATCH` — assigned optional; application unsupported
+- **Patch algorithm registry (`sar-delta`):**
+  - `0x00` `STORE_PATCH` — implemented; all-zero `Delta Base Hash` accepted; no base required
+  - `0x01` `VCDIFF` — implemented per RFC 3284; explicit base bytes required
+  - `0x02` `BSDIFF` — implemented as SAR BSDIFF40 profile (spec §8.4.3); explicit base bytes required
+  - `0x03` `ZSTD_PATCH` — assigned; application blocked (dictionary protocol not specified)
   - `0x04–0xEF` reserved → `SAR_ERR_RESERVED_VALUE`
   - `0xF0–0xFF` custom → `SAR_ERR_UNSUPPORTED`
 - **`EntryMetadata` delta fields:** `patch_algo_id` and `delta_base_hash` exposed in the public reader API and serialized in JSON output (`skip_serializing_if = "Option::is_none"`).
@@ -240,22 +240,43 @@ maintainability cleanup pass.
 - **LFH Header Size accounting:** `Patch Algo ID` (1 B) + `Delta Base Hash` (32 B) = 33 extra bytes included in the header size when `HAS_DELTA` is set.
 - **`STORE_PATCH` application:** decoded patch payload is the complete reconstructed target; no base reads; output length must equal LFH `Uncompressed Size`; `SAR_ERR_PATCH_FAILED` returned on mismatch.
 - **All-zero `Delta Base Hash` for `STORE_PATCH`:** treated as "no base required"; any `Delta Base Hash` value is accepted for `STORE_PATCH`; hash is preserved verbatim in metadata.
-- **`ResourceLimits` for `STORE_PATCH`:** `Uncompressed Size` checked against `max_decoded_entry_size` before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if exceeded.
+- **All-zero `Delta Base Hash` for BSDIFF/VCDIFF:** returns `SAR_ERR_BASE_MISSING` (indicates no base was recorded).
+- **`BSDIFF` application (SAR BSDIFF40 profile):**
+  - Header: magic `BSDIFF40`, `Control_Block_Length`, `Diff_Block_Length`, `New_File_Size` in classic bsdiff sign-magnitude encoding.
+  - Three bzip2-compressed blocks: Control, Diff, Extra.
+  - Control triples: `(diff_len, extra_len, seek_adjust)` in sign-magnitude encoding.
+  - Base reads beyond end of base use `0x00` per spec.
+  - Base seek before offset 0 → `SAR_ERR_PATCH_FAILED`.
+  - `New_File_Size` must equal LFH `Uncompressed Size`.
+  - Explicit base bytes required via `ArchiveReaderOptions.delta_base`.
+- **`VCDIFF` application (RFC 3284):**
+  - Standard VCDIFF header/window/instruction parsing.
+  - VCD_SOURCE (copy from base) and VCD_TARGET (copy from decoded output) windows.
+  - Default RFC 3284 code table (s_near=4, s_same=3).
+  - ADD, COPY (SELF/HERE/NEAR/SAME modes), and RUN instructions.
+  - Explicit base bytes required via `ArchiveReaderOptions.delta_base`.
+  - VCD_DECOMPRESS with non-zero compressor ID → `SAR_ERR_PATCH_FAILED`.
+  - VCD_CODETABLE → `SAR_ERR_PATCH_FAILED` (custom code tables not supported).
+- **`ArchiveReaderOptions.delta_base`:** caller supplies base bytes explicitly; no automatic discovery, no network access, no external CAS access.
+- **`ResourceLimits` for BSDIFF:** `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples` added.
+- **`ResourceLimits` for VCDIFF:** `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size` added.
+- **`SAR_ERR_LIMIT_EXCEEDED`** returned for all configured-limit violations.
+- **`SAR_ERR_BASE_MISSING`** returned when base is required but not supplied, or when all-zero hash is present for BSDIFF/VCDIFF.
 - **`LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`.**
-- **`STORE_PATCH` + compression, encryption, sparse, fragmentation:** all handled correctly through the existing transformation pipeline.
-- **Documentation:** `docs/API.md`, `docs/CONFORMANCE.md`, `docs/SECURITY.md`, `docs/SPEC_QUESTIONS.md`, `README.md` updated.
+- **BSDIFF/VCDIFF + compression, encryption:** all handled correctly through the existing transformation pipeline.
+- **Documentation:** `docs/API.md`, `docs/CONFORMANCE.md`, `docs/SECURITY.md`, `docs/SPEC_QUESTIONS.md`, `docs/MACHINE_READABLE_API.json`, `README.md` updated.
 
 ### Not implemented
 
-- Patch application for VCDIFF, BSDIFF, ZSTD_PATCH, or custom algorithms (`SAR_ERR_UNSUPPORTED` returned).
+- `ZSTD_PATCH` application — dictionary/protocol not specified by spec.
+- Custom patch algorithms — not negotiated.
 - Delta Base Hash verification — hash algorithm not specified by spec; 32 bytes treated as opaque.
-- Base object resolution — object location and lookup model not specified by spec.
-- Per-entry delta opt-out — no `IS_DELTA` bit or no-delta sentinel is defined by spec.
+- Base object automatic resolution — no lookup, no file access, no URI resolution; caller supplies base explicitly.
+- Per-entry delta opt-out — no `IS_DELTA` bit or no-delta sentinel defined by spec.
 
 ### Spec gaps preserved (must not invent semantics for these)
 
 - Delta Base Hash algorithm — the 32-byte field has no accompanying algorithm ID; cannot be verified portably.
-- Base object resolution model — the spec does not define where the base object comes from (for VCDIFF and other base-requiring algorithms).
-- BSDIFF wire format — the spec does not name or cite a normative BSDIFF format version.
+- Base object resolution model — the spec does not define where the base object comes from; caller supplies base explicitly.
 - ZSTD_PATCH dictionary/protocol — the spec does not define the patch protocol.
 - Per-entry IS_DELTA bit — the spec does not define a per-entry delta opt-out mechanism.

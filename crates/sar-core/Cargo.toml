@@ -17,6 +17,7 @@ sar-cdc = { path = "../sar-cdc" }
 sar-delta = { path = "../sar-delta" }
 
 [dev-dependencies]
+bzip2.workspace = true
 serde_json.workspace = true
 tempfile = "3.13"
 

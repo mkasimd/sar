@@ -517,22 +517,24 @@ fn build_archive_with_algo(patch_algo_id: u8) -> Vec<u8> {
 }
 
 #[test]
-fn vcdiff_returns_unsupported() {
-    let archive = build_archive_with_algo(0x01); // VCDIFF
-    let err = read_entry(archive).expect_err("VCDIFF must return Unsupported");
+fn vcdiff_all_zero_hash_returns_base_missing() {
+    // VCDIFF with all-zero Delta Base Hash returns SAR_ERR_BASE_MISSING (now implemented).
+    let archive = build_archive_with_algo(0x01); // VCDIFF, all-zero hash, no base supplied
+    let err = read_entry(archive).expect_err("VCDIFF with all-zero hash must return BaseMissing");
     assert!(
-        matches!(err, SarError::Unsupported(_)),
-        "expected Unsupported for VCDIFF, got {err:?}"
+        matches!(err, SarError::BaseMissing(_)),
+        "expected BaseMissing for VCDIFF+all-zero-hash, got {err:?}"
     );
 }
 
 #[test]
-fn bsdiff_returns_unsupported() {
-    let archive = build_archive_with_algo(0x02); // BSDIFF
-    let err = read_entry(archive).expect_err("BSDIFF must return Unsupported");
+fn bsdiff_all_zero_hash_returns_base_missing() {
+    // BSDIFF with all-zero Delta Base Hash returns SAR_ERR_BASE_MISSING (now implemented).
+    let archive = build_archive_with_algo(0x02); // BSDIFF, all-zero hash, no base supplied
+    let err = read_entry(archive).expect_err("BSDIFF with all-zero hash must return BaseMissing");
     assert!(
-        matches!(err, SarError::Unsupported(_)),
-        "expected Unsupported for BSDIFF, got {err:?}"
+        matches!(err, SarError::BaseMissing(_)),
+        "expected BaseMissing for BSDIFF+all-zero-hash, got {err:?}"
     );
 }
 

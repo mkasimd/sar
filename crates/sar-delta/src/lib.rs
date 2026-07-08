@@ -85,4 +85,3 @@ pub use algo::{
 };
 pub use bsdiff::{BsdiffLimits, apply_bsdiff, decode_bsdiff_int};
 pub use vcdiff::{VcdiffLimits, apply_vcdiff};
-

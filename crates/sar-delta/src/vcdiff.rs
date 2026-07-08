@@ -108,7 +108,10 @@ impl CodeEntry {
     }
 
     const fn double(i1: InstDef, i2: InstDef) -> Self {
-        Self { inst1: i1, inst2: i2 }
+        Self {
+            inst1: i1,
+            inst2: i2,
+        }
     }
 }
 
@@ -157,7 +160,8 @@ fn build_default_code_table() -> [CodeEntry; 256] {
                 if idx >= 256 {
                     break 'outer;
                 }
-                table[idx] = CodeEntry::double(InstDef::add(add_size), InstDef::copy(copy_size, mode));
+                table[idx] =
+                    CodeEntry::double(InstDef::add(add_size), InstDef::copy(copy_size, mode));
                 idx += 1;
             }
         }
@@ -326,7 +330,7 @@ impl AddrCache {
                     .ok_or(PatchError::PatchFailed("VCDIFF: HERE address underflow"))?
             }
             // Modes 2..1+S_NEAR: NEAR cache
-            m if m >= 2 && m <= 1 + S_NEAR => {
+            m if (2..=1 + S_NEAR).contains(&m) => {
                 let i = m - 2;
                 let offset = addr_reader.read_varint()?;
                 self.near[i]
@@ -334,13 +338,15 @@ impl AddrCache {
                     .ok_or(PatchError::PatchFailed("VCDIFF: NEAR address overflow"))?
             }
             // Modes 2+S_NEAR..1+S_NEAR+S_SAME: SAME cache (single byte lookup)
-            m if m >= 2 + S_NEAR && m <= 1 + S_NEAR + S_SAME => {
+            m if (2 + S_NEAR..=1 + S_NEAR + S_SAME).contains(&m) => {
                 let s = m - (2 + S_NEAR);
                 let b = addr_reader.read_u8()? as usize;
                 self.same[s * 256 + b]
             }
             _ => {
-                return Err(PatchError::PatchFailed("VCDIFF: invalid COPY addressing mode"));
+                return Err(PatchError::PatchFailed(
+                    "VCDIFF: invalid COPY addressing mode",
+                ));
             }
         };
         Ok(addr)
@@ -362,17 +368,17 @@ impl AddrCache {
 ///
 /// # Arguments
 ///
-/// * `base`                 – base object bytes (explicit; no automatic discovery).
-/// * `patch`                – decoded VCDIFF patch bytes.
+/// * `base` – base object bytes (explicit; no automatic discovery).
+/// * `patch` – decoded VCDIFF patch bytes.
 /// * `expected_target_size` – LFH `Uncompressed Size`; output MUST equal this exactly.
-/// * `limits`               – resource limits for this operation.
+/// * `limits` – resource limits for this operation.
 ///
 /// # Errors
 ///
-/// * [`PatchError::PatchFailed`]   – malformed or invalid VCDIFF data.
+/// * [`PatchError::PatchFailed`] – malformed or invalid VCDIFF data.
 /// * [`PatchError::LimitExceeded`] – any configured resource limit exceeded.
-/// * [`PatchError::BaseMissing`]   – base bytes required but not supplied
-///                                    (the caller is responsible for this check before calling).
+/// * [`PatchError::BaseMissing`] – base bytes required but not supplied
+///   (the caller is responsible for this check before calling).
 pub fn apply_vcdiff(
     base: &[u8],
     patch: &[u8],
@@ -515,10 +521,13 @@ fn decode_window(
     let target_window_length = reader.read_varint()? as usize;
 
     // Limit: output size
-    let new_total = output
-        .len()
-        .checked_add(target_window_length)
-        .ok_or(PatchError::PatchFailed("VCDIFF: target window length overflow"))?;
+    let new_total =
+        output
+            .len()
+            .checked_add(target_window_length)
+            .ok_or(PatchError::PatchFailed(
+                "VCDIFF: target window length overflow",
+            ))?;
     if new_total as u64 > limits.max_output_size {
         return Err(PatchError::LimitExceeded(
             "VCDIFF: output size exceeds max_output_size limit",
@@ -576,11 +585,11 @@ fn decode_window(
 /// Applies the ADD/COPY/RUN instructions from a single VCDIFF delta window.
 #[allow(clippy::too_many_arguments)]
 fn apply_instructions(
-    source: &[u8],       // source segment for this window (may be empty)
-    add_run: &[u8],      // data section (ADD payload + RUN byte)
-    inst: &[u8],         // instructions section
-    addr: &[u8],         // addresses section
-    target_len: usize,   // expected number of output bytes for this window
+    source: &[u8],     // source segment for this window (may be empty)
+    add_run: &[u8],    // data section (ADD payload + RUN byte)
+    inst: &[u8],       // instructions section
+    addr: &[u8],       // addresses section
+    target_len: usize, // expected number of output bytes for this window
     code_table: &[CodeEntry; 256],
     limits: &VcdiffLimits,
     output: &mut Vec<u8>,
@@ -673,8 +682,7 @@ fn apply_instructions(
                 InstType::Copy => {
                     // Compute "here": current position in the virtual source+target array
                     let here = (source.len() + (target_pos - target_start)) as u64;
-                    let addr_val =
-                        addr_cache.decode_address(idef.mode, here, &mut addr_reader)?;
+                    let addr_val = addr_cache.decode_address(idef.mode, here, &mut addr_reader)?;
 
                     addr_cache.update(addr_val);
 

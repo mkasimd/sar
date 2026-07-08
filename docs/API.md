@@ -93,6 +93,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
 - `ArchiveReaderOptions`
   - `limits: ResourceLimits`
+  - `delta_base: Option<Vec<u8>>` — explicit base bytes for BSDIFF/VCDIFF patch application; no automatic discovery
 - `ResourceLimits`
   - `max_archive_size`
   - `max_entry_count`
@@ -115,6 +116,13 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `max_recovery_protected_range`
   - `max_repair_working_set`
   - `use_runtime_memory_budget`
+  - `max_bsdiff_control_bytes` — maximum decompressed BSDIFF Control Block size (default: 64 MiB)
+  - `max_bsdiff_diff_bytes` — maximum decompressed BSDIFF Diff Block size (default: 1 GiB)
+  - `max_bsdiff_extra_bytes` — maximum decompressed BSDIFF Extra Block size (default: 1 GiB)
+  - `max_bsdiff_control_triples` — maximum number of BSDIFF control triples (default: 4 000 000)
+  - `max_vcdiff_window_count` — maximum number of VCDIFF windows per patch (default: 1 000 000)
+  - `max_vcdiff_instruction_count` — maximum number of VCDIFF instructions per window (default: 10 000 000)
+  - `max_vcdiff_output_size` — maximum total VCDIFF reconstructed output size; 0 = defer to `max_decoded_entry_size` (default: 0)
   - CLI defaults currently rely on `ResourceLimits::default()` unless the caller or CLI flags override them; the most relevant Stage 4 defaults are `max_archive_size = 16 GiB`, `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, and `max_repair_working_set = 2 GiB`
 - `CompressionSettings`
   - `store()` helper
@@ -846,14 +854,19 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-delta`
 
-- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH` application implemented.
-- Status: partial (M9b + STORE_PATCH — registry and metadata implemented; `STORE_PATCH` application implemented; VCDIFF/BSDIFF/ZSTD_PATCH/custom not implemented)
+- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented.
+- Status: complete (M9b — registry, metadata, `STORE_PATCH`, `BSDIFF`, and `VCDIFF` implemented; `ZSTD_PATCH`/custom blocked)
 - Public API (M9b):
   - `PatchAlgoId` — enum of assigned and custom patch algorithm identifiers: `StorePatch (0x00)`, `Vcdiff (0x01)`, `Bsdiff (0x02)`, `ZstdPatch (0x03)`, `Custom(u8)` (`0xF0–0xFF`)
-  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`, `PatchFailed`
+  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`, `PatchFailed`, `BaseMissing`, `LimitExceeded`
   - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>` — validates a raw byte against the SAR patch algorithm registry; returns `ReservedValue` for `0x04–0xEF`, `Unsupported` for `0xF0–0xFF`, and the corresponding `PatchAlgoId` for all assigned IDs
   - `patch_algo_name(u8) -> &'static str` — returns a display name for any raw algorithm byte
   - `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` — applies `STORE_PATCH` (identity): returns the patch payload if its length equals `expected_len`, otherwise returns `PatchFailed`
+  - `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a SAR BSDIFF40 patch; caller supplies base bytes explicitly
+  - `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a VCDIFF (RFC 3284) patch; caller supplies base bytes explicitly
+  - `bsdiff::BsdiffLimits` — resource limits for BSDIFF patch application (`max_patch_size`, `max_control_bytes`, `max_diff_bytes`, `max_extra_bytes`, `max_control_triples`, `max_target_size`)
+  - `vcdiff::VcdiffLimits` — resource limits for VCDIFF patch application (`max_patch_size`, `max_window_count`, `max_instruction_count`, `max_output_size`)
+  - `decode_bsdiff_int(bytes: &[u8]) -> Result<i64, PatchError>` — decodes a classic bsdiff sign-magnitude 8-byte integer
   - Constants: `PATCH_ALGO_STORE_PATCH (0x00u8)`, `PATCH_ALGO_VCDIFF (0x01u8)`, `PATCH_ALGO_BSDIFF (0x02u8)`, `PATCH_ALGO_ZSTD_PATCH (0x03u8)`, `PATCH_ALGO_CUSTOM_MIN (0xF0u8)`, `PATCH_ALGO_CUSTOM_MAX (0xFFu8)`
 - All of the above are re-exported from `sar-core` for consumer convenience.
 - FFI readiness: `not_applicable` (no C ABI in this milestone)
@@ -865,11 +878,23 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 - `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
 - `STORE_PATCH` + compression, encryption, sparse, and fragmentation all handled correctly through the existing transformation pipeline
 
+**Implemented in M9b Delta pass (BSDIFF + VCDIFF):**
+
+- `BSDIFF` (`0x02`) SAR BSDIFF40 profile: magic `BSDIFF40`, sign-magnitude header fields, three bzip2-compressed blocks (Control/Diff/Extra), control triples `(diff_len, extra_len, seek_adjust)`. Base reads beyond end use `0x00`. Base seek before 0 → `SAR_ERR_PATCH_FAILED`. Explicit base bytes required.
+- `VCDIFF` (`0x01`) RFC 3284: standard header/window/instruction decoding, VCD_SOURCE and VCD_TARGET windows, ADD/COPY/RUN instructions, default code table (s_near=4, s_same=3). Explicit base bytes required.
+- `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery, no network access, no CAS access.
+- All-zero `Delta Base Hash` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
+- Missing `delta_base` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
+- `ResourceLimits` enforced for BSDIFF (control/diff/extra block sizes, triple count) and VCDIFF (window count, instruction count, output size).
+- `BSDIFF`/`VCDIFF` + compression and encryption handled correctly through the existing transformation pipeline.
+- `ZSTD_PATCH` (`0x03`) → `SAR_ERR_UNSUPPORTED` (dictionary protocol not specified).
+
 **Not implemented:**
 
-- Patch application for VCDIFF, BSDIFF, ZSTD_PATCH, or custom algorithms (`SAR_ERR_UNSUPPORTED` returned)
-- Delta Base Hash verification (hash algorithm not specified by spec)
-- Base object resolution (object location model not specified by spec)
+- `ZSTD_PATCH` application (dictionary/protocol not specified by spec)
+- Custom patch algorithms
+- Delta Base Hash verification (hash algorithm not specified by spec; field is opaque)
+- Automatic base object resolution (location model not specified by spec)
 
 ### `sar-fragmentation`
 
@@ -1022,7 +1047,7 @@ Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is *
 
 ---
 
-## M9b APIs — Delta Metadata and Patch Algorithm Registry
+## M9b APIs — Delta Metadata, Patch Algorithm Registry, BSDIFF, and VCDIFF
 
 Milestone 9b adds:
 
@@ -1040,11 +1065,21 @@ Milestone 9b adds:
 - `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
 - `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
 
-**Not implemented:**
+**BSDIFF and VCDIFF application (added in M9b Delta pass):**
 
-- Patch application for VCDIFF, BSDIFF, ZSTD_PATCH, or custom algorithms (`SAR_ERR_UNSUPPORTED` returned)
+- `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — SAR BSDIFF40 patcher; explicit base required
+- `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — RFC 3284 VCDIFF patcher; explicit base required
+- `bsdiff::BsdiffLimits` / `vcdiff::VcdiffLimits` — per-algorithm resource limits (re-exported from `sar-core`)
+- `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery
+- `BSDIFF` (`0x02`) and `VCDIFF` (`0x01`) wired into `next_entry()`: all-zero `Delta Base Hash` → `SAR_ERR_BASE_MISSING`; missing `delta_base` → `SAR_ERR_BASE_MISSING`
+- New `ResourceLimits` fields: `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples`, `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size`
+
+**Not implemented (M9b):**
+
+- `ZSTD_PATCH` application — dictionary/protocol not specified by spec (`SAR_ERR_UNSUPPORTED` returned)
+- Custom patch algorithms — not negotiated
 - Delta Base Hash verification — hash algorithm not specified by spec; field treated as opaque bytes
-- Base object resolution — object location model not specified by spec
+- Automatic base object resolution — location model not specified by spec; caller supplies base explicitly
 - Per-entry `IS_DELTA` opt-out bit — not defined in spec
 
 ### `sar-cdc` crate

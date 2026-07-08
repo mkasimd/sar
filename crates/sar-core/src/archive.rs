@@ -12,8 +12,7 @@ use sar_crypto::{
 };
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
-    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
-    bsdiff::BsdiffLimits,
+    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff, bsdiff::BsdiffLimits,
     vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
@@ -664,6 +663,14 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // We don't want the decompressor to be bounded by logical_size;
             // max_decoded_entry_size is already the correct upper bound.
             self.options.max_decoded_entry_size()
+        } else if is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH {
+            // For BSDIFF, VCDIFF, and other patch algorithms the compressed/encrypted
+            // payload contains the *patch bytes*, not the final target bytes.
+            // The decompressor output size will be the decompressed patch size, which
+            // is distinct from (and typically larger than) `lfh.uncompressed_size`
+            // (the target size).  Use `max_decoded_entry_size` as the upper bound and
+            // let the patch algorithm itself verify the final target size.
+            self.options.max_decoded_entry_size()
         } else {
             lfh.uncompressed_size
         };
@@ -714,9 +721,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
                             "VCDIFF: all-zero Delta Base Hash indicates missing base",
                         ));
                     }
-                    let base = self.options.delta_base.as_deref().ok_or(
-                        SarError::BaseMissing("VCDIFF: no base bytes supplied in reader options"),
-                    )?;
+                    let base = self
+                        .options
+                        .delta_base
+                        .as_deref()
+                        .ok_or(SarError::BaseMissing(
+                            "VCDIFF: no base bytes supplied in reader options",
+                        ))?;
                     let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits);
                     apply_vcdiff(base, &decoded, lfh.uncompressed_size, &vcdiff_limits)
                         .map_err(map_patch_error)?
@@ -728,9 +739,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
                             "BSDIFF: all-zero Delta Base Hash indicates missing base",
                         ));
                     }
-                    let base = self.options.delta_base.as_deref().ok_or(
-                        SarError::BaseMissing("BSDIFF: no base bytes supplied in reader options"),
-                    )?;
+                    let base = self
+                        .options
+                        .delta_base
+                        .as_deref()
+                        .ok_or(SarError::BaseMissing(
+                            "BSDIFF: no base bytes supplied in reader options",
+                        ))?;
                     let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits);
                     apply_bsdiff(base, &decoded, lfh.uncompressed_size, &bsdiff_limits)
                         .map_err(map_patch_error)?
@@ -762,8 +777,14 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     "decoded payload size does not match LFH Uncompressed Size",
                 ));
             }
+            // STORE mode requires Payload Size == Uncompressed Size only when
+            // the payload IS the target (no delta transformation, or STORE_PATCH
+            // which is also an identity pass-through).  For BSDIFF and VCDIFF
+            // the uncompressed_size is the target size while payload_size is the
+            // patch size, so the two may legitimately differ.
             if !is_effectively_compressed
                 && !is_encrypted
+                && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
                 && lfh.payload_size != lfh.uncompressed_size
             {
                 return Err(SarError::InvalidLength(
@@ -2058,7 +2079,6 @@ fn ceil_div_u64(a: u64, b: u64) -> Result<u64, SarError> {
         .checked_div(b)
         .ok_or(SarError::Overflow("ceil_div"))
 }
-
 
 /// Maps a [`sar_delta::PatchError`] to a [`SarError`].
 fn map_patch_error(e: sar_delta::PatchError) -> SarError {

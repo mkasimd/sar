@@ -453,7 +453,8 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
             limits: ResourceLimits {
                 max_decoded_entry_size: 512,
                 ..unlimited()
-            , delta_base: None },
+            },
+            delta_base: None,
         },
     )
     .expect("reader");
@@ -566,7 +567,8 @@ fn archive_reader_decompression_respects_entry_limit() {
             limits: ResourceLimits {
                 max_decoded_entry_size: 1024,
                 ..unlimited()
-            , delta_base: None },
+            },
+            delta_base: None,
         },
     )
     .expect("reader");
@@ -716,7 +718,8 @@ fn read_all_logical_files_rejects_sparse_expansion_bomb() {
             limits: ResourceLimits {
                 max_decoded_entry_size: 1024,
                 ..unlimited()
-            , delta_base: None },
+            },
+            delta_base: None,
         },
     )
     .expect("reader");
@@ -755,7 +758,8 @@ fn read_all_logical_files_sparse_bounded_success() {
             limits: ResourceLimits {
                 max_decoded_entry_size: 1024,
                 ..unlimited()
-            , delta_base: None },
+            },
+            delta_base: None,
         },
     )
     .expect("reader");

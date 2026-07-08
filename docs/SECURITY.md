@@ -253,8 +253,9 @@ The LFH `Delta Base Hash` field is a 32-byte opaque value. The spec does not def
 
 - preserves the 32 bytes without interpretation;
 - does **not** assume BLAKE3, SHA-256, or any other algorithm;
-- does **not** verify the base object against this field (base resolution is not implemented);
-- treats an all-zero `Delta Base Hash` as "no base required" for `STORE_PATCH`; for base-requiring algorithms (VCDIFF, BSDIFF, ZSTD_PATCH), all-zero remains invalid/missing if application is ever attempted.
+- does **not** verify the base object against this field;
+- treats an all-zero `Delta Base Hash` as "no base recorded" for BSDIFF and VCDIFF (returns `SAR_ERR_BASE_MISSING`);
+- accepts any `Delta Base Hash` value for `STORE_PATCH` (base not required).
 
 Implementations MUST NOT hard-code a hash algorithm for `Delta Base Hash` verification until the spec normatively defines the algorithm encoding for this field.
 
@@ -268,10 +269,26 @@ Implementations MUST NOT hard-code a hash algorithm for `Delta Base Hash` verifi
 - **No base object access:** `STORE_PATCH` requires no base object; no file access, URI resolution, or external lookup is performed.
 - **`LOSS_TOLERANT` does not suppress errors:** `SAR_ERR_PATCH_FAILED` is always propagated regardless of `LOSS_TOLERANT` semantics.
 
+### BSDIFF and VCDIFF patch application security properties
+
+`BSDIFF` (`0x02`, SAR BSDIFF40 profile) and `VCDIFF` (`0x01`, RFC 3284) are implemented with the following security properties:
+
+- **All operations are bounded by `ResourceLimits`:** bzip2 decompression (BSDIFF blocks), instruction counts (VCDIFF), window counts (VCDIFF), and output size are all capped. `SAR_ERR_LIMIT_EXCEEDED` is returned before any oversized allocation.
+- **No automatic base discovery:** the caller must supply base bytes explicitly via `ArchiveReaderOptions.delta_base`. No file access, network access, CAS lookup, or URI resolution is performed.
+- **All-zero `Delta Base Hash` → `SAR_ERR_BASE_MISSING`:** prevents silent use of a wrong base when no base was recorded.
+- **Missing base → `SAR_ERR_BASE_MISSING`:** if `delta_base` is not supplied, the error is immediate, not a silent corrupt reconstruction.
+- **Negative field rejection (BSDIFF):** negative `Control_Block_Length`, `Diff_Block_Length`, `New_File_Size`, `diff_len`, or `extra_len` values → `SAR_ERR_PATCH_FAILED`.
+- **Seek-before-zero rejection (BSDIFF):** `old_pos < 0` after seek → `SAR_ERR_PATCH_FAILED`.
+- **Block overread protection (BSDIFF):** diff and extra block reads are bounds-checked against the decompressed block sizes.
+- **Output size mismatch rejection:** `New_File_Size` (BSDIFF) or reconstructed output (VCDIFF) must exactly equal LFH `Uncompressed Size`; any mismatch → `SAR_ERR_PATCH_FAILED`.
+- **No use of C FFI in VCDIFF:** VCDIFF decoding is pure Rust.
+- **bzip2 library (BSDIFF):** uses the `bzip2` crate (`libbz2-rs-sys`); pure Rust bzip2 implementation; no linking to system libbz2.
+- **`LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`.**
+
 ### Reserved and unsupported patch algorithm IDs fail closed
 
 - Reserved IDs (`0x04–0xEF`) → `SarError::ReservedValue`
 - Custom IDs (`0xF0–0xFF`) → `SarError::Unsupported`
-- VCDIFF/BSDIFF/ZSTD_PATCH → `SarError::Unsupported` on application attempt (not yet implemented)
+- `ZSTD_PATCH` (`0x03`) → `SarError::Unsupported` (dictionary protocol not specified)
 
 No fallback behavior is attempted for unknown patch algorithms.

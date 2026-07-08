@@ -88,20 +88,20 @@ impl BsdiffLimits {
 ///
 /// # Arguments
 ///
-/// * `base`                 – base object bytes (caller must supply; no automatic discovery).
-/// * `patch`                – decoded patch payload (after SAR decryption/decompression stages).
-/// * `expected_target_size` – value of LFH `Uncompressed Size`; the reconstructed target MUST
-///                            equal this exactly.
-/// * `limits`               – resource limits for this operation.
+/// * `base` – base object bytes (caller must supply; no automatic discovery).
+/// * `patch` – decoded patch payload (after SAR decryption/decompression stages).
+/// * `expected_target_size` – value of LFH `Uncompressed Size`; the reconstructed
+///   target MUST equal this exactly.
+/// * `limits` – resource limits for this operation.
 ///
 /// # Errors
 ///
-/// * [`PatchError::PatchFailed`]   – malformed patch data, invalid magic, negative field,
-///                                    size mismatch, block overread, or bzip2 failure.
+/// * [`PatchError::PatchFailed`] – malformed patch data, invalid magic, negative
+///   field, size mismatch, block overread, or bzip2 failure.
 /// * [`PatchError::LimitExceeded`] – any configured resource limit was exceeded.
-/// * [`PatchError::BaseMissing`]   – `base` is empty but a diff step requires base bytes
-///                                    (this case is handled by the caller checking the hash;
-///                                    missing base detection belongs in the archive reader).
+/// * [`PatchError::BaseMissing`] – `base` is empty but a diff step requires base
+///   bytes (this case is handled by the caller checking the hash; missing base
+///   detection belongs in the archive reader).
 pub fn apply_bsdiff(
     base: &[u8],
     patch: &[u8],
@@ -118,10 +118,14 @@ pub fn apply_bsdiff(
 
     // Header: 32 bytes
     if patch.len() < 32 {
-        return Err(PatchError::PatchFailed("BSDIFF: patch too short for header"));
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: patch too short for header",
+        ));
     }
     if &patch[..8] != b"BSDIFF40" {
-        return Err(PatchError::PatchFailed("BSDIFF: invalid magic (expected BSDIFF40)"));
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: invalid magic (expected BSDIFF40)",
+        ));
     }
 
     let ctrl_len_raw = decode_bsdiff_int(&patch[8..16])?;
@@ -134,7 +138,9 @@ pub fn apply_bsdiff(
         ));
     }
     if diff_len_raw < 0 {
-        return Err(PatchError::PatchFailed("BSDIFF: negative Diff_Block_Length"));
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: negative Diff_Block_Length",
+        ));
     }
     if new_size_raw < 0 {
         return Err(PatchError::PatchFailed("BSDIFF: negative New_File_Size"));
@@ -256,9 +262,9 @@ pub fn apply_bsdiff(
         }
 
         // Bounds: diff block must not be overread
-        let diff_end = diff_pos
-            .checked_add(d_len)
-            .ok_or(PatchError::PatchFailed("BSDIFF: diff block position overflow"))?;
+        let diff_end = diff_pos.checked_add(d_len).ok_or(PatchError::PatchFailed(
+            "BSDIFF: diff block position overflow",
+        ))?;
         if diff_end > diff_data.len() as u64 {
             return Err(PatchError::PatchFailed("BSDIFF: Diff Block overread"));
         }
@@ -279,7 +285,9 @@ pub fn apply_bsdiff(
         diff_pos = diff_end;
         old_pos = old_pos
             .checked_add(d_len_raw)
-            .ok_or(PatchError::PatchFailed("BSDIFF: old_pos overflow in diff step"))?;
+            .ok_or(PatchError::PatchFailed(
+                "BSDIFF: old_pos overflow in diff step",
+            ))?;
 
         // Step 2: copy extra bytes verbatim
         let new_after_extra = new_pos
@@ -291,9 +299,9 @@ pub fn apply_bsdiff(
             ));
         }
 
-        let extra_end = extra_pos
-            .checked_add(e_len)
-            .ok_or(PatchError::PatchFailed("BSDIFF: extra block position overflow"))?;
+        let extra_end = extra_pos.checked_add(e_len).ok_or(PatchError::PatchFailed(
+            "BSDIFF: extra block position overflow",
+        ))?;
         if extra_end > extra_data.len() as u64 {
             return Err(PatchError::PatchFailed("BSDIFF: Extra Block overread"));
         }
@@ -307,11 +315,11 @@ pub fn apply_bsdiff(
         // Step 3: seek adjustment
         old_pos = old_pos
             .checked_add(seek_adj)
-            .ok_or(PatchError::PatchFailed("BSDIFF: old_pos overflow in seek step"))?;
+            .ok_or(PatchError::PatchFailed(
+                "BSDIFF: old_pos overflow in seek step",
+            ))?;
         if old_pos < 0 {
-            return Err(PatchError::PatchFailed(
-                "BSDIFF: base seek before offset 0",
-            ));
+            return Err(PatchError::PatchFailed("BSDIFF: base seek before offset 0"));
         }
     }
 
