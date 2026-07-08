@@ -3003,14 +3003,7 @@ TLV Length MUST equal `16 + Record_Count × Record_Size`.  Both the multiplicati
 
 #### CDC_MAP hash algorithm registry
 
-`Hash_Algorithm_ID` uses the SAR hash algorithm registry (Section 9.4):
-
-| ID   | Name     | Status for CDC_MAP                |
-|------|----------|-----------------------------------|
-| 0x30 | SHA-256  | SHOULD be supported               |
-| 0x31 | BLAKE3   | MUST be supported                 |
-| 0x32 | SHA3-256 | assigned, unsupported → `SAR_ERR_UNSUPPORTED` |
-| other| —        | reserved → `SAR_ERR_RESERVED_VALUE` |
+`Hash_Algorithm_ID` uses the SAR hash algorithm registry (Section 9.4).
 
 #### CDC_MAP structural validation
 
