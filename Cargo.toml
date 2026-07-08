@@ -43,6 +43,7 @@ getrandom = "0.2"
 hmac = "0.12"
 rpassword = "7"
 crc32fast = "1.5"
+bzip2 = "0.6"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -52,6 +52,7 @@ use crate::error::SarError;
 ///         max_in_memory_buffer: 64 * 1024 * 1024,
 ///         ..ResourceLimits::default()
 ///     },
+///     delta_base: None,
 /// };
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +165,37 @@ pub struct ResourceLimits {
     /// records at 50 bytes per record).
     pub max_cdc_metadata_bytes: usize,
 
+    // ── BSDIFF patch ──────────────────────────────────────────────────────────
+    /// Maximum decompressed Control Block byte length for BSDIFF patches.
+    /// Default: 64 MiB.
+    pub max_bsdiff_control_bytes: u64,
+
+    /// Maximum decompressed Diff Block byte length for BSDIFF patches.
+    /// Default: 1 GiB.
+    pub max_bsdiff_diff_bytes: u64,
+
+    /// Maximum decompressed Extra Block byte length for BSDIFF patches.
+    /// Default: 1 GiB.
+    pub max_bsdiff_extra_bytes: u64,
+
+    /// Maximum number of control triples accepted from a BSDIFF Control Block.
+    /// Default: 4 000 000.
+    pub max_bsdiff_control_triples: usize,
+
+    // ── VCDIFF patch ──────────────────────────────────────────────────────────
+    /// Maximum number of VCDIFF windows accepted per patch stream.
+    /// Default: 1 000 000.
+    pub max_vcdiff_window_count: usize,
+
+    /// Maximum instruction count per VCDIFF window.
+    /// Default: 10 000 000.
+    pub max_vcdiff_instruction_count: usize,
+
+    /// Maximum total reconstructed output size for a VCDIFF patch.
+    /// When 0, the `max_decoded_entry_size` value is used instead.
+    /// Default: 0 (defer to `max_decoded_entry_size`).
+    pub max_vcdiff_output_size: u64,
+
     /// Enables optional runtime-memory-budget enforcement in addition to the
     /// configured static limits. Default: false.
     pub use_runtime_memory_budget: bool,
@@ -194,6 +226,13 @@ impl Default for ResourceLimits {
             max_repair_working_set: 2 * 1024 * 1024 * 1024,
             max_cdc_chunk_count: 1_000_000,
             max_cdc_metadata_bytes: 50 * 1024 * 1024,
+            max_bsdiff_control_bytes: 64 * 1024 * 1024,
+            max_bsdiff_diff_bytes: 1024 * 1024 * 1024,
+            max_bsdiff_extra_bytes: 1024 * 1024 * 1024,
+            max_bsdiff_control_triples: 4_000_000,
+            max_vcdiff_window_count: 1_000_000,
+            max_vcdiff_instruction_count: 10_000_000,
+            max_vcdiff_output_size: 0, // 0 = defer to max_decoded_entry_size
             use_runtime_memory_budget: false,
         }
     }
@@ -230,6 +269,13 @@ impl ResourceLimits {
             max_repair_working_set: u64::MAX,
             max_cdc_chunk_count: usize::MAX,
             max_cdc_metadata_bytes: usize::MAX,
+            max_bsdiff_control_bytes: u64::MAX,
+            max_bsdiff_diff_bytes: u64::MAX,
+            max_bsdiff_extra_bytes: u64::MAX,
+            max_bsdiff_control_triples: usize::MAX,
+            max_vcdiff_window_count: usize::MAX,
+            max_vcdiff_instruction_count: usize::MAX,
+            max_vcdiff_output_size: u64::MAX,
             use_runtime_memory_budget: false,
         }
     }

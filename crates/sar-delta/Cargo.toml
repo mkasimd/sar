@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+bzip2.workspace = true
 
 [lints]
 workspace = true

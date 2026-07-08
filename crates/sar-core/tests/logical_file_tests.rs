@@ -419,7 +419,7 @@ fn large_sparse_hole_capped_by_max_size() {
             limits: sar_core::limits::ResourceLimits {
                 max_decoded_entry_size: 512, // cap at 512 bytes
                 ..sar_core::limits::ResourceLimits::default()
-            },
+            , delta_base: None },
         },
     )
     .expect("reader");
@@ -458,7 +458,7 @@ fn large_sparse_hole_capped_by_max_size() {
             limits: sar_core::limits::ResourceLimits {
                 max_decoded_entry_size: 512,
                 ..sar_core::limits::ResourceLimits::default()
-            },
+            , delta_base: None },
         },
     )
     .expect("reader2");

@@ -431,6 +431,7 @@ fn store_patch_output_above_resource_limits_returns_limit_exceeded() {
             max_decoded_entry_size: (target.len() as u64) - 1,
             ..ResourceLimits::unlimited()
         },
+        delta_base: None,
     };
     let err = read_entry_with_opts(archive, opts).expect_err("must fail with limit exceeded");
     assert!(

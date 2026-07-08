@@ -905,7 +905,7 @@ fn extract_archive(
     fs::create_dir_all(&output_dir)?;
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
-        ArchiveReaderOptions { limits },
+        ArchiveReaderOptions { limits, delta_base: None },
     )?;
     let header = reader.read_global_header()?;
     if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
@@ -1100,7 +1100,7 @@ fn verify_archive(
 ) -> Result<(), SarError> {
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
-        ArchiveReaderOptions { limits },
+        ArchiveReaderOptions { limits, delta_base: None },
     )?;
     let header = reader.read_global_header()?;
     let password = if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
@@ -1136,7 +1136,7 @@ fn verify_archive(
         // Collect entries for additional recovery metadata validation
         let mut re_reader = ArchiveReader::with_options(
             BufReader::new(File::open(&archive)?),
-            ArchiveReaderOptions { limits },
+            ArchiveReaderOptions { limits, delta_base: None },
         )?;
         let _ = re_reader.read_global_header()?;
         if password.is_some() {

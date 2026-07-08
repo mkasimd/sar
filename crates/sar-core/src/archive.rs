@@ -12,7 +12,9 @@ use sar_crypto::{
 };
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
-    PATCH_ALGO_ZSTD_PATCH, apply_store_patch,
+    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
+    bsdiff::BsdiffLimits,
+    vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
 use serde::Serialize;
@@ -311,10 +313,24 @@ pub struct SparseWriteOptions {
 /// Pass a [`ResourceLimits`] value to configure all resource caps uniformly.
 /// The [`ArchiveReaderOptions::max_decoded_entry_size`] method provides
 /// backward-compatible access to the corresponding limit value.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ArchiveReaderOptions {
     /// Unified resource limits for parsing and reconstruction.
     pub limits: ResourceLimits,
+    /// Explicit base bytes for delta patch algorithms that require them
+    /// (`BSDIFF`, `VCDIFF`).
+    ///
+    /// When `HAS_DELTA` is active and the patch algorithm requires a base
+    /// object, the reader uses these bytes as the base.  If `None` and a
+    /// base-requiring algorithm is encountered, the reader returns
+    /// [`SarError::BaseMissing`].
+    ///
+    /// Automatic base discovery is **not** implemented.  The caller is
+    /// responsible for locating the correct base object and supplying its
+    /// bytes here before calling [`ArchiveReader::next_entry`].
+    ///
+    /// `STORE_PATCH` does not require base bytes and ignores this field.
+    pub delta_base: Option<Vec<u8>>,
 }
 
 impl ArchiveReaderOptions {
@@ -684,13 +700,45 @@ impl<R: Read + Seek> ArchiveReader<R> {
                             sar_delta::PatchError::PatchFailed(m) => SarError::PatchFailed(m),
                             sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
                             sar_delta::PatchError::ReservedValue(m) => SarError::ReservedValue(m),
+                            sar_delta::PatchError::BaseMissing(m) => SarError::BaseMissing(m),
+                            sar_delta::PatchError::LimitExceeded(m) => SarError::LimitExceeded(m),
                         })?
                     } else {
                         decoded
                     }
                 }
-                PATCH_ALGO_VCDIFF | PATCH_ALGO_BSDIFF | PATCH_ALGO_ZSTD_PATCH => {
-                    return Err(SarError::Unsupported("patch algorithm not yet implemented"));
+                PATCH_ALGO_VCDIFF => {
+                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
+                    if hash == [0u8; 32] {
+                        return Err(SarError::BaseMissing(
+                            "VCDIFF: all-zero Delta Base Hash indicates missing base",
+                        ));
+                    }
+                    let base = self.options.delta_base.as_deref().ok_or(
+                        SarError::BaseMissing("VCDIFF: no base bytes supplied in reader options"),
+                    )?;
+                    let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits);
+                    apply_vcdiff(base, &decoded, lfh.uncompressed_size, &vcdiff_limits)
+                        .map_err(map_patch_error)?
+                }
+                PATCH_ALGO_BSDIFF => {
+                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
+                    if hash == [0u8; 32] {
+                        return Err(SarError::BaseMissing(
+                            "BSDIFF: all-zero Delta Base Hash indicates missing base",
+                        ));
+                    }
+                    let base = self.options.delta_base.as_deref().ok_or(
+                        SarError::BaseMissing("BSDIFF: no base bytes supplied in reader options"),
+                    )?;
+                    let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits);
+                    apply_bsdiff(base, &decoded, lfh.uncompressed_size, &bsdiff_limits)
+                        .map_err(map_patch_error)?
+                }
+                PATCH_ALGO_ZSTD_PATCH => {
+                    return Err(SarError::Unsupported(
+                        "ZSTD_PATCH: dictionary protocol not specified; not implemented",
+                    ));
                 }
                 id if id >= PATCH_ALGO_CUSTOM_MIN => {
                     return Err(SarError::Unsupported(
@@ -2009,4 +2057,43 @@ fn ceil_div_u64(a: u64, b: u64) -> Result<u64, SarError> {
         .ok_or(SarError::Overflow("ceil_div overflow"))?
         .checked_div(b)
         .ok_or(SarError::Overflow("ceil_div"))
+}
+
+
+/// Maps a [`sar_delta::PatchError`] to a [`SarError`].
+fn map_patch_error(e: sar_delta::PatchError) -> SarError {
+    match e {
+        sar_delta::PatchError::PatchFailed(m) => SarError::PatchFailed(m),
+        sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
+        sar_delta::PatchError::ReservedValue(m) => SarError::ReservedValue(m),
+        sar_delta::PatchError::BaseMissing(m) => SarError::BaseMissing(m),
+        sar_delta::PatchError::LimitExceeded(m) => SarError::LimitExceeded(m),
+    }
+}
+
+/// Builds a [`BsdiffLimits`] from the unified [`ResourceLimits`].
+fn bsdiff_limits_from_resource_limits(r: &ResourceLimits) -> BsdiffLimits {
+    BsdiffLimits {
+        max_patch_size: r.max_in_memory_buffer,
+        max_control_bytes: r.max_bsdiff_control_bytes,
+        max_diff_bytes: r.max_bsdiff_diff_bytes,
+        max_extra_bytes: r.max_bsdiff_extra_bytes,
+        max_control_triples: r.max_bsdiff_control_triples,
+        max_target_size: r.max_decoded_entry_size,
+    }
+}
+
+/// Builds a [`VcdiffLimits`] from the unified [`ResourceLimits`].
+fn vcdiff_limits_from_resource_limits(r: &ResourceLimits) -> VcdiffLimits {
+    let max_output = if r.max_vcdiff_output_size == 0 {
+        r.max_decoded_entry_size
+    } else {
+        r.max_vcdiff_output_size.min(r.max_decoded_entry_size)
+    };
+    VcdiffLimits {
+        max_patch_size: r.max_in_memory_buffer,
+        max_window_count: r.max_vcdiff_window_count,
+        max_instruction_count: r.max_vcdiff_instruction_count,
+        max_output_size: max_output,
+    }
 }

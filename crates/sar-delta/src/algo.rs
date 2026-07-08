@@ -100,6 +100,10 @@ pub enum PatchError {
     ReservedValue(&'static str),
     /// Patch application failed (e.g., payload length mismatch).
     PatchFailed(&'static str),
+    /// Required base object missing or all-zero Delta Base Hash.
+    BaseMissing(&'static str),
+    /// A configured resource limit was exceeded.
+    LimitExceeded(&'static str),
 }
 
 impl core::fmt::Display for PatchError {
@@ -108,6 +112,8 @@ impl core::fmt::Display for PatchError {
             Self::Unsupported(m) => write!(f, "patch unsupported: {m}"),
             Self::ReservedValue(m) => write!(f, "patch reserved value: {m}"),
             Self::PatchFailed(m) => write!(f, "patch failed: {m}"),
+            Self::BaseMissing(m) => write!(f, "patch base missing: {m}"),
+            Self::LimitExceeded(m) => write!(f, "patch limit exceeded: {m}"),
         }
     }
 }
