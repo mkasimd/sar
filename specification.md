@@ -709,6 +709,10 @@ Implementations encountering an assigned but unsupported patch algorithm identif
 
 Implementations encountering a reserved patch algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
+For `STORE_PATCH`, the `Delta Base Hash` field MAY be set to all zero bytes to indicate that no base object is required.
+
+For patch algorithms that require a base object, such as `VCDIFF`, an all-zero `Delta Base Hash` MUST be treated as missing base identity and MUST result in `SAR_ERR_BASE_MISSING` if patch application is attempted.
+
 #### 8.4.1 CUSTOM Patch Semantics
 For Custom patch algorithms following ruleset SHALL apply:
 * CUSTOM patch semantics MAY operate on arbitrary binary diff models.
