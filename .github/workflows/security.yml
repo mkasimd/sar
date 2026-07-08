@@ -3,18 +3,33 @@ name: Security
 on:
   push:
     branches: [main]
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/security.yml"
+
   pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "deny.toml"
+      - ".github/workflows/security.yml"
+
   schedule:
     # Every Monday at 07:00 UTC — catches new advisories even without code changes.
     - cron: "0 7 * * 1"
+
   workflow_dispatch:
 
-# Minimal default permissions; individual jobs override only what they need.
 permissions:
   contents: read
 
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # ── 1. cargo-audit ──────────────────────────────────────────────────────────
   audit:
     name: Dependency Audit (cargo-audit)
     runs-on: ubuntu-latest
@@ -22,18 +37,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        uses: taiki-e/install-action@cargo-audit
 
       - name: Run cargo audit
         run: cargo audit
 
-  # ── 2. cargo-deny ───────────────────────────────────────────────────────────
   deny:
     name: Dependency Policy (cargo-deny)
     runs-on: ubuntu-latest
@@ -41,15 +50,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (stable)
-        uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
       - name: Run cargo deny
         uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          # deny.toml lives at the workspace root.
           manifest-path: Cargo.toml
 
   # ── 3. CodeQL ───────────────────────────────────────────────────────────────

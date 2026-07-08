@@ -165,3 +165,53 @@ maintainability cleanup pass.
 - Content Hash verification is not implemented. The archive format stores a 32-byte content hash when `DEDUPLICATION` is set, but does not encode the hash algorithm identifier in the LFH or any other fixed-format field. The spec refers to "e.g., BLAKE3" without normatively specifying the algorithm field encoding. Verification cannot be performed without knowing the algorithm. This is an **implementation gap** (not a spec gap): once the spec normatively defines the algorithm encoding, verification can be added. See also `docs/SPEC_QUESTIONS.md`.
 - Tests cover current implemented flows, but cross-implementation interoperability vectors, malicious corpus coverage, and future-milestone behaviors are still missing.
 - No C ABI, headers, `extern "C"` exports, `cdylib` targets, or binding generators are implemented in this pass.
+
+---
+
+## Milestone 9a — Content-Defined Chunking (CDC)
+
+**Status: Partial (CDC_MAP v1 header format complete; BLAKE3 and SHA-256 CDC_MAP hash verification complete; recipe resolution, Rabin, BuzHash, and `create --cdc` CLI not implemented)**
+
+### Implemented
+
+- **CDC global flag:** `CDC_SUPPORT` (Bit 5) is parsed, exposed in `GlobalFlags`, and tracked in `VerificationReport.cdc_support`.
+- **CDC algorithm ID in LFH:** parsed when `CDC_SUPPORT` active; validated against algorithm registry; stored in `EntryMetadata.cdc_algo_id`. When `ArchiveWriter` is created with CDC Central Dictionary metadata, normal entry-writing APIs emit `LITERAL_MODE (0x00)` so LFHs remain consistent with `CDC_SUPPORT`.
+- **Supported algorithms:** `LITERAL_MODE (0x00)` and `FASTCDC (0x02)`.
+- **FASTCDC algorithm:** deterministic two-level gear-hash chunking with configurable `min_size`/`avg_size`/`max_size`; per-chunk hashes; no zero-length chunks; final chunk may be smaller than `min_size` at EOF. This implementation is useful locally, but the spec still does **not** define or encode enough normative FastCDC parameters for a portable boundary-regeneration or cross-writer chunk-equivalence claim.
+- **Updated CDC metadata registry:** `0x31` remains `DATA_HASH/BLAKE3` and is **not** treated as CDC metadata. `0x40` is `CDC_MAP`, `0x41` is `CDC_EXT_PROVIDER`, `0x42–0x4E` are rejected with `SAR_ERR_RESERVED_VALUE`, and `0x4F` is accepted as implementation-defined `CDC_CUSTOM`.
+- **CDC_MAP v1 header format (`0x40`):** `CDC_MAP` is self-describing via `Hash_Algorithm_ID` in a 16-byte header. The v1 format is: `CDC_MAP_Header (16 B) || CDC_MAP_Record[Record_Count] (Record_Count × 48 B)`. `Hash_Algorithm_ID` is from the SAR hash algorithm registry. BLAKE3 (`0x31`) is supported and required; SHA-256 (`0x30`) is supported. SHA3-256 (`0x32`) returns `SAR_ERR_UNSUPPORTED`. Reserved IDs return `SAR_ERR_RESERVED_VALUE`. FASTCDC controls chunk *boundaries*; `Hash_Algorithm_ID` controls chunk *hashes* — these are independent.
+- **CDC_MAP hash verification:** `verify_cdc_map_record_hash` verifies stored record hashes over the exact byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)` using `Hash_Algorithm_ID`. This is **not** FASTCDC boundary-regeneration verification.
+- **CDC_MAP structural validation:** `parse_cdc_map` enforces: minimum header size, `Map_Version == 0x01`, `Hash_Algorithm_ID` validity, `Flags == 0`, `Reserved == 0`, `Record_Size == 48`, TLV Length == `16 + Record_Count × 48` (checked arithmetic), record count limit.
+- **CDC_EXT_PROVIDER (`0x41`):** parsed as inert UTF-8 URI metadata only. No network access, provider resolution, or chunk fetching is implemented in M9a, and portable external-CAS recipe resolution is not claimed until the provider protocol, hash algorithm, record layout, and CDC transformation domain are specified.
+- **CDC_CUSTOM (`0x4F`):** parsed/preserved as opaque implementation-defined CDC metadata; no custom schema is interpreted by this implementation.
+- **Recipe Mode:** `validate_recipe_payload` enforces 32-byte hash alignment and resource limits; `recipe_hashes` extracts the hash list.
+- **CDC_MAP write:** `make_cdc_map_tlv` serializes a `CdcMap` (with `hash_algorithm_id`) to a `Tlv` with type_id `0x40`.
+- **CDC_EXT_PROVIDER write:** `make_cdc_ext_provider_tlv` serializes inert provider metadata to a `Tlv` with type_id `0x41`.
+- **ResourceLimits:** `max_cdc_chunk_count` (default 1,000,000) and `max_cdc_metadata_bytes` (default 50 MiB) fields; enforced in all CDC parse paths.
+- **CDC interaction tests:** CDC with STORE, compressed, sparse, fragmented entries; AEAD not bypassed; resource limits enforced.
+- **CLI `inspect --json`:** `cdc_support` flag, `cdc_metadata_tlvs`, and legacy `cdc_map_tlvs` at archive level; `cdc_algo_id` per entry.
+- **CLI `verify --cdc`:** validates CDC algorithm IDs and CDC metadata TLVs structurally; reports `cdc_support` and entry count; and does **not** claim regenerated-boundary verification. In M9a this check is limited to structural validation, bounds/resource-limit validation, reserved/unsupported ID handling, metadata consistency, and other checks possible from stored records.
+- **Documentation:** `docs/API.md`, `docs/CONFORMANCE.md`, `docs/SECURITY.md`, `docs/SPEC_QUESTIONS.md`, `README.md` updated.
+
+### Not implemented in M9a
+
+- `sar create --cdc fastcdc` CLI flag (archive creation with CDC annotation is not exposed in the create command).
+- Rabin fingerprinting (`0x01`) and BuzHash (`0x03`) algorithms — fail with `SarError::Unsupported`.
+- Custom CDC algorithm IDs (`0xF0–0xFF`) — fail with `SarError::Unsupported`.
+- Reserved CDC algorithm IDs (`0x04–0xEF`) — fail with `SarError::ReservedValue`.
+- External provider resolution / CAS access for `CDC_EXT_PROVIDER` (`0x41`) — not implemented in M9a; recipe reconstruction against external providers remains unsupported.
+- Recipe-mode archive writing through `ArchiveWriter` — not implemented; `ArchiveWriter` only keeps CDC metadata/LFH handling consistent for literal-mode entry writing.
+- Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) — out of scope for M9a.
+- Boundary-regeneration CDC verification against logical file content — unavailable; M9a validates stored CDC metadata structurally and verifies stored hashes but does not claim portable regeneration of FASTCDC boundaries.
+
+### Spec gaps resolved in M9a (CDC_MAP)
+
+- CDC_MAP record field widths — **resolved**: v1 record is `[Hash: 32 B][Partition_ID: 4 B u32 LE][Absolute_Offset: 8 B u64 LE][Compressed_Size: 4 B u32 LE]` = 48 bytes.
+- Hash algorithm for CDC_MAP records — **resolved**: `Hash_Algorithm_ID` in the v1 header; BLAKE3 required, SHA-256 supported.
+
+### Remaining spec gaps documented in SPEC_QUESTIONS.md
+
+- Recipe hash algorithm (not named in spec)
+- FastCDC parameters — min/avg/max chunk sizes (not defined by spec)
+- CDC transformation domain (not explicitly stated by spec)
+- CDC interaction with LOSS_TOLERANT and FEC (not addressed by spec)

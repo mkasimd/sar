@@ -172,3 +172,77 @@ When a stable ABI is introduced later, security design should explicitly cover:
 - complete archive-level repair orchestration for non-block-aligned erasures (pending spec clarification)
 - automatic end-to-end loss-tolerant extraction integration in `ArchiveReader`
 - stable FFI/C ABI with explicit status codes, opaque handles, and secret-handling rules
+
+---
+
+## Milestone 9a — CDC security properties
+
+### CDC does not bypass AEAD authentication
+
+CDC metadata (`CDC_MAP` at `0x40`, inert `CDC_EXT_PROVIDER` at `0x41`, `CDC_CUSTOM` at `0x4F`, and recipe payloads) is parsed from the Central Dictionary and the decrypted/decompressed payload. The CDC parsing layer never operates on raw encrypted bytes. AEAD authentication is enforced before any CDC validation occurs.
+
+### CDC resource limits prevent denial-of-service
+
+All CDC parse paths enforce `ResourceLimits`:
+
+| Limit field              | Default   | Protected paths                                |
+|--------------------------|-----------|------------------------------------------------|
+| `max_cdc_chunk_count`    | 1,000,000 | `validate_recipe_payload`, `parse_cdc_map`, `parse_entry_cdc_map` |
+| `max_cdc_metadata_bytes` | 50 MiB    | `validate_recipe_payload`, `parse_entry_cdc_map`, `make_cdc_map_tlv` |
+
+A malformed archive with an excessively large CDC_MAP TLV or Recipe payload will fail with `SarError::LimitExceeded` before any allocation proportional to the claimed record count occurs.
+
+`Vec::with_capacity` is never called with an unchecked chunk count; all capacity allocations are guarded by `max_cdc_chunk_count`.
+
+### No unchecked u64→usize casts in CDC paths
+
+All `u64` to `usize` conversions in CDC code use `usize::try_from(...)` or are guarded by resource-limit checks that ensure the value fits in a `usize` on the target platform.
+
+### CDC TLV registry fails closed
+
+- `0x31` remains `DATA_HASH/BLAKE3` and is not interpreted as CDC metadata.
+- `0x42–0x4E` are rejected with `SarError::ReservedValue`.
+- `0x41` (`CDC_EXT_PROVIDER`) is parsed as a UTF-8 URI string only; invalid UTF-8 fails closed with `SarError::Malformed`.
+- `0x4F` (`CDC_CUSTOM`) is treated as opaque implementation-defined metadata and is parsed/preserved only.
+
+### CDC_MAP v1 header validation
+
+`parse_cdc_map` validates the 16-byte v1 header before processing any records:
+
+* TLV length ≥ 16 (minimum header size);
+* `Map_Version` MUST be `0x01`; other versions return `CdcError::Unsupported`;
+* `Hash_Algorithm_ID` MUST be in the SAR hash registry (0x30 or 0x31); others return `Unsupported` or `ReservedValue`;
+* `Flags` MUST be zero; non-zero flags return `CdcError::Malformed`;
+* `Reserved` bytes MUST be zero; non-zero bytes return `CdcError::Malformed`;
+* `Record_Size` MUST be 48; other values return `CdcError::Malformed`;
+* TLV Length MUST equal `16 + Record_Count × 48` (checked multiplication and addition); overflow or mismatch returns `Overflow` or `Malformed`.
+
+Non-aligned or oversized payloads return `CdcError::Malformed` or `CdcError::Overflow` without any out-of-bounds reads.
+
+### CDC_MAP hash algorithm ID must not be guessed
+
+The `Hash_Algorithm_ID` field in the CDC_MAP header MUST be read to determine which algorithm was used for record hashes. Implementations MUST NOT hard-code an unnamed hash algorithm or assume SHA-256 without reading the header. Treating the LFH `CDC Algo ID` (chunking algorithm) as the hash algorithm is incorrect; they are independent fields.
+
+### CDC_MAP record hash verification uses checked arithmetic
+
+`verify_cdc_map_record_hash` verifies that `Absolute_Offset + Compressed_Size` does not overflow before indexing into archive bytes. Both `Absolute_Offset` and the computed end offset are validated against archive bounds.
+
+### FASTCDC algorithm has no unbounded allocation
+
+The FASTCDC chunker operates on a bounded input slice. Chunk count is bounded by `max_cdc_chunk_count`; a `LimitExceeded` error is returned if this limit is exceeded. No in-place allocation is proportional to the entire input; the gear hash is a rolling scalar.
+
+### Reserved and unsupported CDC algorithm IDs fail closed
+
+- Reserved IDs (0x04–0xEF) → `SarError::ReservedValue`
+- Unsupported optional IDs (0x01 Rabin, 0x03 BuzHash) → `SarError::Unsupported`
+- Custom IDs (0xF0–0xFF) → `SarError::Unsupported`
+
+No fallback behavior is attempted for unknown CDC algorithms.
+
+### CDC_MAP hash verification is distinct from FASTCDC boundary-regeneration
+
+CDC_MAP hash verification (`verify_cdc_map_record_hash`) checks that the hash stored in a record matches the bytes at `[Absolute_Offset, Absolute_Offset + Compressed_Size)` in the archive. It does **not** regenerate FASTCDC boundaries from file content. These two operations are independent. Do not claim FASTCDC boundary-regeneration verification from CDC_MAP hash verification.
+
+### CDC_EXT_PROVIDER is inert in M9a
+
+`CDC_EXT_PROVIDER` values are exposed as inert parsed metadata only. The implementation does not perform network access, does not contact external CAS providers, and does not attempt provider-driven recipe resolution in M9a.

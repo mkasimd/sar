@@ -154,6 +154,16 @@ pub struct ResourceLimits {
     /// Default: 2 GiB.
     pub max_repair_working_set: u64,
 
+    // ── CDC ───────────────────────────────────────────────────────────────────
+    /// Maximum number of chunks accepted per CDC entry (chunk-table length
+    /// bound).  Default: 1 000 000.
+    pub max_cdc_chunk_count: usize,
+
+    /// Maximum byte length of a CDC_MAP TLV value.  This bounds the number of
+    /// CDC_MAP records (`value_len / 50`).  Default: 50 MiB (≈ 1 048 576
+    /// records at 50 bytes per record).
+    pub max_cdc_metadata_bytes: usize,
+
     /// Enables optional runtime-memory-budget enforcement in addition to the
     /// configured static limits. Default: false.
     pub use_runtime_memory_budget: bool,
@@ -182,6 +192,8 @@ impl Default for ResourceLimits {
             max_fec_value_bytes: 256 * 1024 * 1024,
             max_recovery_protected_range: 16 * 1024 * 1024 * 1024,
             max_repair_working_set: 2 * 1024 * 1024 * 1024,
+            max_cdc_chunk_count: 1_000_000,
+            max_cdc_metadata_bytes: 50 * 1024 * 1024,
             use_runtime_memory_budget: false,
         }
     }
@@ -216,6 +228,8 @@ impl ResourceLimits {
             max_fec_value_bytes: usize::MAX,
             max_recovery_protected_range: u64::MAX,
             max_repair_working_set: u64::MAX,
+            max_cdc_chunk_count: usize::MAX,
+            max_cdc_metadata_bytes: usize::MAX,
             use_runtime_memory_budget: false,
         }
     }
@@ -535,6 +549,35 @@ impl ResourceLimits {
         if bytes > self.max_repair_working_set {
             return Err(SarError::LimitExceeded(
                 "repair working set exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that a CDC chunk count does not exceed `max_cdc_chunk_count`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SarError::LimitExceeded`] when `count > max_cdc_chunk_count`.
+    pub fn check_cdc_chunk_count(&self, count: usize) -> Result<(), SarError> {
+        if count > self.max_cdc_chunk_count {
+            return Err(SarError::LimitExceeded(
+                "CDC chunk count exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that a CDC metadata byte length does not exceed
+    /// `max_cdc_metadata_bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SarError::LimitExceeded`] when `bytes > max_cdc_metadata_bytes`.
+    pub fn check_cdc_metadata_bytes(&self, bytes: usize) -> Result<(), SarError> {
+        if bytes > self.max_cdc_metadata_bytes {
+            return Err(SarError::LimitExceeded(
+                "CDC metadata size exceeds configured limit",
             ));
         }
         Ok(())

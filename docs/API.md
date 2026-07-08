@@ -74,6 +74,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `metadata()`
 - `ArchiveWriter<W>`
   - `new(writer, ArchiveWriterOptions)`
+  - `new_with_cd_metadata(writer, ArchiveWriterOptions, Vec<Tlv>)`
   - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
   - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
   - `add_entry(EntryInput)`
@@ -988,3 +989,276 @@ Candidate high-level operations:
 - Which result types should be handle-based versus copied into caller-provided buffers?
 - How should callback-based KMS and password resolution propagate errors, cancellation, and secret zeroization requirements across language boundaries?
 - What thread-safety and cancellation guarantees are required before mobile-facing bindings are credible?
+
+---
+
+## M9a APIs — Content-Defined Chunking (CDC)
+
+### Overview
+
+Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits, and CLI support for `inspect --json` (reports `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`) and `verify --cdc` (performs structural CDC validation when active).
+
+Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is **not** implemented in M9a.
+
+### `sar-cdc` crate
+
+A standalone `sar-cdc` crate provides the CDC algorithm and data model, independent of archive I/O.
+
+#### CDC algorithm IDs
+
+| Constant           | Value  | Description                    | Status         |
+|--------------------|--------|--------------------------------|----------------|
+| `CDC_ALGO_LITERAL` | `0x00` | Literal mode (no chunking)     | Supported       |
+| `CDC_ALGO_RABIN`   | `0x01` | Rabin fingerprinting           | Not implemented |
+| `CDC_ALGO_FASTCDC` | `0x02` | FastCDC (required baseline)    | Supported       |
+| `CDC_ALGO_BUZHASH` | `0x03` | BuzHash                        | Not implemented |
+| `0x04–0xEF`        | —      | Reserved                       | Rejected        |
+| `0xF0–0xFF`        | —      | Custom/vendor                  | Rejected        |
+
+Unsupported algorithm IDs (0x01, 0x03) return `SarError::Unsupported`. Reserved IDs (0x04–0xEF) return `SarError::ReservedValue`. Custom IDs (0xF0–0xFF) return `SarError::Unsupported`.
+
+#### CDC_MAP v1 hash algorithm registry
+
+`Hash_Algorithm_ID` in the CDC_MAP header uses the SAR hash algorithm registry.
+Do not confuse this with the LFH `CDC Algo ID` (chunking algorithm).
+FASTCDC controls chunk *boundaries*; `Hash_Algorithm_ID` controls how chunk *hashes* are computed.
+
+| ID   | Name     | Status for CDC_MAP                              |
+|------|----------|-------------------------------------------------|
+| 0x30 | SHA-256  | supported                                       |
+| 0x31 | BLAKE3   | **required** (must be supported for M9a)        |
+| 0x32 | SHA3-256 | assigned, unsupported → `SAR_ERR_UNSUPPORTED`   |
+| other| —        | reserved → `SAR_ERR_RESERVED_VALUE`             |
+
+#### Public types
+
+```rust
+pub struct CdcChunk {
+    pub offset: u64,
+    pub length: u64,
+    pub hash: Option<[u8; 32]>,
+}
+
+pub struct CdcMetadata {
+    pub algorithm_id: u8,
+    pub min_size: u32,
+    pub avg_size: u32,
+    pub max_size: u32,
+    pub chunks: Vec<CdcChunk>,
+}
+
+/// CDC_MAP v1 header (16 bytes on the wire).
+pub struct CdcMapHeader {
+    pub map_version: u8,         // MUST be 0x01
+    pub hash_algorithm_id: u8,   // SAR hash registry ID
+    pub flags: u16,              // MUST be 0 for v1
+    pub record_count: u32,
+    pub record_size: u16,        // MUST be 48 for v1
+    pub reserved: [u8; 6],      // MUST be 0
+}
+
+/// CDC_MAP v1 record (48 bytes on the wire).
+pub struct CdcMapRecord {
+    pub hash: [u8; 32],          // 32 bytes — hash using Hash_Algorithm_ID
+    pub partition_id: u32,        // 4 bytes LE
+    pub absolute_offset: u64,     // 8 bytes LE — from archive start
+    pub compressed_size: u32,     // 4 bytes LE — stored payload size
+}
+
+/// Parsed CDC_MAP catalog.
+pub struct CdcMap {
+    pub hash_algorithm_id: u8,   // from the v1 header
+    pub records: Vec<CdcMapRecord>,
+}
+
+pub const CDC_MAP_HEADER_SIZE: usize = 16;
+pub const CDC_MAP_RECORD_LEN: usize = 48;   // 32 + 4 + 8 + 4
+pub const CDC_MAP_V1_RECORD_SIZE: u16 = 48;
+pub const CDC_MAP_VERSION_V1: u8 = 0x01;
+```
+
+#### FASTCDC algorithm
+
+`sar-cdc` implements FASTCDC via `sar_cdc::fastcdc::chunk_data(data: &[u8], opts: &FastCdcOptions) -> Vec<CdcChunk>`.
+
+Default parameters:
+- `min_size = 2048` (2 KiB)
+- `avg_size = 8192` (8 KiB)
+- `max_size = 65536` (64 KiB)
+
+**Note:** The spec does not define or encode the required FastCDC parameters. The above defaults are conservative and may not produce interoperable chunk boundaries with other implementations. Treat the current FASTCDC implementation as implementation-defined/local-profile behavior rather than a portable standard-profile interoperability guarantee. Different writers may therefore produce different valid CDC maps for the same logical file. See `docs/SPEC_QUESTIONS.md` for details.
+
+Properties:
+- Deterministic: identical input always produces identical chunk boundaries.
+- No zero-length chunks.
+- Final chunk may be smaller than `min_size` only at EOF.
+- Chunks include hash (computed over the chunk's logical bytes; not tied to CDC_MAP `Hash_Algorithm_ID`).
+- Two-level masking: phase 1 from `min_size` to `avg_size` uses `mask_s`; phase 2 from `avg_size` to `max_size` uses `mask_l`.
+- Gear table: 256 entries, `xorshift64*` PRNG seeded at `0x9e3779b97f4a7c15`.
+
+#### CDC validation functions
+
+```rust
+// Validates a cdc_algo_id byte; returns Err for reserved or unsupported IDs.
+pub fn validate_cdc_algo_id(id: u8) -> Result<(), CdcError>
+
+// Validates a Hash_Algorithm_ID for CDC_MAP headers.
+pub fn validate_cdc_map_hash_algo_id(id: u8) -> Result<(), CdcError>
+
+// Structural validation of raw CDC_MAP v1 TLV bytes (wraps parse_cdc_map).
+pub fn validate_cdc_map_bytes(bytes: &[u8], max_records: usize) -> Result<(), CdcError>
+
+// Validates a CdcMetadata struct (no zero-length chunks, no gaps, etc.).
+pub fn validate_cdc_metadata(meta: &CdcMetadata, file_size: u64, ...) -> Result<(), CdcError>
+```
+
+#### CDC_MAP parse/write/verify
+
+```rust
+// Parse stored CDC_MAP v1 TLV binary payload (header + records) into CdcMap.
+// Does not regenerate FASTCDC boundaries; operates on stored records only.
+pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcError>
+
+// Serialize CdcMap into CDC_MAP v1 TLV binary payload (header + records).
+pub fn write_cdc_map(map: &CdcMap) -> Result<Vec<u8>, CdcError>
+
+// Verify the stored hash of one CdcMapRecord against archive bytes.
+// Uses hash_algorithm_id (from the CDC_MAP header), not the CDC chunking algorithm.
+// Verification is over [absolute_offset, absolute_offset + compressed_size).
+pub fn verify_cdc_map_record_hash(
+    record: &CdcMapRecord,
+    hash_algorithm_id: u8,
+    archive_bytes: &[u8],
+) -> Result<bool, CdcError>
+```
+
+For M9a, stored CDC metadata is authoritative for parsing and interpretation. Readers validate the stored `CDC_MAP` / catalog bytes directly and do **not** need to regenerate FASTCDC boundaries merely to parse or use the map.
+
+CDC_MAP hash verification is over the exact stored byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)`. This is **not** FASTCDC boundary-regeneration verification.
+
+External provider resolution and recipe reconstruction remain unsupported in M9a.
+
+### `sar-core` CDC bridge module
+
+`sar_core::cdc` re-exports CDC algorithm constants and provides bridge functions.
+
+#### Public functions in `sar_core::cdc`
+
+```rust
+// Validates CDC algorithm ID; converts CdcError to SarError.
+pub fn validate_cdc_algo_id(id: u8) -> Result<(), SarError>
+
+// Parses an inert CDC_EXT_PROVIDER (0x41) URI TLV.
+pub fn parse_cdc_ext_provider_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<CdcExtProviderMetadata, SarError>
+
+// Validates one CDC metadata TLV using the updated registry.
+pub fn validate_cdc_metadata_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<(), SarError>
+
+// Extracts and parses the first CDC_MAP TLV (0x40) from a TLV slice.
+pub fn parse_entry_cdc_map(tlvs: &[Tlv], limits: &ResourceLimits) -> Result<Option<CdcMap>, SarError>
+
+// Serializes a CdcMap into a Tlv with type_id = 0x40.
+pub fn make_cdc_map_tlv(map: &CdcMap, limits: &ResourceLimits) -> Result<Tlv, SarError>
+
+// Serializes CDC_EXT_PROVIDER metadata into a Tlv with type_id = 0x41.
+pub fn make_cdc_ext_provider_tlv(uri: &str, limits: &ResourceLimits) -> Result<Tlv, SarError>
+
+// Validates a Recipe payload (ordered 32-byte chunk hashes).
+// Returns the number of hashes on success.
+pub fn validate_recipe_payload(payload: &[u8], limits: &ResourceLimits) -> Result<usize, SarError>
+
+// Extracts the ordered list of 32-byte chunk hashes from a Recipe payload.
+pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]>
+```
+
+### CDC ResourceLimits
+
+Two fields in `ResourceLimits` bound CDC parsing:
+
+| Field                    | Default   | Description                            |
+|--------------------------|-----------|----------------------------------------|
+| `max_cdc_chunk_count`    | 1,000,000 | Maximum records in a recipe or CDC_MAP |
+| `max_cdc_metadata_bytes` | 52,428,800| Maximum CDC metadata bytes (50 MiB)    |
+
+Helper methods:
+- `limits.check_cdc_chunk_count(count)` — returns `SarError::LimitExceeded` when `count > max_cdc_chunk_count`.
+- `limits.check_cdc_metadata_bytes(len)` — returns `SarError::LimitExceeded` when `len > max_cdc_metadata_bytes`.
+
+### CDC in `EntryMetadata`
+
+```rust
+pub struct EntryMetadata {
+    // ... existing fields ...
+    /// CDC algorithm ID from LFH. None when CDC_SUPPORT global flag is not set.
+    pub cdc_algo_id: Option<u8>,
+}
+```
+
+### CDC in `VerificationReport`
+
+```rust
+pub struct VerificationReport {
+    // ... existing fields ...
+    /// True when the CDC_SUPPORT global flag is active.
+    pub cdc_support: bool,
+    /// Count of entries that have a cdc_algo_id.
+    pub cdc_entry_count: u64,
+}
+```
+
+### CDC interaction with other features
+
+| Feature                 | Interaction                                                                       |
+|-------------------------|-----------------------------------------------------------------------------------|
+| Compression             | CDC metadata describes logical (decompressed) bytes. Decompression is not bypassed.|
+| Encryption              | AEAD authentication is never bypassed by CDC. CDC_MAP TLVs are in Central Dictionary (not encrypted payload). |
+| Sparse files            | CDC and SPARSE_FILES flags coexist. Sparse reconstruction is not affected by CDC. |
+| Fragmentation           | CDC metadata is compatible with fragmented entries. Fragment reassembly precedes CDC. |
+| FEC                     | CDC_MAP TLVs are parsed after FEC recovery. CDC does not bypass FEC validation.   |
+| LOSS_TOLERANT           | CDC structural validation is still performed; recipe hash verification is skipped for degraded entries. |
+
+### Updated CDC TLV registry
+
+- `0x31` is `DATA_HASH/BLAKE3`, not CDC metadata.
+- `0x40` is `CDC_MAP` (v1 header + records format; self-describing via `Hash_Algorithm_ID`).
+- `0x41` is `CDC_EXT_PROVIDER` and is exposed as inert UTF-8 URI metadata only.
+- `0x42–0x4E` are reserved CDC metadata TLVs and return `SarError::ReservedValue`.
+- `0x4F` is `CDC_CUSTOM` and is parsed/preserved only as implementation-defined opaque metadata.
+
+### CDC transformation domain
+
+CDC chunk boundaries and recipe hashes are treated in this implementation as operating on logical reconstructed file bytes (after fragment reassembly, sparse reconstruction, decryption, and decompression). This is the conservative local profile used for stored metadata interpretation, but the spec does not explicitly state the domain, so portable boundary regeneration and external recipe resolution cannot yet be claimed. See `docs/SPEC_QUESTIONS.md`.
+
+### CDC interoperability semantics
+
+- **Parseable/interpretable CDC metadata:** readers can parse and use stored CDC metadata records directly when they are well-formed and self-consistent. `CDC_MAP` is self-describing via `Hash_Algorithm_ID`.
+- **Structural CDC verification:** checks possible from stored records only, such as metadata parsing, bounds/resource-limit checks, reserved/unsupported ID handling, and internal consistency.
+- **CDC_MAP hash verification:** verifying that stored chunk hashes match the bytes at `[Absolute_Offset, Absolute_Offset + Compressed_Size)`. Supported for BLAKE3 (0x31) and SHA-256 (0x30) when archive bytes are available. This is **not** FASTCDC boundary-regeneration verification.
+- **Boundary-regeneration CDC verification:** re-running a CDC algorithm and proving the stored boundaries/hashes match. M9a does **not** claim this portably because the required FASTCDC parameters and transformation domain are not fully normative or encoded.
+- **Cross-writer deterministic CDC chunking:** multiple implementations independently producing the same boundaries for the same logical file. M9a does **not** require this for `CDC_MAP` parsing.
+- **External CAS recipe resolution:** reconstructing recipe-mode content from an external provider. M9a does **not** implement or claim this portably.
+
+### CDC CLI behavior
+
+- `inspect <archive.sar> --json` — includes `cdc_support` (bool), `cdc_metadata_tlvs` (array), and legacy `cdc_map_tlvs` (array) at archive level; each entry includes `cdc_algo_id` (u8) when CDC_SUPPORT is active.
+- `verify <archive.sar> --cdc` — reports `cdc_support` and `cdc_entries` count; validates CDC algorithm IDs and CDC metadata TLVs structurally when active.
+- `verify <archive.sar> --cdc` does **not** claim it regenerated and verified FASTCDC boundaries. Until parameters and transformation domain are normative or encoded, verification is limited to checks possible from stored records.
+- `verify <archive.sar> --cdc` reports recipe-hash / external-provider verification as unavailable, not passed.
+- Reserved or unsupported CDC algorithm IDs produce clear error output.
+- Resource-limit failures produce `SarError::LimitExceeded` with a descriptive message.
+
+### ArchiveWriter CDC behavior
+
+- `ArchiveWriter::new_with_cd_metadata(...)` auto-enables `OPT_PRESENT` and `CDC_SUPPORT` when CDC metadata TLVs are supplied for an indexed archive.
+- When `CDC_SUPPORT` is active in `ArchiveWriter`, normal entry-writing APIs emit LFH `cdc_algo_id = 0x00` (`LITERAL_MODE`) so archives are internally consistent.
+- `ArchiveWriter` does **not** implement recipe-mode archive writing or external-provider resolution in M9a.
+
+### Not implemented in M9a
+
+- Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution)
+- Rabin fingerprinting (0x01) and BuzHash (0x03) CDC algorithms
+- Custom CDC algorithm IDs (0xF0–0xFF)
+- External provider resolution for `CDC_EXT_PROVIDER` (`0x41`)
+- Portable boundary-regeneration verification across writers
+- Streaming CDC chunking APIs
+- `sar create --cdc fastcdc` CLI flag for creating CDC-annotated archives

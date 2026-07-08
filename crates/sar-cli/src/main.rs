@@ -253,6 +253,9 @@ enum Command {
         /// Additionally validate fragmentation, sparse, and Data Recovery TLV metadata.
         #[arg(long, action = ArgAction::SetTrue)]
         recovery: bool,
+        /// Validate CDC algorithm IDs and CDC_MAP TLVs (when CDC_SUPPORT is active).
+        #[arg(long, action = ArgAction::SetTrue)]
+        cdc: bool,
         #[command(flatten)]
         limits: LimitArgs,
     },
@@ -354,10 +357,11 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
             })
         }
         "-t" => Some(value_after_flag(args, "-f").and_then(list_archive)),
-        "-v" => Some(
-            value_after_flag(args, "-f")
-                .and_then(|path| verify_archive(path, None, false, ResourceLimits::default())),
-        ),
+        "-v" => {
+            Some(value_after_flag(args, "-f").and_then(|path| {
+                verify_archive(path, None, false, false, ResourceLimits::default())
+            }))
+        }
         _ => None,
     }
 }
@@ -493,8 +497,9 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             archive,
             password,
             recovery,
+            cdc,
             limits,
-        } => verify_archive(archive, password, recovery, limits.resource_limits()),
+        } => verify_archive(archive, password, recovery, cdc, limits.resource_limits()),
         Command::Inspect { archive, json } => inspect_archive(archive, json),
         Command::Repair {
             archive,
@@ -1090,6 +1095,7 @@ fn verify_archive(
     archive: PathBuf,
     password: Option<String>,
     recovery: bool,
+    cdc: bool,
     limits: ResourceLimits,
 ) -> Result<(), SarError> {
     let mut reader = ArchiveReader::with_options(
@@ -1110,6 +1116,21 @@ fn verify_archive(
         "verify: valid={} entries={} indexed={}",
         report.valid, report.entry_count, report.indexed
     );
+
+    if cdc || report.cdc_support {
+        println!(
+            "verify: cdc_support={} cdc_entries={}",
+            report.cdc_support, report.cdc_entry_count
+        );
+        if report.cdc_support && cdc {
+            println!("verify: cdc_metadata_validation=pass");
+            println!(
+                "verify: recipe_hash_verification=unavailable (spec does not name the recipe hash algorithm)"
+            );
+        } else if cdc && !report.cdc_support {
+            println!("verify: cdc_support=false (CDC_SUPPORT flag not set in archive)");
+        }
+    }
 
     if recovery {
         // Collect entries for additional recovery metadata validation
@@ -1208,6 +1229,14 @@ fn verify_archive(
     Ok(())
 }
 
+struct CdcMetadataInspectRow {
+    type_id: u8,
+    value_len: usize,
+    kind: &'static str,
+    record_count: Option<usize>,
+    uri: Option<String>,
+}
+
 fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
     let limits = ResourceLimits::default();
     let mut reader = ArchiveReader::new(BufReader::new(File::open(&archive)?))?;
@@ -1220,6 +1249,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
 
     let metadata = reader.metadata();
     let has_global_ec = header.flags.contains(GlobalFlags::HAS_GLOBAL_EC);
+    let cdc_support = header.flags.contains(GlobalFlags::CDC_SUPPORT);
 
     // Build recovery TLV list with validated summaries
     let recovery_tlvs_raw: Vec<_> = metadata
@@ -1237,6 +1267,57 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         })
         .unwrap_or_default();
 
+    let cdc_metadata_tlvs_raw: Vec<CdcMetadataInspectRow> = if let Some(cd) = metadata
+        .as_ref()
+        .and_then(|m| m.central_dictionary.as_ref())
+    {
+        let mut out = Vec::new();
+        for tlv in &cd.metadata {
+            if !sar_core::is_cdc_metadata_tlv_type(tlv.type_id) {
+                continue;
+            }
+
+            match tlv.type_id {
+                sar_core::TLV_CDC_MAP => {
+                    let record_count =
+                        sar_core::parse_entry_cdc_map(std::slice::from_ref(tlv), &limits)?
+                            .map_or(0, |map| map.records.len());
+                    out.push(CdcMetadataInspectRow {
+                        type_id: tlv.type_id,
+                        value_len: tlv.value.len(),
+                        kind: "cdc_map",
+                        record_count: Some(record_count),
+                        uri: None,
+                    });
+                }
+                sar_core::TLV_CDC_EXT_PROVIDER => {
+                    let provider = sar_core::parse_cdc_ext_provider_tlv(tlv, &limits)?;
+                    out.push(CdcMetadataInspectRow {
+                        type_id: tlv.type_id,
+                        value_len: tlv.value.len(),
+                        kind: "cdc_ext_provider",
+                        record_count: None,
+                        uri: Some(provider.uri),
+                    });
+                }
+                sar_core::TLV_CDC_CUSTOM => {
+                    sar_core::validate_cdc_metadata_tlv(tlv, &limits)?;
+                    out.push(CdcMetadataInspectRow {
+                        type_id: tlv.type_id,
+                        value_len: tlv.value.len(),
+                        kind: "cdc_custom",
+                        record_count: None,
+                        uri: None,
+                    });
+                }
+                _ => unreachable!("non-CDC TLV filtered earlier"),
+            }
+        }
+        out
+    } else {
+        Vec::new()
+    };
+
     let repair_possible = has_global_ec && !recovery_tlvs_raw.is_empty();
 
     if as_json {
@@ -1251,7 +1332,35 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             })
             .collect();
 
-        // Build per-entry JSON, adding sparse_extent_count
+        let cdc_metadata_tlvs_json: Vec<serde_json::Value> = cdc_metadata_tlvs_raw
+            .iter()
+            .map(|row| {
+                let mut value = json!({
+                    "type_id": format!("0x{:02X}", row.type_id),
+                    "kind": row.kind,
+                    "value_len": row.value_len,
+                });
+                if let Some(record_count) = row.record_count {
+                    value["record_count"] = json!(record_count);
+                    value["portability"] = json!("implementation-defined");
+                }
+                if let Some(uri) = &row.uri {
+                    value["uri"] = json!(uri);
+                    value["resolution"] = json!("not_implemented");
+                }
+                if row.kind == "cdc_custom" {
+                    value["handling"] = json!("parsed_preserved_only");
+                }
+                value
+            })
+            .collect();
+        let cdc_map_tlvs_json: Vec<_> = cdc_metadata_tlvs_json
+            .iter()
+            .filter(|value| value["kind"] == "cdc_map")
+            .cloned()
+            .collect();
+
+        // Build per-entry JSON, adding sparse_extent_count and cdc_algo_id
         let entries_json: Vec<serde_json::Value> = entries
             .iter()
             .map(|entry| {
@@ -1276,8 +1385,11 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             "global_ec": has_global_ec,
             "fragmentation": header.flags.contains(GlobalFlags::FILE_FRAGMENTATION),
             "sparse_files": header.flags.contains(GlobalFlags::SPARSE_FILES),
+            "cdc_support": cdc_support,
             "entry_count": entries.len(),
             "recovery_tlvs": recovery_tlvs_json,
+            "cdc_metadata_tlvs": cdc_metadata_tlvs_json,
+            "cdc_map_tlvs": cdc_map_tlvs_json,
             "repair_possible": repair_possible,
             "entries": entries_json,
         });
@@ -1293,6 +1405,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             header.flags.contains(GlobalFlags::SELECTIVE_FEC)
         );
         println!("global_ec={has_global_ec}");
+        println!("cdc_support={cdc_support}");
         println!(
             "fragmentation={}",
             header.flags.contains(GlobalFlags::FILE_FRAGMENTATION)
@@ -1303,6 +1416,26 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         );
         println!("entries={}", entries.len());
         println!("repair_possible={repair_possible}");
+        if !cdc_metadata_tlvs_raw.is_empty() {
+            println!("cdc_metadata_tlvs={}", cdc_metadata_tlvs_raw.len());
+            for row in &cdc_metadata_tlvs_raw {
+                match (row.kind, row.record_count, row.uri.as_deref()) {
+                    ("cdc_map", Some(record_count), _) => println!(
+                        "  cdc_map: type_id=0x{:02X} value_len={} record_count={record_count} portability=implementation-defined",
+                        row.type_id, row.value_len
+                    ),
+                    ("cdc_ext_provider", _, Some(uri)) => println!(
+                        "  cdc_ext_provider: type_id=0x{:02X} value_len={} uri={uri} resolution=not_implemented",
+                        row.type_id, row.value_len
+                    ),
+                    ("cdc_custom", _, _) => println!(
+                        "  cdc_custom: type_id=0x{:02X} value_len={} handling=parsed_preserved_only",
+                        row.type_id, row.value_len
+                    ),
+                    _ => {}
+                }
+            }
+        }
         for entry in &entries {
             if let Some(fec) = &entry.fec {
                 let fec_line = match fec {
@@ -1341,6 +1474,13 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                     "  entry={} sparse_extent_count={}",
                     entry.name,
                     extents.len()
+                );
+            }
+            if let Some(algo_id) = entry.cdc_algo_id {
+                let name = sar_cdc::algo_name(algo_id);
+                println!(
+                    "  entry={} cdc_algo_id=0x{algo_id:02X} ({name})",
+                    entry.name
                 );
             }
         }

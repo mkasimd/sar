@@ -13,6 +13,7 @@ zeroize.workspace = true
 sar-compression = { path = "../sar-compression" }
 sar-crypto = { path = "../sar-crypto" }
 sar-fec = { path = "../sar-fec" }
+sar-cdc = { path = "../sar-cdc" }
 
 [dev-dependencies]
 serde_json.workspace = true

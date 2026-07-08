@@ -88,6 +88,11 @@ pub struct EntryMetadata {
     /// not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_hash: Option<[u8; 32]>,
+    /// CDC algorithm ID from the LFH.  `None` when `CDC_SUPPORT` global flag
+    /// is not set.  `0x00` = Literal Mode (payload is literal data).
+    /// Values > 0 = Recipe Mode (payload is an ordered list of chunk hashes).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cdc_algo_id: Option<u8>,
 }
 
 /// Entry payload reader result.
@@ -298,6 +303,10 @@ pub struct VerificationReport {
     pub entry_count: u64,
     /// Indexed mode flag.
     pub indexed: bool,
+    /// Number of CDC entries with a valid algorithm ID.
+    pub cdc_entry_count: u64,
+    /// True when CDC_SUPPORT is active in the global flags.
+    pub cdc_support: bool,
 }
 
 /// Streaming archive reader over a seekable source.
@@ -644,6 +653,18 @@ impl<R: Read + Seek> ArchiveReader<R> {
             },
             file_crc32: lfh.file_crc32,
             content_hash: lfh.content_hash,
+            cdc_algo_id: if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+                // `lfh.cdc_algo_id` is `None` when parsing an archive written by
+                // an older implementation that sets `CDC_SUPPORT` but omits the
+                // per-entry byte.  Default to `LITERAL_MODE (0x00)` so validation
+                // still proceeds — 0x00 is always valid and never triggers a
+                // chunking path, making it the safest conservative fallback.
+                let algo_id = lfh.cdc_algo_id.unwrap_or(0);
+                crate::cdc::validate_cdc_algo_id(algo_id)?;
+                Some(algo_id)
+            } else {
+                None
+            },
         };
 
         self.next_offset = payload_end;
@@ -669,11 +690,29 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         self.next_offset = self.header_len;
         let mut offsets = Vec::new();
+        let mut cdc_entry_count: u64 = 0;
         while let Some(entry) = self.next_entry()? {
             offsets.push(entry.metadata.lfh_offset);
+            if entry.metadata.cdc_algo_id.is_some() {
+                cdc_entry_count = cdc_entry_count
+                    .checked_add(1)
+                    .ok_or(SarError::Overflow("CDC entry count"))?;
+            }
         }
 
+        let cdc_support = global.flags.contains(GlobalFlags::CDC_SUPPORT);
+
         if let Some(cd) = &self.cd {
+            let has_cdc_metadata = cd
+                .metadata
+                .iter()
+                .any(|tlv| crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id));
+            if has_cdc_metadata && !cdc_support {
+                return Err(SarError::FlagConflict(
+                    "CDC metadata requires the CDC_SUPPORT global flag",
+                ));
+            }
+
             if cd.file_count
                 != u64::try_from(offsets.len()).map_err(|_| SarError::Overflow("entry count"))?
             {
@@ -710,6 +749,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     }
                 }
             }
+
+            // Validate any CDC_MAP TLVs present in CD metadata when
+            // CDC_SUPPORT is active.
+            if cdc_support {
+                for tlv in &cd.metadata {
+                    if crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
+                        crate::cdc::validate_cdc_metadata_tlv(tlv, &self.options.limits)?;
+                    }
+                }
+            }
         }
 
         Ok(VerificationReport {
@@ -717,6 +766,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
             entry_count: u64::try_from(offsets.len())
                 .map_err(|_| SarError::Overflow("entry count"))?,
             indexed: self.cd.is_some(),
+            cdc_entry_count,
+            cdc_support,
         })
     }
 
@@ -1081,6 +1132,7 @@ pub struct ArchiveWriter<W> {
     compression: CompressionSettings,
     position: u64,
     offsets: Vec<u64>,
+    cd_metadata: Vec<Tlv>,
     finished: bool,
     cek: Option<SecretBytes>,
     encr_algo_id: Option<u8>,
@@ -1092,11 +1144,31 @@ pub struct ArchiveWriter<W> {
 impl<W: Write> ArchiveWriter<W> {
     /// Creates a new archive writer and writes the global header.
     pub fn new(writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
-        Self::new_with_compression_and_key_provider(
+        Self::new_with_compression_key_provider_and_cd_metadata(
             writer,
             options,
             CompressionSettings::store(),
             None,
+            Vec::new(),
+        )
+    }
+
+    /// Creates a new indexed archive writer with Central Dictionary metadata.
+    ///
+    /// CDC metadata TLVs (`0x40`, `0x41`, `0x4F`) automatically enable
+    /// `CDC_SUPPORT` and cause normal writer entry APIs to emit
+    /// `LITERAL_MODE (0x00)` in each LFH CDC field.
+    pub fn new_with_cd_metadata(
+        writer: W,
+        options: ArchiveWriterOptions,
+        cd_metadata: Vec<Tlv>,
+    ) -> Result<Self, SarError> {
+        Self::new_with_compression_key_provider_and_cd_metadata(
+            writer,
+            options,
+            CompressionSettings::store(),
+            None,
+            cd_metadata,
         )
     }
 
@@ -1106,19 +1178,56 @@ impl<W: Write> ArchiveWriter<W> {
         options: ArchiveWriterOptions,
         compression: CompressionSettings,
     ) -> Result<Self, SarError> {
-        Self::new_with_compression_and_key_provider(writer, options, compression, None)
+        Self::new_with_compression_key_provider_and_cd_metadata(
+            writer,
+            options,
+            compression,
+            None,
+            Vec::new(),
+        )
     }
 
     /// Creates a new archive writer with compression and an optional key provider.
     pub fn new_with_compression_and_key_provider(
-        mut writer: W,
+        writer: W,
         options: ArchiveWriterOptions,
         compression: CompressionSettings,
         key_provider: Option<Box<dyn KeyProvider>>,
     ) -> Result<Self, SarError> {
+        Self::new_with_compression_key_provider_and_cd_metadata(
+            writer,
+            options,
+            compression,
+            key_provider,
+            Vec::new(),
+        )
+    }
+
+    fn new_with_compression_key_provider_and_cd_metadata(
+        mut writer: W,
+        options: ArchiveWriterOptions,
+        compression: CompressionSettings,
+        key_provider: Option<Box<dyn KeyProvider>>,
+        cd_metadata: Vec<Tlv>,
+    ) -> Result<Self, SarError> {
+        if options.no_index && !cd_metadata.is_empty() {
+            return Err(SarError::FlagConflict(
+                "Central Dictionary metadata requires indexed archive output",
+            ));
+        }
+
         let mut flags = GlobalFlags::empty();
         if options.no_index {
             flags |= GlobalFlags::NO_INDEX;
+        }
+        if !cd_metadata.is_empty() {
+            flags |= GlobalFlags::OPT_PRESENT;
+        }
+        if cd_metadata
+            .iter()
+            .any(|tlv| crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id))
+        {
+            flags |= GlobalFlags::CDC_SUPPORT;
         }
         if compression.algo_id != COMP_ALGO_STORE {
             flags |= GlobalFlags::COMPRESSED;
@@ -1158,6 +1267,13 @@ impl<W: Write> ArchiveWriter<W> {
             None
         };
 
+        let limits = ResourceLimits::default();
+        for tlv in &cd_metadata {
+            if crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
+                crate::cdc::validate_cdc_metadata_tlv(tlv, &limits)?;
+            }
+        }
+
         validate_global_flags(flags)?;
         let header = GlobalHeader {
             version: 0x01,
@@ -1176,6 +1292,7 @@ impl<W: Write> ArchiveWriter<W> {
             compression,
             position: u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?,
             offsets: Vec::new(),
+            cd_metadata,
             finished: false,
             cek,
             encr_algo_id,
@@ -1217,9 +1334,11 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
         };
-
         let mut lfh = LocalFileHeader::minimal_store(entry.name.into_bytes(), payload_len);
         lfh.uncompressed_size = uncompressed_len;
+        if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
+            lfh.cdc_algo_id = Some(crate::cdc::CDC_ALGO_LITERAL);
+        }
         if self.flags.contains(GlobalFlags::COMPRESSED) {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
@@ -1460,8 +1579,10 @@ impl<W: Write> ArchiveWriter<W> {
 
         let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), encoded_len);
         lfh.uncompressed_size = sparse.logical_size;
+        if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
+            lfh.cdc_algo_id = Some(crate::cdc::CDC_ALGO_LITERAL);
+        }
         lfh.sparse_map = sparse_map_bytes;
-
         if self.flags.contains(GlobalFlags::COMPRESSED) {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
@@ -1585,7 +1706,7 @@ impl<W: Write> ArchiveWriter<W> {
                 file_count,
                 partition_info: None,
                 global_crc32: None,
-                metadata: Vec::<Tlv>::new(),
+                metadata: self.cd_metadata.clone(),
                 offsets: self.offsets.clone(),
             };
             let cd_bytes = write_central_dictionary(&cd, self.flags)?;
