@@ -1363,7 +1363,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
 
         // Build per-entry JSON, adding sparse_extent_count, cdc_algo_id, and delta fields.
         // Delta fields (patch_algo_id, delta_base_hash) are already included in the
-        // Serialize output of EntryMetadata when HAS_DELTA is set.
+        // serialized output of EntryMetadata when HAS_DELTA is set.
         let entries_json: Vec<serde_json::Value> = entries
             .iter()
             .map(|entry| {

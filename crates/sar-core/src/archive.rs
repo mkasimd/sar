@@ -115,7 +115,6 @@ pub struct EntryMetadata {
     pub delta_base_hash: Option<[u8; 32]>,
 }
 
-/// Entry payload reader result.
 /// Serializes an `Option<[u8; 32]>` as an optional lowercase hex string.
 fn serialize_hash_hex_opt<S>(value: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error>
 where
