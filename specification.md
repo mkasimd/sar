@@ -715,6 +715,44 @@ For Custom patch algorithms following ruleset SHALL apply:
 * CUSTOM patch semantics MUST be explicitly negotiated by application layer.
 * CUSTOM patch semantics MUST fail with `SAR_ERR_UNSUPPORTED` if unknown.
 
+#### 8.4.2 STORE_PATCH (`0x00`)
+
+`STORE_PATCH` is the baseline delta patch algorithm.
+
+For `STORE_PATCH`, the patch payload is the complete target logical byte sequence.
+
+No copy instructions, base reads, external dictionaries, or external base-object lookups are performed by the `STORE_PATCH` algorithm.
+
+When applying `STORE_PATCH`, the decoder SHALL treat the decoded patch payload as the reconstructed target logical data.
+
+The reconstructed output size MUST equal the LFH `Uncompressed Size` field after patch application. If the decoded patch payload length differs from LFH `Uncompressed Size`, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+
+`STORE_PATCH` operates in the delta transformation domain defined by Section 13:
+
+```text
+Decrypt -> Decompress -> Apply Patch
+```
+
+Therefore, if compression and/or encryption are active, they are applied to the `STORE_PATCH` payload in the same way as any other patch payload:
+
+```text
+Encode: target logical data -> STORE_PATCH payload -> compress -> encrypt
+Decode: decrypt -> decompress -> STORE_PATCH payload -> reconstructed target logical data
+```
+
+`STORE_PATCH` does not require the base object bytes to be available for patch application.
+
+If `Delta Base Hash` is present, implementations MAY use it for metadata consistency checks or base-selection diagnostics, but `STORE_PATCH` application MUST NOT fail solely because the base object is unavailable.
+
+Implementations MUST still validate all sizes using `ResourceLimits`.
+
+Implementations MUST NOT allocate the reconstructed target buffer unless LFH `Uncompressed Size` is within configured limits.
+
+Implementations encountering malformed `STORE_PATCH` payloads MUST return `SAR_ERR_PATCH_FAILED`.
+
+For `STORE_PATCH`, a malformed payload is one whose decoded payload length does not exactly equal LFH `Uncompressed Size`, or whose decoded payload cannot be obtained because decryption, decompression, FEC repair, or earlier transformation stages failed.
+
+
 ### 8.5 CDC Algorithms (`SAR_L_CDC`)
 Used only when `CDC_SUPPORT` (Bit 5) is set. This ID is stored in the **CDC Algo ID** field of the LFH.
 
