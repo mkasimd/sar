@@ -364,7 +364,7 @@ fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
 
     let mut lfh = LocalFileHeader::minimal_store(b"meta.bin".to_vec(), 0);
-    lfh.patch_algo_id = Some(0x01); // VCDIFF
+    lfh.patch_algo_id = Some(0x00); // STORE_PATCH (VCDIFF/0x01 is unsupported since M9b)
     lfh.delta_base_hash = Some(expected_hash);
 
     let lfh_bytes = write_lfh(&flags, &lfh).expect("write lfh");
@@ -379,7 +379,7 @@ fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
         .expect("must succeed")
         .expect("entry present");
 
-    assert_eq!(entry.metadata.patch_algo_id, Some(0x01));
+    assert_eq!(entry.metadata.patch_algo_id, Some(0x00));
     assert_eq!(entry.metadata.delta_base_hash, Some(expected_hash));
 }
 

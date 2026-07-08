@@ -7,27 +7,43 @@
 //! * patch algorithm identifier constants (`SAR_L_PATCH`, spec section 8.4);
 //! * the [`PatchAlgoId`] enum for type-safe algorithm representation;
 //! * [`validate_patch_algo_id`] for registry enforcement;
-//! * a display helper [`patch_algo_name`].
+//! * a display helper [`patch_algo_name`];
+//! * [`apply_store_patch`] for `STORE_PATCH` (`0x00`) application.
 //!
 //! # Supported patch algorithms
 //!
 //! | ID       | Name         | Status                                               |
 //! |----------|--------------|------------------------------------------------------|
-//! | `0x00`   | `STORE_PATCH`| assigned, mandatory; application **not implemented** |
+//! | `0x00`   | `STORE_PATCH`| assigned, mandatory; application **implemented**    |
 //! | `0x01`   | `VCDIFF`     | assigned, mandatory; application **not implemented** |
 //! | `0x02`   | `BSDIFF`     | assigned, optional;  application **not implemented** |
 //! | `0x03`   | `ZSTD_PATCH` | assigned, optional;  application **not implemented** |
 //! | `0x04–0xEF` | reserved  | `SAR_ERR_RESERVED_VALUE`                             |
 //! | `0xF0–0xFF` | CUSTOM    | `SAR_ERR_UNSUPPORTED` unless negotiated              |
 //!
+//! # STORE_PATCH semantics
+//!
+//! `STORE_PATCH` (`0x00`) means:
+//!
+//! ```text
+//! The decoded patch payload is the complete reconstructed target logical byte
+//! sequence.
+//! ```
+//!
+//! No base reads are performed.  No copy/insert instruction stream exists.
+//! No external dictionary is used.  No external base object is required.
+//!
+//! The reconstructed output size MUST equal LFH `Uncompressed Size`.  If the
+//! decoded patch payload length differs from `Uncompressed Size`,
+//! [`apply_store_patch`] returns [`PatchError::PatchFailed`].
+//!
+//! All-zero `Delta Base Hash` is treated as "no base required" for
+//! `STORE_PATCH` and is valid.
+//!
 //! # Spec gaps
 //!
 //! The following items are **not implemented** due to unresolved specification
 //! gaps.  See `docs/SPEC_QUESTIONS.md` for details.
-//!
-//! * **STORE_PATCH wire semantics**: The spec names `STORE_PATCH` as "Direct
-//!   binary delta application" but does not define the on-wire format.
-//!   Application is deferred until the format is normatively specified.
 //!
 //! * **VCDIFF, BSDIFF, ZSTD_PATCH application**: No application is implemented
 //!   in this milestone.
@@ -43,8 +59,7 @@
 //!
 //! * **Per-entry delta opt-out**: No `IS_DELTA` entry mode bit is defined.
 //!   There is no spec-defined sentinel to indicate that an individual entry
-//!   should bypass patching when `HAS_DELTA` is set globally.  All-zero
-//!   `Delta Base Hash` has no special meaning unless the spec later defines one.
+//!   should bypass patching when `HAS_DELTA` is set globally.
 
 /// Patch algorithm ID constants (spec section 8.4, `SAR_L_PATCH`).
 ///
@@ -54,6 +69,6 @@ pub mod algo;
 
 pub use algo::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MAX, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH,
-    PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, patch_algo_name,
-    validate_patch_algo_id,
+    PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, apply_store_patch,
+    patch_algo_name, validate_patch_algo_id,
 };

@@ -1497,8 +1497,13 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             }
             if let Some(algo_id) = entry.patch_algo_id {
                 let name = sar_core::patch_algo_name(algo_id);
+                let status = if algo_id == sar_core::PATCH_ALGO_STORE_PATCH {
+                    "applied"
+                } else {
+                    "not_implemented"
+                };
                 println!(
-                    "  entry={} patch_algo_id=0x{algo_id:02X} ({name}) application=not_implemented",
+                    "  entry={} patch_algo_id=0x{algo_id:02X} ({name}) application={status}",
                     entry.name
                 );
             }

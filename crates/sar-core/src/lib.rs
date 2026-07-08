@@ -70,8 +70,8 @@ pub use sar_cdc::CdcMap;
 pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
 pub use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MAX, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH,
-    PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, patch_algo_name,
-    validate_patch_algo_id,
+    PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, apply_store_patch,
+    patch_algo_name, validate_patch_algo_id,
 };
 pub use sparse::{
     SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,

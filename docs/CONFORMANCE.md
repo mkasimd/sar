@@ -228,31 +228,34 @@ maintainability cleanup pass.
 - **LFH `Patch Algo ID` field:** parsed when `HAS_DELTA` is set; validated against the SAR patch algorithm registry; stored in `EntryMetadata.patch_algo_id` as `Option<u8>`.
 - **LFH `Delta Base Hash` field:** parsed when `HAS_DELTA` is set; preserved as opaque 32 bytes in `EntryMetadata.delta_base_hash` as `Option<[u8; 32]>`.
 - **Patch algorithm registry validation (`sar-delta`):**
-  - `0x00` `STORE_PATCH` — assigned; application unsupported (wire semantics not specified)
-  - `0x01` `VCDIFF` — assigned; application unsupported in M9b
-  - `0x02` `BSDIFF` — assigned optional; application unsupported in M9b
-  - `0x03` `ZSTD_PATCH` — assigned optional; application unsupported in M9b
+  - `0x00` `STORE_PATCH` — assigned; application implemented
+  - `0x01` `VCDIFF` — assigned; application unsupported
+  - `0x02` `BSDIFF` — assigned optional; application unsupported
+  - `0x03` `ZSTD_PATCH` — assigned optional; application unsupported
   - `0x04–0xEF` reserved → `SAR_ERR_RESERVED_VALUE`
   - `0xF0–0xFF` custom → `SAR_ERR_UNSUPPORTED`
 - **`EntryMetadata` delta fields:** `patch_algo_id` and `delta_base_hash` exposed in the public reader API and serialized in JSON output (`skip_serializing_if = "Option::is_none"`).
 - **`delta_base_hash` JSON serialization:** lowercase hex string (64 characters).
 - **CLI `inspect --json`:** reports `has_delta` at archive level; reports `patch_algo_id`, `delta_base_hash` (hex), and `patch_algorithm` (name string) per entry.
 - **LFH Header Size accounting:** `Patch Algo ID` (1 B) + `Delta Base Hash` (32 B) = 33 extra bytes included in the header size when `HAS_DELTA` is set.
+- **`STORE_PATCH` application:** decoded patch payload is the complete reconstructed target; no base reads; output length must equal LFH `Uncompressed Size`; `SAR_ERR_PATCH_FAILED` returned on mismatch.
+- **All-zero `Delta Base Hash` for `STORE_PATCH`:** treated as "no base required"; any `Delta Base Hash` value is accepted for `STORE_PATCH`; hash is preserved verbatim in metadata.
+- **`ResourceLimits` for `STORE_PATCH`:** `Uncompressed Size` checked against `max_decoded_entry_size` before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if exceeded.
+- **`LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`.**
+- **`STORE_PATCH` + compression, encryption, sparse, fragmentation:** all handled correctly through the existing transformation pipeline.
 - **Documentation:** `docs/API.md`, `docs/CONFORMANCE.md`, `docs/SECURITY.md`, `docs/SPEC_QUESTIONS.md`, `README.md` updated.
 
-### Not implemented in M9b
+### Not implemented
 
-- Patch application for any algorithm (STORE_PATCH, VCDIFF, BSDIFF, ZSTD_PATCH, or custom).
+- Patch application for VCDIFF, BSDIFF, ZSTD_PATCH, or custom algorithms (`SAR_ERR_UNSUPPORTED` returned).
 - Delta Base Hash verification — hash algorithm not specified by spec; 32 bytes treated as opaque.
 - Base object resolution — object location and lookup model not specified by spec.
-- STORE_PATCH wire semantics — payload interpretation undefined by spec; no payload is applied as a patch in this stage.
 - Per-entry delta opt-out — no `IS_DELTA` bit or no-delta sentinel is defined by spec.
-- All-zero Delta Base Hash — no special meaning unless spec later defines one.
 
-### Spec gaps preserved in M9b (must not invent semantics for these)
+### Spec gaps preserved (must not invent semantics for these)
 
-- STORE_PATCH wire format — "direct binary delta application" is undefined in the spec.
 - Delta Base Hash algorithm — the 32-byte field has no accompanying algorithm ID; cannot be verified portably.
-- Base object resolution model — the spec does not define where the base object comes from.
+- Base object resolution model — the spec does not define where the base object comes from (for VCDIFF and other base-requiring algorithms).
+- BSDIFF wire format — the spec does not name or cite a normative BSDIFF format version.
+- ZSTD_PATCH dictionary/protocol — the spec does not define the patch protocol.
 - Per-entry IS_DELTA bit — the spec does not define a per-entry delta opt-out mechanism.
-- All-zero Delta Base Hash — no special meaning is defined by the spec.

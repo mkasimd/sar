@@ -136,7 +136,9 @@ fn inspect_json_entry_includes_patch_algo_id_and_delta_base_hash() {
         }
         h
     };
-    let archive = build_delta_archive(dir.path(), 0x01, hash, b"payload");
+    // Use STORE_PATCH (0x00): the only implemented algorithm as of M9b.
+    // VCDIFF (0x01) is unsupported and returns SAR_ERR_UNSUPPORTED when read.
+    let archive = build_delta_archive(dir.path(), 0x00, hash, b"payload");
 
     let output = Command::cargo_bin("sar-cli")
         .expect("sar binary")
@@ -150,8 +152,8 @@ fn inspect_json_entry_includes_patch_algo_id_and_delta_base_hash() {
     let entry = &json["entries"][0];
     assert_eq!(
         entry["patch_algo_id"],
-        Value::Number(1.into()),
-        "patch_algo_id must be 0x01 (VCDIFF)"
+        Value::Number(0.into()),
+        "patch_algo_id must be 0x00 (STORE_PATCH)"
     );
 
     let expected_hex: String = hash.iter().map(|b| format!("{b:02x}")).collect();
@@ -163,8 +165,8 @@ fn inspect_json_entry_includes_patch_algo_id_and_delta_base_hash() {
 
     assert_eq!(
         entry["patch_algorithm"],
-        Value::String("VCDIFF".to_string()),
-        "patch_algorithm must be 'VCDIFF'"
+        Value::String("STORE_PATCH".to_string()),
+        "patch_algorithm must be 'STORE_PATCH'"
     );
 }
 

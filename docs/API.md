@@ -23,7 +23,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
 | `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
-| `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); patch application not yet implemented | partial (M9b) |
+| `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH` application implemented | partial (M9b + STORE_PATCH) |
 | `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
 | `sar-partition` | Future partition support placeholder | placeholder |
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
@@ -241,7 +241,7 @@ Not implemented in this pass, even though some flags or structural fields alread
 
 - signature cryptography and signature verification
 - CDC map processing
-- delta application
+- delta application (VCDIFF, BSDIFF, ZSTD_PATCH, and custom algorithms — base-requiring algorithms not yet implemented)
 - partition reassembly logic
 - streaming session APIs (Milestone 10)
 - stable FFI / C ABI (Milestone 12)
@@ -310,7 +310,7 @@ Sparse reconstruction occurs after all prior transformations in this order:
 1. Fragment Reassembly (if `FILE_FRAGMENTATION`)
 2. Decryption (if `ENCRYPTED`) — authentication failure is never suppressed
 3. Decompression (if `COMPRESSED`)
-4. Delta Application (if `HAS_DELTA`) — not yet implemented
+4. Delta Application (if `HAS_DELTA`) — `STORE_PATCH` implemented; VCDIFF/BSDIFF/ZSTD_PATCH/custom unsupported
 5. Sparse Reconstruction (if `SPARSE_FILES`)
 
 The Sparse Map describes the layout of the **fully reconstructed logical payload**, not individual fragments or compressed bytes.
@@ -846,24 +846,30 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-delta`
 
-- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); patch application reserved for a future milestone.
-- Status: partial (M9b — registry and metadata implemented; patch application not implemented)
+- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH` application implemented.
+- Status: partial (M9b + STORE_PATCH — registry and metadata implemented; `STORE_PATCH` application implemented; VCDIFF/BSDIFF/ZSTD_PATCH/custom not implemented)
 - Public API (M9b):
   - `PatchAlgoId` — enum of assigned and custom patch algorithm identifiers: `StorePatch (0x00)`, `Vcdiff (0x01)`, `Bsdiff (0x02)`, `ZstdPatch (0x03)`, `Custom(u8)` (`0xF0–0xFF`)
-  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`
+  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`, `PatchFailed`
   - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>` — validates a raw byte against the SAR patch algorithm registry; returns `ReservedValue` for `0x04–0xEF`, `Unsupported` for `0xF0–0xFF`, and the corresponding `PatchAlgoId` for all assigned IDs
   - `patch_algo_name(u8) -> &'static str` — returns a display name for any raw algorithm byte
+  - `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` — applies `STORE_PATCH` (identity): returns the patch payload if its length equals `expected_len`, otherwise returns `PatchFailed`
   - Constants: `PATCH_ALGO_STORE_PATCH (0x00u8)`, `PATCH_ALGO_VCDIFF (0x01u8)`, `PATCH_ALGO_BSDIFF (0x02u8)`, `PATCH_ALGO_ZSTD_PATCH (0x03u8)`, `PATCH_ALGO_CUSTOM_MIN (0xF0u8)`, `PATCH_ALGO_CUSTOM_MAX (0xFFu8)`
 - All of the above are re-exported from `sar-core` for consumer convenience.
 - FFI readiness: `not_applicable` (no C ABI in this milestone)
 
-**Not implemented in M9b:**
+**Implemented in STORE_PATCH pass:**
 
-- Patch application for any algorithm (STORE_PATCH, VCDIFF, BSDIFF, ZSTD_PATCH, or custom)
+- `STORE_PATCH` (`0x00`) application: decoded patch payload is the complete reconstructed target; no base reads; no instruction stream; output length must equal LFH `Uncompressed Size` or `SAR_ERR_PATCH_FAILED` is returned
+- All-zero `Delta Base Hash` accepted for `STORE_PATCH` (treated as "no base required"); nonzero hash preserved verbatim in metadata
+- `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
+- `STORE_PATCH` + compression, encryption, sparse, and fragmentation all handled correctly through the existing transformation pipeline
+
+**Not implemented:**
+
+- Patch application for VCDIFF, BSDIFF, ZSTD_PATCH, or custom algorithms (`SAR_ERR_UNSUPPORTED` returned)
 - Delta Base Hash verification (hash algorithm not specified by spec)
 - Base object resolution (object location model not specified by spec)
-- STORE_PATCH wire semantics (undefined in spec; `SAR_ERR_UNSUPPORTED` is returned on application attempt)
-- All-zero Delta Base Hash has no special meaning; it is preserved as opaque bytes
 
 ### `sar-fragmentation`
 
@@ -1026,12 +1032,19 @@ Milestone 9b adds:
 - `EntryMetadata.delta_base_hash: Option<[u8; 32]>` — present when `HAS_DELTA` is set; treated as opaque 32 bytes; serialized as lowercase hex string in JSON output
 - CLI `inspect --json`: reports `has_delta` at archive level; reports `patch_algo_id`, `delta_base_hash`, and `patch_algorithm` name per entry
 
-**Not implemented in M9b:**
+**STORE_PATCH application (added in STORE_PATCH pass):**
 
-- Patch application for any algorithm (STORE_PATCH, VCDIFF, BSDIFF, ZSTD_PATCH, or custom)
+- `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` in `sar-delta` (re-exported from `sar-core`)
+- `STORE_PATCH` (`0x00`) wired into `next_entry()`: decoded patch payload becomes the complete reconstructed target; length must equal LFH `Uncompressed Size`; returns `SAR_ERR_PATCH_FAILED` on mismatch
+- All-zero `Delta Base Hash` treated as "no base required" for `STORE_PATCH`; nonzero hash preserved verbatim; base lookup not performed for any algorithm
+- `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
+- `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
+
+**Not implemented:**
+
+- Patch application for VCDIFF, BSDIFF, ZSTD_PATCH, or custom algorithms (`SAR_ERR_UNSUPPORTED` returned)
 - Delta Base Hash verification — hash algorithm not specified by spec; field treated as opaque bytes
 - Base object resolution — object location model not specified by spec
-- STORE_PATCH wire semantics — undefined in spec; direct payload use is not mandated
 - Per-entry `IS_DELTA` opt-out bit — not defined in spec
 
 ### `sar-cdc` crate

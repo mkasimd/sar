@@ -4,11 +4,13 @@
 //! These constants are stored in the one-byte `Patch Algo ID` field of the
 //! Local File Header when `HAS_DELTA` (Bit 9) is active globally.
 
-/// STORE_PATCH: direct binary delta application.
+/// STORE_PATCH: the decoded patch payload is the complete reconstructed target
+/// logical byte sequence.
 ///
-/// Assigned and **mandatory** per the spec.  Application is **not implemented**
-/// in this milestone; the wire format is underspecified.  Parsing and
-/// preservation of the algorithm ID byte are fully supported.
+/// Assigned and **mandatory** per the spec.  Application is implemented:
+/// [`apply_store_patch`] validates that the payload length equals the declared
+/// `Uncompressed Size` and returns the payload as the reconstructed target.
+/// No base read, no copy/insert instruction stream, no external dictionary.
 pub const PATCH_ALGO_STORE_PATCH: u8 = 0x00;
 
 /// VCDIFF: Standard Binary Diff (RFC 3284).
@@ -43,12 +45,12 @@ pub const PATCH_ALGO_CUSTOM_MAX: u8 = 0xFF;
 ///
 /// # Application status
 ///
-/// None of the assigned algorithms are implemented for patch *application* in
-/// this milestone.  The enum exists for registry validation and metadata
-/// exposure only.
+/// `STORE_PATCH` is implemented via [`apply_store_patch`].  The remaining
+/// assigned algorithms are not implemented for patch *application* in this
+/// milestone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchAlgoId {
-    /// `0x00` — STORE_PATCH; assigned, mandatory; application not implemented.
+    /// `0x00` — STORE_PATCH; assigned, mandatory; application implemented.
     StorePatch,
     /// `0x01` — VCDIFF (RFC 3284); assigned, mandatory; application not implemented.
     Vcdiff,
@@ -86,7 +88,7 @@ impl PatchAlgoId {
     }
 }
 
-/// Error type used by the patch algorithm registry.
+/// Error type used by the patch algorithm registry and patch application.
 ///
 /// Variant names mirror `sar_core::SarError` so that `sar-core` can map them
 /// directly without taking a dependency on `sar-delta` for the error type.
@@ -96,6 +98,8 @@ pub enum PatchError {
     Unsupported(&'static str),
     /// Reserved or prohibited algorithm identifier.
     ReservedValue(&'static str),
+    /// Patch application failed (e.g., payload length mismatch).
+    PatchFailed(&'static str),
 }
 
 impl core::fmt::Display for PatchError {
@@ -103,6 +107,7 @@ impl core::fmt::Display for PatchError {
         match self {
             Self::Unsupported(m) => write!(f, "patch unsupported: {m}"),
             Self::ReservedValue(m) => write!(f, "patch reserved value: {m}"),
+            Self::PatchFailed(m) => write!(f, "patch failed: {m}"),
         }
     }
 }
@@ -155,4 +160,39 @@ pub fn patch_algo_name(id: u8) -> &'static str {
         PATCH_ALGO_CUSTOM_MIN..=PATCH_ALGO_CUSTOM_MAX => "custom",
         _ => "unknown",
     }
+}
+
+/// Applies `STORE_PATCH` (`0x00`) to `patch_payload`.
+///
+/// For `STORE_PATCH`, the decoded patch payload **is** the complete
+/// reconstructed target logical byte sequence.  No base read is performed.
+/// No copy/insert instruction stream exists.  No external dictionary is used.
+///
+/// # Arguments
+///
+/// * `patch_payload` — decoded bytes produced by the decompression (and
+///   decryption) stage, representing the full target file content.
+/// * `expected_len` — the LFH `Uncompressed Size` field.  The caller is
+///   responsible for validating this value against any configured resource
+///   limits **before** calling this function.
+///
+/// # Errors
+///
+/// Returns [`PatchError::PatchFailed`] when
+/// `patch_payload.len() as u64 != expected_len`.
+///
+/// # Notes
+///
+/// All-zero `Delta Base Hash` is valid for `STORE_PATCH` and means "no base
+/// required".  The caller must not pass `Delta Base Hash` to this function;
+/// it is opaque metadata and plays no role in the application of this
+/// algorithm.
+pub fn apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError> {
+    let actual_len = patch_payload.len() as u64;
+    if actual_len != expected_len {
+        return Err(PatchError::PatchFailed(
+            "STORE_PATCH: decoded payload length does not match LFH Uncompressed Size",
+        ));
+    }
+    Ok(patch_payload.to_vec())
 }

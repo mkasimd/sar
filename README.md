@@ -52,15 +52,16 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `inspect --json` includes `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`; `verify --cdc` performs structural CDC validation only and does **not** claim boundary regeneration or external-CAS recipe verification
   - CDC does not bypass AEAD authentication, sparse reconstruction, fragment reassembly, or resource limits
   - Delta encoding (VCDIFF, BSDIFF) is **not** implemented in M9a
-- **Milestone 9b — Delta Metadata and Patch Algorithm Registry**: delta LFH field parsing/preservation and patch algorithm registry
+- **Milestone 9b — Delta Metadata, Patch Algorithm Registry, and STORE_PATCH Application**: delta LFH field parsing/preservation and patch algorithm registry; `STORE_PATCH` application implemented
   - `HAS_DELTA` global flag (Bit 9) activates delta fields: `Patch Algo ID` (1 B) and `Delta Base Hash` (32 B) parsed from every LFH when active
-  - SAR patch algorithm registry: `0x00` = `STORE_PATCH`, `0x01` = `VCDIFF`, `0x02` = `BSDIFF`, `0x03` = `ZSTD_PATCH`, `0x04–0xEF` = reserved → `SAR_ERR_RESERVED_VALUE`, `0xF0–0xFF` = custom → `SAR_ERR_UNSUPPORTED`
+  - SAR patch algorithm registry: `0x00` = `STORE_PATCH` (implemented), `0x01` = `VCDIFF`, `0x02` = `BSDIFF`, `0x03` = `ZSTD_PATCH`, `0x04–0xEF` = reserved → `SAR_ERR_RESERVED_VALUE`, `0xF0–0xFF` = custom → `SAR_ERR_UNSUPPORTED`
   - `EntryMetadata.patch_algo_id` exposes raw algorithm byte per entry; `EntryMetadata.delta_base_hash` exposes 32-byte opaque hash
   - `Delta Base Hash` is preserved as opaque bytes; **no hash algorithm is assumed**; no verification is performed (algorithm not specified by spec)
   - `inspect --json` includes `has_delta` at archive level; per-entry `patch_algo_id`, `delta_base_hash` (hex), and `patch_algorithm` name
-  - **Patch application is not implemented**: no base resolution, no patch reconstruction, no target output
-  - STORE_PATCH wire semantics are undefined in spec; VCDIFF/BSDIFF/ZSTD_PATCH application is unsupported in this stage
-  - All-zero `Delta Base Hash` has no special meaning; it is preserved as-is
+  - **`STORE_PATCH` (`0x00`) application**: decoded patch payload is the complete reconstructed target; no base reads; length must equal LFH `Uncompressed Size`; `SAR_ERR_PATCH_FAILED` returned on mismatch; `ResourceLimits` enforced before allocation
+  - All-zero `Delta Base Hash` treated as "no base required" for `STORE_PATCH`; nonzero hash preserved verbatim; base lookup not performed
+  - `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
+  - VCDIFF/BSDIFF/ZSTD_PATCH and custom algorithms return `SAR_ERR_UNSUPPORTED` on application attempt (base resolution model and wire formats not specified by spec)
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`

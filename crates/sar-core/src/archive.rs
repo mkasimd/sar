@@ -10,6 +10,10 @@ use sar_crypto::{
     provider::resolve_cek,
     validate_encr_algo_id,
 };
+use sar_delta::{
+    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
+    PATCH_ALGO_ZSTD_PATCH, apply_store_patch,
+};
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
 use serde::Serialize;
 
@@ -94,18 +98,24 @@ pub struct EntryMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cdc_algo_id: Option<u8>,
     /// Patch algorithm ID from the LFH.  `None` when `HAS_DELTA` global flag
-    /// is not set.  Present as an opaque registry byte when `HAS_DELTA` is set.
+    /// is not set.  Present as a validated registry byte when `HAS_DELTA` is
+    /// set.
     ///
-    /// Patch application is **not implemented** in this milestone.  The field
-    /// is preserved for metadata exposure only.  See `docs/SPEC_QUESTIONS.md`
-    /// for unresolved spec gaps (STORE_PATCH wire format, Delta Base Hash
-    /// algorithm, and base object resolution model).
+    /// `STORE_PATCH` (`0x00`) is implemented: the decoded patch payload is the
+    /// complete reconstructed target logical byte sequence.
+    ///
+    /// `VCDIFF` (`0x01`), `BSDIFF` (`0x02`), and `ZSTD_PATCH` (`0x03`) are
+    /// assigned but not yet implemented; reading an entry with any of these
+    /// algorithms returns `SAR_ERR_UNSUPPORTED`.
+    ///
+    /// See `docs/SPEC_QUESTIONS.md` for remaining spec gaps (Delta Base Hash
+    /// algorithm and base object resolution model).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub patch_algo_id: Option<u8>,
     /// Delta base hash (32 bytes, opaque).  `None` when `HAS_DELTA` global
     /// flag is not set.  The hash algorithm is **not specified** by the spec
-    /// and is treated as opaque bytes.  All-zero bytes have no special meaning
-    /// unless the spec later defines one.  Serialised as a hex string.
+    /// and is treated as opaque bytes.  For `STORE_PATCH`, all-zero bytes mean
+    /// "no base required".  Serialised as a hex string.
     ///
     /// Base object resolution is **not implemented** in this milestone.
     #[serde(
@@ -602,6 +612,37 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // decompressor does not refuse to run.
         let is_sparse =
             header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
+
+        // STORE_PATCH resource-limit guard: reject before any allocation when the
+        // declared Uncompressed Size exceeds the configured limit.  Non-sparse
+        // entries are already protected by the `expected_output_size` path inside
+        // `decode_payload_v2`, but sparse entries pass `max_decoded_entry_size` as
+        // the upper bound there; an explicit check is required for those too.
+        let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
+        let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
+        if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
+            self.options
+                .limits
+                .check_decoded_entry_size(lfh.uncompressed_size)?;
+        }
+
+        // STORE_PATCH pre-decode length guard for non-compressed, non-encrypted
+        // entries: the decoded patch payload equals the raw encoded payload, so a
+        // mismatch between `payload_size` and `Uncompressed Size` is detectable
+        // before `decode_payload_v2`.  Return PatchFailed rather than letting the
+        // STORE decompressor's output-limit enforcement produce LimitExceeded.
+        if is_has_delta
+            && patch_raw_id == PATCH_ALGO_STORE_PATCH
+            && !is_effectively_compressed
+            && !is_encrypted
+            && !is_sparse
+            && lfh.payload_size != lfh.uncompressed_size
+        {
+            return Err(SarError::PatchFailed(
+                "STORE_PATCH: raw payload length does not match LFH Uncompressed Size",
+            ));
+        }
+
         let decode_expected = if is_sparse {
             // We don't want the decompressor to be bounded by logical_size;
             // max_decoded_entry_size is already the correct upper bound.
@@ -620,6 +661,48 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 crypto,
             },
         )?;
+
+        // Apply delta patch when `HAS_DELTA` is active.
+        //
+        // Transformation order (spec §8.4 / §6.1):
+        //   FEC repair (done above)  →  AEAD decrypt (decode_payload_v2)  →
+        //   decompress (decode_payload_v2)  →  patch application  →
+        //   sparse reconstruction (read_all_logical_files)
+        let decoded = if is_has_delta {
+            match patch_raw_id {
+                PATCH_ALGO_STORE_PATCH => {
+                    // STORE_PATCH: the decoded payload IS the complete reconstructed
+                    // target logical byte sequence.  No base read.  No instruction
+                    // stream.  No external dictionary.
+                    //
+                    // For non-sparse entries the output length must equal
+                    // Uncompressed Size exactly; sparse reconstruction handles the
+                    // final logical size for sparse entries.
+                    if !is_sparse {
+                        apply_store_patch(&decoded, lfh.uncompressed_size).map_err(|e| match e {
+                            sar_delta::PatchError::PatchFailed(m) => SarError::PatchFailed(m),
+                            sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
+                            sar_delta::PatchError::ReservedValue(m) => SarError::ReservedValue(m),
+                        })?
+                    } else {
+                        decoded
+                    }
+                }
+                PATCH_ALGO_VCDIFF | PATCH_ALGO_BSDIFF | PATCH_ALGO_ZSTD_PATCH => {
+                    return Err(SarError::Unsupported("patch algorithm not yet implemented"));
+                }
+                id if id >= PATCH_ALGO_CUSTOM_MIN => {
+                    return Err(SarError::Unsupported(
+                        "CUSTOM patch algorithm not supported",
+                    ));
+                }
+                _ => {
+                    return Err(SarError::ReservedValue("reserved patch algorithm ID"));
+                }
+            }
+        } else {
+            decoded
+        };
 
         if !is_sparse {
             if u64::try_from(decoded.len())
@@ -699,22 +782,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 None
             },
             // Patch fields: present when HAS_DELTA is globally set.
-            // The Patch Algo ID registry is validated but patch application is
-            // not performed in this milestone.  The Delta Base Hash is treated
-            // as opaque bytes; no hash algorithm is assumed.
-            patch_algo_id: if header.flags.contains(GlobalFlags::HAS_DELTA) {
-                let raw_id = lfh.patch_algo_id.unwrap_or(0);
-                sar_delta::validate_patch_algo_id(raw_id).map_err(|e| match e {
-                    sar_delta::PatchError::ReservedValue(m) => SarError::ReservedValue(m),
-                    sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
-                })?;
-                Some(raw_id)
+            // Registry validation and patch application have already been performed
+            // above; this block only surfaces the validated ID and opaque hash bytes.
+            patch_algo_id: if is_has_delta {
+                Some(patch_raw_id)
             } else {
                 None
             },
-            delta_base_hash: if header.flags.contains(GlobalFlags::HAS_DELTA) {
+            delta_base_hash: if is_has_delta {
                 // Preserved as opaque 32 bytes.  No hash algorithm is assumed.
-                // All-zero bytes have no special meaning in this implementation.
+                // All-zero bytes mean "no base required" for STORE_PATCH; the
+                // field is still preserved verbatim for all other algorithms.
                 Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
             } else {
                 None

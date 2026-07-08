@@ -254,18 +254,24 @@ The LFH `Delta Base Hash` field is a 32-byte opaque value. The spec does not def
 - preserves the 32 bytes without interpretation;
 - does **not** assume BLAKE3, SHA-256, or any other algorithm;
 - does **not** verify the base object against this field (base resolution is not implemented);
-- does **not** treat an all-zero `Delta Base Hash` as a sentinel or skip condition — it is stored as-is.
+- treats an all-zero `Delta Base Hash` as "no base required" for `STORE_PATCH`; for base-requiring algorithms (VCDIFF, BSDIFF, ZSTD_PATCH), all-zero remains invalid/missing if application is ever attempted.
 
 Implementations MUST NOT hard-code a hash algorithm for `Delta Base Hash` verification until the spec normatively defines the algorithm encoding for this field.
 
-### Delta patch application is not implemented (M9b)
+### STORE_PATCH application security properties
 
-No patch is applied during `inspect` or structural `verify`. The archive payload is treated as raw stored bytes regardless of `HAS_DELTA` or `Patch Algo ID`. There is no base-object lookup, no patch reconstruction, and no target output in this stage. This means an attacker-controlled `Patch Algo ID` or `Delta Base Hash` cannot trigger unbounded computation or memory allocation.
+`STORE_PATCH` (`0x00`) is implemented with the following security properties:
 
-### Reserved and unsupported patch algorithm IDs fail closed (M9b)
+- **No unchecked allocation:** `Uncompressed Size` is checked against `ResourceLimits.max_decoded_entry_size` before any allocation. Oversized payloads return `SAR_ERR_LIMIT_EXCEEDED` without allocating.
+- **No unchecked arithmetic:** all length comparisons use `u64` checked equality; no cast-narrowing.
+- **No panic on malformed input:** length mismatch returns `SAR_ERR_PATCH_FAILED`; allocation failure is not possible due to the pre-allocation limit check.
+- **No base object access:** `STORE_PATCH` requires no base object; no file access, URI resolution, or external lookup is performed.
+- **`LOSS_TOLERANT` does not suppress errors:** `SAR_ERR_PATCH_FAILED` is always propagated regardless of `LOSS_TOLERANT` semantics.
+
+### Reserved and unsupported patch algorithm IDs fail closed
 
 - Reserved IDs (`0x04–0xEF`) → `SarError::ReservedValue`
 - Custom IDs (`0xF0–0xFF`) → `SarError::Unsupported`
-- Assigned-but-not-implemented IDs → `SarError::Unsupported` on application attempt
+- VCDIFF/BSDIFF/ZSTD_PATCH → `SarError::Unsupported` on application attempt (not yet implemented)
 
 No fallback behavior is attempted for unknown patch algorithms.

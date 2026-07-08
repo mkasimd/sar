@@ -189,12 +189,6 @@ The items below are derived from the current code audit. They document places wh
 
 ## Milestone 9b — Delta spec gaps
 
-- **Spec section:** STORE_PATCH wire semantics (spec §8.4 and §6.1)
-  - **Issue:** Section 8.4 assigns `0x00` to `STORE_PATCH` and describes it as "Direct binary patch application," but does not normatively define the wire format of the patch payload, the structure of the diff, or how the target is reconstructed.
-  - **Current conservative implementation:** `STORE_PATCH` is a known, assigned algorithm. The algorithm ID is parsed and validated. Patch application is not implemented; attempting to apply a STORE_PATCH returns `SarError::Unsupported`.
-  - **Interoperability risk:** high. Two implementations cannot interoperate on delta reconstruction without a normative patch payload format.
-  - **Follow-up needed:** spec must define STORE_PATCH wire format (e.g., raw binary patch, byte-for-byte overlay, or structured diff) and how the payload is applied to the base object to produce the target.
-
 - **Spec section:** Delta Base Hash algorithm (spec §6.1)
   - **Issue:** The LFH `Delta Base Hash` field is 32 bytes. The spec does not include a hash algorithm identifier in the LFH or any other header field to identify which algorithm produced this value.
   - **Current conservative implementation:** the 32-byte field is parsed and preserved in `EntryMetadata.delta_base_hash`, but no verification is performed because the algorithm cannot be determined from the archive. The field is treated as opaque bytes and exposed in JSON output as a lowercase hex string. An all-zero value has no special meaning.
