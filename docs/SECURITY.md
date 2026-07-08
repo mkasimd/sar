@@ -246,3 +246,26 @@ CDC_MAP hash verification (`verify_cdc_map_record_hash`) checks that the hash st
 ### CDC_EXT_PROVIDER is inert in M9a
 
 `CDC_EXT_PROVIDER` values are exposed as inert parsed metadata only. The implementation does not perform network access, does not contact external CAS providers, and does not attempt provider-driven recipe resolution in M9a.
+
+### Delta Base Hash is opaque — do not assume a hash algorithm (M9b)
+
+The LFH `Delta Base Hash` field is a 32-byte opaque value. The spec does not define a hash algorithm identifier for this field. This implementation:
+
+- preserves the 32 bytes without interpretation;
+- does **not** assume BLAKE3, SHA-256, or any other algorithm;
+- does **not** verify the base object against this field (base resolution is not implemented);
+- does **not** treat an all-zero `Delta Base Hash` as a sentinel or skip condition — it is stored as-is.
+
+Implementations MUST NOT hard-code a hash algorithm for `Delta Base Hash` verification until the spec normatively defines the algorithm encoding for this field.
+
+### Delta patch application is not implemented (M9b)
+
+No patch is applied during `inspect` or structural `verify`. The archive payload is treated as raw stored bytes regardless of `HAS_DELTA` or `Patch Algo ID`. There is no base-object lookup, no patch reconstruction, and no target output in this stage. This means an attacker-controlled `Patch Algo ID` or `Delta Base Hash` cannot trigger unbounded computation or memory allocation.
+
+### Reserved and unsupported patch algorithm IDs fail closed (M9b)
+
+- Reserved IDs (`0x04–0xEF`) → `SarError::ReservedValue`
+- Custom IDs (`0xF0–0xFF`) → `SarError::Unsupported`
+- Assigned-but-not-implemented IDs → `SarError::Unsupported` on application attempt
+
+No fallback behavior is attempted for unknown patch algorithms.

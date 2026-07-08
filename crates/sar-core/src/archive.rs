@@ -93,9 +93,43 @@ pub struct EntryMetadata {
     /// Values > 0 = Recipe Mode (payload is an ordered list of chunk hashes).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cdc_algo_id: Option<u8>,
+    /// Patch algorithm ID from the LFH.  `None` when `HAS_DELTA` global flag
+    /// is not set.  Present as an opaque registry byte when `HAS_DELTA` is set.
+    ///
+    /// Patch application is **not implemented** in this milestone.  The field
+    /// is preserved for metadata exposure only.  See `docs/SPEC_QUESTIONS.md`
+    /// for unresolved spec gaps (STORE_PATCH wire format, Delta Base Hash
+    /// algorithm, and base object resolution model).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch_algo_id: Option<u8>,
+    /// Delta base hash (32 bytes, opaque).  `None` when `HAS_DELTA` global
+    /// flag is not set.  The hash algorithm is **not specified** by the spec
+    /// and is treated as opaque bytes.  All-zero bytes have no special meaning
+    /// unless the spec later defines one.  Serialised as a hex string.
+    ///
+    /// Base object resolution is **not implemented** in this milestone.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_hash_hex_opt"
+    )]
+    pub delta_base_hash: Option<[u8; 32]>,
 }
 
 /// Entry payload reader result.
+/// Serializes an `Option<[u8; 32]>` as an optional lowercase hex string.
+fn serialize_hash_hex_opt<S>(value: &Option<[u8; 32]>, s: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(bytes) => {
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            s.serialize_some(&hex)
+        }
+        None => s.serialize_none(),
+    }
+}
+
 /// A reconstructed logical file, which may have been assembled from multiple
 /// fragment entries or had its sparse holes zero-filled.
 ///
@@ -662,6 +696,27 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 let algo_id = lfh.cdc_algo_id.unwrap_or(0);
                 crate::cdc::validate_cdc_algo_id(algo_id)?;
                 Some(algo_id)
+            } else {
+                None
+            },
+            // Patch fields: present when HAS_DELTA is globally set.
+            // The Patch Algo ID registry is validated but patch application is
+            // not performed in this milestone.  The Delta Base Hash is treated
+            // as opaque bytes; no hash algorithm is assumed.
+            patch_algo_id: if header.flags.contains(GlobalFlags::HAS_DELTA) {
+                let raw_id = lfh.patch_algo_id.unwrap_or(0);
+                sar_delta::validate_patch_algo_id(raw_id).map_err(|e| match e {
+                    sar_delta::PatchError::ReservedValue(m) => SarError::ReservedValue(m),
+                    sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
+                })?;
+                Some(raw_id)
+            } else {
+                None
+            },
+            delta_base_hash: if header.flags.contains(GlobalFlags::HAS_DELTA) {
+                // Preserved as opaque 32 bytes.  No hash algorithm is assumed.
+                // All-zero bytes have no special meaning in this implementation.
+                Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
             } else {
                 None
             },

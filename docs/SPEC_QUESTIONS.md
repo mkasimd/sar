@@ -184,3 +184,43 @@ The items below are derived from the current code audit. They document places wh
   - **Interoperability risk:** high. Even if two implementations parse the same metadata, they may be unable to reconstruct the same recipe from an external provider without a shared protocol and profile.
   - **Follow-up needed:** specify the provider protocol, recipe hash algorithm, record layout, and CDC transformation domain required for portable external-CAS recipe resolution.
 
+
+---
+
+## Milestone 9b — Delta spec gaps
+
+- **Spec section:** STORE_PATCH wire semantics (spec §8.4 and §6.1)
+  - **Issue:** Section 8.4 assigns `0x00` to `STORE_PATCH` and describes it as "Direct binary patch application," but does not normatively define the wire format of the patch payload, the structure of the diff, or how the target is reconstructed.
+  - **Current conservative implementation:** `STORE_PATCH` is a known, assigned algorithm. The algorithm ID is parsed and validated. Patch application is not implemented; attempting to apply a STORE_PATCH returns `SarError::Unsupported`.
+  - **Interoperability risk:** high. Two implementations cannot interoperate on delta reconstruction without a normative patch payload format.
+  - **Follow-up needed:** spec must define STORE_PATCH wire format (e.g., raw binary patch, byte-for-byte overlay, or structured diff) and how the payload is applied to the base object to produce the target.
+
+- **Spec section:** Delta Base Hash algorithm (spec §6.1)
+  - **Issue:** The LFH `Delta Base Hash` field is 32 bytes. The spec does not include a hash algorithm identifier in the LFH or any other header field to identify which algorithm produced this value.
+  - **Current conservative implementation:** the 32-byte field is parsed and preserved in `EntryMetadata.delta_base_hash`, but no verification is performed because the algorithm cannot be determined from the archive. The field is treated as opaque bytes and exposed in JSON output as a lowercase hex string. An all-zero value has no special meaning.
+  - **Interoperability risk:** high. Without a known algorithm, implementations cannot verify base identity, detect tampered base objects, or perform portable base lookup.
+  - **Follow-up needed:** spec must normatively define how the hash algorithm is signaled for `Delta Base Hash` (e.g., a 1-byte algo ID prepended to the 32-byte field, a Global Header field, or a fixed "BLAKE3-only" mandate).
+
+- **Spec section:** Base object resolution model (spec §8.4)
+  - **Issue:** Section 8.4 references a "Delta Base Hash" for identifying the base archive or object, but does not define how a reader locates the base object given a hash. The spec does not specify whether the base is a prior entry in the same archive, a separate archive, a URI, or an external repository.
+  - **Current conservative implementation:** base resolution is not implemented. No lookup, no file access, and no URI resolution is attempted. `EntryMetadata.delta_base_hash` is exposed as an opaque field.
+  - **Interoperability risk:** high. Without a normative resolution model, two implementations cannot independently reconstruct the same target from the same archive.
+  - **Follow-up needed:** spec must define a normative base object resolution model (same-archive by hash, external file, URI, CAS, or other mechanism).
+
+- **Spec section:** Per-entry `IS_DELTA` opt-out bit (spec §6.1 and §8.4)
+  - **Issue:** The spec defines `HAS_DELTA` as a global flag that governs the presence of `Patch Algo ID` and `Delta Base Hash` in every LFH. There is no per-entry bit defined to indicate that a specific entry is not a delta (i.e., is a full copy even within a delta archive). If any entry in a delta archive stores a full copy rather than a patch, the reader has no way to distinguish it from a delta entry without applying the patch.
+  - **Current conservative implementation:** the spec defines no IS_DELTA per-entry bit; this implementation does not invent one. All entries in a `HAS_DELTA` archive are treated as having delta LFH fields present.
+  - **Interoperability risk:** medium. Mixed archives (some entries delta, some full) cannot be expressed without a per-entry opt-out.
+  - **Follow-up needed:** spec should define a per-entry indicator (e.g., `IS_DELTA` entry flag or a sentinel `Patch Algo ID` value) for mixed-mode archives.
+
+- **Spec section:** BSDIFF wire format (spec §8.4)
+  - **Issue:** Section 8.4 assigns `0x02` to BSDIFF but does not name or cite the BSDIFF format version (e.g., bsdiff 4.x, BSDIFF43, or a custom variant), the control/diff/extra block layout, or any normative reference.
+  - **Current conservative implementation:** BSDIFF is an assigned, optional algorithm. The ID is recognized; application is not implemented; attempting to apply returns `SarError::Unsupported`.
+  - **Interoperability risk:** high if BSDIFF is ever implemented without a normative format reference.
+  - **Follow-up needed:** spec must cite a normative BSDIFF format version or define the wire format.
+
+- **Spec section:** ZSTD_PATCH dictionary/protocol (spec §8.4)
+  - **Issue:** Section 8.4 assigns `0x03` to ZSTD_PATCH but does not define the patch protocol: whether the payload is a raw ZSTD-compressed delta, a ZSTD dictionary-based frame, or a higher-level format that uses ZSTD compression internally.
+  - **Current conservative implementation:** ZSTD_PATCH is an assigned, optional algorithm. The ID is recognized; application is not implemented; attempting to apply returns `SarError::Unsupported`.
+  - **Interoperability risk:** high if ZSTD_PATCH is ever implemented without a normative protocol definition.
+  - **Follow-up needed:** spec must define the ZSTD_PATCH protocol (compression format, dictionary negotiation, and delta structure).

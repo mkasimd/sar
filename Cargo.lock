@@ -792,6 +792,7 @@ dependencies = [
  "sar-cdc",
  "sar-compression",
  "sar-crypto",
+ "sar-delta",
  "sar-fec",
  "serde",
  "serde_json",

@@ -23,7 +23,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
 | `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
-| `sar-delta` | Future delta support placeholder | placeholder |
+| `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); patch application not yet implemented | partial (M9b) |
 | `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
 | `sar-partition` | Future partition support placeholder | placeholder |
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
@@ -846,10 +846,24 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-delta`
 
-- Purpose: reserved for future delta support
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); patch application reserved for a future milestone.
+- Status: partial (M9b — registry and metadata implemented; patch application not implemented)
+- Public API (M9b):
+  - `PatchAlgoId` — enum of assigned and custom patch algorithm identifiers: `StorePatch (0x00)`, `Vcdiff (0x01)`, `Bsdiff (0x02)`, `ZstdPatch (0x03)`, `Custom(u8)` (`0xF0–0xFF`)
+  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`
+  - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>` — validates a raw byte against the SAR patch algorithm registry; returns `ReservedValue` for `0x04–0xEF`, `Unsupported` for `0xF0–0xFF`, and the corresponding `PatchAlgoId` for all assigned IDs
+  - `patch_algo_name(u8) -> &'static str` — returns a display name for any raw algorithm byte
+  - Constants: `PATCH_ALGO_STORE_PATCH (0x00u8)`, `PATCH_ALGO_VCDIFF (0x01u8)`, `PATCH_ALGO_BSDIFF (0x02u8)`, `PATCH_ALGO_ZSTD_PATCH (0x03u8)`, `PATCH_ALGO_CUSTOM_MIN (0xF0u8)`, `PATCH_ALGO_CUSTOM_MAX (0xFFu8)`
+- All of the above are re-exported from `sar-core` for consumer convenience.
+- FFI readiness: `not_applicable` (no C ABI in this milestone)
+
+**Not implemented in M9b:**
+
+- Patch application for any algorithm (STORE_PATCH, VCDIFF, BSDIFF, ZSTD_PATCH, or custom)
+- Delta Base Hash verification (hash algorithm not specified by spec)
+- Base object resolution (object location model not specified by spec)
+- STORE_PATCH wire semantics (undefined in spec; `SAR_ERR_UNSUPPORTED` is returned on application attempt)
+- All-zero Delta Base Hash has no special meaning; it is preserved as opaque bytes
 
 ### `sar-fragmentation`
 
@@ -999,6 +1013,26 @@ Candidate high-level operations:
 Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits, and CLI support for `inspect --json` (reports `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`) and `verify --cdc` (performs structural CDC validation when active).
 
 Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is **not** implemented in M9a.
+
+---
+
+## M9b APIs — Delta Metadata and Patch Algorithm Registry
+
+Milestone 9b adds:
+
+- `PatchAlgoId` enum in `sar-delta` (and re-exported from `sar-core`): `StorePatch`, `Vcdiff`, `Bsdiff`, `ZstdPatch`, `Custom(u8)`
+- `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>`: validates a raw algorithm byte against the SAR patch algorithm registry; returns `SarError::ReservedValue` for `0x04–0xEF`, `SarError::Unsupported` for `0xF0–0xFF`, and the `PatchAlgoId` for all assigned IDs
+- `EntryMetadata.patch_algo_id: Option<u8>` — present when `HAS_DELTA` is set; raw byte preserved; validated against registry during `next_entry()`
+- `EntryMetadata.delta_base_hash: Option<[u8; 32]>` — present when `HAS_DELTA` is set; treated as opaque 32 bytes; serialized as lowercase hex string in JSON output
+- CLI `inspect --json`: reports `has_delta` at archive level; reports `patch_algo_id`, `delta_base_hash`, and `patch_algorithm` name per entry
+
+**Not implemented in M9b:**
+
+- Patch application for any algorithm (STORE_PATCH, VCDIFF, BSDIFF, ZSTD_PATCH, or custom)
+- Delta Base Hash verification — hash algorithm not specified by spec; field treated as opaque bytes
+- Base object resolution — object location model not specified by spec
+- STORE_PATCH wire semantics — undefined in spec; direct payload use is not mandated
+- Per-entry `IS_DELTA` opt-out bit — not defined in spec
 
 ### `sar-cdc` crate
 
