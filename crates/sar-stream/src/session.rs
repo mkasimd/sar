@@ -11,6 +11,8 @@ use crate::protocol::{
     SessionStatusFrame,
 };
 
+const ACTIVE_SESSION_BASE_MEMORY_BYTES: u64 = 16 + 2 + 2 + 8;
+
 /// Configuration for the in-memory stateful session manager.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionManagerConfig {
@@ -73,7 +75,7 @@ impl ActiveSession {
             .as_ref()
             .map(|value| value.content_type.len() + value.metadata.len())
             .unwrap_or(0);
-        16u64 + 2 + 2 + 8 + u64::try_from(metadata).unwrap_or(u64::MAX)
+        ACTIVE_SESSION_BASE_MEMORY_BYTES + u64::try_from(metadata).unwrap_or(u64::MAX)
     }
 }
 
@@ -415,7 +417,7 @@ impl SessionManager {
             .check_active_streams(self.active_sessions.len().saturating_add(1))?;
         let projected_memory = self
             .total_session_memory()
-            .checked_add(28)
+            .checked_add(ACTIVE_SESSION_BASE_MEMORY_BYTES)
             .ok_or(SarError::Overflow("session memory"))?;
         self.config
             .limits

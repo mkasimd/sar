@@ -47,9 +47,13 @@ fn entry_mode_reports_loss_tolerant_bit() {
 #[test]
 fn entry_mode_reports_session_and_sync_bits() {
     let mode = EntryMode::from_bits(
-        EntryMode::SESSION_CONTROL | EntryMode::ATOMIC_WRITE | EntryMode::FORCE_SYNC,
+        EntryMode::HIDDEN_ATTR
+            | EntryMode::SESSION_CONTROL
+            | EntryMode::ATOMIC_WRITE
+            | EntryMode::FORCE_SYNC,
     );
 
+    assert!(mode.is_hidden_attr());
     assert!(mode.is_session_control());
     assert!(mode.is_atomic_write());
     assert!(mode.is_force_sync());
