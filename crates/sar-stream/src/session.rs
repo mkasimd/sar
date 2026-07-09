@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use sar_core::{
-    EntryMode, EntryReader, GlobalFlags, GlobalHeader, LocalFileHeader, ResourceLimits, SarError,
-    SarStatus, validate_entry_mode_against_global, validate_global_flags,
+    EntryReader, GlobalFlags, GlobalHeader, LocalFileHeader, ResourceLimits, SarError, SarStatus,
+    validate_entry_mode_against_global, validate_global_flags,
 };
 
 use crate::protocol::{
@@ -336,9 +336,9 @@ impl SessionManager {
 
     /// Processes a decoded entry.
     pub fn process_entry(&mut self, entry: &SessionEntry) -> Result<ProcessResult, SarError> {
-        let global_flags = self
-            .current_global_flags
-            .ok_or(SarError::StreamState("session manager missing current global header"))?;
+        let global_flags = self.current_global_flags.ok_or(SarError::StreamState(
+            "session manager missing current global header",
+        ))?;
         validate_entry_mode_against_global(global_flags, entry.header.entry_mode)?;
 
         if entry.degraded && !entry.header.entry_mode.is_loss_tolerant() {
@@ -350,8 +350,8 @@ impl SessionManager {
             self.config
                 .limits
                 .check_session_fragment_buffer_bytes(entry.header.uncompressed_size)?;
-            let payload_len =
-                u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
+            let payload_len = u64::try_from(entry.payload.len())
+                .map_err(|_| SarError::Overflow("payload len"))?;
             self.config
                 .limits
                 .check_session_fragment_buffer_bytes(payload_len)?;
@@ -398,7 +398,11 @@ impl SessionManager {
     ) -> Result<ProcessResult, SarError> {
         let frame = SessionInitFrame::parse(&entry.payload)?;
         if !global_flags.contains(GlobalFlags::NO_INDEX) || entry.header.stream_id == 0 {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         if self.active_sessions.contains_key(&entry.header.stream_id) {
             return Err(SarError::StreamState(
@@ -448,7 +452,11 @@ impl SessionManager {
         entry: &SessionEntry,
     ) -> Result<ProcessResult, SarError> {
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         if !entry.payload.is_empty() {
             return Err(SarError::InvalidLength(
@@ -464,7 +472,7 @@ impl SessionManager {
                         entry.header.stream_id,
                         true,
                         entry.header.entry_mode.op_code(),
-                    ))
+                    ));
                 }
             };
             validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -498,7 +506,11 @@ impl SessionManager {
     ) -> Result<ProcessResult, SarError> {
         let frame = SessionResumeFrame::parse(&entry.payload)?;
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         let session = match self.active_sessions.get_mut(&entry.header.stream_id) {
             Some(session) => session,
@@ -507,7 +519,7 @@ impl SessionManager {
                     entry.header.stream_id,
                     true,
                     entry.header.entry_mode.op_code(),
-                ))
+                ));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -534,7 +546,11 @@ impl SessionManager {
         entry: &SessionEntry,
     ) -> Result<ProcessResult, SarError> {
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         if !entry.payload.is_empty() {
             return Err(SarError::InvalidLength(
@@ -548,7 +564,7 @@ impl SessionManager {
                     entry.header.stream_id,
                     true,
                     entry.header.entry_mode.op_code(),
-                ))
+                ));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -568,7 +584,11 @@ impl SessionManager {
     ) -> Result<ProcessResult, SarError> {
         let frame = SessionStatusFrame::parse(&entry.payload, &self.config.limits)?;
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         let session = match self.active_sessions.get_mut(&entry.header.stream_id) {
             Some(session) => session,
@@ -577,7 +597,7 @@ impl SessionManager {
                     entry.header.stream_id,
                     true,
                     entry.header.entry_mode.op_code(),
-                ))
+                ));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -597,7 +617,11 @@ impl SessionManager {
     ) -> Result<ProcessResult, SarError> {
         let frame = SessionAckFrame::parse(&entry.payload)?;
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         let session = match self.active_sessions.get_mut(&entry.header.stream_id) {
             Some(session) => session,
@@ -606,7 +630,7 @@ impl SessionManager {
                     entry.header.stream_id,
                     true,
                     entry.header.entry_mode.op_code(),
-                ))
+                ));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -626,7 +650,11 @@ impl SessionManager {
     ) -> Result<ProcessResult, SarError> {
         let frame = SessionMetadataFrame::parse(&entry.payload, &self.config.limits)?;
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         let new_state = SessionMetadataState {
             content_type: frame.content_type.clone(),
@@ -640,7 +668,7 @@ impl SessionManager {
                     entry.header.stream_id,
                     true,
                     entry.header.entry_mode.op_code(),
-                ))
+                ));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -672,7 +700,11 @@ impl SessionManager {
     ) -> Result<ProcessResult, SarError> {
         let frame = SessionCapabilitiesFrame::parse(&entry.payload)?;
         if !self.should_apply_stateful(global_flags, entry.header.stream_id) {
-            return Ok(self.inactive_result(entry.header.stream_id, true, entry.header.entry_mode.op_code()));
+            return Ok(self.inactive_result(
+                entry.header.stream_id,
+                true,
+                entry.header.entry_mode.op_code(),
+            ));
         }
         let session = match self.active_sessions.get_mut(&entry.header.stream_id) {
             Some(session) => session,
@@ -681,7 +713,7 @@ impl SessionManager {
                     entry.header.stream_id,
                     true,
                     entry.header.entry_mode.op_code(),
-                ))
+                ));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;
@@ -704,7 +736,7 @@ impl SessionManager {
         let op = FilesystemOpCode::try_from(op_code)?;
         match op {
             FilesystemOpCode::Delete if !entry.payload.is_empty() => {
-                return Err(SarError::InvalidLength("DELETE payload must be empty"))
+                return Err(SarError::InvalidLength("DELETE payload must be empty"));
             }
             _ => {}
         }
@@ -788,9 +820,9 @@ impl SessionManager {
     }
 
     fn total_session_memory(&self) -> u64 {
-        self.active_sessions
-            .values()
-            .fold(0u64, |acc, session| acc.saturating_add(session.memory_usage()))
+        self.active_sessions.values().fold(0u64, |acc, session| {
+            acc.saturating_add(session.memory_usage())
+        })
     }
 
     fn bump_activity_tick(&mut self) -> Result<u64, SarError> {

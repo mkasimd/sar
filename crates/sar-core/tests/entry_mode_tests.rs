@@ -106,7 +106,8 @@ fn entry_mode_validation_accepts_consistent_bits() {
 
 #[test]
 fn entry_mode_reserved_bit_fails_closed() {
-    let err = validate_entry_mode_against_global(GlobalFlags::NO_INDEX, EntryMode::from_bits(1 << 12))
-        .expect_err("reserved bit 12 must fail");
+    let err =
+        validate_entry_mode_against_global(GlobalFlags::NO_INDEX, EntryMode::from_bits(1 << 12))
+            .expect_err("reserved bit 12 must fail");
     assert!(matches!(err, SarError::ReservedValue(_)));
 }

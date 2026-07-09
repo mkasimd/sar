@@ -52,7 +52,12 @@ pub fn init_entry(stream_id: u16, sequence_no: u16, uuid: [u8; 16], flags: u16) 
     }
 }
 
-pub fn control_entry(stream_id: u16, sequence_no: u16, opcode: u8, payload: Vec<u8>) -> SessionEntry {
+pub fn control_entry(
+    stream_id: u16,
+    sequence_no: u16,
+    opcode: u8,
+    payload: Vec<u8>,
+) -> SessionEntry {
     let mut header = LocalFileHeader::minimal_store(b"ctl".to_vec(), payload.len() as u64);
     header.stream_id = stream_id;
     header.sequence_no = sequence_no;

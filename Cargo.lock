@@ -846,6 +846,9 @@ version = "0.1.0"
 [[package]]
 name = "sar-stream"
 version = "0.1.0"
+dependencies = [
+ "sar-core",
+]
 
 [[package]]
 name = "sar-transport"

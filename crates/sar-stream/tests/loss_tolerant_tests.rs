@@ -1,7 +1,9 @@
 mod common;
 
 use sar_core::{EntryMode, SarError, SarStatus};
-use sar_stream::{FilesystemAction, SessionEntry, SessionEvent, SessionManager, SessionManagerConfig};
+use sar_stream::{
+    FilesystemAction, SessionEntry, SessionEvent, SessionManager, SessionManagerConfig,
+};
 
 use common::{fragmented_no_index_header, fs_entry, init_entry};
 
