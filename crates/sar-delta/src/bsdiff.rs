@@ -142,8 +142,8 @@ pub fn apply_bsdiff(
         .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid Control_Block_Length"))?;
     let diff_len = u64::try_from(diff_len_raw)
         .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid Diff_Block_Length"))?;
-    let new_size =
-        u64::try_from(new_size_raw).map_err(|_| PatchError::PatchFailed("BSDIFF: invalid New_File_Size"))?;
+    let new_size = u64::try_from(new_size_raw)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid New_File_Size"))?;
 
     if new_size != expected_target_size {
         return Err(PatchError::PatchFailed(
@@ -226,12 +226,14 @@ pub fn apply_bsdiff(
     let mut extra_pos: u64 = 0;
 
     for triple_idx in 0..n_triples {
-        let triple_offset = triple_idx
-            .checked_mul(24)
-            .ok_or(PatchError::PatchFailed("BSDIFF: control triple offset overflow"))?;
+        let triple_offset = triple_idx.checked_mul(24).ok_or(PatchError::PatchFailed(
+            "BSDIFF: control triple offset overflow",
+        ))?;
         let triple_end = triple_offset
             .checked_add(24)
-            .ok_or(PatchError::PatchFailed("BSDIFF: control triple end overflow"))?;
+            .ok_or(PatchError::PatchFailed(
+                "BSDIFF: control triple end overflow",
+            ))?;
         if triple_end > ctrl_data.len() {
             return Err(PatchError::PatchFailed(
                 "BSDIFF: malformed or truncated control triple",
@@ -268,9 +270,9 @@ pub fn apply_bsdiff(
             ));
         }
 
-        let diff_end = diff_pos
-            .checked_add(d_len)
-            .ok_or(PatchError::PatchFailed("BSDIFF: diff block position overflow"))?;
+        let diff_end = diff_pos.checked_add(d_len).ok_or(PatchError::PatchFailed(
+            "BSDIFF: diff block position overflow",
+        ))?;
         if diff_end > diff_len {
             return Err(PatchError::PatchFailed("BSDIFF: Diff Block overread"));
         }
@@ -298,7 +300,11 @@ pub fn apply_bsdiff(
             let old_byte = if old_byte_pos < 0 {
                 return Err(PatchError::PatchFailed("BSDIFF: base seek before offset 0"));
             } else if let Ok(old_idx) = usize::try_from(old_byte_pos) {
-                if old_idx < base.len() { base[old_idx] } else { 0 }
+                if old_idx < base.len() {
+                    base[old_idx]
+                } else {
+                    0
+                }
             } else {
                 0
             };
@@ -310,7 +316,9 @@ pub fn apply_bsdiff(
         diff_pos = diff_end;
         old_pos = old_pos
             .checked_add(d_len_raw)
-            .ok_or(PatchError::PatchFailed("BSDIFF: old_pos overflow in diff step"))?;
+            .ok_or(PatchError::PatchFailed(
+                "BSDIFF: old_pos overflow in diff step",
+            ))?;
 
         let new_after_extra = new_pos
             .checked_add(e_len)
@@ -321,9 +329,9 @@ pub fn apply_bsdiff(
             ));
         }
 
-        let extra_end = extra_pos
-            .checked_add(e_len)
-            .ok_or(PatchError::PatchFailed("BSDIFF: extra block position overflow"))?;
+        let extra_end = extra_pos.checked_add(e_len).ok_or(PatchError::PatchFailed(
+            "BSDIFF: extra block position overflow",
+        ))?;
         if extra_end > extra_len {
             return Err(PatchError::PatchFailed("BSDIFF: Extra Block overread"));
         }
@@ -345,7 +353,9 @@ pub fn apply_bsdiff(
 
         old_pos = old_pos
             .checked_add(seek_adj)
-            .ok_or(PatchError::PatchFailed("BSDIFF: old_pos overflow in seek step"))?;
+            .ok_or(PatchError::PatchFailed(
+                "BSDIFF: old_pos overflow in seek step",
+            ))?;
         if old_pos < 0 {
             return Err(PatchError::PatchFailed("BSDIFF: base seek before offset 0"));
         }

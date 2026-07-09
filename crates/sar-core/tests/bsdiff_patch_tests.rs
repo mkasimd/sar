@@ -2,9 +2,7 @@
 
 use std::io::Cursor;
 
-use sar_compression::{
-    COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions, encode_stream,
-};
+use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions, encode_stream};
 use sar_core::{
     ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
@@ -145,7 +143,12 @@ fn bsdiff_deflate_pipeline_reconstructs_target() {
             target[i].wrapping_sub(base_byte)
         })
         .collect();
-    let patch = build_patch(&[(target.len() as i64, 0, 0)], &diff, b"", target.len() as i64);
+    let patch = build_patch(
+        &[(target.len() as i64, 0, 0)],
+        &diff,
+        b"",
+        target.len() as i64,
+    );
     let archive = build_bsdiff_archive(
         &patch,
         target.len() as u64,
@@ -166,7 +169,12 @@ fn bsdiff_zstd_pipeline_reconstructs_target() {
             target[i].wrapping_sub(base_byte)
         })
         .collect();
-    let patch = build_patch(&[(target.len() as i64, 0, 0)], &diff, b"", target.len() as i64);
+    let patch = build_patch(
+        &[(target.len() as i64, 0, 0)],
+        &diff,
+        b"",
+        target.len() as i64,
+    );
     let archive = build_bsdiff_archive(
         &patch,
         target.len() as u64,
@@ -209,7 +217,12 @@ fn bsdiff_target_above_resource_limit_returns_limit_exceeded() {
     let diff: Vec<u8> = (0..target.len())
         .map(|i| target[i].wrapping_sub(base.get(i).copied().unwrap_or(0)))
         .collect();
-    let patch = build_patch(&[(target.len() as i64, 0, 0)], &diff, b"", target.len() as i64);
+    let patch = build_patch(
+        &[(target.len() as i64, 0, 0)],
+        &diff,
+        b"",
+        target.len() as i64,
+    );
     let archive = build_bsdiff_archive(&patch, target.len() as u64, NON_ZERO_HASH, None);
     let opts = ArchiveReaderOptions {
         limits: ResourceLimits {

@@ -382,6 +382,7 @@ fn vcdiff_secondary_compressor_returns_unsupported() {
     patch.extend_from_slice(&vcdiff_add_window(b"x"));
 
     let archive = build_vcdiff_archive(&patch, 1, NON_ZERO_HASH);
-    let err = read_entry_with_opts(archive, opts_with_base(b"base".to_vec())).expect_err("must fail");
+    let err =
+        read_entry_with_opts(archive, opts_with_base(b"base".to_vec())).expect_err("must fail");
     assert!(matches!(err, SarError::Unsupported(_)));
 }

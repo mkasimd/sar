@@ -22,11 +22,20 @@ fn triples_to_control(triples: &[(i64, i64, i64)]) -> Vec<u8> {
     ctrl
 }
 
-fn build_sar_bsdiff_patch(ctrl_raw: &[u8], diff_bytes: &[u8], extra_bytes: &[u8], new_size: i64) -> Vec<u8> {
+fn build_sar_bsdiff_patch(
+    ctrl_raw: &[u8],
+    diff_bytes: &[u8],
+    extra_bytes: &[u8],
+    new_size: i64,
+) -> Vec<u8> {
     let mut patch = Vec::new();
     patch.extend_from_slice(b"SARBSD01");
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(ctrl_raw.len()).expect("ctrl len")));
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(diff_bytes.len()).expect("diff len")));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(ctrl_raw.len()).expect("ctrl len"),
+    ));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(diff_bytes.len()).expect("diff len"),
+    ));
     patch.extend_from_slice(&encode_bsdiff_int(new_size));
     patch.extend_from_slice(ctrl_raw);
     patch.extend_from_slice(diff_bytes);
@@ -34,8 +43,18 @@ fn build_sar_bsdiff_patch(ctrl_raw: &[u8], diff_bytes: &[u8], extra_bytes: &[u8]
     patch
 }
 
-fn build_patch(triples: &[(i64, i64, i64)], diff_bytes: &[u8], extra_bytes: &[u8], new_size: i64) -> Vec<u8> {
-    build_sar_bsdiff_patch(&triples_to_control(triples), diff_bytes, extra_bytes, new_size)
+fn build_patch(
+    triples: &[(i64, i64, i64)],
+    diff_bytes: &[u8],
+    extra_bytes: &[u8],
+    new_size: i64,
+) -> Vec<u8> {
+    build_sar_bsdiff_patch(
+        &triples_to_control(triples),
+        diff_bytes,
+        extra_bytes,
+        new_size,
+    )
 }
 
 #[test]
@@ -51,7 +70,8 @@ fn apply_bsdiff_sarbsd01_magic_is_accepted() {
     let base = b"hello world";
     let diff: Vec<u8> = base.iter().map(|_| 0u8).collect();
     let patch = build_patch(&[(base.len() as i64, 0, 0)], &diff, b"", base.len() as i64);
-    let out = apply_bsdiff(base, &patch, base.len() as u64, &BsdiffLimits::unlimited()).expect("ok");
+    let out =
+        apply_bsdiff(base, &patch, base.len() as u64, &BsdiffLimits::unlimited()).expect("ok");
     assert_eq!(out, base);
 }
 
@@ -70,7 +90,13 @@ fn apply_bsdiff_control_diff_extra_blocks_are_uncompressed() {
     let diff: Vec<u8> = vec![0, b'B'.wrapping_sub(b'b'), b'Z'.wrapping_sub(b'c')];
     let extra = b"h9";
     let patch = build_patch(&[(3, 2, 0)], &diff, extra, target.len() as i64);
-    let out = apply_bsdiff(base, &patch, target.len() as u64, &BsdiffLimits::unlimited()).expect("ok");
+    let out = apply_bsdiff(
+        base,
+        &patch,
+        target.len() as u64,
+        &BsdiffLimits::unlimited(),
+    )
+    .expect("ok");
     assert_eq!(out, target);
 }
 
