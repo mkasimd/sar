@@ -138,9 +138,11 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - **Milestone 10d SAR-over-TCP binding**
   - `sar-transport::tcp::TcpSarConnection<S>` wraps any `Read + Write` stream and drives the M10c TCP-policy harness over real bytes
   - TCP listener/client helpers: `TcpSarConnection::connect` / `TcpSarConnection::accept` / `TcpSarConnection::from_stream`
+  - TCP binding is **plaintext SAR-over-TCP only**; TCP+TLS is **not** implemented; STARTTLS is **not** implemented
   - TCP streams use a single fixed `TransportStreamId(0)` per connection; no byte-interleaving of SAR sessions
   - a new SAR session may start only after `SESSION_CLOSE` or end-of-archive on the same TCP connection
   - invalid unskippable stream bytes emit `CloseConnection` action and mark the connection closed
+  - TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is closed
   - duplicate active SAR Stream IDs produce `SAR_ERR_STREAM_STATE` and close the connection
   - too many active streams produces `SAR_ERR_TOO_MANY_STREAMS` and closes the connection
   - `SESSION_CLOSE` unbinds the SAR Stream ID and permits a later SAR session on the same TCP connection
@@ -148,6 +150,9 @@ This document reflects the current repository state after Milestones 10a/10b/10c
   - heartbeat/watchdog uses explicit `now_ms` input; no background thread or timer
   - `TcpTransportConfig.read_buffer_size` caps bytes read per `process_available` call; `write_buffer_size` caps bytes accepted per `write_all_sar_bytes` call — both enforced before any allocation
   - uses `std::net` (blocking I/O, no async runtime, no TLS, no QUIC)
+  - KMS Mode `0x04 TLS_EXPORTER` is recognized as a spec-defined mode; over a plaintext TCP stream it is **not** supported and the connection is rejected with `SAR_ERR_UNSUPPORTED`
+  - TCP must not and does not advertise `CAP_TLS_EXPORTER_AEAD` in its local capability set
+  - `CAP_TLS_EXPORTER_AEAD` (bit 6) is now a defined capability bit in `CapabilityFlags`; it passes `validate()` since it is spec-defined; reserved bits 7–15 still trigger `SAR_ERR_RESERVED_VALUE`
   - loopback TCP integration tests and non-network buffer/limit tests added in `sar-transport`
 
 ## Partial
@@ -187,7 +192,10 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - delta patch application and reconstruction
 - partition set reconstruction
 - real SAR-over-QUIC sockets/runtime integration (remains M10e)
-- transport security/TLS integration (TLS is not implemented in M10d; SAR AEAD and/or external transport security is required for untrusted networks)
+- TCP+TLS (TLS is not implemented in M10d; SAR AEAD and/or external transport security is required for untrusted networks)
+- STARTTLS or any in-band TLS upgrade on the plaintext TCP binding
+- KMS Mode `0x04 TLS_EXPORTER` — spec-defined, recognized, and exported as a constant (`KMS_TLS_EXPORTER`), but not implemented; requires an authenticated TLS session which the plaintext TCP binding does not provide
+- `CAP_TLS_EXPORTER_AEAD` — spec-defined capability bit (bit 6), recognized in parsing, but not advertised or implemented by the TCP binding
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 

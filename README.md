@@ -94,10 +94,12 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `write_all_sar_bytes(bytes)` writes raw SAR archive bytes to the stream
   - TCP streams MUST NOT byte-interleave SAR sessions; a new SAR session may start only after `SESSION_CLOSE` or end-of-archive
   - invalid unskippable bytes emit `CloseConnection` and permanently close the connection
+  - TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is closed
+  - KMS Mode `0x04 TLS_EXPORTER` is spec-defined but **not** supported on plaintext TCP; the connection is rejected with `SAR_ERR_UNSUPPORTED` if a peer uses this mode
   - duplicate active Stream ID → `SAR_ERR_STREAM_STATE`; too many streams → `SAR_ERR_TOO_MANY_STREAMS`
   - `SESSION_STATUS` / `SESSION_ACK` are serialized as SAR LFH control entries and written to the outbound stream when bidirectional control is enabled
   - heartbeat/watchdog uses explicit `now_ms` input; no background timer or thread
-  - uses `std::net` (blocking); **no TLS, no QUIC, no async runtime**
+  - uses `std::net` (blocking); **no TLS, no TCP+TLS, no STARTTLS, no QUIC, no async runtime**
   - **for untrusted networks, SAR AEAD encryption and/or external transport security is required**
   - QUIC binding remains M10e
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing

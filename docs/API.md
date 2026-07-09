@@ -548,7 +548,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 
 - Hash IDs: `HASH_SHA256`, `HASH_BLAKE3`, `HASH_SHA3_256`
 - Encryption IDs: `ENCR_PLAINTEXT`, `ENCR_AES256_GCM`, `ENCR_CHACHA20`, `ENCR_AES256_CBC`, `ENCR_XCHACHA20_POLY`, `ENCR_CHACHA20_POLY1305`
-- KMS IDs: `KMS_PBKDF2`, `KMS_ARGON2`, `KMS_ASYMMETRIC_WRAP`
+- KMS IDs: `KMS_PBKDF2`, `KMS_ARGON2`, `KMS_ASYMMETRIC_WRAP`, `KMS_TLS_EXPORTER`
 - PBKDF2 PRF IDs and Argon2 variant IDs
 - `AEAD_KEY_SIZE`, `AEAD_TAG_SIZE`
 - `validate_encr_algo_id()`
@@ -607,6 +607,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 - SHA3-256 is declared but not implemented.
 - Only AES-256-GCM and XChaCha20-Poly1305 are integrated into `sar-core` archive flows.
 - `ASYMMETRIC_WRAP` is a structural/public KMS mode with callback-based unwrapping, not a built-in RSA/ECIES implementation.
+- `KMS_TLS_EXPORTER` (`0x04`) is a spec-defined KMS mode identifier that is recognized and exported as a constant. It is **not** implemented in this release; `parse_kms_payload(KMS_TLS_EXPORTER, …)` and `validate_kms_mode_id(KMS_TLS_EXPORTER)` return `SAR_ERR_UNSUPPORTED`. Plaintext TCP streams that advertise this KMS mode are rejected with `SAR_ERR_UNSUPPORTED`.
 
 ### FFI / C ABI notes
 
@@ -1003,6 +1004,7 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - strictly in-memory only; no transport abstraction or network I/O
   - requires `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT` before stateful activation
   - sequence continuity is enforced for all accepted entries, including heartbeats and control frames
+  - `CapabilityFlags` now includes `CAP_TLS_EXPORTER_AEAD` (bit 6, spec-defined); this bit passes `validate()` but is not advertised by TCP bindings and is not implemented in this release
 
 ### `sar-transport`
 
@@ -1020,12 +1022,16 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 - FFI readiness: `not_applicable` for generic/network types; `candidate` for policy/harness types
 - Notes:
   - M10d TCP binding: `TcpSarConnection<S>` wraps any `Read + Write` stream and drives the M10c TCP policy
+  - M10d TCP binding is **plaintext SAR-over-TCP only**; TCP+TLS is not implemented; STARTTLS is not implemented
   - TCP binding uses `std::net` (blocking, no async runtime, no TLS, no QUIC)
   - TCP streams do not permit byte-interleaved SAR sessions; sequential sessions allowed after `SESSION_CLOSE`
   - invalid unskippable stream bytes close the connection (`CloseConnection` action)
+  - TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected/closed
   - `SESSION_STATUS`/`SESSION_ACK` serialization to outbound bytes requires bidirectional control to be enabled
   - heartbeat/watchdog is explicit-time with `now_ms` parameter; no background timer
-  - TLS is not implemented; for untrusted networks, SAR AEAD and/or external transport security is required
+  - TLS is not implemented; for untrusted networks, SAR AEAD and/or external transport security (e.g. WireGuard, IPsec) is required
+  - KMS Mode `0x04 TLS_EXPORTER` is defined by the spec but is **not** supported over plaintext TCP; the connection is rejected with `SAR_ERR_UNSUPPORTED` if a peer uses this mode
+  - TCP must not and does not advertise `CAP_TLS_EXPORTER_AEAD` in its local capability set
   - QUIC binding remains M10e
   - M10f (full closeout) remains pending
 

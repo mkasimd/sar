@@ -74,7 +74,11 @@ This document reflects current implemented behavior only.
 ## M10d SAR-over-TCP binding security notes
 
 - `TcpSarConnection<S>` wraps an existing TCP stream; it does **not** implement TLS or any transport-layer encryption.
+- The M10d TCP binding is **plaintext SAR-over-TCP only**.  TCP+TLS is **not** implemented.  STARTTLS is **not** implemented.  No in-band upgrade path exists.
 - **For connections over untrusted networks, SAR AEAD encryption and/or external transport security (e.g., WireGuard, IPsec, SSH tunneling) is required.**  M10d does not provide confidentiality or integrity of the TCP byte stream itself.
+- TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is immediately closed; no further data is accepted.
+- KMS Mode `0x04 TLS_EXPORTER` is spec-defined but **must not** be used over a plaintext TCP stream.  If a plaintext TCP stream encounters this KMS mode, the connection is rejected with `SAR_ERR_UNSUPPORTED`.  There is no TLS session and no TLS exporter material available on this binding.
+- The TCP binding does **not** advertise `CAP_TLS_EXPORTER_AEAD`.  Any local capability set used by the TCP binding must not include this bit.
 - The `process_available` path never exposes raw payload bytes to callers; all payload processing occurs inside `sar-core`/`sar-stream` behind AEAD and session semantics before any filesystem actions are surfaced.
 - Invalid/unskippable byte sequences trigger `CloseConnection` before any further data is accepted; the connection is then permanently closed.
 - `read_buffer_size` caps bytes accepted per `process_available` call; `write_buffer_size` caps bytes per `write_all_sar_bytes` call — both enforced before any allocation from network input.

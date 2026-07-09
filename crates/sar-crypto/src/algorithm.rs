@@ -28,6 +28,8 @@ pub const KMS_PBKDF2: u8 = 0x01;
 pub const KMS_ARGON2: u8 = 0x02;
 /// Asymmetric wrap KMS mode identifier.
 pub const KMS_ASYMMETRIC_WRAP: u8 = 0x03;
+/// TLS-exporter key derivation KMS mode identifier (spec-defined; unsupported on plaintext TCP).
+pub const KMS_TLS_EXPORTER: u8 = 0x04;
 
 /// PBKDF2 HMAC-SHA256 PRF identifier.
 pub const PBKDF2_PRF_HMAC_SHA256: u8 = 0x01;
@@ -83,6 +85,9 @@ pub fn validate_encr_algo_id(id: u8) -> Result<(), SarCryptoError> {
 pub fn validate_kms_mode_id(id: u8) -> Result<(), SarCryptoError> {
     match id {
         KMS_PBKDF2 | KMS_ARGON2 | KMS_ASYMMETRIC_WRAP => Ok(()),
+        KMS_TLS_EXPORTER => Err(SarCryptoError::Unsupported(
+            "KMS_TLS_EXPORTER requires an authenticated TLS session; unsupported on plaintext TCP",
+        )),
         0xF0..=0xFF => Err(SarCryptoError::Unsupported("custom KMS mode")),
         _ => Err(SarCryptoError::ReservedValue("unknown KMS mode ID")),
     }

@@ -2,7 +2,8 @@
 
 use crate::algorithm::{
     ARGON2_VARIANT_D, ARGON2_VARIANT_I, ARGON2_VARIANT_ID, KMS_ARGON2, KMS_ASYMMETRIC_WRAP,
-    KMS_PBKDF2, PBKDF2_PRF_HMAC_SHA3_256, PBKDF2_PRF_HMAC_SHA256, PBKDF2_PRF_HMAC_SHA512,
+    KMS_PBKDF2, KMS_TLS_EXPORTER, PBKDF2_PRF_HMAC_SHA3_256, PBKDF2_PRF_HMAC_SHA256,
+    PBKDF2_PRF_HMAC_SHA512,
 };
 use crate::error::SarCryptoError;
 
@@ -122,6 +123,9 @@ pub fn parse_kms_payload(mode_id: u8, payload: &[u8]) -> Result<KmsParams, SarCr
         KMS_PBKDF2 => parse_pbkdf2(payload),
         KMS_ARGON2 => parse_argon2(payload),
         KMS_ASYMMETRIC_WRAP => parse_asymmetric_wrap(payload),
+        KMS_TLS_EXPORTER => Err(SarCryptoError::Unsupported(
+            "KMS_TLS_EXPORTER requires an authenticated TLS session; unsupported on plaintext TCP",
+        )),
         0xF0..=0xFF => Err(SarCryptoError::Unsupported("custom KMS mode")),
         _ => Err(SarCryptoError::ReservedValue("unknown KMS mode ID")),
     }

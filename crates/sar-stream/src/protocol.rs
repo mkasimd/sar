@@ -170,8 +170,12 @@ impl CapabilityFlags {
     pub const BIDIRECTIONAL_CONTROL: u16 = 1 << 4;
     /// Endpoint supports reverse-direction filesystem and session entries.
     pub const BIDIRECTIONAL_STREAM: u16 = 1 << 5;
+    /// Endpoint supports SAR AEAD key derivation using KMS Mode `0x04 TLS_EXPORTER` over an
+    /// authenticated TLS-based transport.  This bit is spec-defined but not advertised by
+    /// plaintext TCP bindings; TCP must never set this bit in its local capability advertisement.
+    pub const CAP_TLS_EXPORTER_AEAD: u16 = 1 << 6;
 
-    const RESERVED_MASK: u16 = 0xffc0;
+    const RESERVED_MASK: u16 = 0xff80;
 
     /// Empty capability set.
     pub const NONE: Self = Self { bits: 0 };
@@ -222,6 +226,15 @@ impl CapabilityFlags {
     #[must_use]
     pub const fn supports_bidirectional_stream(self) -> bool {
         self.bits & Self::BIDIRECTIONAL_STREAM != 0
+    }
+
+    /// Returns true when TLS-exporter AEAD capability is present.
+    ///
+    /// This capability is spec-defined (bit 6) but is **not** supported by plaintext TCP
+    /// bindings.  Plaintext TCP must never advertise this bit.
+    #[must_use]
+    pub const fn supports_tls_exporter_aead(self) -> bool {
+        self.bits & Self::CAP_TLS_EXPORTER_AEAD != 0
     }
 
     /// Validates reserved bits and required flag combinations.

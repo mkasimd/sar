@@ -6,8 +6,8 @@ use sar_crypto::kms::types::{
     parse_kms_payload, serialize_kms_payload,
 };
 use sar_crypto::{
-    ARGON2_VARIANT_ID, KMS_ARGON2, KMS_ASYMMETRIC_WRAP, KMS_PBKDF2, PBKDF2_PRF_HMAC_SHA256,
-    SarCryptoError,
+    ARGON2_VARIANT_ID, KMS_ARGON2, KMS_ASYMMETRIC_WRAP, KMS_PBKDF2, KMS_TLS_EXPORTER,
+    PBKDF2_PRF_HMAC_SHA256, SarCryptoError, validate_kms_mode_id,
 };
 
 #[test]
@@ -109,4 +109,47 @@ fn asymmetric_wrap_errors() {
     let err = unwrap_cek(&params, b"bob", |_algo, _recipient, _wrapped| Ok(None))
         .expect_err("missing recipient");
     assert!(matches!(err, SarCryptoError::KeyMissing(_)));
+}
+
+// ── KMS_TLS_EXPORTER (0x04) recognition tests ─────────────────────────────────
+
+#[test]
+fn tls_exporter_mode_id_constant_is_0x04() {
+    assert_eq!(KMS_TLS_EXPORTER, 0x04);
+}
+
+#[test]
+fn tls_exporter_parse_returns_unsupported_not_reserved() {
+    // 0x04 must be recognized as a defined-but-unsupported mode, not as an
+    // unknown/reserved value.  SAR_ERR_UNSUPPORTED is the correct fail-closed
+    // error for a plaintext TCP context without TLS exporter material.
+    let err = parse_kms_payload(KMS_TLS_EXPORTER, &[]).expect_err("TLS_EXPORTER unsupported");
+    assert!(
+        matches!(err, SarCryptoError::Unsupported(_)),
+        "expected Unsupported, got {err:?}"
+    );
+}
+
+#[test]
+fn tls_exporter_validate_returns_unsupported_not_reserved() {
+    let err = validate_kms_mode_id(KMS_TLS_EXPORTER).expect_err("TLS_EXPORTER unsupported");
+    assert!(
+        matches!(err, SarCryptoError::Unsupported(_)),
+        "expected Unsupported, got {err:?}"
+    );
+}
+
+#[test]
+fn unknown_kms_mode_still_returns_reserved_value() {
+    // Modes 0x05–0xEF (excluding 0xF0–0xFF) remain reserved.
+    let err = parse_kms_payload(0x05, &[]).expect_err("reserved mode");
+    assert!(
+        matches!(err, SarCryptoError::ReservedValue(_)),
+        "expected ReservedValue for 0x05, got {err:?}"
+    );
+    let err = validate_kms_mode_id(0xEF).expect_err("reserved mode");
+    assert!(
+        matches!(err, SarCryptoError::ReservedValue(_)),
+        "expected ReservedValue for 0xEF, got {err:?}"
+    );
 }
