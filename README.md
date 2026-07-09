@@ -67,6 +67,13 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - Legacy `BSDIFF40` decode support is not implemented in this profile; `BSDIFF40` magic is rejected as `SAR_ERR_PATCH_FAILED`
   - `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
   - BSDIFF/VCDIFF `ResourceLimits`: `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples`, `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size`
+- **Milestone 10a — stateless forward-only SAR Byte Stream parser/writer state model**
+  - `sar-core::stream::StreamArchiveParser` provides explicit parsing phases and deterministic partial-input stepping (`NeedMore` / `Ready` / `Complete`)
+  - parser is forward-only for supported streaming paths and does not require backward seek
+  - parser supports concatenated `NO_INDEX` archives in one contiguous byte stream
+  - Global Flags still control physical LFH field presence; Entry Mode only controls semantic applicability
+  - `SESSION_CONTROL`/OP_CODE bits are parsed structurally only; no Stateful Streaming Mode lifecycle semantics are implemented in M10a
+  - `ArchiveWriter` exposes structural writing phases via `StreamWriteState` and `ArchiveWriter::stream_state()`
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
@@ -174,6 +181,7 @@ Notes:
 - `extract`, `verify`, and `repair` use default `ResourceLimits` safety caps unless CLI overrides are supplied. Relevant defaults include `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, `max_archive_size = 16 GiB`, and `max_repair_working_set = 2 GiB`.
 - sparse apparent-size failures and repair working-set failures return `SAR_ERR_LIMIT_EXCEEDED` and do not leave final output files behind
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
+- Stateful Streaming Mode, session lifecycle management (`SESSION_INIT` binding/resume/ack/status/heartbeat), and transport bindings (SAR-over-QUIC/TCP framing) remain out of scope in M10a.
 
 ## Validation
 

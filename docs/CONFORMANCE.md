@@ -1,7 +1,6 @@
 # Conformance Statement
 
-This document reflects the current repository state after the Milestone 8 closeout and
-maintainability cleanup pass.
+This document reflects the current repository state after Milestone 10a.
 
 ## Implemented
 
@@ -106,6 +105,15 @@ maintainability cleanup pass.
   - M8 final pass: `sparse_fragment_tests` — sparse map on fragment-0 applies to whole group; sparse map on non-zero fragment index returns `SAR_ERR_INVALID_MAP`; allow_lossy does not suppress `SAR_ERR_INVALID_MAP`; three-fragment scatter-gather via sparse map; trailing holes preserved across fragment boundaries; missing fragment without allow_lossy fails; missing fragment with allow_lossy+LOSS_TOLERANT succeeds with is_degraded=true; degraded sparse+fragment output is marked
   - M8 final pass: `sparse_writer_tests` — writer creates sparse entry with leading/middle/trailing holes; round-trips through reader; rejects overlapping extents; rejects extent beyond logical_size; rejects payload length mismatch (short and excess); requires sparse flag; edge cases (single full extent, empty extents, indexed archive)
   - Stage 3: `pipeline_memory_tests` — 25 tests covering sparse expansion-bomb reject and bounded-success, general memory-bound limits (max_decoded_entry_size, max_in_memory_buffer, max_total_pipeline_memory), sparse trailing-hole limit enforcement, fragment descriptor overflow, huge fragment group span, loss-tolerant gap limit, fragmented sparse expansion bomb, decompression output limit, compressed bomb limit, FEC/recovery working-set limits, failed-repair non-output guarantee
+- **Milestone 10a stateless stream parser/writer state model**
+  - `StreamArchiveParser` explicit phases: `NeedGlobalHeader`, `NeedLocalFileHeader`, `NeedPayload`, `TransformingEntry`, `EntryReady`, `NeedCentralDictionaryOrFooter`, `ArchiveComplete`, `Error`
+  - deterministic partial-input stepping via `StreamStep::{NeedMore, Ready, Complete}`
+  - forward-only parsing for `NO_INDEX` byte-stream paths with concatenated archive support
+  - LFH physical-field presence remains derived from Global Flags even when Entry Mode marks a feature inactive
+  - `IS_COMPRESSED` unset => STORE semantics even when compression field is physically present
+  - `IS_ENCRYPTED` unset => PLAINTEXT semantics even when encryption fields are physically present
+  - session OP_CODE fields and `SESSION_CONTROL` entries are structurally parsed only; no M10b session lifecycle semantics
+  - writer exposes structural phases through `StreamWriteState` / `ArchiveWriter::stream_state()`
 
 ## Partial
 
@@ -143,7 +151,7 @@ maintainability cleanup pass.
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- streaming/session APIs
+- Stateful Streaming Mode/session lifecycle APIs (`SESSION_INIT` binding, `SESSION_RESUME`, `SESSION_ACK`, `SESSION_STATUS`, heartbeat/watchdog, transport bindings)
 - transport-layer APIs
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)

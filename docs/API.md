@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 8 source audit)
+# API Inventory (post–Milestone 10a source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -9,6 +9,9 @@ Current scope:
 - Milestone 5: crypto, KMS parsing, password-based CEK resolution, hashes, AEAD integration
 - Milestones 6–7: Selective FEC metadata, XOR FEC, Reed-Solomon FEC, CLI FEC create/inspect/verify/extract flows
 - Milestone 8: sparse file map parsing/reconstruction, fragment reassembly, loss-tolerant semantics, archive-level Data Recovery TLV inspection/planning/repair, CLI repair/verify-recovery/allow-lossy
+- Milestone 9a: CDC metadata/TLV parsing and validation
+- Milestone 9b: delta metadata and patch application (`STORE_PATCH`, `VCDIFF`, `BSDIFF`)
+- Milestone 10a: stateless forward-only SAR byte-stream parser/writer state model
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: no workspace crate in the current tree defines Cargo feature flags.
@@ -57,6 +60,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 - `profile`
 - `recovery`  *(new in M8)*
 - `sparse`    *(new in M8)*
+- `stream`    *(new in M10a)*
 - `tlv`
 - `transform`
 
@@ -80,6 +84,15 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `add_entry(EntryInput)`
   - `write_sparse_entry(name, gathered_payload, SparseWriteOptions)` *(new in M8 final pass)*
   - `finish()`
+- `StreamArchiveParser`
+  - `new()`
+  - `with_options(ArchiveReaderOptions)`
+  - `with_key_provider(Box<dyn KeyProvider>)`
+  - `push_bytes(&[u8])`
+  - `finalize_input()`
+  - `step() -> Result<StreamStep<StreamEvent>, SarError>`
+- `StreamParseState`, `StreamStep<T>`, `StreamEvent`, `StreamArchiveSummary`
+- `StreamWriteState` + `ArchiveWriter::stream_state()`
 
 #### Important public types
 
@@ -251,8 +264,16 @@ Not implemented in this pass, even though some flags or structural fields alread
 - CDC map processing
 - delta application for `ZSTD_PATCH` and custom patch algorithms
 - partition reassembly logic
-- streaming session APIs (Milestone 10)
+- Stateful Streaming Mode/session lifecycle APIs (SESSION_INIT binding, RESUME/ACK/STATUS, heartbeat/watchdog, transport bindings)
 - stable FFI / C ABI (Milestone 12)
+
+### M10a stream model notes
+
+- `StreamArchiveParser` implements **stateless** SAR byte-stream parsing only.
+- Parsing is forward-only and supports partial input via `StreamStep::NeedMore`.
+- Entry Mode controls semantic applicability only; Global Flags still determine physical LFH field presence.
+- Session `OP_CODE` bits and `SESSION_CONTROL` entries are parsed structurally only in M10a (no session lifecycle semantics).
+- M10a parser currently supports forward-only `NO_INDEX` streaming paths.
 
 ---
 

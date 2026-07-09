@@ -615,9 +615,13 @@
         "stage-2",
         "stage-3",
         "stage-4",
-        "9a"
+        "9a",
+        "9b",
+        "10a"
       ],
-      "features": [],
+      "features": [
+        "Milestone 10a stateless forward-only stream parser/writer state model."
+      ],
       "modules": [
         {
           "name": "archive",
@@ -1347,6 +1351,46 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Useful for CLI/FFI verify reporting."
+            },
+            {
+              "name": "StreamWriteState",
+              "kind": "enum",
+              "signature": "pub enum StreamWriteState { NeedLocalFileHeader, NeedPayload, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Structural archive writer phases for stream-oriented emission.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "ArchiveWriter::stream_state",
+              "kind": "function",
+              "signature": "pub fn ArchiveWriter<W>::stream_state(&self) -> StreamWriteState",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Returns current writer structural phase.",
+              "parameters": [],
+              "returns": "StreamWriteState",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         },
@@ -4025,6 +4069,256 @@
               "ffi_notes": ""
             }
           ]
+        },
+        {
+          "name": "stream",
+          "path": "src/stream.rs",
+          "items": [
+            {
+              "name": "StreamParseState",
+              "kind": "enum",
+              "signature": "pub enum StreamParseState { NeedGlobalHeader, NeedLocalFileHeader, NeedPayload, TransformingEntry, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Explicit forward-only parser phases.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamStep",
+              "kind": "enum",
+              "signature": "pub enum StreamStep<T> { NeedMore { needed: Option<usize> }, Ready(T), Complete }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Deterministic incremental parser step result.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamEvent",
+              "kind": "enum",
+              "signature": "pub enum StreamEvent { GlobalHeader(Box<GlobalHeader>), Entry(Box<EntryReader>), ArchiveComplete(StreamArchiveSummary) }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Events emitted by StreamArchiveParser.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveSummary",
+              "kind": "struct",
+              "signature": "pub struct StreamArchiveSummary { pub entry_count: u64, pub flags: GlobalFlags, pub indexed: bool }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Per-archive completion summary emitted in stream mode.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser",
+              "kind": "struct",
+              "signature": "pub struct StreamArchiveParser { ... }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Forward-only stateless SAR byte-stream parser with partial-input support.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::new",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::new() -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Create parser with default options.",
+              "parameters": [],
+              "returns": "Self",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::with_options",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::with_options(options: ArchiveReaderOptions) -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Create parser with explicit options.",
+              "parameters": [],
+              "returns": "Self",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::with_key_provider",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::with_key_provider(self, key_provider: Box<dyn KeyProvider>) -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Attach key provider for encrypted entries.",
+              "parameters": [],
+              "returns": "Self",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::push_bytes",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::push_bytes(&mut self, chunk: &[u8]) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Append bytes to parser input buffer.",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::finalize_input",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::finalize_input(&mut self)",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Declare end-of-stream for truncated/error finalization.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::state",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::state(&self) -> StreamParseState",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Return current parser phase.",
+              "parameters": [],
+              "returns": "StreamParseState",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::step",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::step(&mut self) -> Result<StreamStep<StreamEvent>, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Run one deterministic parser step.",
+              "parameters": [],
+              "returns": "Result<StreamStep<StreamEvent>, SarError>",
+              "errors": [
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            }
+          ]
         }
       ]
     },
@@ -5177,7 +5471,9 @@
       "path": "crates/sar-delta",
       "purpose": "Patch algorithm registry and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1.",
       "status": "implemented",
-      "milestones": ["9b"],
+      "milestones": [
+        "9b"
+      ],
       "features": [
         "sar_bsdiff_v1: normative",
         "legacy_bsdiff40_decode: unsupported"
@@ -5193,7 +5489,7 @@
               "signature": "pub enum PatchAlgoId { StorePatch, Vcdiff, Bsdiff, ZstdPatch, Custom(u8) }",
               "visibility": "public",
               "stability": "stable",
-              "description": "SAR patch algorithm identifiers from spec §8.4. Custom(u8) covers 0xF0–0xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
+              "description": "SAR patch algorithm identifiers from spec \u00a78.4. Custom(u8) covers 0xF0\u20130xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5201,7 +5497,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5221,7 +5519,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5233,15 +5533,26 @@
               "signature": "pub fn validate_patch_algo_id(id: u8) -> Result<PatchAlgoId, PatchError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04–0xEF, Unsupported for 0xF0–0xFF, and PatchAlgoId for assigned IDs 0x00–0x03. Does not apply any patch.",
-              "parameters": [{"name": "id", "type": "u8", "description": "Raw patch algorithm byte from LFH."}],
+              "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04\u20130xEF, Unsupported for 0xF0\u20130xFF, and PatchAlgoId for assigned IDs 0x00\u20130x03. Does not apply any patch.",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "u8",
+                  "description": "Raw patch algorithm byte from LFH."
+                }
+              ],
               "returns": "Result<PatchAlgoId, PatchError>",
-              "errors": ["PatchError::ReservedValue (0x04–0xEF)", "PatchError::Unsupported (0xF0–0xFF)"],
+              "errors": [
+                "PatchError::ReservedValue (0x04\u20130xEF)",
+                "PatchError::Unsupported (0xF0\u20130xFF)"
+              ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5254,14 +5565,22 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Returns a display name string for any raw patch algorithm byte.",
-              "parameters": [{"name": "id", "type": "u8", "description": "Raw patch algorithm byte."}],
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "u8",
+                  "description": "Raw patch algorithm byte."
+                }
+              ],
               "returns": "&'static str",
               "errors": [],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5275,16 +5594,28 @@
               "stability": "stable",
               "description": "Applies STORE_PATCH (identity transform): returns the patch payload as the reconstructed target if its length equals expected_len, otherwise returns PatchFailed. No base reads, no instruction stream, no external dictionary.",
               "parameters": [
-                {"name": "patch_payload", "type": "&[u8]", "description": "Decoded patch payload bytes (already decompressed/decrypted)."},
-                {"name": "expected_len", "type": "u64", "description": "LFH Uncompressed Size; the output length must equal this value."}
+                {
+                  "name": "patch_payload",
+                  "type": "&[u8]",
+                  "description": "Decoded patch payload bytes (already decompressed/decrypted)."
+                },
+                {
+                  "name": "expected_len",
+                  "type": "u64",
+                  "description": "LFH Uncompressed Size; the output length must equal this value."
+                }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
-              "errors": ["PatchError::PatchFailed if patch_payload.len() != expected_len"],
+              "errors": [
+                "PatchError::PatchFailed if patch_payload.len() != expected_len"
+              ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5298,10 +5629,26 @@
               "stability": "stable",
               "description": "Applies a SAR BSDIFF v1 patch (`SARBSD01`) to the supplied base bytes. Validates the 32-byte header (magic, block lengths, new file size), reads uncompressed Control/Diff/Extra blocks, applies control triples using sign-magnitude decoding, and returns the reconstructed target. Base reads beyond the end of base use 0x00. Caller supplies base explicitly; no lookup is performed.",
               "parameters": [
-                {"name": "base", "type": "&[u8]", "description": "Base object bytes supplied explicitly by the caller."},
-                {"name": "patch", "type": "&[u8]", "description": "SAR BSDIFF v1 patch payload bytes (`SARBSD01`)."},
-                {"name": "expected_target_size", "type": "u64", "description": "Expected reconstructed target size (must equal LFH Uncompressed Size); must match New_File_Size in the patch header."},
-                {"name": "limits", "type": "&BsdiffLimits", "description": "Resource limits for block sizes, control triple count, and output size."}
+                {
+                  "name": "base",
+                  "type": "&[u8]",
+                  "description": "Base object bytes supplied explicitly by the caller."
+                },
+                {
+                  "name": "patch",
+                  "type": "&[u8]",
+                  "description": "SAR BSDIFF v1 patch payload bytes (`SARBSD01`)."
+                },
+                {
+                  "name": "expected_target_size",
+                  "type": "u64",
+                  "description": "Expected reconstructed target size (must equal LFH Uncompressed Size); must match New_File_Size in the patch header."
+                },
+                {
+                  "name": "limits",
+                  "type": "&BsdiffLimits",
+                  "description": "Resource limits for block sizes, control triple count, and output size."
+                }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
               "errors": [
@@ -5313,7 +5660,11 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4", "8.4.4", "8.4.6"],
+              "related_spec_sections": [
+                "8.4",
+                "8.4.4",
+                "8.4.6"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5327,10 +5678,26 @@
               "stability": "stable",
               "description": "Applies a VCDIFF (RFC 3284) patch to the supplied base bytes. Validates the 4-byte magic header, decodes windows and instruction tables, and reconstructs the target output. Supports VCD_SOURCE and VCD_TARGET address spaces; ADD, COPY, and RUN instructions; default code table. Caller supplies base explicitly; no lookup is performed.",
               "parameters": [
-                {"name": "base", "type": "&[u8]", "description": "Base object bytes supplied explicitly by the caller."},
-                {"name": "patch", "type": "&[u8]", "description": "VCDIFF patch stream bytes."},
-                {"name": "expected_target_size", "type": "u64", "description": "Expected reconstructed target size (must equal LFH Uncompressed Size)."},
-                {"name": "limits", "type": "&VcdiffLimits", "description": "Resource limits for window count, instruction count, and output size."}
+                {
+                  "name": "base",
+                  "type": "&[u8]",
+                  "description": "Base object bytes supplied explicitly by the caller."
+                },
+                {
+                  "name": "patch",
+                  "type": "&[u8]",
+                  "description": "VCDIFF patch stream bytes."
+                },
+                {
+                  "name": "expected_target_size",
+                  "type": "u64",
+                  "description": "Expected reconstructed target size (must equal LFH Uncompressed Size)."
+                },
+                {
+                  "name": "limits",
+                  "type": "&VcdiffLimits",
+                  "description": "Resource limits for window count, instruction count, and output size."
+                }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
               "errors": [
@@ -5343,7 +5710,10 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4", "8.4.3"],
+              "related_spec_sections": [
+                "8.4",
+                "8.4.3"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5363,7 +5733,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4.4"],
+              "related_spec_sections": [
+                "8.4.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5383,7 +5755,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4.3"],
+              "related_spec_sections": [
+                "8.4.3"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5402,7 +5776,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5422,7 +5798,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5442,7 +5820,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5462,7 +5842,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5474,7 +5856,7 @@
               "signature": "pub const PATCH_ALGO_CUSTOM_MIN: u8 = 0xF0;",
               "visibility": "public",
               "stability": "stable",
-              "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0–0xFF; all return Unsupported.",
+              "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0\u20130xFF; all return Unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5482,7 +5864,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5494,7 +5878,7 @@
               "signature": "pub const PATCH_ALGO_CUSTOM_MAX: u8 = 0xFF;",
               "visibility": "public",
               "stability": "stable",
-              "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0–0xFF; all return Unsupported.",
+              "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0\u20130xFF; all return Unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5502,7 +5886,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",

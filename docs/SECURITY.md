@@ -39,6 +39,15 @@ This document reflects current implemented behavior only.
 - Current AAD binding uses the global-header flag section plus LFH bytes prepared for AEAD.
 - When Selective FEC is enabled for an encrypted entry, the AEAD AAD excludes only the FEC size/value region so that ciphertext repair metadata can vary without invalidating the authenticated header contract.
 - Wrong passwords fail during AEAD verification before decompression runs.
+- `StreamArchiveParser` preserves the same ordering: AEAD verification/decrypt occurs before decompression and before any patch/sparse/fragment reconstruction output is released.
+
+## M10a forward-only stream parser security notes
+
+- M10a implements the **stateless** SAR Byte Stream model only.
+- The parser is forward-only and does not require backward seek for supported streaming paths (`NO_INDEX` archives).
+- Partial input is handled deterministically via `NeedMore`; truncated errors are emitted only after `finalize_input()` declares end-of-stream.
+- Entry Mode does not remove physical LFH fields: Global Flags remain authoritative for on-wire field presence.
+- Session control opcodes are parsed structurally only in M10a; no session lifecycle state is established.
 
 ## FEC and AEAD ordering
 

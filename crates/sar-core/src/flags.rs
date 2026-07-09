@@ -68,6 +68,8 @@ impl EntryMode {
     pub const LAST_FRAGMENT: u16 = 1 << 6;
     /// Entry supports degraded loss-tolerant reconstruction.
     pub const LOSS_TOLERANT: u16 = 1 << 7;
+    /// Session-control opcode context toggle.
+    pub const SESSION_CONTROL: u16 = 1 << 13;
 
     /// Creates an entry mode from raw wire bits.
     #[must_use]
@@ -109,6 +111,18 @@ impl EntryMode {
     #[must_use]
     pub const fn is_loss_tolerant(self) -> bool {
         self.bits & Self::LOSS_TOLERANT != 0
+    }
+
+    /// Returns true when opcode context is `SESSION_CONTROL`.
+    #[must_use]
+    pub const fn is_session_control(self) -> bool {
+        self.bits & Self::SESSION_CONTROL != 0
+    }
+
+    /// Returns the raw 4-bit `OP_CODE` field value.
+    #[must_use]
+    pub const fn op_code(self) -> u8 {
+        ((self.bits >> 8) & 0x0f) as u8
     }
 }
 
