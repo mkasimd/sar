@@ -184,11 +184,12 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 * **Integrity**: Unknown Mode IDs MUST trigger `SAR_ERR_RESERVED_VALUE`.
 
 #### 5.3.2 KMS Mode Registry
-| ID        | Name                 | Description                       |
+| ID        | Name                        | Description                       |
 | --- | --- | --- |
 | 0x01      | **PBKDF2**                  | Password-based key derivation.    |
 | 0x02      | **ARGON2**                  | Memory-hard password derivation.  |
 | 0x03      | **ASYMMETRIC_WRAP**         | Encrypted master key wrapping.    |
+| 0x04      | **TLS_EXPORTER**            | TLS exporter derivation.          |
 | 0xF0–0xFF | **CUSTOM (RESERVED RANGE)** | Implementation-defined KMS modes. |
 
 ### 5.3.2.1 CUSTOM KMS Semantics
@@ -230,6 +231,21 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 | — Recipient ID | Var | Key ID / Fingerprint. |
 | — Wrapped Key Len | 2B | Length of wrapped blob. |
 | — Wrapped Key Blob | Var | The Wrapped Master Key. |
+
+**Mode 0x04 - TLS_EXPORTER**
+| Field                      | Size | Description                                                                |
+|----------------------------|------|----------------------------------------------------------------------------|
+| Exporter Label Length      | 1B   | Length of Exporter Label in bytes.                                         |
+| Exporter Label             | Var  | ASCII-encoded TLS exporter label.                                          |
+| Context Version            | 1B   | MUST be `0x01` for this profile.                                           |
+| AEAD Algo ID               | 1B   | SAR AEAD algorithm ID.                                                     |
+| KDF Algo ID                | 1B   | Optional post-export KDF; `0x00` means direct TLS exporter output profile. `0x01 - 0xFF`: RESERVED; nonzero values MUST return `SAR_ERR_RESERVED_VALUE`. |
+| Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding.                             |
+| Salt Length                | 1B   | MAY be `0`; length of non-secret salt/context bytes.                       |
+| Salt                       | Var  | Non-secret salt/context bytes.                                             |
+| Derived Key Length         | 2B   | MUST match the selected AEAD algorithm requirements.                       |
+| Flags                      | 2B   | Profile flags; reserved bits MUST be zero.                                 |
+
 
 
 #### 5.3.4 The Partition Descriptor
@@ -3057,7 +3073,8 @@ The payload of a `SESSION_CAPABILITIES` message SHALL be encoded as follows:
 | 3 | `CAP_SESSION_METADATA` | Endpoint can transmit and process `SESSION_METADATA`. |
 | 4 | `CAP_BIDIRECTIONAL_CONTROL` | Endpoint supports reverse-direction session-control messages. |
 | 5 | `CAP_BIDIRECTIONAL_STREAM` | Endpoint supports reverse-direction Filesystem Mode and Session Mode entries. |
-| 6-15 | `RESERVED` | Reserved for future use. |
+| 6 | `CAP_TLS_EXPORTER_AEAD` | Endpoint supports SAR AEAD key derivation using KMS Mode `0x04 TLS_EXPORTER` over an authenticated TLS-based transport. |
+| 7-15 | `RESERVED` | Reserved for future use. |
 
 Reserved bits MUST be set to 0 by encoders and MAY be ignored by receivers unless strict validation is enabled.
 
@@ -3067,6 +3084,11 @@ A Sender MAY transmit `SESSION_CAPABILITIES` immediately after `SESSION_INIT`.
 
 If bidirectional control is negotiated, both endpoints MUST transmit `SESSION_CAPABILITIES` before sending any non-control stream data in the reverse direction.
 
+`CAP_TLS_EXPORTER_AEAD` indicates support for deriving SAR-layer AEAD keying material from TLS exporter material using the KMS Mode `0x04 TLS_EXPORTER` profile.
+
+Advertising `CAP_TLS_EXPORTER_AEAD` does not by itself require SAR AEAD protection. SAR AEAD protection is required only when negotiated by profile, required by application policy, or required by the Global Header / KMS configuration.
+
+If an endpoint requires TLS-exporter-derived SAR AEAD and the peer does not advertise `CAP_TLS_EXPORTER_AEAD`, the session MUST fail closed with `SAR_ERR_UNSUPPORTED` or `SAR_ERR_KMS_FAILED`.
 
 ### 18.4 Stateful Execution Semantics
 This subsection defines execution guarantees that apply **only when Stateful Streaming Mode is active (Section 18.1)**.
@@ -3094,6 +3116,291 @@ If CRC verification fails:
 * The shadow data MUST be discarded
 * No mutation to the final namespace MUST occur
 * The operation MUST be treated as failed at the state layer, even if transport delivery succeeded
+
+### 18.5 SAR Transport Binding Profiles
+
+SAR Stateful Streaming Mode MAY be bound to multiple reliable transport profiles.
+
+This specification defines the following transport binding profiles:
+
+| Profile         | Transport             | Stream Multiplexing                 | TLS Availability                   | Notes                                                             |
+| --------------- | --------------------- | ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
+| `SAR-over-TCP`  | TCP byte stream       | Sequential SAR streams only         | Optional, if TCP is wrapped in TLS | SAR streams MUST NOT be byte-interleaved on one TCP connection.   |
+| `SAR-over-QUIC` | QUIC stream transport | Concurrent independent QUIC streams | Mandatory as part of QUIC/TLS      | Each QUIC stream defines an independent SAR byte-stream boundary. |
+
+A transport binding profile MUST preserve the byte-stream abstraction required by Section 18.3.1 for every SAR stream it presents to the SAR parser.
+
+A transport binding profile MUST NOT weaken SAR AEAD, signature, hash, KMS, or transformation ordering requirements.
+
+A transport binding profile MAY provide additional transport-level confidentiality, integrity, authentication, flow control, or multiplexing. Such transport-level protections do not replace SAR-layer AEAD protection when SAR-layer AEAD is required by the archive, session, or application policy.
+
+#### 18.5.1 SAR-over-TCP Profile
+
+In the `SAR-over-TCP` profile, a TCP connection carries SAR bytes as a reliable ordered byte stream.
+
+A single TCP connection MAY carry multiple SAR streams sequentially.
+
+SAR streams carried over one TCP connection MUST NOT be byte-interleaved.
+
+A new SAR stream MAY begin on an existing TCP connection only after the preceding SAR stream has terminated via `SESSION_CLOSE` or otherwise reached its end.
+
+If a receiver encounters an invalid or rejected SAR stream and cannot safely determine the end of that stream without fully accepting it, the receiver MUST close the TCP connection.
+
+If TLS is layered over TCP, the resulting TLS session MAY be used with KMS Mode `0x04 TLS_EXPORTER` when both endpoints support `CAP_TLS_EXPORTER_AEAD` and the TLS stack exposes exporter keying material.
+
+If TCP is not protected by TLS, KMS Mode `0x04 TLS_EXPORTER` MUST NOT be used.
+
+
+#### 18.5.2 SAR-over-QUIC Profile
+
+In the `SAR-over-QUIC` profile, SAR streams are carried over QUIC streams.
+
+A QUIC connection MAY carry multiple simultaneous SAR streams.
+
+Each QUIC stream defines an independent SAR byte-stream boundary.
+
+Bytes from different QUIC streams MUST NOT be interleaved before presentation to the SAR parser.
+
+A single QUIC stream SHOULD carry at most one active SAR session lifecycle at a time.
+
+A QUIC connection MAY carry multiple active SAR Stream IDs concurrently, provided that each active SAR Stream ID is unique within that QUIC connection.
+
+The same SAR Stream ID MAY be active on different QUIC connections.
+
+A duplicate active SAR Stream ID on the same QUIC connection MUST fail closed with `SAR_ERR_STREAM_STATE`.
+
+Bidirectional SAR streaming MAY occur on the same SAR Stream ID.
+
+For SAR-over-QUIC, a single bidirectional QUIC stream MAY carry both forward-direction SAR entries and reverse-direction SAR entries associated with the same SAR Stream ID and Session UUID.
+
+All SAR-over-QUIC implementations that advertise `CAP_BIDIRECTIONAL_CONTROL` MUST support transmitting and receiving reverse-direction `SESSION_ACK` and `SESSION_STATUS` entries on the same bidirectional QUIC stream as the corresponding SAR session.
+
+All SAR-over-QUIC implementations that advertise `CAP_BIDIRECTIONAL_STREAM` MUST support transmitting and receiving reverse-direction Filesystem Mode entries and Session Mode entries on the same bidirectional QUIC stream as the corresponding SAR session.
+
+Endpoints MUST use the same SAR Stream ID for bidirectional communication associated with the same SAR stream, regardless of whether communication occurs on one QUIC stream or across multiple QUIC streams.
+
+Additional QUIC streams MAY be opened on the same QUIC connection for `SESSION_CONTROL` messages associated with an existing SAR Stream ID.
+
+For example, the TLS client MAY open a second QUIC stream on the same QUIC connection to transmit `SESSION_ACK` or `SESSION_STATUS` messages to the TLS server for a SAR session whose primary data flow is server-to-client.
+
+A `SESSION_CONTROL` message transmitted on an additional QUIC stream MUST reference the same SAR Stream ID and Session UUID as the SAR session it controls.
+
+An endpoint MUST NOT transmit `SESSION_CONTROL` messages on an additional QUIC stream unless the peer has explicitly advertised or been configured to support separate control streams.
+
+A QUIC stream carrying only `SESSION_CONTROL` messages for an existing SAR Stream ID does not establish a new SAR stream and MUST NOT cause the receiver to reinitialize the SAR session.
+
+If multiple QUIC streams are associated with the same SAR Stream ID, the receiver MUST apply `SESSION_CONTROL` messages according to `Sequence No` ordering and MUST reject ambiguous or contradictory state transitions with `SAR_ERR_STREAM_STATE`.
+
+Use of additional QUIC streams for `SESSION_CONTROL` messages MUST NOT relax SAR Stream ID uniqueness, Session UUID binding, Sequence No validation, AEAD authentication, or session lifecycle rules.
+
+Implementations MUST ensure that session ordering, state transitions, and message semantics remain consistent regardless of whether communication occurs on a single QUIC stream or across multiple QUIC streams.
+
+When a SAR stream carried on a QUIC stream is rejected, malformed, or exceeds limits, the receiver SHOULD reset, discard, or reject only the affected QUIC stream where supported by the QUIC API.
+
+Termination of a SAR stream MUST unbind the SAR Stream ID and MUST cause all QUIC streams associated exclusively with that SAR Stream ID to be closed, reset, drained, or disassociated according to transport policy.
+
+If all QUIC streams within a connection are terminated or scheduled for termination, the implementation SHOULD close the entire QUIC connection unless policy requires otherwise.
+
+A stream-local error SHOULD NOT require closing the entire QUIC connection unless the error is connection-fatal or policy requires connection termination.
+
+SAR-over-QUIC endpoints SHOULD support `CAP_TLS_EXPORTER_AEAD`.
+
+SAR-over-QUIC deployments SHOULD use SAR-layer AEAD protection derived through KMS Mode `0x04 TLS_EXPORTER`.
+
+SAR-over-QUIC deployments SHOULD use SAR-layer AEAD protection in addition to QUIC/TLS transport protection.
+
+Deployments MAY operate with QUIC/TLS transport protection only. In that mode, QUIC/TLS protects transport bytes, but SAR entries do not receive independent SAR-layer AEAD confidentiality or AAD authentication unless the archive itself uses SAR encryption.
+
+
+### 18.6 TLS_EXPORTER SAR AEAD Profile
+
+The `TLS_EXPORTER` SAR AEAD profile defines how SAR derives SAR-layer AEAD keying material from an authenticated TLS-based transport session.
+
+This profile applies to any SAR transport binding that uses TLS and exposes TLS exporter keying material, including:
+
+* SAR-over-QUIC
+* SAR-over-TCP when TCP is wrapped in TLS
+* future TLS-based SAR transport bindings
+
+This profile MUST NOT be used unless the underlying TLS session has completed successfully and the peer authentication policy required by the application has been satisfied.
+
+For SAR-over-QUIC, the TLS session is the QUIC/TLS session.
+
+For SAR-over-TCP+TLS, the TLS session is the TLS session carried over TCP.
+
+
+#### 18.6.1 Security Modes
+
+SAR transport bindings using TLS define two SAR-layer security modes:
+
+| Mode                       | Description                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transport-only TLS mode    | TLS protects transport bytes. SAR does not derive SAR-layer AEAD keys from TLS exporter material.                                           |
+| TLS-exporter SAR-AEAD mode | TLS protects transport bytes, and SAR derives SAR-layer AEAD keying material from TLS exporter material using KMS Mode `0x04 TLS_EXPORTER`. |
+
+TLS-exporter SAR-AEAD mode is RECOMMENDED for SAR-over-QUIC.
+
+Transport-only TLS mode is allowed.
+
+If application policy, profile negotiation, or archive metadata requires TLS-exporter SAR-AEAD mode, endpoints MUST NOT silently downgrade to transport-only TLS mode.
+
+
+#### 18.6.2 TLS_EXPORTER KMS Requirements
+
+When KMS Mode `0x04 TLS_EXPORTER` is used:
+
+* the SAR AEAD keying material MUST be derived from TLS exporter material;
+* the TLS exporter output MUST NOT be transmitted in SAR frames;
+* the derived SAR AEAD key MUST NOT be transmitted in SAR frames;
+* SAR KMS Data MUST contain derivation metadata only;
+* SAR KMS Data MUST NOT contain raw keys, wrapping keys, TLS exporter output, private keys, or plaintext content-encryption keys;
+* the TLS exporter derivation MUST be bound to the SAR session context;
+* the selected SAR AEAD algorithm MUST match the derived key length;
+* unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
+
+If exporter keying material is unavailable from the TLS stack, implementations MUST return `SAR_ERR_UNSUPPORTED` or `SAR_ERR_KMS_FAILED`.
+
+
+#### 18.6.3 Exporter Label and Context
+
+The KMS Data for Mode `0x04 TLS_EXPORTER` supplies the TLS exporter label and non-secret derivation parameters used to construct SAR-layer AEAD keying material.
+
+KMS Data is derivation input only. It does not alter, extend, or override the SAR AEAD AAD construction defined in Section 13.2.1.
+
+The exporter label SHOULD be specific to the SAR transport binding profile.
+
+Recommended labels are:
+
+| Binding          | Recommended Exporter Label  |
+| ---------------- | --------------------------- |
+| SAR-over-QUIC    | `EXPORTER-SAR-v1-QUIC-AEAD` |
+| SAR-over-TCP+TLS | `EXPORTER-SAR-v1-TLS-AEAD`  |
+
+The TLS exporter context MUST bind the derived SAR AEAD keying material to the SAR session, transport binding, cryptographic profile, and key usage.
+
+When the Mode `0x04 TLS_EXPORTER` KMS Data field `Context Version` is `0x01`, the TLS exporter context MUST be encoded exactly as follows:
+
+| Order | Field                      | Size | Description                                    |
+| ----- | -------------------------- | ---- | ---------------------------------------------- |
+| 0     | Context Version            | 1B   | MUST be `0x01`.                                |
+| 1     | Transport Profile ID       | 1B   | Transport binding profile identifier.          |
+| 2     | SAR Major Version          | 1B   | SAR major protocol version.                    |
+| 3     | SAR Minor Version          | 1B   | SAR minor protocol version.                    |
+| 4     | Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
+| 5     | Global Header Hash Length  | 1B   | Length of Global Header Hash in bytes.         |
+| 6     | Global Header Hash         | Var  | Hash of the complete encoded Global Header.    |
+| 7     | KMS Mode ID                | 1B   | MUST be `0x04`.                                |
+| 8     | AEAD Algo ID               | 1B   | SAR AEAD algorithm ID.                         |
+| 9     | Stream ID                  | 2B   | SAR Stream ID, little-endian.                  |
+| 10    | Session UUID               | 16B  | Session UUID from `SESSION_INIT`.              |
+| 11    | Key Usage ID               | 1B   | Direction or key-usage identifier.             |
+| 12    | Salt Length                | 1B   | Length of Salt from KMS Data in bytes.         |
+| 13    | Salt                       | Var  | Salt/context bytes from KMS Data.              |
+
+The Global Header Hash MUST be computed over the complete encoded Global Header as transmitted, including KMS Mode ID, KMS Payload Length, and KMS Payload. LFH bytes MUST NOT be included in the Global Header Hash.
+
+The `Global Header Hash Algo ID` in the exporter context MUST be identical to the `Global Header Hash Algo ID` declared in the Mode `0x04 TLS_EXPORTER` KMS Data.
+
+`Global Header Hash Algo ID` MUST reference the SAR hash algorithm registry. If the referenced algorithm is unsupported or reserved, implementations MUST fail closed with `SAR_ERR_UNSUPPORTED` or `SAR_ERR_RESERVED_VALUE` as applicable.
+
+The `AEAD Algo ID`, `Salt Length`, and `Salt` fields in the exporter context MUST be identical to the corresponding fields declared in the Mode `0x04 TLS_EXPORTER` KMS Data.
+
+For `KDF Algo ID = 0x00`, the TLS exporter MUST be invoked with the `Exporter Label`, the encoded TLS exporter context defined by `Context Version`, and an output length equal to `Derived Key Length`. The returned bytes are used directly as SAR AEAD keying material.
+
+Unsupported `Context Version`, `Transport Profile ID`, `Key Usage ID`, `Global Header Hash Algo ID`, `AEAD Algo ID`, or `KDF Algo ID` values MUST fail closed.
+
+Implementations MUST use distinct `Key Usage ID` values for distinct key usages. Implementations MUST NOT reuse the same derived AEAD key for both communication directions unless a future profile explicitly defines a safe bidirectional key schedule.
+
+**TLS_EXPORTER Transport Profile ID Registry**
+
+| ID        | Name             | Description                                                    |
+| --------- | ---------------- | -------------------------------------------------------------- |
+| 0x01      | SAR_OVER_QUIC    | SAR-over-QUIC profile.                                         |
+| 0x02      | SAR_OVER_TCP_TLS | SAR-over-TCP wrapped in TLS.                                   |
+| 0x03–0xEF | RESERVED         | Reserved for future standard TLS-based SAR transport profiles. |
+| 0xF0–0xFF | CUSTOM           | Implementation-defined transport profiles.                     |
+
+**TLS_EXPORTER Key Usage ID Registry**
+
+| ID        | Name                   | Description                                          |
+| --------- | ---------------------- | ---------------------------------------------------- |
+| 0x01      | CLIENT_TO_SERVER_ENTRY | SAR entry protection for client-to-server direction. |
+| 0x02      | SERVER_TO_CLIENT_ENTRY | SAR entry protection for server-to-client direction. |
+| 0x03      | SESSION_CONTROL        | SAR session-control protection, if separately keyed. |
+| 0x04–0xEF | RESERVED               | Reserved for future standard key usages.             |
+| 0xF0–0xFF | CUSTOM                 | Implementation-defined key usages.                   |
+
+For TLS_EXPORTER key usage, `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` refer to TLS transport roles, not SAR Sender/Receiver roles.
+
+The TLS client is the endpoint that initiated the TCP+TLS or QUIC connection to the listening endpoint.
+
+The TLS server is the endpoint that accepted the TCP+TLS or QUIC connection and presents the server-side TLS identity.
+
+A SAR entry transmitted by the TLS client MUST use `CLIENT_TO_SERVER_ENTRY`.
+
+A SAR entry transmitted by the TLS server MUST use `SERVER_TO_CLIENT_ENTRY`.
+
+By default, `SESSION_CONTROL` entries MUST use the same directional key usage as ordinary SAR entries sent by the same TLS endpoint.
+
+A `SESSION_CONTROL` entry transmitted by the TLS client therefore uses `CLIENT_TO_SERVER_ENTRY` unless a separate session-control key usage has been explicitly negotiated or mandated by the active transport profile.
+
+A `SESSION_CONTROL` entry transmitted by the TLS server therefore uses `SERVER_TO_CLIENT_ENTRY` unless a separate session-control key usage has been explicitly negotiated or mandated by the active transport profile.
+
+`SESSION_CONTROL` key usage MUST NOT be used unless both endpoints have explicitly negotiated it or the active transport profile mandates it.
+
+Receivers MUST derive and verify using the single key usage selected by the active profile or negotiation. Receivers MUST NOT try multiple key usages to recover from authentication failure.
+
+
+#### 18.6.4 AAD Requirements
+
+This section does not redefine AAD composition rules.
+
+AAD field selection, encoding, and storage are defined in the SAR AEAD/AAD specification section 13.2 and apply uniformly across all SAR encryption modes.
+
+When TLS-exporter SAR-AEAD mode is active, those existing AAD rules MUST be applied without modification.
+
+In addition, implementations MUST ensure that the TLS-exporter-derived keying context is correctly bound to the SAR session as defined in Section 18.6.3.
+
+Implementations MUST NOT expose plaintext before AEAD authentication succeeds.
+
+A missing, malformed, unsupported, or mismatched AAD context MUST produce a hard error.
+
+`LOSS_TOLERANT` MUST NOT suppress AEAD authentication failures.
+
+
+#### 18.6.5 Negotiation and Failure Behavior
+
+Endpoints that support TLS-exporter SAR-AEAD SHOULD advertise `CAP_TLS_EXPORTER_AEAD` in `SESSION_CAPABILITIES`.
+
+If TLS-exporter SAR-AEAD is required and the peer does not advertise `CAP_TLS_EXPORTER_AEAD`, the session MUST fail closed.
+
+If KMS Mode `0x04 TLS_EXPORTER` is present in the Global Header, encrypted SAR entries depending on it MUST NOT be processed until:
+
+1. the TLS session is established;
+2. the TLS peer identity has been validated according to policy;
+3. `SESSION_INIT` has successfully bound the Stream ID and Session UUID;
+4. required `SESSION_CAPABILITIES` negotiation has completed, if required by policy;
+5. the TLS exporter material has been derived successfully;
+6. the SAR AEAD keying material has been derived successfully.
+
+Failure at any step MUST prevent decryption and MUST NOT expose plaintext.
+
+
+#### 18.6.6 Prohibited Behavior
+
+Implementations MUST NOT:
+
+* transmit SAR content-encryption keys in `SESSION_*` messages;
+* transmit TLS exporter output in SAR frames;
+* place plaintext keys in KMS Data;
+* treat Session UUIDs as authentication secrets;
+* derive SAR AEAD keys without binding them to the SAR session context;
+* reuse exporter-derived SAR AEAD keys across independent sessions unless explicitly allowed by a future rekey profile;
+* expose plaintext before AEAD authentication succeeds;
+* allow `LOSS_TOLERANT` to suppress AEAD failures;
+* silently downgrade from required TLS-exporter SAR-AEAD mode to transport-only TLS mode.
+
+
 
 ## 19. Archive Partitioning and File Fragmentation
 This section formalizes how SAR handles data that is physically or logically non-contiguous.
