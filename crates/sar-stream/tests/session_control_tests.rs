@@ -72,7 +72,7 @@ fn resume_rules_are_enforced() {
     let unsupported = manager
         .process_entry(&control_entry(
             5,
-            1,
+            2,
             0x2,
             SessionResumeFrame {
                 session_uuid: [0x55; 16],
