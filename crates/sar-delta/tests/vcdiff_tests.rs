@@ -15,6 +15,7 @@
 //! * Malformed header magic fails with `PatchFailed`.
 //! * Malformed varint fails with `PatchFailed`.
 //! * Invalid VCD_CODETABLE flag fails with `PatchFailed`.
+//! * Unsupported secondary compressor flags fail with `Unsupported`.
 //! * COPY beyond base returns `PatchFailed`.
 //! * Truncated patch fails with `PatchFailed`.
 //! * Output exceeding expected size fails with `PatchFailed`.
@@ -283,6 +284,40 @@ fn apply_vcdiff_custom_codetable_flag_returns_patch_failed() {
     patch.extend_from_slice(&window);
     let err = apply_vcdiff(b"", &patch, 1, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
+}
+
+#[test]
+fn apply_vcdiff_header_secondary_compressor_returns_unsupported() {
+    let window = vcdiff_add_window(b"x");
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"\xD6\xC3\xC4\x00");
+    patch.push(0x01u8); // VCD_DECOMPRESS
+    patch.push(0x01u8); // compressor id
+    patch.extend_from_slice(&window);
+    let err = apply_vcdiff(b"", &patch, 1, &VcdiffLimits::unlimited()).expect_err("must fail");
+    assert!(matches!(err, PatchError::Unsupported(_)));
+}
+
+#[test]
+fn apply_vcdiff_delta_section_secondary_compression_returns_unsupported() {
+    let mut inst = Vec::new();
+    inst.push(0x01u8);
+    inst.extend_from_slice(&encode_varint(1));
+    let mut delta_body = Vec::new();
+    delta_body.extend_from_slice(&encode_varint(1)); // target window len
+    delta_body.push(0x01u8); // delta_indicator with secondary compression bit
+    delta_body.extend_from_slice(&encode_varint(1)); // len_add_run
+    delta_body.extend_from_slice(&encode_varint(inst.len() as u64));
+    delta_body.extend_from_slice(&encode_varint(0));
+    delta_body.extend_from_slice(b"x");
+    delta_body.extend_from_slice(&inst);
+    let mut window = Vec::new();
+    window.push(0x00u8);
+    window.extend_from_slice(&encode_varint(delta_body.len() as u64));
+    window.extend_from_slice(&delta_body);
+    let patch = vcdiff_patch(&window);
+    let err = apply_vcdiff(b"", &patch, 1, &VcdiffLimits::unlimited()).expect_err("must fail");
+    assert!(matches!(err, PatchError::Unsupported(_)));
 }
 
 // ---------------------------------------------------------------------------

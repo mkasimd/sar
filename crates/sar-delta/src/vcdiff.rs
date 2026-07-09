@@ -403,7 +403,7 @@ pub fn apply_vcdiff(
     if hdr_indicator & VCD_DECOMPRESS != 0 {
         let compressor_id = reader.read_u8()?;
         if compressor_id != 0 {
-            return Err(PatchError::PatchFailed(
+            return Err(PatchError::Unsupported(
                 "VCDIFF: secondary compressor not supported",
             ));
         }
@@ -537,7 +537,7 @@ fn decode_window(
     let delta_indicator = reader.read_u8()?;
     if delta_indicator & 0x07 != 0 {
         // Bits 0..2 are VCD_DATACOMP / VCD_INSTCOMP / VCD_ADDRCOMP
-        return Err(PatchError::PatchFailed(
+        return Err(PatchError::Unsupported(
             "VCDIFF: secondary compression in delta sections not supported",
         ));
     }

@@ -1,36 +1,32 @@
-//! SAR BSDIFF40 profile — patch application (spec §8.4.3).
+//! SAR BSDIFF v1 (`SARBSD01`) patch application (spec §8.4.4).
 //!
-//! The patch format is:
+//! The decoded patch payload format is:
 //!
 //! ```text
 //! Header (32 bytes):
-//!   Magic[8]               = "BSDIFF40"
+//!   Magic[8]                  = "SARBSD01"
 //!   Control_Block_Length[8]   signed bsdiff int, must be >= 0
 //!   Diff_Block_Length[8]      signed bsdiff int, must be >= 0
 //!   New_File_Size[8]          signed bsdiff int, must be >= 0
 //!
-//! Control_Block: bzip2-compressed sequence of control triples
-//! Diff_Block:    bzip2-compressed diff bytes
-//! Extra_Block:   bzip2-compressed extra bytes
+//! Control_Block: uncompressed sequence of control triples
+//! Diff_Block:    uncompressed diff bytes
+//! Extra_Block:   uncompressed extra bytes
 //! ```
 //!
 //! Each control triple encodes:
 //! ```text
 //! (diff_len[8], extra_len[8], seek_adjust[8])
 //! ```
-//! all in classic bsdiff signed integer encoding.
+//! all in classic bsdiff sign-magnitude integer encoding.
 //!
-//! Application algorithm (spec §8.4.3):
+//! Application algorithm (spec §8.4.4):
 //! 1. Add `diff_len` diff bytes to corresponding base bytes (mod 256), base reads beyond end → 0.
 //! 2. Copy `extra_len` bytes from extra block verbatim.
 //! 3. Advance base position by `seek_adjust`.
 //!
-//! Reject negative lengths/sizes, overreads, base-before-0, size mismatch, or
-//! malformed bzip2 data.
-
-use std::io::Read;
-
-use bzip2::read::BzDecoder;
+//! Reject invalid magic, negative lengths, malformed triples, overreads,
+//! trailing unused diff/extra bytes, base-before-0 seeks, or size mismatch.
 
 use crate::algo::PatchError;
 
@@ -40,13 +36,13 @@ use crate::algo::PatchError;
 /// from its unified [`ResourceLimits`][sar_core::ResourceLimits] struct.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BsdiffLimits {
-    /// Maximum compressed payload size (entire patch blob). Default: 512 MiB.
+    /// Maximum decoded patch payload size (entire BSDIFF blob). Default: 512 MiB.
     pub max_patch_size: u64,
-    /// Maximum decompressed Control Block size. Default: 64 MiB.
+    /// Maximum Control Block size. Default: 64 MiB.
     pub max_control_bytes: u64,
-    /// Maximum decompressed Diff Block size. Default: 1 GiB.
+    /// Maximum Diff Block size. Default: 1 GiB.
     pub max_diff_bytes: u64,
-    /// Maximum decompressed Extra Block size. Default: 1 GiB.
+    /// Maximum Extra Block size. Default: 1 GiB.
     pub max_extra_bytes: u64,
     /// Maximum number of control triples. Default: 4 000 000.
     pub max_control_triples: usize,
@@ -84,7 +80,7 @@ impl BsdiffLimits {
     }
 }
 
-/// Applies a SAR BSDIFF40 patch to `base`, returning the reconstructed target.
+/// Applies a SAR BSDIFF v1 patch to `base`, returning the reconstructed target.
 ///
 /// # Arguments
 ///
@@ -97,34 +93,30 @@ impl BsdiffLimits {
 /// # Errors
 ///
 /// * [`PatchError::PatchFailed`] – malformed patch data, invalid magic, negative
-///   field, size mismatch, block overread, or bzip2 failure.
+///   field, size mismatch, block overread, trailing unused bytes, or seek-before-0.
 /// * [`PatchError::LimitExceeded`] – any configured resource limit was exceeded.
-/// * [`PatchError::BaseMissing`] – `base` is empty but a diff step requires base
-///   bytes (this case is handled by the caller checking the hash; missing base
-///   detection belongs in the archive reader).
 pub fn apply_bsdiff(
     base: &[u8],
     patch: &[u8],
     expected_target_size: u64,
     limits: &BsdiffLimits,
 ) -> Result<Vec<u8>, PatchError> {
-    // Limit: patch payload size
-    let patch_len = patch.len() as u64;
+    let patch_len = u64::try_from(patch.len())
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF: patch length exceeds u64"))?;
     if patch_len > limits.max_patch_size {
         return Err(PatchError::LimitExceeded(
             "BSDIFF: patch payload exceeds max_patch_size limit",
         ));
     }
 
-    // Header: 32 bytes
     if patch.len() < 32 {
         return Err(PatchError::PatchFailed(
             "BSDIFF: patch too short for header",
         ));
     }
-    if &patch[..8] != b"BSDIFF40" {
+    if &patch[..8] != b"SARBSD01" {
         return Err(PatchError::PatchFailed(
-            "BSDIFF: invalid magic (expected BSDIFF40)",
+            "BSDIFF: invalid magic (expected SARBSD01)",
         ));
     }
 
@@ -146,41 +138,24 @@ pub fn apply_bsdiff(
         return Err(PatchError::PatchFailed("BSDIFF: negative New_File_Size"));
     }
 
-    let ctrl_len = ctrl_len_raw as u64;
-    let diff_len = diff_len_raw as u64;
-    let new_size = new_size_raw as u64;
+    let ctrl_len = u64::try_from(ctrl_len_raw)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid Control_Block_Length"))?;
+    let diff_len = u64::try_from(diff_len_raw)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid Diff_Block_Length"))?;
+    let new_size =
+        u64::try_from(new_size_raw).map_err(|_| PatchError::PatchFailed("BSDIFF: invalid New_File_Size"))?;
 
-    // Spec §8.4.3: New_File_Size MUST equal LFH Uncompressed Size
     if new_size != expected_target_size {
         return Err(PatchError::PatchFailed(
             "BSDIFF: New_File_Size does not match LFH Uncompressed Size",
         ));
     }
-
-    // Limit: target size
     if new_size > limits.max_target_size {
         return Err(PatchError::LimitExceeded(
             "BSDIFF: target size exceeds max_target_size limit",
         ));
     }
 
-    // Block offsets (checked arithmetic)
-    let ctrl_start: u64 = 32;
-    let diff_start = ctrl_start
-        .checked_add(ctrl_len)
-        .ok_or(PatchError::PatchFailed("BSDIFF: block offset overflow"))?;
-    let extra_start = diff_start
-        .checked_add(diff_len)
-        .ok_or(PatchError::PatchFailed("BSDIFF: block offset overflow"))?;
-
-    // Validate patch length
-    if extra_start > patch.len() as u64 {
-        return Err(PatchError::PatchFailed(
-            "BSDIFF: patch too short (diff/extra blocks truncated)",
-        ));
-    }
-
-    // Limit: compressed block sizes
     if ctrl_len > limits.max_control_bytes {
         return Err(PatchError::LimitExceeded(
             "BSDIFF: Control Block exceeds max_control_bytes limit",
@@ -192,50 +167,81 @@ pub fn apply_bsdiff(
         ));
     }
 
-    // Decompress Control Block
-    let ctrl_compressed = &patch[ctrl_start as usize..diff_start as usize];
-    let ctrl_data = bzip2_decompress(ctrl_compressed, limits.max_control_bytes)
-        .map_err(|_| PatchError::PatchFailed("BSDIFF: malformed bzip2 Control Block"))?;
+    let ctrl_start: u64 = 32;
+    let diff_start = ctrl_start
+        .checked_add(ctrl_len)
+        .ok_or(PatchError::PatchFailed("BSDIFF: block offset overflow"))?;
+    let extra_start = diff_start
+        .checked_add(diff_len)
+        .ok_or(PatchError::PatchFailed("BSDIFF: block offset overflow"))?;
 
-    // Decompress Diff Block
-    let diff_compressed = &patch[diff_start as usize..extra_start as usize];
-    let diff_data = bzip2_decompress(diff_compressed, limits.max_diff_bytes)
-        .map_err(|_| PatchError::PatchFailed("BSDIFF: malformed bzip2 Diff Block"))?;
+    if extra_start > patch_len {
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: patch too short (diff/extra blocks truncated)",
+        ));
+    }
 
-    // Decompress Extra Block (remainder of patch)
-    let extra_compressed = &patch[extra_start as usize..];
-    let extra_data = bzip2_decompress(extra_compressed, limits.max_extra_bytes)
-        .map_err(|_| PatchError::PatchFailed("BSDIFF: malformed bzip2 Extra Block"))?;
+    let extra_len = patch_len
+        .checked_sub(extra_start)
+        .ok_or(PatchError::PatchFailed("BSDIFF: block offset underflow"))?;
+    if extra_len > limits.max_extra_bytes {
+        return Err(PatchError::LimitExceeded(
+            "BSDIFF: Extra Block exceeds max_extra_bytes limit",
+        ));
+    }
 
-    // Control block must be a multiple of 24 bytes (3 fields × 8 bytes)
-    if ctrl_data.len() % 24 != 0 {
+    if ctrl_len % 24 != 0 {
         return Err(PatchError::PatchFailed(
             "BSDIFF: Control Block length not a multiple of 24",
         ));
     }
-    let n_triples = ctrl_data.len() / 24;
 
-    // Limit: control triple count
+    let triple_count_u64 = ctrl_len / 24;
+    let n_triples = usize::try_from(triple_count_u64)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF: control triple count exceeds usize"))?;
     if n_triples > limits.max_control_triples {
         return Err(PatchError::LimitExceeded(
             "BSDIFF: control triple count exceeds max_control_triples limit",
         ));
     }
 
-    // Allocate output buffer
-    let target_len = new_size as usize;
+    let ctrl_start_usize = usize::try_from(ctrl_start)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: control start offset overflow"))?;
+    let diff_start_usize = usize::try_from(diff_start)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: diff start offset overflow"))?;
+    let extra_start_usize = usize::try_from(extra_start)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: extra start offset overflow"))?;
+
+    let ctrl_data = &patch[ctrl_start_usize..diff_start_usize];
+    let diff_data = &patch[diff_start_usize..extra_start_usize];
+    let extra_data = &patch[extra_start_usize..];
+
+    let target_len = usize::try_from(new_size)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF: target size exceeds platform limits"))?;
     let mut target = vec![0u8; target_len];
 
-    let mut old_pos: i64 = 0; // current position in base
-    let mut new_pos: u64 = 0; // current position in output
-    let mut diff_pos: u64 = 0; // current read position in decompressed diff
-    let mut extra_pos: u64 = 0; // current read position in decompressed extra
+    let mut old_pos: i64 = 0;
+    let mut new_pos: u64 = 0;
+    let mut diff_pos: u64 = 0;
+    let mut extra_pos: u64 = 0;
 
     for triple_idx in 0..n_triples {
-        let triple_base = &ctrl_data[triple_idx * 24..triple_idx * 24 + 24];
-        let d_len_raw = decode_bsdiff_int(&triple_base[0..8])?;
-        let e_len_raw = decode_bsdiff_int(&triple_base[8..16])?;
-        let seek_adj = decode_bsdiff_int(&triple_base[16..24])?;
+        let triple_offset = triple_idx
+            .checked_mul(24)
+            .ok_or(PatchError::PatchFailed("BSDIFF: control triple offset overflow"))?;
+        let triple_end = triple_offset
+            .checked_add(24)
+            .ok_or(PatchError::PatchFailed("BSDIFF: control triple end overflow"))?;
+        if triple_end > ctrl_data.len() {
+            return Err(PatchError::PatchFailed(
+                "BSDIFF: malformed or truncated control triple",
+            ));
+        }
+        let triple = &ctrl_data[triple_offset..triple_end];
+
+        let d_len_raw = decode_bsdiff_int(&triple[0..8])?;
+        let e_len_raw = decode_bsdiff_int(&triple[8..16])?;
+        let seek_adj = decode_bsdiff_int(&triple[16..24])?;
 
         if d_len_raw < 0 {
             return Err(PatchError::PatchFailed(
@@ -248,10 +254,11 @@ pub fn apply_bsdiff(
             ));
         }
 
-        let d_len = d_len_raw as u64;
-        let e_len = e_len_raw as u64;
+        let d_len = u64::try_from(d_len_raw)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid diff_len in control triple"))?;
+        let e_len = u64::try_from(e_len_raw)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid extra_len in control triple"))?;
 
-        // Bounds: output must not exceed new_size
         let new_after_diff = new_pos
             .checked_add(d_len)
             .ok_or(PatchError::PatchFailed("BSDIFF: output position overflow"))?;
@@ -261,35 +268,50 @@ pub fn apply_bsdiff(
             ));
         }
 
-        // Bounds: diff block must not be overread
-        let diff_end = diff_pos.checked_add(d_len).ok_or(PatchError::PatchFailed(
-            "BSDIFF: diff block position overflow",
-        ))?;
-        if diff_end > diff_data.len() as u64 {
+        let diff_end = diff_pos
+            .checked_add(d_len)
+            .ok_or(PatchError::PatchFailed("BSDIFF: diff block position overflow"))?;
+        if diff_end > diff_len {
             return Err(PatchError::PatchFailed("BSDIFF: Diff Block overread"));
         }
 
-        // Step 1: apply diff bytes to base bytes
-        for j in 0..d_len as usize {
-            let diff_byte = diff_data[diff_pos as usize + j];
-            let old_byte_pos = old_pos + j as i64;
-            let old_byte = if old_byte_pos >= 0 && (old_byte_pos as usize) < base.len() {
-                base[old_byte_pos as usize]
+        let d_len_usize = usize::try_from(d_len)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: diff_len exceeds usize"))?;
+        let diff_pos_usize = usize::try_from(diff_pos)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: diff position exceeds usize"))?;
+        let new_pos_usize = usize::try_from(new_pos)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: output position exceeds usize"))?;
+
+        for j in 0..d_len_usize {
+            let diff_idx = diff_pos_usize
+                .checked_add(j)
+                .ok_or(PatchError::PatchFailed("BSDIFF: diff index overflow"))?;
+            let new_idx = new_pos_usize
+                .checked_add(j)
+                .ok_or(PatchError::PatchFailed("BSDIFF: output index overflow"))?;
+            let j_i64 = i64::try_from(j)
+                .map_err(|_| PatchError::PatchFailed("BSDIFF: j index exceeds i64"))?;
+            let old_byte_pos = old_pos
+                .checked_add(j_i64)
+                .ok_or(PatchError::PatchFailed("BSDIFF: base index overflow"))?;
+
+            let old_byte = if old_byte_pos < 0 {
+                return Err(PatchError::PatchFailed("BSDIFF: base seek before offset 0"));
+            } else if let Ok(old_idx) = usize::try_from(old_byte_pos) {
+                if old_idx < base.len() { base[old_idx] } else { 0 }
             } else {
-                0u8 // base reads beyond end (or before start) use 0x00
+                0
             };
-            target[new_pos as usize + j] = diff_byte.wrapping_add(old_byte);
+
+            target[new_idx] = diff_data[diff_idx].wrapping_add(old_byte);
         }
 
         new_pos = new_after_diff;
         diff_pos = diff_end;
         old_pos = old_pos
             .checked_add(d_len_raw)
-            .ok_or(PatchError::PatchFailed(
-                "BSDIFF: old_pos overflow in diff step",
-            ))?;
+            .ok_or(PatchError::PatchFailed("BSDIFF: old_pos overflow in diff step"))?;
 
-        // Step 2: copy extra bytes verbatim
         let new_after_extra = new_pos
             .checked_add(e_len)
             .ok_or(PatchError::PatchFailed("BSDIFF: output position overflow"))?;
@@ -299,34 +321,49 @@ pub fn apply_bsdiff(
             ));
         }
 
-        let extra_end = extra_pos.checked_add(e_len).ok_or(PatchError::PatchFailed(
-            "BSDIFF: extra block position overflow",
-        ))?;
-        if extra_end > extra_data.len() as u64 {
+        let extra_end = extra_pos
+            .checked_add(e_len)
+            .ok_or(PatchError::PatchFailed("BSDIFF: extra block position overflow"))?;
+        if extra_end > extra_len {
             return Err(PatchError::PatchFailed("BSDIFF: Extra Block overread"));
         }
 
-        target[new_pos as usize..new_after_extra as usize]
-            .copy_from_slice(&extra_data[extra_pos as usize..extra_end as usize]);
+        let extra_pos_usize = usize::try_from(extra_pos)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: extra position exceeds usize"))?;
+        let extra_end_usize = usize::try_from(extra_end)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: extra end exceeds usize"))?;
+        let new_pos_usize = usize::try_from(new_pos)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: output position exceeds usize"))?;
+        let new_after_extra_usize = usize::try_from(new_after_extra)
+            .map_err(|_| PatchError::PatchFailed("BSDIFF: output end exceeds usize"))?;
+
+        target[new_pos_usize..new_after_extra_usize]
+            .copy_from_slice(&extra_data[extra_pos_usize..extra_end_usize]);
 
         new_pos = new_after_extra;
         extra_pos = extra_end;
 
-        // Step 3: seek adjustment
         old_pos = old_pos
             .checked_add(seek_adj)
-            .ok_or(PatchError::PatchFailed(
-                "BSDIFF: old_pos overflow in seek step",
-            ))?;
+            .ok_or(PatchError::PatchFailed("BSDIFF: old_pos overflow in seek step"))?;
         if old_pos < 0 {
             return Err(PatchError::PatchFailed("BSDIFF: base seek before offset 0"));
         }
     }
 
-    // Exactly new_size bytes must have been written
     if new_pos != new_size {
         return Err(PatchError::PatchFailed(
             "BSDIFF: output shorter than New_File_Size after all triples",
+        ));
+    }
+    if diff_pos != diff_len {
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: trailing unused Diff Block bytes",
+        ));
+    }
+    if extra_pos != extra_len {
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: trailing unused Extra Block bytes",
         ));
     }
 
@@ -349,6 +386,7 @@ pub fn decode_bsdiff_int(bytes: &[u8]) -> Result<i64, PatchError> {
             "BSDIFF: integer field is not 8 bytes",
         ));
     }
+
     let magnitude: u64 = u64::from_le_bytes([
         bytes[0],
         bytes[1],
@@ -357,42 +395,17 @@ pub fn decode_bsdiff_int(bytes: &[u8]) -> Result<i64, PatchError> {
         bytes[4],
         bytes[5],
         bytes[6],
-        bytes[7] & 0x7F, // mask off the sign bit
+        bytes[7] & 0x7F,
     ]);
     let negative = (bytes[7] & 0x80) != 0;
 
-    // Reject values that can't be represented as i64 (magnitude > i64::MAX)
     if magnitude > i64::MAX as u64 {
         return Err(PatchError::PatchFailed(
             "BSDIFF: integer magnitude overflows i64",
         ));
     }
 
-    let value = magnitude as i64;
+    let value = i64::try_from(magnitude)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: integer magnitude overflows i64"))?;
     Ok(if negative { -value } else { value })
-}
-
-/// Decompresses a bzip2-compressed slice, enforcing an output size limit.
-///
-/// Returns the decompressed bytes on success, or an `io::Error` on failure.
-fn bzip2_decompress(compressed: &[u8], max_output: u64) -> Result<Vec<u8>, std::io::Error> {
-    let cursor = std::io::Cursor::new(compressed);
-    let mut decoder = BzDecoder::new(cursor);
-
-    let mut output = Vec::new();
-    // Use Read::take to cap decompressed output at the limit
-    let limit = max_output.min(usize::MAX as u64) as usize;
-    // Read up to limit+1 bytes so we can detect if the limit is exceeded
-    let mut limited = (&mut decoder).take(max_output.saturating_add(1));
-    limited.read_to_end(&mut output)?;
-
-    if output.len() as u64 > max_output {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "bzip2 decompressed output exceeds limit",
-        ));
-    }
-    let _ = limit; // suppress unused warning
-
-    Ok(output)
 }

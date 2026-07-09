@@ -372,3 +372,16 @@ fn vcdiff_loss_tolerant_does_not_suppress_patch_failed() {
         "expected PatchFailed (not suppressed by LOSS_TOLERANT), got {err:?}"
     );
 }
+
+#[test]
+fn vcdiff_secondary_compressor_returns_unsupported() {
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"\xD6\xC3\xC4\x00");
+    patch.push(0x01u8); // VCD_DECOMPRESS
+    patch.push(0x01u8); // unsupported compressor id
+    patch.extend_from_slice(&vcdiff_add_window(b"x"));
+
+    let archive = build_vcdiff_archive(&patch, 1, NON_ZERO_HASH);
+    let err = read_entry_with_opts(archive, opts_with_base(b"base".to_vec())).expect_err("must fail");
+    assert!(matches!(err, SarError::Unsupported(_)));
+}

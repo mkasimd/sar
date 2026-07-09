@@ -23,7 +23,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
 | `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
-| `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH` application implemented | partial (M9b + STORE_PATCH) |
+| `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented | implemented |
 | `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
 | `sar-partition` | Future partition support placeholder | placeholder |
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
@@ -116,9 +116,9 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `max_recovery_protected_range`
   - `max_repair_working_set`
   - `use_runtime_memory_budget`
-  - `max_bsdiff_control_bytes` — maximum decompressed BSDIFF Control Block size (default: 64 MiB)
-  - `max_bsdiff_diff_bytes` — maximum decompressed BSDIFF Diff Block size (default: 1 GiB)
-  - `max_bsdiff_extra_bytes` — maximum decompressed BSDIFF Extra Block size (default: 1 GiB)
+  - `max_bsdiff_control_bytes` — maximum BSDIFF Control Block size in decoded patch payload (default: 64 MiB)
+  - `max_bsdiff_diff_bytes` — maximum BSDIFF Diff Block size in decoded patch payload (default: 1 GiB)
+  - `max_bsdiff_extra_bytes` — maximum BSDIFF Extra Block size in decoded patch payload (default: 1 GiB)
   - `max_bsdiff_control_triples` — maximum number of BSDIFF control triples (default: 4 000 000)
   - `max_vcdiff_window_count` — maximum number of VCDIFF windows per patch (default: 1 000 000)
   - `max_vcdiff_instruction_count` — maximum number of VCDIFF instructions per window (default: 10 000 000)
@@ -249,7 +249,7 @@ Not implemented in this pass, even though some flags or structural fields alread
 
 - signature cryptography and signature verification
 - CDC map processing
-- delta application (VCDIFF, BSDIFF, ZSTD_PATCH, and custom algorithms — base-requiring algorithms not yet implemented)
+- delta application for `ZSTD_PATCH` and custom patch algorithms
 - partition reassembly logic
 - streaming session APIs (Milestone 10)
 - stable FFI / C ABI (Milestone 12)
@@ -318,7 +318,7 @@ Sparse reconstruction occurs after all prior transformations in this order:
 1. Fragment Reassembly (if `FILE_FRAGMENTATION`)
 2. Decryption (if `ENCRYPTED`) — authentication failure is never suppressed
 3. Decompression (if `COMPRESSED`)
-4. Delta Application (if `HAS_DELTA`) — `STORE_PATCH` implemented; VCDIFF/BSDIFF/ZSTD_PATCH/custom unsupported
+4. Delta Application (if `HAS_DELTA`) — `STORE_PATCH`, `VCDIFF`, and `BSDIFF` implemented; `ZSTD_PATCH`/custom unsupported
 5. Sparse Reconstruction (if `SPARSE_FILES`)
 
 The Sparse Map describes the layout of the **fully reconstructed logical payload**, not individual fragments or compressed bytes.
@@ -862,7 +862,7 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>` — validates a raw byte against the SAR patch algorithm registry; returns `ReservedValue` for `0x04–0xEF`, `Unsupported` for `0xF0–0xFF`, and the corresponding `PatchAlgoId` for all assigned IDs
   - `patch_algo_name(u8) -> &'static str` — returns a display name for any raw algorithm byte
   - `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` — applies `STORE_PATCH` (identity): returns the patch payload if its length equals `expected_len`, otherwise returns `PatchFailed`
-  - `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a SAR BSDIFF40 patch; caller supplies base bytes explicitly
+  - `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a SAR BSDIFF v1 (`SARBSD01`) patch; caller supplies base bytes explicitly
   - `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a VCDIFF (RFC 3284) patch; caller supplies base bytes explicitly
   - `bsdiff::BsdiffLimits` — resource limits for BSDIFF patch application (`max_patch_size`, `max_control_bytes`, `max_diff_bytes`, `max_extra_bytes`, `max_control_triples`, `max_target_size`)
   - `vcdiff::VcdiffLimits` — resource limits for VCDIFF patch application (`max_patch_size`, `max_window_count`, `max_instruction_count`, `max_output_size`)
@@ -880,13 +880,15 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 **Implemented in M9b Delta pass (BSDIFF + VCDIFF):**
 
-- `BSDIFF` (`0x02`) SAR BSDIFF40 profile: magic `BSDIFF40`, sign-magnitude header fields, three bzip2-compressed blocks (Control/Diff/Extra), control triples `(diff_len, extra_len, seek_adjust)`. Base reads beyond end use `0x00`. Base seek before 0 → `SAR_ERR_PATCH_FAILED`. Explicit base bytes required.
+- `BSDIFF` (`0x02`) SAR BSDIFF v1 profile: magic `SARBSD01`, sign-magnitude header fields, uncompressed Control/Diff/Extra blocks, control triples `(diff_len, extra_len, seek_adjust)`. Base reads beyond end use `0x00`. Base seek before 0 → `SAR_ERR_PATCH_FAILED`. Explicit base bytes required.
 - `VCDIFF` (`0x01`) RFC 3284: standard header/window/instruction decoding, VCD_SOURCE and VCD_TARGET windows, ADD/COPY/RUN instructions, default code table (s_near=4, s_same=3). Explicit base bytes required.
+- VCDIFF streams that require secondary compressors return `SAR_ERR_UNSUPPORTED`.
 - `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery, no network access, no CAS access.
 - All-zero `Delta Base Hash` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
 - Missing `delta_base` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
 - `ResourceLimits` enforced for BSDIFF (control/diff/extra block sizes, triple count) and VCDIFF (window count, instruction count, output size).
 - `BSDIFF`/`VCDIFF` + compression and encryption handled correctly through the existing transformation pipeline.
+- Legacy classic `BSDIFF40` decode support is not implemented; payloads with `BSDIFF40` magic return `SAR_ERR_PATCH_FAILED`.
 - `ZSTD_PATCH` (`0x03`) → `SAR_ERR_UNSUPPORTED` (dictionary protocol not specified).
 
 **Not implemented:**
@@ -1067,7 +1069,7 @@ Milestone 9b adds:
 
 **BSDIFF and VCDIFF application (added in M9b Delta pass):**
 
-- `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — SAR BSDIFF40 patcher; explicit base required
+- `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — SAR BSDIFF v1 (`SARBSD01`) patcher; explicit base required
 - `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — RFC 3284 VCDIFF patcher; explicit base required
 - `bsdiff::BsdiffLimits` / `vcdiff::VcdiffLimits` — per-algorithm resource limits (re-exported from `sar-core`)
 - `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery

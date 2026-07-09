@@ -230,7 +230,7 @@ maintainability cleanup pass.
 - **Patch algorithm registry (`sar-delta`):**
   - `0x00` `STORE_PATCH` — implemented; all-zero `Delta Base Hash` accepted; no base required
   - `0x01` `VCDIFF` — implemented per RFC 3284; explicit base bytes required
-  - `0x02` `BSDIFF` — implemented as SAR BSDIFF40 profile (spec §8.4.3); explicit base bytes required
+  - `0x02` `BSDIFF` — implemented as SAR BSDIFF v1 (`SARBSD01`, spec §8.4.4); explicit base bytes required
   - `0x03` `ZSTD_PATCH` — assigned; application blocked (dictionary protocol not specified)
   - `0x04–0xEF` reserved → `SAR_ERR_RESERVED_VALUE`
   - `0xF0–0xFF` custom → `SAR_ERR_UNSUPPORTED`
@@ -241,12 +241,13 @@ maintainability cleanup pass.
 - **`STORE_PATCH` application:** decoded patch payload is the complete reconstructed target; no base reads; output length must equal LFH `Uncompressed Size`; `SAR_ERR_PATCH_FAILED` returned on mismatch.
 - **All-zero `Delta Base Hash` for `STORE_PATCH`:** treated as "no base required"; any `Delta Base Hash` value is accepted for `STORE_PATCH`; hash is preserved verbatim in metadata.
 - **All-zero `Delta Base Hash` for BSDIFF/VCDIFF:** returns `SAR_ERR_BASE_MISSING` (indicates no base was recorded).
-- **`BSDIFF` application (SAR BSDIFF40 profile):**
-  - Header: magic `BSDIFF40`, `Control_Block_Length`, `Diff_Block_Length`, `New_File_Size` in classic bsdiff sign-magnitude encoding.
-  - Three bzip2-compressed blocks: Control, Diff, Extra.
+- **`BSDIFF` application (SAR BSDIFF v1):**
+  - Header: magic `SARBSD01`, `Control_Block_Length`, `Diff_Block_Length`, `New_File_Size` in classic bsdiff sign-magnitude encoding.
+  - Uncompressed Control, Diff, and Extra blocks in decoded patch payload.
   - Control triples: `(diff_len, extra_len, seek_adjust)` in sign-magnitude encoding.
   - Base reads beyond end of base use `0x00` per spec.
   - Base seek before offset 0 → `SAR_ERR_PATCH_FAILED`.
+  - Trailing unused Diff/Extra bytes are rejected with `SAR_ERR_PATCH_FAILED`.
   - `New_File_Size` must equal LFH `Uncompressed Size`.
   - Explicit base bytes required via `ArchiveReaderOptions.delta_base`.
 - **`VCDIFF` application (RFC 3284):**
@@ -255,7 +256,7 @@ maintainability cleanup pass.
   - Default RFC 3284 code table (s_near=4, s_same=3).
   - ADD, COPY (SELF/HERE/NEAR/SAME modes), and RUN instructions.
   - Explicit base bytes required via `ArchiveReaderOptions.delta_base`.
-  - VCD_DECOMPRESS with non-zero compressor ID → `SAR_ERR_PATCH_FAILED`.
+  - VCD_DECOMPRESS with non-zero compressor ID → `SAR_ERR_UNSUPPORTED`.
   - VCD_CODETABLE → `SAR_ERR_PATCH_FAILED` (custom code tables not supported).
 - **`ArchiveReaderOptions.delta_base`:** caller supplies base bytes explicitly; no automatic discovery, no network access, no external CAS access.
 - **`ResourceLimits` for BSDIFF:** `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples` added.
@@ -264,6 +265,7 @@ maintainability cleanup pass.
 - **`SAR_ERR_BASE_MISSING`** returned when base is required but not supplied, or when all-zero hash is present for BSDIFF/VCDIFF.
 - **`LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`.**
 - **BSDIFF/VCDIFF + compression, encryption:** all handled correctly through the existing transformation pipeline.
+- **Legacy `BSDIFF40`:** decode-only support not implemented in this profile; `BSDIFF40` magic is rejected with `SAR_ERR_PATCH_FAILED`.
 - **Documentation:** `docs/API.md`, `docs/CONFORMANCE.md`, `docs/SECURITY.md`, `docs/SPEC_QUESTIONS.md`, `docs/MACHINE_READABLE_API.json`, `README.md` updated.
 
 ### Not implemented

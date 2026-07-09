@@ -5175,10 +5175,13 @@
     {
       "name": "sar-delta",
       "path": "crates/sar-delta",
-      "purpose": "Patch algorithm registry, delta LFH field types and validation. Patch application is not yet implemented.",
-      "status": "partial",
+      "purpose": "Patch algorithm registry and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1.",
+      "status": "implemented",
       "milestones": ["9b"],
-      "features": [],
+      "features": [
+        "sar_bsdiff_v1: normative",
+        "legacy_bsdiff40_decode: unsupported"
+      ],
       "modules": [
         {
           "name": "algo",
@@ -5190,7 +5193,7 @@
               "signature": "pub enum PatchAlgoId { StorePatch, Vcdiff, Bsdiff, ZstdPatch, Custom(u8) }",
               "visibility": "public",
               "stability": "stable",
-              "description": "SAR patch algorithm identifiers from spec §8.4. Custom(u8) covers 0xF0–0xFF. Patch application is not implemented in M9b.",
+              "description": "SAR patch algorithm identifiers from spec §8.4. Custom(u8) covers 0xF0–0xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5293,16 +5296,16 @@
               "signature": "pub fn apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Applies a SAR BSDIFF40 patch to the supplied base bytes. Validates the 32-byte header (magic, block lengths, new file size), decompresses the three bzip2-compressed blocks (Control/Diff/Extra), applies control triples using sign-magnitude decoding, and returns the reconstructed target. Base reads beyond the end of base use 0x00. Caller supplies base explicitly; no lookup is performed.",
+              "description": "Applies a SAR BSDIFF v1 patch (`SARBSD01`) to the supplied base bytes. Validates the 32-byte header (magic, block lengths, new file size), reads uncompressed Control/Diff/Extra blocks, applies control triples using sign-magnitude decoding, and returns the reconstructed target. Base reads beyond the end of base use 0x00. Caller supplies base explicitly; no lookup is performed.",
               "parameters": [
                 {"name": "base", "type": "&[u8]", "description": "Base object bytes supplied explicitly by the caller."},
-                {"name": "patch", "type": "&[u8]", "description": "BSDIFF40 patch payload bytes."},
+                {"name": "patch", "type": "&[u8]", "description": "SAR BSDIFF v1 patch payload bytes (`SARBSD01`)."},
                 {"name": "expected_target_size", "type": "u64", "description": "Expected reconstructed target size (must equal LFH Uncompressed Size); must match New_File_Size in the patch header."},
                 {"name": "limits", "type": "&BsdiffLimits", "description": "Resource limits for block sizes, control triple count, and output size."}
               ],
               "returns": "Result<Vec<u8>, PatchError>",
               "errors": [
-                "PatchError::PatchFailed for invalid magic, negative lengths, malformed bzip2, block overread, seek-before-zero, output size mismatch",
+                "PatchError::PatchFailed for invalid magic, negative lengths, malformed or truncated control triples, block overread, trailing unused diff/extra bytes, seek-before-zero, output size mismatch",
                 "PatchError::LimitExceeded for ResourceLimits violations",
                 "PatchError::BaseMissing when base is required but not supplied (checked by caller before this call)"
               ],
@@ -5310,7 +5313,7 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4", "8.4.3"],
+              "related_spec_sections": ["8.4", "8.4.4", "8.4.6"],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5332,6 +5335,7 @@
               "returns": "Result<Vec<u8>, PatchError>",
               "errors": [
                 "PatchError::PatchFailed for invalid header, malformed varints, invalid instructions, copy out of range, output size mismatch, truncated stream",
+                "PatchError::Unsupported for unsupported VCDIFF secondary compression flags/compressors",
                 "PatchError::LimitExceeded for ResourceLimits violations",
                 "PatchError::BaseMissing when base is required but not supplied (checked by caller before this call)"
               ],
@@ -5339,7 +5343,7 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4", "8.4.1"],
+              "related_spec_sections": ["8.4", "8.4.3"],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5359,7 +5363,7 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4.3"],
+              "related_spec_sections": ["8.4.4"],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5379,7 +5383,7 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4.1"],
+              "related_spec_sections": ["8.4.3"],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5430,7 +5434,7 @@
               "signature": "pub const PATCH_ALGO_BSDIFF: u8 = 0x02;",
               "visibility": "public",
               "stability": "stable",
-              "description": "Algorithm ID for BSDIFF (0x02). Assigned; application implemented as SAR BSDIFF40 profile (M9b Delta pass). Explicit base bytes required via ArchiveReaderOptions.delta_base.",
+              "description": "Algorithm ID for BSDIFF (0x02). Assigned; application implemented as SAR BSDIFF v1 (`SARBSD01`) with uncompressed Control/Diff/Extra blocks. Explicit base bytes required via ArchiveReaderOptions.delta_base. Legacy BSDIFF40 decode is unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],

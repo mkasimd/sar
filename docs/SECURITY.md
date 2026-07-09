@@ -271,18 +271,21 @@ Implementations MUST NOT hard-code a hash algorithm for `Delta Base Hash` verifi
 
 ### BSDIFF and VCDIFF patch application security properties
 
-`BSDIFF` (`0x02`, SAR BSDIFF40 profile) and `VCDIFF` (`0x01`, RFC 3284) are implemented with the following security properties:
+`BSDIFF` (`0x02`, SAR BSDIFF v1 `SARBSD01`) and `VCDIFF` (`0x01`, RFC 3284) are implemented with the following security properties:
 
-- **All operations are bounded by `ResourceLimits`:** bzip2 decompression (BSDIFF blocks), instruction counts (VCDIFF), window counts (VCDIFF), and output size are all capped. `SAR_ERR_LIMIT_EXCEEDED` is returned before any oversized allocation.
+- **All operations are bounded by `ResourceLimits`:** BSDIFF block sizes, VCDIFF instruction counts, VCDIFF window counts, and output size are capped. `SAR_ERR_LIMIT_EXCEEDED` is returned before any oversized allocation.
 - **No automatic base discovery:** the caller must supply base bytes explicitly via `ArchiveReaderOptions.delta_base`. No file access, network access, CAS lookup, or URI resolution is performed.
 - **All-zero `Delta Base Hash` → `SAR_ERR_BASE_MISSING`:** prevents silent use of a wrong base when no base was recorded.
 - **Missing base → `SAR_ERR_BASE_MISSING`:** if `delta_base` is not supplied, the error is immediate, not a silent corrupt reconstruction.
 - **Negative field rejection (BSDIFF):** negative `Control_Block_Length`, `Diff_Block_Length`, `New_File_Size`, `diff_len`, or `extra_len` values → `SAR_ERR_PATCH_FAILED`.
 - **Seek-before-zero rejection (BSDIFF):** `old_pos < 0` after seek → `SAR_ERR_PATCH_FAILED`.
-- **Block overread protection (BSDIFF):** diff and extra block reads are bounds-checked against the decompressed block sizes.
+- **Block overread protection (BSDIFF):** diff and extra block reads are bounds-checked against decoded payload block sizes.
+- **Trailing-byte rejection (BSDIFF):** trailing unused Diff/Extra bytes return `SAR_ERR_PATCH_FAILED`.
 - **Output size mismatch rejection:** `New_File_Size` (BSDIFF) or reconstructed output (VCDIFF) must exactly equal LFH `Uncompressed Size`; any mismatch → `SAR_ERR_PATCH_FAILED`.
 - **No use of C FFI in VCDIFF:** VCDIFF decoding is pure Rust.
-- **bzip2 library (BSDIFF):** uses the `bzip2` crate (`libbz2-rs-sys`); pure Rust bzip2 implementation; no linking to system libbz2.
+- **Unsupported VCDIFF secondary compression:** VCDIFF streams requiring secondary compressors return `SAR_ERR_UNSUPPORTED`.
+- **No hidden BSDIFF decompression layer:** SAR BSDIFF v1 uses uncompressed Control/Diff/Extra blocks; archive compression remains solely in the SAR compression layer.
+- **Legacy `BSDIFF40` decode path:** not implemented; `BSDIFF40` magic is rejected as `SAR_ERR_PATCH_FAILED`.
 - **`LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`.**
 
 ### Reserved and unsupported patch algorithm IDs fail closed

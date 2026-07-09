@@ -15,15 +15,12 @@ pub const PATCH_ALGO_STORE_PATCH: u8 = 0x00;
 
 /// VCDIFF: Standard Binary Diff (RFC 3284).
 ///
-/// Assigned and **mandatory** per the spec.  Application is **not implemented**
-/// in this milestone.  Parsing and preservation of the algorithm ID byte are
-/// fully supported.
+/// Assigned and **mandatory** per the spec. Application is implemented.
 pub const PATCH_ALGO_VCDIFF: u8 = 0x01;
 
 /// BSDIFF: high-efficiency binary patching.
 ///
-/// Assigned, **optional**.  Application is **not implemented** in this
-/// milestone; the specific wire format version is not cited by the spec.
+/// Assigned, optional. Application is implemented as SAR BSDIFF v1 (`SARBSD01`).
 pub const PATCH_ALGO_BSDIFF: u8 = 0x02;
 
 /// ZSTD_PATCH: Zstd utilizing an external dictionary.
@@ -45,16 +42,15 @@ pub const PATCH_ALGO_CUSTOM_MAX: u8 = 0xFF;
 ///
 /// # Application status
 ///
-/// `STORE_PATCH` is implemented via [`apply_store_patch`].  The remaining
-/// assigned algorithms are not implemented for patch *application* in this
-/// milestone.
+/// `STORE_PATCH`, `VCDIFF`, and `BSDIFF` are implemented for patch
+/// application. `ZSTD_PATCH` remains unsupported.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PatchAlgoId {
     /// `0x00` — STORE_PATCH; assigned, mandatory; application implemented.
     StorePatch,
-    /// `0x01` — VCDIFF (RFC 3284); assigned, mandatory; application not implemented.
+    /// `0x01` — VCDIFF (RFC 3284); assigned, mandatory; application implemented.
     Vcdiff,
-    /// `0x02` — BSDIFF; assigned, optional; application not implemented.
+    /// `0x02` — BSDIFF; assigned, optional; application implemented.
     Bsdiff,
     /// `0x03` — ZSTD_PATCH; assigned, optional; application not implemented.
     ZstdPatch,

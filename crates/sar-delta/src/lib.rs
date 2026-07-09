@@ -9,7 +9,7 @@
 //! * [`validate_patch_algo_id`] for registry enforcement;
 //! * a display helper [`patch_algo_name`];
 //! * [`apply_store_patch`] for `STORE_PATCH` (`0x00`) application;
-//! * [`apply_bsdiff`] for `BSDIFF` (`0x02`) application (SAR BSDIFF40 profile);
+//! * [`apply_bsdiff`] for `BSDIFF` (`0x02`) application (SAR BSDIFF v1, `SARBSD01`);
 //! * [`apply_vcdiff`] for `VCDIFF` (`0x01`) application (RFC 3284).
 //!
 //! # Supported patch algorithms
@@ -44,7 +44,7 @@
 //!
 //! # BSDIFF semantics
 //!
-//! `BSDIFF` (`0x02`) uses the SAR BSDIFF40 profile (spec §8.4.3).
+//! `BSDIFF` (`0x02`) uses SAR BSDIFF v1 (`SARBSD01`, spec §8.4.4).
 //!
 //! Base bytes MUST be supplied explicitly; automatic base discovery is not
 //! performed.  All-zero `Delta Base Hash` MUST result in
@@ -72,7 +72,7 @@
 /// Patch algorithm ID constants (spec section 8.4, `SAR_L_PATCH`).
 pub mod algo;
 
-/// SAR BSDIFF40 profile patch application (spec §8.4.3).
+/// SAR BSDIFF v1 patch application (`SARBSD01`, spec §8.4.4).
 pub mod bsdiff;
 
 /// VCDIFF patch application per RFC 3284.

@@ -212,3 +212,9 @@ The items below are derived from the current code audit. They document places wh
   - **Current conservative implementation:** ZSTD_PATCH is an assigned, optional algorithm. The ID is recognized; application is not implemented; attempting to apply returns `SarError::Unsupported`.
   - **Interoperability risk:** high if ZSTD_PATCH is ever implemented without a normative protocol definition.
   - **Follow-up needed:** spec must define the ZSTD_PATCH protocol (compression format, dictionary negotiation, and delta structure).
+
+- **Spec section:** BSDIFF legacy compatibility (spec §8.4.4)
+  - **Issue:** The spec allows optional legacy `BSDIFF40` decode support.
+  - **Current conservative implementation:** only SAR BSDIFF v1 (`SARBSD01`) is supported; legacy `BSDIFF40` decoding is not implemented; `BSDIFF40` magic returns `SarError::PatchFailed`.
+  - **Interoperability risk:** archives that use legacy `BSDIFF40` payloads are intentionally rejected by this implementation profile.
+  - **Follow-up needed:** none for current profile unless legacy compatibility is explicitly required.
