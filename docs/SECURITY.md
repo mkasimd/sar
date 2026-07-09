@@ -49,6 +49,16 @@ This document reflects current implemented behavior only.
 - Entry Mode does not remove physical LFH fields: Global Flags remain authoritative for on-wire field presence.
 - Session control opcodes are parsed structurally only in M10a; no session lifecycle state is established.
 
+## M10b in-memory session-layer security notes
+
+- `sar-stream` implements only the in-memory session semantics layer; it performs no network I/O, transport framing, socket access, or background activity.
+- Stateful activation is fail-closed: `NO_INDEX`, non-zero `Stream ID`, and a valid `SESSION_INIT` are all required before any filesystem opcode is exposed as an action.
+- Reserved entry-mode bit 12, reserved filesystem/session opcodes, reserved session flags, reserved capability bits, and reserved ACK bits all fail closed with SAR reserved/flag/state errors.
+- Sequence continuity is enforced for every accepted entry, including `SESSION_HEARTBEAT`; wraparound from `0xFFFF` to `0x0000` is accepted.
+- Session-layer limits bound active streams, status message size, metadata size, fragment/session buffers, and cumulative session memory before allocations grow.
+- `LOSS_TOLERANT` warnings are emitted only for degraded authenticated data; auth failures, decompression failures, patch failures, and structural corruption remain hard errors.
+- `ATOMIC_WRITE` and `FORCE_SYNC` are surfaced as inert action flags only; the crate does not mutate filesystems or expose unauthenticated plaintext.
+
 ## FEC and AEAD ordering
 
 Current implemented order is:

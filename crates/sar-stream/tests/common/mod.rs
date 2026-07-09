@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use sar_core::{EntryMode, GlobalFlags, GlobalHeader, LocalFileHeader};
 use sar_stream::{SessionEntry, SessionFlags, SessionInitFrame};
 

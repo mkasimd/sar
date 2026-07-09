@@ -5,7 +5,7 @@ use sar_stream::{
     FilesystemAction, SessionEntry, SessionEvent, SessionManager, SessionManagerConfig,
 };
 
-use common::{fragmented_no_index_header, fs_entry, init_entry};
+use common::{fragmented_no_index_header, fs_entry, init_entry, no_index_header};
 
 #[test]
 fn degraded_loss_tolerant_output_emits_warning() {

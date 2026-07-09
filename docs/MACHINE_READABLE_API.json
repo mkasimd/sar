@@ -6608,34 +6608,55 @@
     {
       "name": "sar-stream",
       "path": "crates/sar-stream",
-      "purpose": "Placeholder crate for future streaming API support.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "In-memory Stateful Streaming Mode session layer over sar-core structural parsing.",
+      "status": "implemented",
+      "milestones": [
+        "10b"
+      ],
+      "features": [
+        "Activation requires NO_INDEX + non-zero Stream ID + valid SESSION_INIT.",
+        "Session UUID binding, per-stream sequence continuity/wraparound, and SESSION_* frame parsing/writing.",
+        "Filesystem/session OP_CODE namespace validation with in-memory event/action output only.",
+        "LOSS_TOLERANT can surface authenticated degraded output as SAR_WARN_INCOMPLETE but does not suppress auth, decompression, patch, or structural failures.",
+        "No transport framing, networking, sockets, or async runtime."
+      ],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
+              "name": "SessionManager",
               "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "signature": "pub struct SessionManager { ... }",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented streaming functionality.",
+              "stability": "evolving",
+              "description": "In-memory Stateful Streaming Mode manager that binds Stream IDs to Session UUIDs, validates SESSION_* semantics, and emits actions/events without performing transport or filesystem I/O.",
               "parameters": [],
               "returns": "",
-              "errors": [],
-              "safety_notes": [],
+              "errors": [
+                "Returns SarError::ReservedValue for reserved flags/opcodes/bits.",
+                "Returns SarError::StreamState for invalid activation, duplicate Stream IDs, or sequence discontinuities.",
+                "Returns SarError::LimitExceeded / TooManyStreams when configured ResourceLimits are exceeded."
+              ],
+              "safety_notes": [
+                "Requires NO_INDEX + non-zero Stream ID + valid SESSION_INIT before stateful mode becomes active.",
+                "No network I/O, transport framing, or real filesystem mutation is performed."
+              ],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "since_milestone": "10b",
+              "related_spec_sections": [
+                "6.2",
+                "6.3",
+                "18.1",
+                "18.2",
+                "18.3"
+              ],
               "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Possible future opaque-handle wrapper because the API is already transport-free and in-memory."
             }
           ]
         }

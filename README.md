@@ -74,6 +74,12 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - Global Flags still control physical LFH field presence; Entry Mode only controls semantic applicability
   - `SESSION_CONTROL`/OP_CODE bits are parsed structurally only; no Stateful Streaming Mode lifecycle semantics are implemented in M10a
   - `ArchiveWriter` exposes structural writing phases via `StreamWriteState` and `ArchiveWriter::stream_state()`
+- **Milestone 10b — in-memory Stateful Streaming Mode session layer**
+  - `sar-stream` implements session activation, Stream ID/UUID binding, sequence continuity, and strict `SESSION_*` parsing/writing
+  - Stateful mode activates only after `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT`
+  - Session and filesystem `OP_CODE` namespaces are validated separately; reserved values fail closed
+  - `LOSS_TOLERANT` may surface only authenticated degraded reconstruction as `SAR_WARN_INCOMPLETE`; it never suppresses auth, decompression, patch, or structural failures
+  - implementation is in-memory only: no transport framing, no networking, no QUIC/TCP, no async runtime
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
@@ -112,7 +118,7 @@ docs/
 fuzz/
 ```
 
-Placeholder crates compile but intentionally expose only a `NotImplemented` marker until later milestones.
+Placeholder crates still expose only a `NotImplemented` marker except where later milestones have now been implemented (`sar-stream` for M10b).
 
 ## CLI
 
@@ -181,7 +187,7 @@ Notes:
 - `extract`, `verify`, and `repair` use default `ResourceLimits` safety caps unless CLI overrides are supplied. Relevant defaults include `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, `max_archive_size = 16 GiB`, and `max_repair_working_set = 2 GiB`.
 - sparse apparent-size failures and repair working-set failures return `SAR_ERR_LIMIT_EXCEEDED` and do not leave final output files behind
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
-- Stateful Streaming Mode, session lifecycle management (`SESSION_INIT` binding/resume/ack/status/heartbeat), and transport bindings (SAR-over-QUIC/TCP framing) remain out of scope in M10a.
+- `sar-stream` provides only the in-memory M10b session layer; it does not implement transport framing, networking, QUIC/TCP bindings, or real I/O.
 
 ## Validation
 

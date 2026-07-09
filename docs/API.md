@@ -31,7 +31,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-partition` | Future partition support placeholder | placeholder |
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
 | `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
-| `sar-stream` | Future streaming API placeholder | placeholder |
+| `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
 | `sar-transport` | Future transport integration placeholder | placeholder |
 
 ## `sar-core`
@@ -264,7 +264,7 @@ Not implemented in this pass, even though some flags or structural fields alread
 - CDC map processing
 - delta application for `ZSTD_PATCH` and custom patch algorithms
 - partition reassembly logic
-- Stateful Streaming Mode/session lifecycle APIs (SESSION_INIT binding, RESUME/ACK/STATUS, heartbeat/watchdog, transport bindings)
+- transport-layer Stateful Streaming bindings and real network I/O
 - stable FFI / C ABI (Milestone 12)
 
 ### M10a stream model notes
@@ -274,6 +274,17 @@ Not implemented in this pass, even though some flags or structural fields alread
 - Entry Mode controls semantic applicability only; Global Flags still determine physical LFH field presence.
 - Session `OP_CODE` bits and `SESSION_CONTROL` entries are parsed structurally only in M10a (no session lifecycle semantics).
 - M10a parser currently supports forward-only `NO_INDEX` streaming paths.
+
+### M10b session-layer notes in `sar-stream`
+
+- `sar-stream` adds the **in-memory only** Stateful Streaming Mode state layer on top of `sar-core` parsing.
+- Activation requires all of: `NO_INDEX`, non-zero `Stream ID`, and a valid `SESSION_INIT`.
+- `SessionManager` tracks Stream ID → Session UUID binding, per-stream sequence continuity, peer capabilities, and session metadata.
+- Sequence numbers increment by exactly 1 for every accepted entry and wrap from `0xFFFF` to `0x0000`; discontinuities fail with `SAR_ERR_STREAM_STATE`.
+- Filesystem `OP_CODE`s (`DATA_WRITE`, `DELETE`, `RENAME`, `META_PROBE`, `SYNC_BARRIER`) and session `OP_CODE`s (`INIT`, `CLOSE`, `RESUME`, `HEARTBEAT`, `STATUS`, `ACK`, `METADATA`, `CAPABILITIES`) are validated as separate namespaces.
+- `ATOMIC_WRITE` and `FORCE_SYNC` are surfaced as in-memory action flags only; no filesystem or transport side effects are performed by this crate.
+- `LOSS_TOLERANT` can only surface degraded authenticated output as `SAR_WARN_INCOMPLETE`; it does not suppress auth, decompression, patch, or structural failures.
+- No transport framing, QUIC/TCP binding, socket I/O, async runtime, retransmission, or background tasks are implemented in M10b.
 
 ---
 
@@ -949,10 +960,21 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-stream`
 
-- Purpose: reserved for future streaming APIs
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: in-memory Stateful Streaming Mode session semantics layered over `sar-core`
+- Status: implemented for Milestone 10b session semantics only
+- Public APIs:
+  - `SessionManager`, `SessionManagerConfig`
+  - `SessionEntry`, `ProcessResult`
+  - `SessionEvent`, `SessionAction`
+  - `ActiveSession`, `SessionMetadataState`
+  - `FilesystemAction`, `FilesystemEntryAction`, `FilesystemDeleteAction`, `FilesystemRenameAction`, `FilesystemSyncBarrierAction`
+  - `SessionInitFrame`, `SessionResumeFrame`, `SessionStatusFrame`, `SessionAckFrame`, `SessionMetadataFrame`, `SessionCapabilitiesFrame`
+  - `SessionFlags`, `CapabilityFlags`, `AckFlags`, `SessionOpCode`, `FilesystemOpCode`
+- FFI readiness: `candidate`
+- Notes:
+  - strictly in-memory only; no transport abstraction or network I/O
+  - requires `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT` before stateful activation
+  - sequence continuity is enforced for all accepted entries, including heartbeats and control frames
 
 ### `sar-transport`
 

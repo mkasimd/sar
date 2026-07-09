@@ -114,6 +114,16 @@ This document reflects the current repository state after Milestone 10a.
   - `IS_ENCRYPTED` unset => PLAINTEXT semantics even when encryption fields are physically present
   - session OP_CODE fields and `SESSION_CONTROL` entries are structurally parsed only; no M10b session lifecycle semantics
   - writer exposes structural phases through `StreamWriteState` / `ArchiveWriter::stream_state()`
+- **Milestone 10b in-memory stateful session layer**
+  - `sar-stream::SessionManager` activates stateful semantics only after `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT`
+  - Stream ID reuse while active returns `SAR_ERR_STREAM_STATE`; configured active-stream limit returns `SAR_ERR_TOO_MANY_STREAMS`
+  - `SESSION_INIT`, `SESSION_CLOSE`, `SESSION_RESUME`, `SESSION_HEARTBEAT`, `SESSION_STATUS`, `SESSION_ACK`, `SESSION_METADATA`, and `SESSION_CAPABILITIES` are parsed and validated in-memory
+  - Session Flags, Capability Flags, ACK flags, reserved entry-mode bit 12, and reserved session/filesystem opcodes fail closed
+  - sequence continuity is enforced for all accepted entries and wraps `0xFFFF -> 0x0000`
+  - filesystem `OP_CODE`s are validated and surfaced as in-memory actions only; no real filesystem mutation or transport I/O occurs
+  - `ATOMIC_WRITE` / `FORCE_SYNC` are exposed as action metadata only
+  - session-layer limits cover active streams, metadata size, status size, fragment buffers, and cumulative session memory
+  - degraded `LOSS_TOLERANT` output may emit `SAR_WARN_INCOMPLETE`, but auth, decompression, patch, and structural failures are never suppressed
 
 ## Partial
 
@@ -151,14 +161,14 @@ This document reflects the current repository state after Milestone 10a.
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- Stateful Streaming Mode/session lifecycle APIs (`SESSION_INIT` binding, `SESSION_RESUME`, `SESSION_ACK`, `SESSION_STATUS`, heartbeat/watchdog, transport bindings)
+- transport bindings for Stateful Streaming Mode (`sar-transport`, QUIC/TCP framing, sockets, async runtime, retransmission)
 - transport-layer APIs
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
 ## Planned
 
-- later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`, `sar-stream`, `sar-transport`) remain placeholders
+- later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`, `sar-transport`) remain placeholders
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
 - **Milestone 10:** streaming/session APIs
