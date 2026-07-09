@@ -480,8 +480,11 @@ fn decode_window(
 
     // Source segment (if any)
     let (ss_size, ss_pos) = if win_indicator & (VCD_SOURCE | VCD_TARGET) != 0 {
-        let size = reader.read_varint()? as usize;
-        let pos = reader.read_varint()? as usize;
+        let size = usize::try_from(reader.read_varint()?)
+            .map_err(|_| PatchError::PatchFailed("VCDIFF: source segment size exceeds usize"))?;
+        let pos = usize::try_from(reader.read_varint()?).map_err(|_| {
+            PatchError::PatchFailed("VCDIFF: source segment position exceeds usize")
+        })?;
         (size, pos)
     } else {
         (0, 0)
@@ -509,7 +512,8 @@ fn decode_window(
     }
 
     // Delta encoding header
-    let delta_encoding_length = reader.read_varint()? as usize;
+    let delta_encoding_length = usize::try_from(reader.read_varint()?)
+        .map_err(|_| PatchError::PatchFailed("VCDIFF: delta_encoding_length exceeds usize"))?;
     if delta_encoding_length > reader.remaining() {
         return Err(PatchError::PatchFailed(
             "VCDIFF: delta_encoding_length exceeds remaining patch bytes",
@@ -518,7 +522,8 @@ fn decode_window(
     // Record current reader position to validate delta_encoding_length later
     let delta_start = reader.pos;
 
-    let target_window_length = reader.read_varint()? as usize;
+    let target_window_length = usize::try_from(reader.read_varint()?)
+        .map_err(|_| PatchError::PatchFailed("VCDIFF: target_window_length exceeds usize"))?;
 
     // Limit: output size
     let new_total =
@@ -542,9 +547,12 @@ fn decode_window(
         ));
     }
 
-    let len_add_run = reader.read_varint()? as usize;
-    let len_inst = reader.read_varint()? as usize;
-    let len_addr = reader.read_varint()? as usize;
+    let len_add_run = usize::try_from(reader.read_varint()?)
+        .map_err(|_| PatchError::PatchFailed("VCDIFF: len_add_run exceeds usize"))?;
+    let len_inst = usize::try_from(reader.read_varint()?)
+        .map_err(|_| PatchError::PatchFailed("VCDIFF: len_inst exceeds usize"))?;
+    let len_addr = usize::try_from(reader.read_varint()?)
+        .map_err(|_| PatchError::PatchFailed("VCDIFF: len_addr exceeds usize"))?;
 
     let add_run_data = reader.read_bytes(len_add_run)?;
     let inst_bytes = reader.read_bytes(len_inst)?;
@@ -639,7 +647,9 @@ fn apply_instructions(
 
             // Determine size
             let size: usize = if idef.size == 0 {
-                inst_reader.read_varint()? as usize
+                usize::try_from(inst_reader.read_varint()?).map_err(|_| {
+                    PatchError::PatchFailed("VCDIFF: instruction size exceeds usize")
+                })?
             } else {
                 idef.size as usize
             };
@@ -686,7 +696,9 @@ fn apply_instructions(
 
                     addr_cache.update(addr_val);
 
-                    let addr_usize = addr_val as usize;
+                    let addr_usize = usize::try_from(addr_val).map_err(|_| {
+                        PatchError::PatchFailed("VCDIFF: COPY address exceeds usize")
+                    })?;
                     let out_end = target_pos
                         .checked_add(size)
                         .ok_or(PatchError::PatchFailed("VCDIFF: COPY output overflow"))?;
