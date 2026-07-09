@@ -246,3 +246,52 @@ CDC_MAP hash verification (`verify_cdc_map_record_hash`) checks that the hash st
 ### CDC_EXT_PROVIDER is inert in M9a
 
 `CDC_EXT_PROVIDER` values are exposed as inert parsed metadata only. The implementation does not perform network access, does not contact external CAS providers, and does not attempt provider-driven recipe resolution in M9a.
+
+### Delta Base Hash is opaque — do not assume a hash algorithm (M9b)
+
+The LFH `Delta Base Hash` field is a 32-byte opaque value. The spec does not define a hash algorithm identifier for this field. This implementation:
+
+- preserves the 32 bytes without interpretation;
+- does **not** assume BLAKE3, SHA-256, or any other algorithm;
+- does **not** verify the base object against this field;
+- treats an all-zero `Delta Base Hash` as "no base recorded" for BSDIFF and VCDIFF (returns `SAR_ERR_BASE_MISSING`);
+- accepts any `Delta Base Hash` value for `STORE_PATCH` (base not required).
+
+Implementations MUST NOT hard-code a hash algorithm for `Delta Base Hash` verification until the spec normatively defines the algorithm encoding for this field.
+
+### STORE_PATCH application security properties
+
+`STORE_PATCH` (`0x00`) is implemented with the following security properties:
+
+- **No unchecked allocation:** `Uncompressed Size` is checked against `ResourceLimits.max_decoded_entry_size` before any allocation. Oversized payloads return `SAR_ERR_LIMIT_EXCEEDED` without allocating.
+- **No unchecked arithmetic:** all length comparisons use `u64` checked equality; no cast-narrowing.
+- **No panic on malformed input:** length mismatch returns `SAR_ERR_PATCH_FAILED`; allocation failure is not possible due to the pre-allocation limit check.
+- **No base object access:** `STORE_PATCH` requires no base object; no file access, URI resolution, or external lookup is performed.
+- **`LOSS_TOLERANT` does not suppress errors:** `SAR_ERR_PATCH_FAILED` is always propagated regardless of `LOSS_TOLERANT` semantics.
+
+### BSDIFF and VCDIFF patch application security properties
+
+`BSDIFF` (`0x02`, SAR BSDIFF v1 `SARBSD01`) and `VCDIFF` (`0x01`, RFC 3284) are implemented with the following security properties:
+
+- **All operations are bounded by `ResourceLimits`:** BSDIFF block sizes, VCDIFF instruction counts, VCDIFF window counts, and output size are capped. `SAR_ERR_LIMIT_EXCEEDED` is returned before any oversized allocation.
+- **No automatic base discovery:** the caller must supply base bytes explicitly via `ArchiveReaderOptions.delta_base`. No file access, network access, CAS lookup, or URI resolution is performed.
+- **All-zero `Delta Base Hash` → `SAR_ERR_BASE_MISSING`:** prevents silent use of a wrong base when no base was recorded.
+- **Missing base → `SAR_ERR_BASE_MISSING`:** if `delta_base` is not supplied, the error is immediate, not a silent corrupt reconstruction.
+- **Negative field rejection (BSDIFF):** negative `Control_Block_Length`, `Diff_Block_Length`, `New_File_Size`, `diff_len`, or `extra_len` values → `SAR_ERR_PATCH_FAILED`.
+- **Seek-before-zero rejection (BSDIFF):** `old_pos < 0` after seek → `SAR_ERR_PATCH_FAILED`.
+- **Block overread protection (BSDIFF):** diff and extra block reads are bounds-checked against decoded payload block sizes.
+- **Trailing-byte rejection (BSDIFF):** trailing unused Diff/Extra bytes return `SAR_ERR_PATCH_FAILED`.
+- **Output size mismatch rejection:** `New_File_Size` (BSDIFF) or reconstructed output (VCDIFF) must exactly equal LFH `Uncompressed Size`; any mismatch → `SAR_ERR_PATCH_FAILED`.
+- **No use of C FFI in VCDIFF:** VCDIFF decoding is pure Rust.
+- **Unsupported VCDIFF secondary compression:** VCDIFF streams requiring secondary compressors return `SAR_ERR_UNSUPPORTED`.
+- **No hidden BSDIFF decompression layer:** SAR BSDIFF v1 uses uncompressed Control/Diff/Extra blocks; archive compression remains solely in the SAR compression layer.
+- **Legacy `BSDIFF40` decode path:** not implemented; `BSDIFF40` magic is rejected as `SAR_ERR_PATCH_FAILED`.
+- **`LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`.**
+
+### Reserved and unsupported patch algorithm IDs fail closed
+
+- Reserved IDs (`0x04–0xEF`) → `SarError::ReservedValue`
+- Custom IDs (`0xF0–0xFF`) → `SarError::Unsupported`
+- `ZSTD_PATCH` (`0x03`) → `SarError::Unsupported` (dictionary protocol not specified)
+
+No fallback behavior is attempted for unknown patch algorithms.

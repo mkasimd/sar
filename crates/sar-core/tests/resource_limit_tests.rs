@@ -134,6 +134,7 @@ fn excessive_payload_size_fails_before_allocation() {
                 max_in_memory_buffer: 4,
                 ..base_limits()
             },
+            delta_base: None,
         },
     )
     .expect("reader");
@@ -246,6 +247,7 @@ fn archive_reader_rejects_excessive_cd_region() {
                 max_cd_bytes: 8,
                 ..base_limits()
             },
+            delta_base: None,
         },
     )
     .expect("reader");

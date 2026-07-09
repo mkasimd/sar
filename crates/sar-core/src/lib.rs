@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–9a).
+//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–9b).
 
 /// Archive reader/writer APIs.
 pub mod archive;
@@ -68,6 +68,12 @@ pub use recovery::{
 pub use sar_cdc::CDC_MAP_RECORD_LEN;
 pub use sar_cdc::CdcMap;
 pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
+pub use sar_delta::{
+    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MAX, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH,
+    PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, apply_bsdiff,
+    apply_store_patch, apply_vcdiff, bsdiff::BsdiffLimits, patch_algo_name, validate_patch_algo_id,
+    vcdiff::VcdiffLimits,
+};
 pub use sparse::{
     SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
     write_sparse_map,

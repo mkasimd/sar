@@ -326,6 +326,7 @@ fn sparse_allocation_bounded_by_max_size() {
                 max_decoded_entry_size: 512,
                 ..sar_core::limits::ResourceLimits::default()
             },
+            delta_base: None,
         },
     )
     .expect("reader");

@@ -23,7 +23,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
 | `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
-| `sar-delta` | Future delta support placeholder | placeholder |
+| `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented | implemented |
 | `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
 | `sar-partition` | Future partition support placeholder | placeholder |
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
@@ -93,6 +93,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
 - `ArchiveReaderOptions`
   - `limits: ResourceLimits`
+  - `delta_base: Option<Vec<u8>>` — explicit base bytes for BSDIFF/VCDIFF patch application; no automatic discovery
 - `ResourceLimits`
   - `max_archive_size`
   - `max_entry_count`
@@ -115,6 +116,13 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
   - `max_recovery_protected_range`
   - `max_repair_working_set`
   - `use_runtime_memory_budget`
+  - `max_bsdiff_control_bytes` — maximum BSDIFF Control Block size in decoded patch payload (default: 64 MiB)
+  - `max_bsdiff_diff_bytes` — maximum BSDIFF Diff Block size in decoded patch payload (default: 1 GiB)
+  - `max_bsdiff_extra_bytes` — maximum BSDIFF Extra Block size in decoded patch payload (default: 1 GiB)
+  - `max_bsdiff_control_triples` — maximum number of BSDIFF control triples (default: 4 000 000)
+  - `max_vcdiff_window_count` — maximum number of VCDIFF windows per patch (default: 1 000 000)
+  - `max_vcdiff_instruction_count` — maximum number of VCDIFF instructions per window (default: 10 000 000)
+  - `max_vcdiff_output_size` — maximum total VCDIFF reconstructed output size; 0 = defer to `max_decoded_entry_size` (default: 0)
   - CLI defaults currently rely on `ResourceLimits::default()` unless the caller or CLI flags override them; the most relevant Stage 4 defaults are `max_archive_size = 16 GiB`, `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, and `max_repair_working_set = 2 GiB`
 - `CompressionSettings`
   - `store()` helper
@@ -241,7 +249,7 @@ Not implemented in this pass, even though some flags or structural fields alread
 
 - signature cryptography and signature verification
 - CDC map processing
-- delta application
+- delta application for `ZSTD_PATCH` and custom patch algorithms
 - partition reassembly logic
 - streaming session APIs (Milestone 10)
 - stable FFI / C ABI (Milestone 12)
@@ -310,7 +318,7 @@ Sparse reconstruction occurs after all prior transformations in this order:
 1. Fragment Reassembly (if `FILE_FRAGMENTATION`)
 2. Decryption (if `ENCRYPTED`) — authentication failure is never suppressed
 3. Decompression (if `COMPRESSED`)
-4. Delta Application (if `HAS_DELTA`) — not yet implemented
+4. Delta Application (if `HAS_DELTA`) — `STORE_PATCH`, `VCDIFF`, and `BSDIFF` implemented; `ZSTD_PATCH`/custom unsupported
 5. Sparse Reconstruction (if `SPARSE_FILES`)
 
 The Sparse Map describes the layout of the **fully reconstructed logical payload**, not individual fragments or compressed bytes.
@@ -846,10 +854,49 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-delta`
 
-- Purpose: reserved for future delta support
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented.
+- Status: complete (M9b — registry, metadata, `STORE_PATCH`, `BSDIFF`, and `VCDIFF` implemented; `ZSTD_PATCH`/custom blocked)
+- Public API (M9b):
+  - `PatchAlgoId` — enum of assigned and custom patch algorithm identifiers: `StorePatch (0x00)`, `Vcdiff (0x01)`, `Bsdiff (0x02)`, `ZstdPatch (0x03)`, `Custom(u8)` (`0xF0–0xFF`)
+  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`, `PatchFailed`, `BaseMissing`, `LimitExceeded`
+  - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>` — validates a raw byte against the SAR patch algorithm registry; returns `ReservedValue` for `0x04–0xEF`, `Unsupported` for `0xF0–0xFF`, and the corresponding `PatchAlgoId` for all assigned IDs
+  - `patch_algo_name(u8) -> &'static str` — returns a display name for any raw algorithm byte
+  - `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` — applies `STORE_PATCH` (identity): returns the patch payload if its length equals `expected_len`, otherwise returns `PatchFailed`
+  - `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a SAR BSDIFF v1 (`SARBSD01`) patch; caller supplies base bytes explicitly
+  - `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a VCDIFF (RFC 3284) patch; caller supplies base bytes explicitly
+  - `bsdiff::BsdiffLimits` — resource limits for BSDIFF patch application (`max_patch_size`, `max_control_bytes`, `max_diff_bytes`, `max_extra_bytes`, `max_control_triples`, `max_target_size`)
+  - `vcdiff::VcdiffLimits` — resource limits for VCDIFF patch application (`max_patch_size`, `max_window_count`, `max_instruction_count`, `max_output_size`)
+  - `decode_bsdiff_int(bytes: &[u8]) -> Result<i64, PatchError>` — decodes a classic bsdiff sign-magnitude 8-byte integer
+  - Constants: `PATCH_ALGO_STORE_PATCH (0x00u8)`, `PATCH_ALGO_VCDIFF (0x01u8)`, `PATCH_ALGO_BSDIFF (0x02u8)`, `PATCH_ALGO_ZSTD_PATCH (0x03u8)`, `PATCH_ALGO_CUSTOM_MIN (0xF0u8)`, `PATCH_ALGO_CUSTOM_MAX (0xFFu8)`
+- All of the above are re-exported from `sar-core` for consumer convenience.
+- FFI readiness: `not_applicable` (no C ABI in this milestone)
+
+**Implemented in STORE_PATCH pass:**
+
+- `STORE_PATCH` (`0x00`) application: decoded patch payload is the complete reconstructed target; no base reads; no instruction stream; output length must equal LFH `Uncompressed Size` or `SAR_ERR_PATCH_FAILED` is returned
+- All-zero `Delta Base Hash` accepted for `STORE_PATCH` (treated as "no base required"); nonzero hash preserved verbatim in metadata
+- `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
+- `STORE_PATCH` + compression, encryption, sparse, and fragmentation all handled correctly through the existing transformation pipeline
+
+**Implemented in M9b Delta pass (BSDIFF + VCDIFF):**
+
+- `BSDIFF` (`0x02`) SAR BSDIFF v1 profile: magic `SARBSD01`, sign-magnitude header fields, uncompressed Control/Diff/Extra blocks, control triples `(diff_len, extra_len, seek_adjust)`. Base reads beyond end use `0x00`. Base seek before 0 → `SAR_ERR_PATCH_FAILED`. Explicit base bytes required.
+- `VCDIFF` (`0x01`) RFC 3284: standard header/window/instruction decoding, VCD_SOURCE and VCD_TARGET windows, ADD/COPY/RUN instructions, default code table (s_near=4, s_same=3). Explicit base bytes required.
+- VCDIFF streams that require secondary compressors return `SAR_ERR_UNSUPPORTED`.
+- `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery, no network access, no CAS access.
+- All-zero `Delta Base Hash` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
+- Missing `delta_base` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
+- `ResourceLimits` enforced for BSDIFF (control/diff/extra block sizes, triple count) and VCDIFF (window count, instruction count, output size).
+- `BSDIFF`/`VCDIFF` + compression and encryption handled correctly through the existing transformation pipeline.
+- Legacy classic `BSDIFF40` decode support is not implemented; payloads with `BSDIFF40` magic return `SAR_ERR_PATCH_FAILED`.
+- `ZSTD_PATCH` (`0x03`) → `SAR_ERR_UNSUPPORTED` (dictionary protocol not specified).
+
+**Not implemented:**
+
+- `ZSTD_PATCH` application (dictionary/protocol not specified by spec)
+- Custom patch algorithms
+- Delta Base Hash verification (hash algorithm not specified by spec; field is opaque)
+- Automatic base object resolution (location model not specified by spec)
 
 ### `sar-fragmentation`
 
@@ -999,6 +1046,43 @@ Candidate high-level operations:
 Milestone 9a adds CDC metadata parsing, CDC metadata writing, CDC validation, the required FASTCDC algorithm, resource limits, and CLI support for `inspect --json` (reports `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`) and `verify --cdc` (performs structural CDC validation when active).
 
 Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is **not** implemented in M9a.
+
+---
+
+## M9b APIs — Delta Metadata, Patch Algorithm Registry, BSDIFF, and VCDIFF
+
+Milestone 9b adds:
+
+- `PatchAlgoId` enum in `sar-delta` (and re-exported from `sar-core`): `StorePatch`, `Vcdiff`, `Bsdiff`, `ZstdPatch`, `Custom(u8)`
+- `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>`: validates a raw algorithm byte against the SAR patch algorithm registry; returns `SarError::ReservedValue` for `0x04–0xEF`, `SarError::Unsupported` for `0xF0–0xFF`, and the `PatchAlgoId` for all assigned IDs
+- `EntryMetadata.patch_algo_id: Option<u8>` — present when `HAS_DELTA` is set; raw byte preserved; validated against registry during `next_entry()`
+- `EntryMetadata.delta_base_hash: Option<[u8; 32]>` — present when `HAS_DELTA` is set; treated as opaque 32 bytes; serialized as lowercase hex string in JSON output
+- CLI `inspect --json`: reports `has_delta` at archive level; reports `patch_algo_id`, `delta_base_hash`, and `patch_algorithm` name per entry
+
+**STORE_PATCH application (added in STORE_PATCH pass):**
+
+- `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` in `sar-delta` (re-exported from `sar-core`)
+- `STORE_PATCH` (`0x00`) wired into `next_entry()`: decoded patch payload becomes the complete reconstructed target; length must equal LFH `Uncompressed Size`; returns `SAR_ERR_PATCH_FAILED` on mismatch
+- All-zero `Delta Base Hash` treated as "no base required" for `STORE_PATCH`; nonzero hash preserved verbatim; base lookup not performed for any algorithm
+- `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
+- `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
+
+**BSDIFF and VCDIFF application (added in M9b Delta pass):**
+
+- `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — SAR BSDIFF v1 (`SARBSD01`) patcher; explicit base required
+- `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — RFC 3284 VCDIFF patcher; explicit base required
+- `bsdiff::BsdiffLimits` / `vcdiff::VcdiffLimits` — per-algorithm resource limits (re-exported from `sar-core`)
+- `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery
+- `BSDIFF` (`0x02`) and `VCDIFF` (`0x01`) wired into `next_entry()`: all-zero `Delta Base Hash` → `SAR_ERR_BASE_MISSING`; missing `delta_base` → `SAR_ERR_BASE_MISSING`
+- New `ResourceLimits` fields: `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples`, `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size`
+
+**Not implemented (M9b):**
+
+- `ZSTD_PATCH` application — dictionary/protocol not specified by spec (`SAR_ERR_UNSUPPORTED` returned)
+- Custom patch algorithms — not negotiated
+- Delta Base Hash verification — hash algorithm not specified by spec; field treated as opaque bytes
+- Automatic base object resolution — location model not specified by spec; caller supplies base explicitly
+- Per-entry `IS_DELTA` opt-out bit — not defined in spec
 
 ### `sar-cdc` crate
 

@@ -905,7 +905,10 @@ fn extract_archive(
     fs::create_dir_all(&output_dir)?;
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
-        ArchiveReaderOptions { limits },
+        ArchiveReaderOptions {
+            limits,
+            delta_base: None,
+        },
     )?;
     let header = reader.read_global_header()?;
     if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
@@ -1100,7 +1103,10 @@ fn verify_archive(
 ) -> Result<(), SarError> {
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
-        ArchiveReaderOptions { limits },
+        ArchiveReaderOptions {
+            limits,
+            delta_base: None,
+        },
     )?;
     let header = reader.read_global_header()?;
     let password = if header.flags.contains(sar_core::GlobalFlags::ENCRYPTED) {
@@ -1136,7 +1142,10 @@ fn verify_archive(
         // Collect entries for additional recovery metadata validation
         let mut re_reader = ArchiveReader::with_options(
             BufReader::new(File::open(&archive)?),
-            ArchiveReaderOptions { limits },
+            ArchiveReaderOptions {
+                limits,
+                delta_base: None,
+            },
         )?;
         let _ = re_reader.read_global_header()?;
         if password.is_some() {
@@ -1250,6 +1259,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
     let metadata = reader.metadata();
     let has_global_ec = header.flags.contains(GlobalFlags::HAS_GLOBAL_EC);
     let cdc_support = header.flags.contains(GlobalFlags::CDC_SUPPORT);
+    let has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
 
     // Build recovery TLV list with validated summaries
     let recovery_tlvs_raw: Vec<_> = metadata
@@ -1360,7 +1370,9 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             .cloned()
             .collect();
 
-        // Build per-entry JSON, adding sparse_extent_count and cdc_algo_id
+        // Build per-entry JSON, adding sparse_extent_count, cdc_algo_id, and delta fields.
+        // Delta fields (patch_algo_id, delta_base_hash) are already included in the
+        // serialized output of EntryMetadata when HAS_DELTA is set.
         let entries_json: Vec<serde_json::Value> = entries
             .iter()
             .map(|entry| {
@@ -1371,6 +1383,13 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                         "sparse_extent_count".to_string(),
                         json!(sparse_extent_count),
                     );
+                    // Add human-readable patch algorithm name when present.
+                    if let Some(algo_id) = entry.patch_algo_id {
+                        obj.insert(
+                            "patch_algorithm".to_string(),
+                            json!(sar_core::patch_algo_name(algo_id)),
+                        );
+                    }
                 }
                 val
             })
@@ -1386,6 +1405,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
             "fragmentation": header.flags.contains(GlobalFlags::FILE_FRAGMENTATION),
             "sparse_files": header.flags.contains(GlobalFlags::SPARSE_FILES),
             "cdc_support": cdc_support,
+            "has_delta": has_delta,
             "entry_count": entries.len(),
             "recovery_tlvs": recovery_tlvs_json,
             "cdc_metadata_tlvs": cdc_metadata_tlvs_json,
@@ -1406,6 +1426,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
         );
         println!("global_ec={has_global_ec}");
         println!("cdc_support={cdc_support}");
+        println!("has_delta={has_delta}");
         println!(
             "fragmentation={}",
             header.flags.contains(GlobalFlags::FILE_FRAGMENTATION)
@@ -1480,6 +1501,18 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 let name = sar_cdc::algo_name(algo_id);
                 println!(
                     "  entry={} cdc_algo_id=0x{algo_id:02X} ({name})",
+                    entry.name
+                );
+            }
+            if let Some(algo_id) = entry.patch_algo_id {
+                let name = sar_core::patch_algo_name(algo_id);
+                let status = if algo_id == sar_core::PATCH_ALGO_STORE_PATCH {
+                    "applied"
+                } else {
+                    "not_implemented"
+                };
+                println!(
+                    "  entry={} patch_algo_id=0x{algo_id:02X} ({name}) application={status}",
                     entry.name
                 );
             }

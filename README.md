@@ -52,6 +52,21 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - `inspect --json` includes `cdc_support`, `cdc_metadata_tlvs`, and per-entry `cdc_algo_id`; `verify --cdc` performs structural CDC validation only and does **not** claim boundary regeneration or external-CAS recipe verification
   - CDC does not bypass AEAD authentication, sparse reconstruction, fragment reassembly, or resource limits
   - Delta encoding (VCDIFF, BSDIFF) is **not** implemented in M9a
+- **Milestone 9b — Delta Metadata, Patch Algorithm Registry, STORE_PATCH, BSDIFF, and VCDIFF Application**: complete delta patch pipeline
+  - `HAS_DELTA` global flag (Bit 9) activates delta fields: `Patch Algo ID` (1 B) and `Delta Base Hash` (32 B) parsed from every LFH when active
+  - SAR patch algorithm registry: `0x00` = `STORE_PATCH` (implemented), `0x01` = `VCDIFF` (implemented), `0x02` = `BSDIFF` (implemented), `0x03` = `ZSTD_PATCH` (blocked — protocol not specified), `0x04–0xEF` = reserved → `SAR_ERR_RESERVED_VALUE`, `0xF0–0xFF` = custom → `SAR_ERR_UNSUPPORTED`
+  - `EntryMetadata.patch_algo_id` exposes raw algorithm byte per entry; `EntryMetadata.delta_base_hash` exposes 32-byte opaque hash
+  - `Delta Base Hash` is preserved as opaque bytes; **no hash algorithm is assumed** (BLAKE3, SHA-256, etc. are NOT guessed); no verification is performed
+  - `inspect --json` includes `has_delta` at archive level; per-entry `patch_algo_id`, `delta_base_hash` (hex), and `patch_algorithm` name
+  - **`STORE_PATCH` (`0x00`) application**: decoded patch payload is the complete reconstructed target; no base reads; length must equal LFH `Uncompressed Size`; `SAR_ERR_PATCH_FAILED` returned on mismatch
+  - **`BSDIFF` (`0x02`) application** (SAR BSDIFF v1): magic `SARBSD01`, uncompressed Control/Diff/Extra blocks in decoded patch payload; explicit base bytes required via `ArchiveReaderOptions.delta_base`; base reads beyond end use `0x00`
+  - **`VCDIFF` (`0x01`) application** (RFC 3284): standard header/window/instruction decoding; VCD_SOURCE and VCD_TARGET windows; ADD/COPY/RUN instructions; explicit base bytes required via `ArchiveReaderOptions.delta_base`
+  - `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes explicitly; **no automatic discovery, no network access, no CAS access**
+  - All-zero `Delta Base Hash` with BSDIFF or VCDIFF → `SAR_ERR_BASE_MISSING`; missing `delta_base` → `SAR_ERR_BASE_MISSING`
+  - All-zero `Delta Base Hash` accepted for `STORE_PATCH` (no base required)
+  - Legacy `BSDIFF40` decode support is not implemented in this profile; `BSDIFF40` magic is rejected as `SAR_ERR_PATCH_FAILED`
+  - `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
+  - BSDIFF/VCDIFF `ResourceLimits`: `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples`, `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size`
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
