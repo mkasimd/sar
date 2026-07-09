@@ -64,13 +64,11 @@ fn session_init_validates_flags_and_duplicate_streams() {
         .observe_global_header(&no_index_header())
         .expect("header");
 
+    let mut reserved = init_entry(1, 0, uuid, 0);
+    reserved.payload[16] = 0;
+    reserved.payload[17] = 0x80;
     let err = manager
-        .process_entry(&init_entry(
-            1,
-            0,
-            uuid,
-            SessionManagerConfig::default().local_capabilities.bits() << 8,
-        ))
+        .process_entry(&reserved)
         .expect_err("reserved session flags must fail");
     assert!(matches!(err, SarError::ReservedValue(_)));
 

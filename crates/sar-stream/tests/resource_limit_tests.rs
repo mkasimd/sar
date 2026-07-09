@@ -7,10 +7,12 @@ use common::{control_entry, fragmented_no_index_header, fs_entry, init_entry, no
 
 #[test]
 fn active_stream_limit_is_enforced() {
-    let mut config = SessionManagerConfig::default();
-    config.limits = ResourceLimits {
-        max_active_streams: 1,
-        ..ResourceLimits::default()
+    let config = SessionManagerConfig {
+        limits: ResourceLimits {
+            max_active_streams: 1,
+            ..ResourceLimits::default()
+        },
+        ..SessionManagerConfig::default()
     };
     let mut manager = SessionManager::new(config);
     manager
@@ -27,11 +29,13 @@ fn active_stream_limit_is_enforced() {
 
 #[test]
 fn status_metadata_fragment_and_session_memory_limits_are_enforced() {
-    let mut limits = ResourceLimits::default();
-    limits.max_session_status_message_bytes = 3;
-    limits.max_session_metadata_bytes = 2;
-    limits.max_session_fragment_buffer_bytes = 1;
-    limits.max_session_memory_bytes = 20;
+    let limits = ResourceLimits {
+        max_session_status_message_bytes: 3,
+        max_session_metadata_bytes: 2,
+        max_session_fragment_buffer_bytes: 1,
+        max_session_memory_bytes: 20,
+        ..ResourceLimits::default()
+    };
     let mut manager = SessionManager::new(SessionManagerConfig {
         limits,
         ..SessionManagerConfig::default()
