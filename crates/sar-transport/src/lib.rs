@@ -2,6 +2,12 @@
 #![deny(missing_docs)]
 
 //! Transport abstraction and deterministic in-memory transport harness for SAR Stateful Streaming.
+//!
+//! Milestone coverage:
+//! - M10c: in-memory harness, TCP/QUIC policy models, transport actions
+//! - M10d: SAR-over-TCP binding ([`tcp`] module)
+
+pub mod tcp;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1127,3 +1133,5 @@ impl TransportHarness {
         drained
     }
 }
+
+pub use tcp::{TcpSarConnection, TcpTransportConfig};

@@ -87,6 +87,19 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - reverse-control hooks map `sar-stream` events to abstract `SESSION_STATUS` / `SESSION_ACK` transport actions (no real send path)
   - heartbeat/watchdog policy uses explicit time input only; no timers/background tasks are spawned
   - M10c does **not** implement real sockets, TCP networking, QUIC networking, TLS, retransmission, or congestion control
+- **Milestone 10d — SAR-over-TCP binding**
+  - `sar-transport::tcp::TcpSarConnection<S>` wraps any `Read + Write` stream (including `std::net::TcpStream`) and drives the M10c TCP-policy harness over real bytes
+  - `TcpSarConnection::connect` / `TcpSarConnection::accept` for real TCP; `TcpSarConnection::from_stream` for testing
+  - `process_available(now_ms)` reads bytes, feeds them to the transport policy, serializes outbound control frames, and returns resulting actions
+  - `write_all_sar_bytes(bytes)` writes raw SAR archive bytes to the stream
+  - TCP streams MUST NOT byte-interleave SAR sessions; a new SAR session may start only after `SESSION_CLOSE` or end-of-archive
+  - invalid unskippable bytes emit `CloseConnection` and permanently close the connection
+  - duplicate active Stream ID → `SAR_ERR_STREAM_STATE`; too many streams → `SAR_ERR_TOO_MANY_STREAMS`
+  - `SESSION_STATUS` / `SESSION_ACK` are serialized as SAR LFH control entries and written to the outbound stream when bidirectional control is enabled
+  - heartbeat/watchdog uses explicit `now_ms` input; no background timer or thread
+  - uses `std::net` (blocking); **no TLS, no QUIC, no async runtime**
+  - **for untrusted networks, SAR AEAD encryption and/or external transport security is required**
+  - QUIC binding remains M10e
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
@@ -125,7 +138,7 @@ docs/
 fuzz/
 ```
 
-Placeholder crates still expose only a `NotImplemented` marker except where later milestones have now been implemented (`sar-stream` for M10b, `sar-transport` for M10c).
+Placeholder crates still expose only a `NotImplemented` marker except where later milestones have now been implemented (`sar-stream` for M10b, `sar-transport` for M10c/M10d).
 
 ## CLI
 
@@ -195,7 +208,7 @@ Notes:
 - sparse apparent-size failures and repair working-set failures return `SAR_ERR_LIMIT_EXCEEDED` and do not leave final output files behind
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
 - `sar-stream` provides only the in-memory M10b session layer.
-- `sar-transport` (M10c) provides in-memory transport policy/harness only; real SAR-over-TCP (M10d), real SAR-over-QUIC (M10e), and full M10 closeout (M10f) are pending.
+- `sar-transport` (M10c/M10d) provides in-memory transport policy/harness and SAR-over-TCP binding; real SAR-over-QUIC (M10e) and full M10 closeout (M10f) are pending.
 
 ## Validation
 

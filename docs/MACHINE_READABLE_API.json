@@ -6665,17 +6665,21 @@
     {
       "name": "sar-transport",
       "path": "crates/sar-transport",
-      "purpose": "Transport abstraction traits plus deterministic in-memory TCP-like/QUIC-like harness over sar-stream.",
+      "purpose": "Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, and SAR-over-TCP binding (M10d).",
       "status": "implemented",
       "milestones": [
-        "10c"
+        "10c",
+        "10d"
       ],
       "features": [
         "Transport abstraction surface: TransportBindingKind, TransportConfig, TransportStreamId, TransportStreamState, TransportAction, SarTransportBinding.",
         "Deterministic in-memory harness with TCP-like non-interleaved policy and QUIC-like concurrent-stream policy.",
         "Active SAR Stream ID uniqueness, duplicate/limit rejection, rejected-ID unbound invariant, and SESSION_CLOSE unbind/reuse behavior.",
         "Status/ACK hooks mapped from sar-stream events/actions using SessionStatusFrame and SessionAckFrame types.",
-        "Explicit-time heartbeat/watchdog hooks with no background timers/tasks or real network I/O."
+        "Explicit-time heartbeat/watchdog hooks with no background timers/tasks or real network I/O.",
+        "M10d TCP binding: TcpSarConnection<S> wraps any Read+Write stream and drives M10c TCP policy over real bytes (std::net, no async, no TLS, no QUIC).",
+        "M10d TCP binding enforces bounded read_buffer_size and write_buffer_size limits before any allocation.",
+        "M10d TCP binding serializes SESSION_STATUS/SESSION_ACK outbound frames when bidirectional control is active."
       ],
       "modules": [
         {
@@ -6931,6 +6935,283 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Can be wrapped for deterministic test harness APIs in future bindings."
+            }
+          ]
+        },
+        {
+          "name": "tcp",
+          "path": "src/tcp.rs",
+          "items": [
+            {
+              "name": "TcpTransportConfig",
+              "kind": "struct",
+              "signature": "pub struct TcpTransportConfig { pub transport: TransportConfig, pub read_buffer_size: usize, pub write_buffer_size: usize }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Configuration for a TcpSarConnection. Extends TransportConfig with per-call read/write buffer size limits enforced before allocation.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "read_buffer_size caps bytes consumed per process_available call.",
+                "write_buffer_size caps bytes accepted per write_all_sar_bytes call.",
+                "Both limits are enforced before any allocation from network input."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "Generic/network types are not suitable for direct FFI export."
+            },
+            {
+              "name": "TcpSarConnection",
+              "kind": "struct",
+              "signature": "pub struct TcpSarConnection<S>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "SAR-over-TCP connection binding. Generic over any Read+Write stream. Uses a single TransportStreamId(0). Drives M10c TCP policy. Uses std::net blocking I/O; no async runtime, no TLS, no QUIC.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "No TLS is implemented. For untrusted networks, SAR AEAD and/or external transport security is required.",
+                "No background threads or timers are spawned by production code.",
+                "All unsafe code is forbidden (#![forbid(unsafe_code)]).",
+                "No unwrap/expect/panic/todo/unimplemented in production paths."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18",
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "Generic over Read+Write; not suitable for direct FFI. A future concrete wrapper may expose a stable C API."
+            },
+            {
+              "name": "TcpSarConnection::connect",
+              "kind": "function",
+              "signature": "pub fn connect(addr: SocketAddr, config: TcpTransportConfig) -> Result<TcpSarConnection<TcpStream>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Connect to a remote SAR-over-TCP server. Returns a ready-to-use blocking connection.",
+              "parameters": [
+                {
+                  "name": "addr",
+                  "type": "std::net::SocketAddr",
+                  "description": "Remote address to connect to."
+                },
+                {
+                  "name": "config",
+                  "type": "TcpTransportConfig",
+                  "description": "Connection configuration."
+                }
+              ],
+              "returns": "Result<TcpSarConnection<TcpStream>, SarError>",
+              "errors": [
+                "SarError::Io on connection failure"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::accept",
+              "kind": "function",
+              "signature": "pub fn accept(stream: TcpStream, config: TcpTransportConfig) -> Result<TcpSarConnection<TcpStream>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Accept an already-connected TcpStream from a TcpListener::accept call.",
+              "parameters": [
+                {
+                  "name": "stream",
+                  "type": "std::net::TcpStream",
+                  "description": "Accepted TCP stream."
+                },
+                {
+                  "name": "config",
+                  "type": "TcpTransportConfig",
+                  "description": "Connection configuration."
+                }
+              ],
+              "returns": "Result<TcpSarConnection<TcpStream>, SarError>",
+              "errors": [
+                "SarError::StreamState if transport stream init fails"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::from_stream",
+              "kind": "function",
+              "signature": "pub fn from_stream(stream: S, config: TcpTransportConfig) -> Result<TcpSarConnection<S>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Construct a connection from any Read+Write stream. Used for in-memory or mock testing.",
+              "parameters": [
+                {
+                  "name": "stream",
+                  "type": "S: Read + Write",
+                  "description": "Any Read+Write stream."
+                },
+                {
+                  "name": "config",
+                  "type": "TcpTransportConfig",
+                  "description": "Connection configuration."
+                }
+              ],
+              "returns": "Result<TcpSarConnection<S>, SarError>",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::process_available",
+              "kind": "function",
+              "signature": "pub fn process_available(&mut self, now_ms: Option<u64>) -> Result<Vec<TransportAction>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Read one bounded chunk from the stream, feed to TCP policy, serialize outbound control frames, and return actions. Checks inactivity watchdog when now_ms is Some. Returns StreamClosed on EOF.",
+              "parameters": [
+                {
+                  "name": "now_ms",
+                  "type": "Option<u64>",
+                  "description": "Explicit monotonic millisecond timestamp for heartbeat/watchdog checks. None to skip time checks."
+                }
+              ],
+              "returns": "Result<Vec<TransportAction>, SarError>",
+              "errors": [
+                "SarError::StreamClosed on EOF or after connection is closed.",
+                "SarError::Timeout when inactivity watchdog fires.",
+                "SarError::Io on underlying stream I/O error."
+              ],
+              "safety_notes": [
+                "Read chunk is capped at read_buffer_size; no unbounded allocation from network.",
+                "Malformed bytes emit CloseConnection action; connection is permanently closed.",
+                "No raw payload bytes are exposed in actions."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18",
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::write_all_sar_bytes",
+              "kind": "function",
+              "signature": "pub fn write_all_sar_bytes(&mut self, bytes: &[u8]) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Write raw SAR archive bytes to the TCP connection. Caller constructs valid SAR bytes. Capped at write_buffer_size per call.",
+              "parameters": [
+                {
+                  "name": "bytes",
+                  "type": "&[u8]",
+                  "description": "Raw SAR archive bytes to write."
+                }
+              ],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::LimitExceeded if bytes.len() > write_buffer_size.",
+                "SarError::StreamClosed if connection is closed.",
+                "SarError::Io on write failure."
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::close",
+              "kind": "function",
+              "signature": "pub fn close(&mut self) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Close the connection gracefully. Marks the connection as closed, finalises the transport stream, and flushes the write buffer. Subsequent calls are no-ops.",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "STREAM_ID",
+              "kind": "const",
+              "signature": "pub const STREAM_ID: TransportStreamId = TransportStreamId(0);",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "The single fixed transport-stream ID used by all TCP connections (one SAR session at a time, no byte-interleaving).",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
             }
           ]
         }

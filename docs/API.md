@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 10c source audit)
+# API Inventory (post–Milestone 10d source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -12,6 +12,7 @@ Current scope:
 - Milestone 9a: CDC metadata/TLV parsing and validation
 - Milestone 9b: delta metadata and patch application (`STORE_PATCH`, `VCDIFF`, `BSDIFF`)
 - Milestone 10a: stateless forward-only SAR byte-stream parser/writer state model
+- Milestone 10d: SAR-over-TCP binding (`sar-transport::tcp`)
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: no workspace crate in the current tree defines Cargo feature flags.
@@ -32,7 +33,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
 | `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
 | `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
-| `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream` | implemented |
+| `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d) | implemented |
 
 ## `sar-core`
 
@@ -298,6 +299,20 @@ Not implemented in this pass, even though some flags or structural fields alread
 - reverse `SESSION_STATUS` / `SESSION_ACK` are abstract transport actions and use `sar-stream` frame/event types (`SessionStatusFrame`, `SessionAckFrame`).
 - heartbeat/watchdog hooks are explicit-time (`record_valid_activity`, `check_inactivity`, `maybe_emit_heartbeat`) with no background monitoring.
 - M10c does not implement real TCP/QUIC sockets, async runtime integration, retransmission, congestion control, or TLS.
+
+### M10d SAR-over-TCP binding in `sar-transport::tcp`
+
+- `TcpSarConnection<S>` wraps any `Read + Write` stream (including `std::net::TcpStream`) and drives the M10c TCP-policy harness over real bytes.
+- TCP listener/client entry points: `TcpSarConnection::connect(addr, config)` and `TcpSarConnection::accept(stream, config)`.
+- Generic entry point for testing: `TcpSarConnection::from_stream(stream, config)`.
+- `process_available(now_ms)` reads one bounded chunk, feeds it to the transport policy, serializes outbound control frames, and returns resulting actions.
+- `write_all_sar_bytes(bytes)` writes a bounded chunk of raw SAR archive bytes to the stream.
+- `close()` closes the connection gracefully.
+- Uses a single fixed `TransportStreamId(0)` per TCP connection (one SAR session at a time, no byte-interleaving).
+- When bidirectional control is active, `EmitSessionStatus` and `EmitSessionAck` actions are serialized as SAR LFH-encoded control entries and written to the outbound stream.  A single NO_INDEX global header is sent before the first outbound control frame; subsequent frames reuse the same session context.
+- Heartbeat/watchdog is explicit-time: pass `now_ms` to `process_available`; no background timer.
+- Uses `std::net` only (blocking I/O, no async runtime, no TLS, no QUIC).
+- `TcpTransportConfig` holds `transport: TransportConfig`, `read_buffer_size`, and `write_buffer_size`; both buffer sizes are enforced before any allocation from network input.
 
 ---
 
@@ -991,24 +1006,28 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-transport`
 
-- Purpose: transport abstraction and deterministic in-memory transport harness layered over `sar-stream`
-- Status: implemented for Milestone 10c policy/harness scope
+- Purpose: transport abstraction and deterministic in-memory transport harness layered over `sar-stream`; SAR-over-TCP binding (M10d)
+- Status: implemented for Milestone 10c policy/harness scope + Milestone 10d TCP binding
 - Public APIs:
   - `TransportBindingKind`, `TransportConfig`, `TransportStreamId`, `TransportStreamState`, `TransportAction`
   - `SarTransportBinding`
   - `InMemoryTransport`
   - `TcpPolicy`, `QuicPolicy`
   - `TransportHarness`
-- FFI readiness: `candidate`
+  - `tcp::TcpTransportConfig` *(M10d, experimental)*
+  - `tcp::TcpSarConnection<S>` *(M10d, experimental)*
+  - `tcp::STREAM_ID` *(M10d, experimental)*
+- FFI readiness: `not_applicable` for generic/network types; `candidate` for policy/harness types
 - Notes:
-  - in-memory transport policy only; no real network I/O
-  - TCP-like policy is non-interleaved
-  - QUIC-like policy permits concurrent independent transport streams
-  - duplicate active Stream IDs fail closed; rejected Stream IDs remain unbound
-  - `SESSION_CLOSE` unbinds Stream ID and enables reuse
-  - reverse status/ack are emitted as abstract actions only
-  - explicit-time heartbeat/watchdog hooks only; no background timers/tasks
-  - M10d/M10e/M10f are still pending
+  - M10d TCP binding: `TcpSarConnection<S>` wraps any `Read + Write` stream and drives the M10c TCP policy
+  - TCP binding uses `std::net` (blocking, no async runtime, no TLS, no QUIC)
+  - TCP streams do not permit byte-interleaved SAR sessions; sequential sessions allowed after `SESSION_CLOSE`
+  - invalid unskippable stream bytes close the connection (`CloseConnection` action)
+  - `SESSION_STATUS`/`SESSION_ACK` serialization to outbound bytes requires bidirectional control to be enabled
+  - heartbeat/watchdog is explicit-time with `now_ms` parameter; no background timer
+  - TLS is not implemented; for untrusted networks, SAR AEAD and/or external transport security is required
+  - QUIC binding remains M10e
+  - M10f (full closeout) remains pending
 
 ## Foreign-Language Interface Readiness
 

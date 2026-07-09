@@ -1,6 +1,6 @@
 # Conformance Statement
 
-This document reflects the current repository state after Milestones 10a/10b/10c.
+This document reflects the current repository state after Milestones 10a/10b/10c/10d.
 
 ## Implemented
 
@@ -135,6 +135,20 @@ This document reflects the current repository state after Milestones 10a/10b/10c
   - status/ack hooks are emitted as abstract transport actions mapped from `sar-stream` events/actions
   - heartbeat/watchdog hooks use explicit timestamp input (`record_valid_activity`, `check_inactivity`, `maybe_emit_heartbeat`); no background monitoring exists
   - no real sockets, TCP networking, QUIC networking, TLS, async runtime integration, retransmission, or congestion control are implemented in M10c
+- **Milestone 10d SAR-over-TCP binding**
+  - `sar-transport::tcp::TcpSarConnection<S>` wraps any `Read + Write` stream and drives the M10c TCP-policy harness over real bytes
+  - TCP listener/client helpers: `TcpSarConnection::connect` / `TcpSarConnection::accept` / `TcpSarConnection::from_stream`
+  - TCP streams use a single fixed `TransportStreamId(0)` per connection; no byte-interleaving of SAR sessions
+  - a new SAR session may start only after `SESSION_CLOSE` or end-of-archive on the same TCP connection
+  - invalid unskippable stream bytes emit `CloseConnection` action and mark the connection closed
+  - duplicate active SAR Stream IDs produce `SAR_ERR_STREAM_STATE` and close the connection
+  - too many active streams produces `SAR_ERR_TOO_MANY_STREAMS` and closes the connection
+  - `SESSION_CLOSE` unbinds the SAR Stream ID and permits a later SAR session on the same TCP connection
+  - when bidirectional control is active, `EmitSessionStatus` and `EmitSessionAck` actions are serialized as SAR LFH control entries and written to the outbound stream; a NO_INDEX global header is sent before the first outbound control frame
+  - heartbeat/watchdog uses explicit `now_ms` input; no background thread or timer
+  - `TcpTransportConfig.read_buffer_size` caps bytes read per `process_available` call; `write_buffer_size` caps bytes accepted per `write_all_sar_bytes` call — both enforced before any allocation
+  - uses `std::net` (blocking I/O, no async runtime, no TLS, no QUIC)
+  - loopback TCP integration tests and non-network buffer/limit tests added in `sar-transport`
 
 ## Partial
 
@@ -172,8 +186,8 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- real transport bindings for Stateful Streaming Mode (real SAR-over-TCP and SAR-over-QUIC sockets/runtime integration)
-- transport security/TLS integration
+- real SAR-over-QUIC sockets/runtime integration (remains M10e)
+- transport security/TLS integration (TLS is not implemented in M10d; SAR AEAD and/or external transport security is required for untrusted networks)
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
@@ -182,7 +196,8 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`) remain placeholders
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
-- **Milestone 10d/10e/10f:** real SAR-over-TCP binding, real SAR-over-QUIC binding, and M10 full closeout
+- **Milestone 10e:** real SAR-over-QUIC binding
+- **Milestone 10f:** M10 full closeout
 - **Milestone 12:** stable FFI / C ABI for C, C++, and other language bindings
 
 ## Known Gaps

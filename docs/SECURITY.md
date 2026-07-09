@@ -70,7 +70,19 @@ This document reflects current implemented behavior only.
 - status/ack behavior is represented as abstract in-memory transport actions only; no real send path is performed.
 - for untrusted future transports, AEAD-capable SAR encryption is strongly recommended to authenticate `SESSION_INIT` / `SESSION_RESUME` and reduce hijack risk.
 - without SAR AEAD, session protection relies on future transport security or network isolation.
-- M10d will add real SAR-over-TCP binding and M10e will add real SAR-over-QUIC binding.
+
+## M10d SAR-over-TCP binding security notes
+
+- `TcpSarConnection<S>` wraps an existing TCP stream; it does **not** implement TLS or any transport-layer encryption.
+- **For connections over untrusted networks, SAR AEAD encryption and/or external transport security (e.g., WireGuard, IPsec, SSH tunneling) is required.**  M10d does not provide confidentiality or integrity of the TCP byte stream itself.
+- The `process_available` path never exposes raw payload bytes to callers; all payload processing occurs inside `sar-core`/`sar-stream` behind AEAD and session semantics before any filesystem actions are surfaced.
+- Invalid/unskippable byte sequences trigger `CloseConnection` before any further data is accepted; the connection is then permanently closed.
+- `read_buffer_size` caps bytes accepted per `process_available` call; `write_buffer_size` caps bytes per `write_all_sar_bytes` call — both enforced before any allocation from network input.
+- `std::net` blocking I/O is used; no async runtime, no `tokio`, no `mio`, no background tasks.
+- `thread::spawn` appears only in tests and is always joined deterministically.
+- No `unsafe` code is present.  All `unwrap` / `expect` calls in production code have been replaced with `?`-based error propagation.
+- QUIC binding, TLS, retransmission, and congestion control are **not** implemented in M10d.
+- QUIC binding remains M10e.
 
 ## FEC and AEAD ordering
 
