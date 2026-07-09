@@ -6665,34 +6665,272 @@
     {
       "name": "sar-transport",
       "path": "crates/sar-transport",
-      "purpose": "Placeholder crate for future transport integration.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "Transport abstraction traits plus deterministic in-memory TCP-like/QUIC-like harness over sar-stream.",
+      "status": "implemented",
+      "milestones": [
+        "10c"
+      ],
+      "features": [
+        "Transport abstraction surface: TransportBindingKind, TransportConfig, TransportStreamId, TransportStreamState, TransportAction, SarTransportBinding.",
+        "Deterministic in-memory harness with TCP-like non-interleaved policy and QUIC-like concurrent-stream policy.",
+        "Active SAR Stream ID uniqueness, duplicate/limit rejection, rejected-ID unbound invariant, and SESSION_CLOSE unbind/reuse behavior.",
+        "Status/ACK hooks mapped from sar-stream events/actions using SessionStatusFrame and SessionAckFrame types.",
+        "Explicit-time heartbeat/watchdog hooks with no background timers/tasks or real network I/O."
+      ],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "TransportBindingKind",
+              "kind": "enum",
+              "signature": "pub enum TransportBindingKind { Tcp, Quic, InMemory }",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented transport functionality.",
+              "stability": "experimental",
+              "description": "Transport binding family discriminator for TCP-like, QUIC-like, and in-memory harness modes.",
               "parameters": [],
               "returns": "",
               "errors": [],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.3",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Enum is simple and suitable for future opaque-handle APIs."
+            },
+            {
+              "name": "TransportConfig",
+              "kind": "struct",
+              "signature": "pub struct TransportConfig { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Configures transport-level stream limits, buffering bounds, status/ack queues, and heartbeat/watchdog timing.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "All feed/path action queues are bounded by explicit limits.",
+                "No background monitoring is performed; explicit timestamps are required."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Field set may evolve before transport binding milestones complete."
+            },
+            {
+              "name": "TransportStreamId",
+              "kind": "struct",
+              "signature": "pub struct TransportStreamId(pub u64);",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Opaque transport-stream identifier used by the harness policy layer.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Simple numeric handle."
+            },
+            {
+              "name": "TransportStreamState",
+              "kind": "enum",
+              "signature": "pub enum TransportStreamState { Idle, AwaitingGlobalHeader, AwaitingSessionInit, Active, Closing, Closed, Reset, Rejected }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Transport-stream state machine for policy/harness behavior.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.2",
+                "18.3.6"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "May evolve with M10d/M10e real binding integration."
+            },
+            {
+              "name": "TransportAction",
+              "kind": "enum",
+              "signature": "pub enum TransportAction { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Abstract action/event output from transport policy evaluation.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "Actions are abstract only; no real send/close/reset system call is performed in M10c."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.4",
+                "18.3.5",
+                "18.3.6"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Enum payload shape may grow before M10f."
+            },
+            {
+              "name": "SarTransportBinding",
+              "kind": "trait",
+              "signature": "pub trait SarTransportBinding { binding_kind, open_transport_stream, feed_bytes, close_transport_stream, reset_transport_stream }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Abstract transport-binding interface for opening streams, feeding bytes, and producing policy actions.",
+              "parameters": [],
+              "returns": "",
+              "errors": [
+                "Returns SarError::NotFound for unknown streams.",
+                "Returns SarError::LimitExceeded for configured transport bounds."
+              ],
+              "safety_notes": [
+                "M10c implementations are in-memory policy models only."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.3.1"
+              ],
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "requires_wrapper",
+              "ffi_notes": "Trait objects require an opaque wrapper for C ABI use."
+            },
+            {
+              "name": "InMemoryTransport",
+              "kind": "struct",
+              "signature": "pub struct InMemoryTransport { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Deterministic in-memory transport model implementing TCP-like and QUIC-like policy behaviors.",
+              "parameters": [],
+              "returns": "",
+              "errors": [
+                "Returns stream/limit/state errors via Result and RejectSarStream actions."
+              ],
+              "safety_notes": [
+                "No sockets, async runtime, TLS, retransmission, or congestion control."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3",
+                "18.3.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Best exposed as an opaque handle in future FFI."
+            },
+            {
+              "name": "TcpPolicy",
+              "kind": "struct",
+              "signature": "pub struct TcpPolicy;",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Marker for TCP-like non-interleaved transport policy model.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Zero-sized marker."
+            },
+            {
+              "name": "QuicPolicy",
+              "kind": "struct",
+              "signature": "pub struct QuicPolicy;",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Marker for QUIC-like concurrent-stream transport policy model.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Zero-sized marker."
+            },
+            {
+              "name": "TransportHarness",
+              "kind": "struct",
+              "signature": "pub struct TransportHarness { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Convenience deterministic harness that accumulates transport actions for tests and integration scaffolding.",
+              "parameters": [],
+              "returns": "",
+              "errors": [
+                "Propagates transport binding errors from wrapped InMemoryTransport operations."
+              ],
+              "safety_notes": [
+                "Harness is deterministic and in-memory only."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Can be wrapped for deterministic test harness APIs in future bindings."
             }
           ]
         }

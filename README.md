@@ -80,6 +80,13 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - Session and filesystem `OP_CODE` namespaces are validated separately; reserved values fail closed
   - `LOSS_TOLERANT` may surface only authenticated degraded reconstruction as `SAR_WARN_INCOMPLETE`; it never suppresses auth, decompression, patch, or structural failures
   - implementation is in-memory only: no transport framing, no networking, no QUIC/TCP, no async runtime
+- **Milestone 10c — `sar-transport` abstraction + in-memory transport harness**
+  - `sar-transport` now provides transport abstraction traits/types and deterministic in-memory TCP-like / QUIC-like policy models
+  - transport-level active transport streams and active SAR Stream ID tracking are enforced with duplicate/limit rejection
+  - rejected Stream IDs remain unbound; `SESSION_CLOSE` unbinds and allows later Stream ID reuse
+  - reverse-control hooks map `sar-stream` events to abstract `SESSION_STATUS` / `SESSION_ACK` transport actions (no real send path)
+  - heartbeat/watchdog policy uses explicit time input only; no timers/background tasks are spawned
+  - M10c does **not** implement real sockets, TCP networking, QUIC networking, TLS, retransmission, or congestion control
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
@@ -118,7 +125,7 @@ docs/
 fuzz/
 ```
 
-Placeholder crates still expose only a `NotImplemented` marker except where later milestones have now been implemented (`sar-stream` for M10b).
+Placeholder crates still expose only a `NotImplemented` marker except where later milestones have now been implemented (`sar-stream` for M10b, `sar-transport` for M10c).
 
 ## CLI
 
@@ -187,7 +194,8 @@ Notes:
 - `extract`, `verify`, and `repair` use default `ResourceLimits` safety caps unless CLI overrides are supplied. Relevant defaults include `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, `max_archive_size = 16 GiB`, and `max_repair_working_set = 2 GiB`.
 - sparse apparent-size failures and repair working-set failures return `SAR_ERR_LIMIT_EXCEEDED` and do not leave final output files behind
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
-- `sar-stream` provides only the in-memory M10b session layer; it does not implement transport framing, networking, QUIC/TCP bindings, or real I/O.
+- `sar-stream` provides only the in-memory M10b session layer.
+- `sar-transport` (M10c) provides in-memory transport policy/harness only; real SAR-over-TCP (M10d), real SAR-over-QUIC (M10e), and full M10 closeout (M10f) are pending.
 
 ## Validation
 

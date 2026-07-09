@@ -59,6 +59,19 @@ This document reflects current implemented behavior only.
 - `LOSS_TOLERANT` warnings are emitted only for degraded authenticated data; auth failures, decompression failures, patch failures, and structural corruption remain hard errors.
 - `ATOMIC_WRITE` and `FORCE_SYNC` are surfaced as inert action flags only; the crate does not mutate filesystems or expose unauthenticated plaintext.
 
+## M10c in-memory transport-layer security notes
+
+- `sar-transport` implements transport abstraction and deterministic in-memory policy/harness behavior only; it performs no production network I/O.
+- `sar-transport` does not implement real TCP sockets, real QUIC sockets, async runtime integration, TLS, retransmission, congestion control, or handshake logic.
+- transport policy does not authenticate SAR data by itself and does not weaken SAR AEAD/integrity invariants enforced by `sar-core`/`sar-stream`.
+- Session UUID values are not authentication credentials; they remain bound only as session identifiers.
+- rejected/invalid stream states fail closed and rejected Stream IDs remain unbound.
+- heartbeat/watchdog hooks use explicit timestamp input only; no background timers/tasks are spawned.
+- status/ack behavior is represented as abstract in-memory transport actions only; no real send path is performed.
+- for untrusted future transports, AEAD-capable SAR encryption is strongly recommended to authenticate `SESSION_INIT` / `SESSION_RESUME` and reduce hijack risk.
+- without SAR AEAD, session protection relies on future transport security or network isolation.
+- M10d will add real SAR-over-TCP binding and M10e will add real SAR-over-QUIC binding.
+
 ## FEC and AEAD ordering
 
 Current implemented order is:

@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+sar-core = { path = "../sar-core" }
+sar-stream = { path = "../sar-stream" }
 
 [lints]
 workspace = true

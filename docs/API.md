@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 10a source audit)
+# API Inventory (post–Milestone 10c source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -32,7 +32,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
 | `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
 | `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
-| `sar-transport` | Future transport integration placeholder | placeholder |
+| `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream` | implemented |
 
 ## `sar-core`
 
@@ -285,6 +285,19 @@ Not implemented in this pass, even though some flags or structural fields alread
 - `ATOMIC_WRITE` and `FORCE_SYNC` are surfaced as in-memory action flags only; no filesystem or transport side effects are performed by this crate.
 - `LOSS_TOLERANT` can only surface degraded authenticated output as `SAR_WARN_INCOMPLETE`; it does not suppress auth, decompression, patch, or structural failures.
 - No transport framing, QUIC/TCP binding, socket I/O, async runtime, retransmission, or background tasks are implemented in M10b.
+
+### M10c transport-layer notes in `sar-transport`
+
+- `sar-transport` depends on `sar-stream` (`sar-transport -> sar-stream -> sar-core`) and `sar-stream` does not depend on `sar-transport`.
+- `SarTransportBinding`, `InMemoryTransport`, and `TransportHarness` provide deterministic in-memory transport policy/harness behavior only.
+- TCP-like policy is non-interleaved and emits close/discard actions for invalid or unskippable stream errors.
+- QUIC-like policy allows concurrent independent transport streams and emits stream-local reset/reject actions where possible.
+- active SAR Stream ID uniqueness is enforced across the transport connection; duplicate active IDs fail closed.
+- rejected Stream IDs remain unbound.
+- `SESSION_CLOSE` unbinds Stream ID and allows later reuse.
+- reverse `SESSION_STATUS` / `SESSION_ACK` are abstract transport actions and use `sar-stream` frame/event types (`SessionStatusFrame`, `SessionAckFrame`).
+- heartbeat/watchdog hooks are explicit-time (`record_valid_activity`, `check_inactivity`, `maybe_emit_heartbeat`) with no background monitoring.
+- M10c does not implement real TCP/QUIC sockets, async runtime integration, retransmission, congestion control, or TLS.
 
 ---
 
@@ -978,10 +991,24 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-transport`
 
-- Purpose: reserved for future transport integration
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: transport abstraction and deterministic in-memory transport harness layered over `sar-stream`
+- Status: implemented for Milestone 10c policy/harness scope
+- Public APIs:
+  - `TransportBindingKind`, `TransportConfig`, `TransportStreamId`, `TransportStreamState`, `TransportAction`
+  - `SarTransportBinding`
+  - `InMemoryTransport`
+  - `TcpPolicy`, `QuicPolicy`
+  - `TransportHarness`
+- FFI readiness: `candidate`
+- Notes:
+  - in-memory transport policy only; no real network I/O
+  - TCP-like policy is non-interleaved
+  - QUIC-like policy permits concurrent independent transport streams
+  - duplicate active Stream IDs fail closed; rejected Stream IDs remain unbound
+  - `SESSION_CLOSE` unbinds Stream ID and enables reuse
+  - reverse status/ack are emitted as abstract actions only
+  - explicit-time heartbeat/watchdog hooks only; no background timers/tasks
+  - M10d/M10e/M10f are still pending
 
 ## Foreign-Language Interface Readiness
 

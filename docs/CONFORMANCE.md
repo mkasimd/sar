@@ -1,6 +1,6 @@
 # Conformance Statement
 
-This document reflects the current repository state after Milestone 10a.
+This document reflects the current repository state after Milestones 10a/10b/10c.
 
 ## Implemented
 
@@ -124,6 +124,17 @@ This document reflects the current repository state after Milestone 10a.
   - `ATOMIC_WRITE` / `FORCE_SYNC` are exposed as action metadata only
   - session-layer limits cover active streams, metadata size, status size, fragment buffers, and cumulative session memory
   - degraded `LOSS_TOLERANT` output may emit `SAR_WARN_INCOMPLETE`, but auth, decompression, patch, and structural failures are never suppressed
+- **Milestone 10c transport abstraction + in-memory harness**
+  - `sar-transport` provides transport abstraction traits/types and deterministic in-memory harness only
+  - dependency direction is `sar-transport -> sar-stream -> sar-core` with no reverse dependency from `sar-stream` to `sar-transport`
+  - TCP-like policy is non-interleaved and emits abstract close/discard actions for invalid/unskippable stream failures
+  - QUIC-like policy supports concurrent transport streams and emits stream-local reset/reject actions
+  - active SAR Stream ID uniqueness is enforced connection-wide; duplicate active IDs fail closed
+  - rejected Stream IDs remain unbound
+  - `SESSION_CLOSE` unbinds Stream ID and permits later reuse
+  - status/ack hooks are emitted as abstract transport actions mapped from `sar-stream` events/actions
+  - heartbeat/watchdog hooks use explicit timestamp input (`record_valid_activity`, `check_inactivity`, `maybe_emit_heartbeat`); no background monitoring exists
+  - no real sockets, TCP networking, QUIC networking, TLS, async runtime integration, retransmission, or congestion control are implemented in M10c
 
 ## Partial
 
@@ -161,17 +172,17 @@ This document reflects the current repository state after Milestone 10a.
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- transport bindings for Stateful Streaming Mode (`sar-transport`, QUIC/TCP framing, sockets, async runtime, retransmission)
-- transport-layer APIs
+- real transport bindings for Stateful Streaming Mode (real SAR-over-TCP and SAR-over-QUIC sockets/runtime integration)
+- transport security/TLS integration
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
 ## Planned
 
-- later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`, `sar-transport`) remain placeholders
+- later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`) remain placeholders
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
-- **Milestone 10:** streaming/session APIs
+- **Milestone 10d/10e/10f:** real SAR-over-TCP binding, real SAR-over-QUIC binding, and M10 full closeout
 - **Milestone 12:** stable FFI / C ABI for C, C++, and other language bindings
 
 ## Known Gaps

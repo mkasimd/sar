@@ -853,6 +853,10 @@ dependencies = [
 [[package]]
 name = "sar-transport"
 version = "0.1.0"
+dependencies = [
+ "sar-core",
+ "sar-stream",
+]
 
 [[package]]
 name = "serde"
