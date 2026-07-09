@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use sar_core::{EntryMode, GlobalFlags, GlobalHeader, LocalFileHeader, write_global_header, write_lfh};
+use sar_core::{
+    EntryMode, GlobalFlags, GlobalHeader, LocalFileHeader, write_global_header, write_lfh,
+};
 use sar_stream::{
     CapabilityFlags, SessionCapabilitiesFrame, SessionFlags, SessionInitFrame, SessionOpCode,
 };
@@ -50,7 +52,12 @@ pub fn session_control_entry_bytes(
 }
 
 pub fn session_close_entry_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> {
-    session_control_entry_bytes(stream_id, sequence_no, SessionOpCode::Close as u8, Vec::new())
+    session_control_entry_bytes(
+        stream_id,
+        sequence_no,
+        SessionOpCode::Close as u8,
+        Vec::new(),
+    )
 }
 
 pub fn session_heartbeat_entry_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> {
@@ -70,7 +77,12 @@ pub fn session_capabilities_entry_bytes(
     let payload = SessionCapabilitiesFrame { flags }
         .to_bytes()
         .expect("capabilities payload");
-    session_control_entry_bytes(stream_id, sequence_no, SessionOpCode::Capabilities as u8, payload)
+    session_control_entry_bytes(
+        stream_id,
+        sequence_no,
+        SessionOpCode::Capabilities as u8,
+        payload,
+    )
 }
 
 pub fn filesystem_data_entry_bytes(stream_id: u16, sequence_no: u16, payload: Vec<u8>) -> Vec<u8> {
@@ -85,9 +97,18 @@ pub fn filesystem_data_entry_bytes(stream_id: u16, sequence_no: u16, payload: Ve
     bytes
 }
 
-pub fn session_archive_init_bytes(stream_id: u16, sequence_no: u16, session_uuid: [u8; 16]) -> Vec<u8> {
+pub fn session_archive_init_bytes(
+    stream_id: u16,
+    sequence_no: u16,
+    session_uuid: [u8; 16],
+) -> Vec<u8> {
     let mut bytes = no_index_global_header_bytes();
-    bytes.extend_from_slice(&session_init_entry_bytes(stream_id, sequence_no, session_uuid, 0));
+    bytes.extend_from_slice(&session_init_entry_bytes(
+        stream_id,
+        sequence_no,
+        session_uuid,
+        0,
+    ));
     bytes
 }
 

@@ -246,8 +246,10 @@ struct TransportStreamContext {
 
 impl TransportStreamContext {
     fn new(config: &TransportConfig) -> Self {
-        let mut limits = ResourceLimits::default();
-        limits.max_active_streams = config.max_active_sar_streams;
+        let limits = ResourceLimits {
+            max_active_streams: config.max_active_sar_streams,
+            ..ResourceLimits::default()
+        };
         let mut local_capabilities = CapabilityFlags::NONE;
         if config.bidirectional_control {
             local_capabilities = CapabilityFlags::from_bits(
@@ -255,7 +257,7 @@ impl TransportStreamContext {
             );
         }
         let manager_config = SessionManagerConfig {
-            limits: limits.clone(),
+            limits,
             local_capabilities,
             support_resume: false,
         };
@@ -356,7 +358,9 @@ impl InMemoryTransport {
         &self,
         transport_stream_id: TransportStreamId,
     ) -> Option<TransportStreamState> {
-        self.streams.get(&transport_stream_id).map(|context| context.state)
+        self.streams
+            .get(&transport_stream_id)
+            .map(|context| context.state)
     }
 
     /// Records valid LFH activity using explicit time input.
@@ -376,10 +380,10 @@ impl InMemoryTransport {
 
     /// Checks inactivity watchdog using explicit time input.
     pub fn check_inactivity(&self, now_ms: u64) -> Result<Vec<TransportAction>, SarError> {
-        if let Some(last) = self.connection_last_activity_ms {
-            if now_ms.saturating_sub(last) > self.config.inactivity_timeout_ms {
-                return Err(SarError::Timeout("transport inactivity watchdog expired"));
-            }
+        if let Some(last) = self.connection_last_activity_ms
+            && now_ms.saturating_sub(last) > self.config.inactivity_timeout_ms
+        {
+            return Err(SarError::Timeout("transport inactivity watchdog expired"));
         }
         Ok(Vec::new())
     }
@@ -430,7 +434,9 @@ impl InMemoryTransport {
         action: TransportAction,
     ) -> Result<(), SarError> {
         if actions.len() >= config.max_pending_actions {
-            return Err(SarError::LimitExceeded("transport pending action limit exceeded"));
+            return Err(SarError::LimitExceeded(
+                "transport pending action limit exceeded",
+            ));
         }
         actions.push(action);
         Ok(())
@@ -442,7 +448,8 @@ impl InMemoryTransport {
             .filter(|action| {
                 matches!(
                     action,
-                    TransportAction::EmitSessionStatus { .. } | TransportAction::EmitSessionAck { .. }
+                    TransportAction::EmitSessionStatus { .. }
+                        | TransportAction::EmitSessionAck { .. }
                 )
             })
             .count()
@@ -480,9 +487,7 @@ impl InMemoryTransport {
 
     fn error_from_status(status: SarStatus) -> SarError {
         match status {
-            SarStatus::ErrTooManyStreams => {
-                SarError::TooManyStreams("transport policy rejection")
-            }
+            SarStatus::ErrTooManyStreams => SarError::TooManyStreams("transport policy rejection"),
             SarStatus::ErrFlagConflict => SarError::FlagConflict("transport policy rejection"),
             SarStatus::ErrTimeout => SarError::Timeout("transport policy rejection"),
             SarStatus::ErrLimitExceeded => SarError::LimitExceeded("transport policy rejection"),
@@ -597,7 +602,8 @@ impl InMemoryTransport {
                     if !context.peer_capabilities.supports_session_ack() {
                         continue;
                     }
-                    if Self::count_status_ack_actions(actions) >= self.config.max_status_ack_actions {
+                    if Self::count_status_ack_actions(actions) >= self.config.max_status_ack_actions
+                    {
                         return Err(SarError::LimitExceeded(
                             "transport status/ack action limit exceeded",
                         ));
@@ -654,7 +660,9 @@ impl InMemoryTransport {
                     }
 
                     if self.config.strict_validation {
-                        if flags.bidirectional_stream_required() && !self.config.bidirectional_stream {
+                        if flags.bidirectional_stream_required()
+                            && !self.config.bidirectional_stream
+                        {
                             self.reject_stream_with_policy(
                                 transport_stream_id,
                                 Some(stream_id),
@@ -666,7 +674,9 @@ impl InMemoryTransport {
                             )?;
                             continue;
                         }
-                        if flags.bidirectional_control_required() && !self.config.bidirectional_control {
+                        if flags.bidirectional_control_required()
+                            && !self.config.bidirectional_control
+                        {
                             self.reject_stream_with_policy(
                                 transport_stream_id,
                                 Some(stream_id),
@@ -680,7 +690,8 @@ impl InMemoryTransport {
                         }
                     }
 
-                    self.active_sar_streams.insert(stream_id, transport_stream_id);
+                    self.active_sar_streams
+                        .insert(stream_id, transport_stream_id);
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.state = TransportStreamState::Active;
                         context.bound_sar_stream_id = Some(stream_id);
@@ -695,7 +706,10 @@ impl InMemoryTransport {
                         },
                     )?;
                 }
-                SessionEvent::SessionClosed { stream_id, session_uuid: _ } => {
+                SessionEvent::SessionClosed {
+                    stream_id,
+                    session_uuid: _,
+                } => {
                     self.active_sar_streams.remove(&stream_id);
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.bound_sar_stream_id = None;
@@ -703,17 +717,20 @@ impl InMemoryTransport {
                     }
                     close_stream = Some(Some(stream_id));
                 }
-                SessionEvent::CapabilitiesUpdated { stream_id: _, frame } => {
+                SessionEvent::CapabilitiesUpdated {
+                    stream_id: _,
+                    frame,
+                } => {
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.peer_capabilities = frame.flags;
                     }
                 }
-                SessionEvent::Warning { stream_id: _, status, message: _ } => {
-                    Self::push_action(
-                        &self.config,
-                        actions,
-                        TransportAction::Warning { status },
-                    )?;
+                SessionEvent::Warning {
+                    stream_id: _,
+                    status,
+                    message: _,
+                } => {
+                    Self::push_action(&self.config, actions, TransportAction::Warning { status })?;
                 }
                 SessionEvent::StatefulInactive {
                     stream_id,
@@ -770,13 +787,7 @@ impl InMemoryTransport {
             .streams
             .get(&transport_stream_id)
             .and_then(|context| context.bound_sar_stream_id);
-        self.reject_stream_with_policy(
-            transport_stream_id,
-            current_sar,
-            error,
-            0,
-            actions,
-        )
+        self.reject_stream_with_policy(transport_stream_id, current_sar, error, 0, actions)
     }
 }
 
@@ -797,8 +808,10 @@ impl SarTransportBinding for InMemoryTransport {
                 "too many active transport streams for connection",
             ));
         }
-        self.streams
-            .insert(transport_stream_id, TransportStreamContext::new(&self.config));
+        self.streams.insert(
+            transport_stream_id,
+            TransportStreamContext::new(&self.config),
+        );
         if let Some(context) = self.streams.get_mut(&transport_stream_id) {
             context.state = TransportStreamState::AwaitingGlobalHeader;
         }
@@ -807,7 +820,9 @@ impl SarTransportBinding for InMemoryTransport {
         Self::push_action(
             &self.config,
             &mut actions,
-            TransportAction::AcceptTransportStream { transport_stream_id },
+            TransportAction::AcceptTransportStream {
+                transport_stream_id,
+            },
         )?;
 
         self.ensure_tcp_not_interleaved().or_else(|err| {
@@ -884,7 +899,9 @@ impl SarTransportBinding for InMemoryTransport {
                             self.connection_last_activity_ms = Some(now);
                         }
                         let sequence_no = entry.header.sequence_no;
-                        let result = context.manager.process_entry(&SessionEntry::from_entry_reader(*entry));
+                        let result = context
+                            .manager
+                            .process_entry(&SessionEntry::from_entry_reader(*entry));
                         LoopEvent::SessionResult {
                             sequence_no,
                             result,
@@ -1043,7 +1060,9 @@ impl TransportHarness {
         bytes: &[u8],
         now_ms: Option<u64>,
     ) -> Result<(), SarError> {
-        let actions = self.binding.feed_bytes(transport_stream_id, bytes, now_ms)?;
+        let actions = self
+            .binding
+            .feed_bytes(transport_stream_id, bytes, now_ms)?;
         self.actions.extend(actions);
         Ok(())
     }
@@ -1074,7 +1093,9 @@ impl TransportHarness {
         transport_stream_id: TransportStreamId,
         reason: SarError,
     ) -> Result<(), SarError> {
-        let actions = self.binding.reset_transport_stream(transport_stream_id, reason)?;
+        let actions = self
+            .binding
+            .reset_transport_stream(transport_stream_id, reason)?;
         self.actions.extend(actions);
         Ok(())
     }

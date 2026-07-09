@@ -32,9 +32,11 @@ fn tcp_policy_rejects_byte_interleaved_streams() {
     let actions = transport
         .open_transport_stream(TransportStreamId(2))
         .expect("open stream2 still action-level rejected");
-    assert!(actions
-        .iter()
-        .any(|action| matches!(action, TransportAction::CloseConnection { .. })));
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, TransportAction::CloseConnection { .. }))
+    );
 }
 
 #[test]
@@ -76,9 +78,11 @@ fn tcp_invalid_unskippable_stream_emits_close_connection() {
     let actions = transport
         .feed_bytes(TransportStreamId(1), &bytes, Some(1))
         .expect("policy rejection as actions");
-    assert!(actions
-        .iter()
-        .any(|action| matches!(action, TransportAction::CloseConnection { .. })));
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, TransportAction::CloseConnection { .. }))
+    );
 }
 
 #[test]
@@ -104,8 +108,10 @@ fn tcp_duplicate_active_sar_stream_id_is_rejected() {
 
 #[test]
 fn tcp_too_many_active_sar_streams_is_rejected() {
-    let mut config = TransportConfig::default();
-    config.max_active_sar_streams = 1;
+    let config = TransportConfig {
+        max_active_sar_streams: 1,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_tcp(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -138,7 +144,10 @@ fn tcp_rejected_stream_id_remains_unbound_and_close_unbinds() {
         .expect("bind");
     assert!(transport.is_sar_stream_bound(7));
 
-    let close = concat(&[no_index_global_header_bytes(), session_close_entry_bytes(7, 1)]);
+    let close = concat(&[
+        no_index_global_header_bytes(),
+        session_close_entry_bytes(7, 1),
+    ]);
     transport
         .feed_bytes(TransportStreamId(1), &close, Some(2))
         .expect("close");

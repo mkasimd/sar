@@ -1,14 +1,18 @@
 mod common;
 
-use common::{filesystem_data_entry_bytes, no_index_global_header_bytes, session_archive_init_bytes};
+use common::{
+    filesystem_data_entry_bytes, no_index_global_header_bytes, session_archive_init_bytes,
+};
 use sar_transport::{
     InMemoryTransport, SarTransportBinding, TransportAction, TransportConfig, TransportStreamId,
 };
 
 #[test]
 fn max_active_transport_stream_limit_is_enforced() {
-    let mut config = TransportConfig::default();
-    config.max_active_transport_streams = 1;
+    let config = TransportConfig {
+        max_active_transport_streams: 1,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -21,8 +25,10 @@ fn max_active_transport_stream_limit_is_enforced() {
 
 #[test]
 fn max_active_sar_stream_limit_is_enforced() {
-    let mut config = TransportConfig::default();
-    config.max_active_sar_streams = 1;
+    let config = TransportConfig {
+        max_active_sar_streams: 1,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -52,8 +58,10 @@ fn max_active_sar_stream_limit_is_enforced() {
 
 #[test]
 fn max_buffered_bytes_per_stream_is_enforced() {
-    let mut config = TransportConfig::default();
-    config.max_buffered_bytes_per_transport_stream = 4;
+    let config = TransportConfig {
+        max_buffered_bytes_per_transport_stream: 4,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -66,8 +74,10 @@ fn max_buffered_bytes_per_stream_is_enforced() {
 
 #[test]
 fn max_pending_action_limit_is_enforced() {
-    let mut config = TransportConfig::default();
-    config.max_pending_actions = 1;
+    let config = TransportConfig {
+        max_pending_actions: 1,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -76,8 +86,11 @@ fn max_pending_action_limit_is_enforced() {
     let err = transport
         .feed_bytes(
             TransportStreamId(1),
-            &[no_index_global_header_bytes(), filesystem_data_entry_bytes(1, 0, b"x".to_vec())]
-                .concat(),
+            &[
+                no_index_global_header_bytes(),
+                filesystem_data_entry_bytes(1, 0, b"x".to_vec()),
+            ]
+            .concat(),
             Some(1),
         )
         .expect_err("reject+reset should overflow per-call action bound");
@@ -93,10 +106,14 @@ fn malformed_transport_fed_bytes_do_not_panic() {
     let actions = transport
         .feed_bytes(TransportStreamId(1), &[0x01, 0x02, 0x03, 0x04], Some(1))
         .expect("handled as policy actions or need-more");
-    assert!(actions.is_empty() || actions.iter().any(|action| {
-        matches!(
-            action,
-            TransportAction::RejectSarStream { .. } | TransportAction::ResetTransportStream { .. }
-        )
-    }));
+    assert!(
+        actions.is_empty()
+            || actions.iter().any(|action| {
+                matches!(
+                    action,
+                    TransportAction::RejectSarStream { .. }
+                        | TransportAction::ResetTransportStream { .. }
+                )
+            })
+    );
 }

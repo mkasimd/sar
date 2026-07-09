@@ -50,7 +50,9 @@ fn missing_heartbeat_beyond_timeout_returns_timeout() {
     transport
         .record_valid_activity(TransportStreamId(1), 0)
         .expect("record");
-    let timeout = transport.check_inactivity(180_001).expect_err("timeout expected");
+    let timeout = transport
+        .check_inactivity(180_001)
+        .expect_err("timeout expected");
     assert!(matches!(timeout, sar_core::SarError::Timeout(_)));
 }
 

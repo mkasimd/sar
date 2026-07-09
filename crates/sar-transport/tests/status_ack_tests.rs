@@ -10,8 +10,10 @@ use sar_transport::{
 
 #[test]
 fn bidirectional_control_active_emits_status_for_stream_state_error() {
-    let mut config = TransportConfig::default();
-    config.bidirectional_control = true;
+    let config = TransportConfig {
+        bidirectional_control: true,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -43,8 +45,10 @@ fn bidirectional_control_active_emits_status_for_stream_state_error() {
 
 #[test]
 fn bidirectional_control_inactive_does_not_emit_status() {
-    let mut config = TransportConfig::default();
-    config.bidirectional_control = false;
+    let config = TransportConfig {
+        bidirectional_control: false,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -69,9 +73,11 @@ fn bidirectional_control_inactive_does_not_emit_status() {
         )
         .expect("duplicate reject");
 
-    assert!(!actions
-        .iter()
-        .any(|action| matches!(action, TransportAction::EmitSessionStatus { .. })));
+    assert!(
+        !actions
+            .iter()
+            .any(|action| matches!(action, TransportAction::EmitSessionStatus { .. }))
+    );
 }
 
 #[test]
@@ -125,12 +131,18 @@ fn unsupported_ack_does_not_emit_ack() {
         )
         .expect("bind");
 
-    let close = [common::no_index_global_header_bytes(), session_close_entry_bytes(9, 1)].concat();
+    let close = [
+        common::no_index_global_header_bytes(),
+        session_close_entry_bytes(9, 1),
+    ]
+    .concat();
     let actions = transport
         .feed_bytes(TransportStreamId(1), &close, Some(2))
         .expect("close");
 
-    assert!(!actions
-        .iter()
-        .any(|action| matches!(action, TransportAction::EmitSessionAck { .. })));
+    assert!(
+        !actions
+            .iter()
+            .any(|action| matches!(action, TransportAction::EmitSessionAck { .. }))
+    );
 }

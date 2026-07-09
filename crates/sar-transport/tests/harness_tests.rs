@@ -9,13 +9,19 @@ use sar_transport::{
 #[test]
 fn harness_can_create_tcp_like_binding() {
     let transport = InMemoryTransport::new_tcp(TransportConfig::default());
-    assert_eq!(transport.policy_kind(), sar_transport::TransportBindingKind::Tcp);
+    assert_eq!(
+        transport.policy_kind(),
+        sar_transport::TransportBindingKind::Tcp
+    );
 }
 
 #[test]
 fn harness_can_create_quic_like_binding() {
     let transport = InMemoryTransport::new_quic(TransportConfig::default());
-    assert_eq!(transport.policy_kind(), sar_transport::TransportBindingKind::Quic);
+    assert_eq!(
+        transport.policy_kind(),
+        sar_transport::TransportBindingKind::Quic
+    );
 }
 
 #[test]
@@ -64,7 +70,9 @@ fn harness_does_not_bind_before_complete_bytes_arrive() {
     let actions = transport
         .feed_bytes(TransportStreamId(1), partial, Some(1))
         .expect("partial feed");
-    assert!(actions
-        .iter()
-        .all(|action| !matches!(action, TransportAction::BindSarStream { .. })));
+    assert!(
+        actions
+            .iter()
+            .all(|action| !matches!(action, TransportAction::BindSarStream { .. }))
+    );
 }

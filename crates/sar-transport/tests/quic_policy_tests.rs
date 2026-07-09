@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    malformed_lfh_prefix, session_archive_init_bytes, session_close_entry_bytes,
-};
+use common::{malformed_lfh_prefix, session_archive_init_bytes, session_close_entry_bytes};
 use sar_transport::{
     InMemoryTransport, SarTransportBinding, TransportAction, TransportConfig, TransportStreamId,
 };
@@ -61,7 +59,11 @@ fn quic_policy_resets_only_affected_stream_on_local_error() {
         )
         .expect("bind stream1");
 
-    let bad = [session_archive_init_bytes(2, 0, [2; 16]), malformed_lfh_prefix()].concat();
+    let bad = [
+        session_archive_init_bytes(2, 0, [2; 16]),
+        malformed_lfh_prefix(),
+    ]
+    .concat();
     let actions = transport
         .feed_bytes(TransportStreamId(2), &bad, Some(2))
         .expect("stream-local reset");
@@ -69,15 +71,19 @@ fn quic_policy_resets_only_affected_stream_on_local_error() {
     assert!(actions.iter().any(|action| {
         matches!(action, TransportAction::ResetTransportStream { transport_stream_id, .. } if *transport_stream_id == TransportStreamId(2))
     }));
-    assert!(!actions
-        .iter()
-        .any(|action| matches!(action, TransportAction::CloseConnection { .. })));
+    assert!(
+        !actions
+            .iter()
+            .any(|action| matches!(action, TransportAction::CloseConnection { .. }))
+    );
 }
 
 #[test]
 fn quic_duplicate_and_too_many_stream_handling_and_reuse_after_close() {
-    let mut config = TransportConfig::default();
-    config.max_active_sar_streams = 1;
+    let config = TransportConfig {
+        max_active_sar_streams: 1,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
@@ -109,7 +115,11 @@ fn quic_duplicate_and_too_many_stream_handling_and_reuse_after_close() {
     }));
     assert!(transport.is_sar_stream_bound(5));
 
-    let close = [common::no_index_global_header_bytes(), session_close_entry_bytes(5, 1)].concat();
+    let close = [
+        common::no_index_global_header_bytes(),
+        session_close_entry_bytes(5, 1),
+    ]
+    .concat();
     transport
         .feed_bytes(TransportStreamId(1), &close, Some(3))
         .expect("close stream 5");

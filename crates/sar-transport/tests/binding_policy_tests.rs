@@ -1,8 +1,6 @@
 mod common;
 
-use common::{
-    filesystem_data_entry_bytes, session_archive_init_bytes, session_init_entry_bytes,
-};
+use common::{filesystem_data_entry_bytes, session_archive_init_bytes, session_init_entry_bytes};
 use sar_transport::{
     InMemoryTransport, SarTransportBinding, TransportAction, TransportConfig, TransportStreamId,
 };
@@ -24,9 +22,11 @@ fn new_global_header_without_valid_session_init_does_not_bind() {
         .expect("policy actions");
 
     assert!(!transport.is_sar_stream_bound(3));
-    assert!(actions
-        .iter()
-        .any(|action| matches!(action, TransportAction::RejectSarStream { .. })));
+    assert!(
+        actions
+            .iter()
+            .any(|action| matches!(action, TransportAction::RejectSarStream { .. }))
+    );
 }
 
 #[test]
@@ -52,8 +52,10 @@ fn new_global_header_followed_by_valid_session_init_binds() {
 
 #[test]
 fn stream_id_zero_duplicate_and_too_many_are_rejected() {
-    let mut config = TransportConfig::default();
-    config.max_active_sar_streams = 1;
+    let config = TransportConfig {
+        max_active_sar_streams: 1,
+        ..TransportConfig::default()
+    };
     let mut transport = InMemoryTransport::new_quic(config);
     transport
         .open_transport_stream(TransportStreamId(1))
