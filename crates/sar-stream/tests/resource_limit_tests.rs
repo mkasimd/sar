@@ -33,7 +33,7 @@ fn status_metadata_fragment_and_session_memory_limits_are_enforced() {
         max_session_status_message_bytes: 3,
         max_session_metadata_bytes: 2,
         max_session_fragment_buffer_bytes: 1,
-        max_session_memory_bytes: 20,
+        max_session_memory_bytes: 40,
         ..ResourceLimits::default()
     };
     let mut manager = SessionManager::new(SessionManagerConfig {
