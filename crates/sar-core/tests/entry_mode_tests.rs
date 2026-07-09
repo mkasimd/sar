@@ -45,6 +45,17 @@ fn entry_mode_reports_loss_tolerant_bit() {
 }
 
 #[test]
+fn entry_mode_reports_session_and_sync_bits() {
+    let mode = EntryMode::from_bits(
+        EntryMode::SESSION_CONTROL | EntryMode::ATOMIC_WRITE | EntryMode::FORCE_SYNC,
+    );
+
+    assert!(mode.is_session_control());
+    assert!(mode.is_atomic_write());
+    assert!(mode.is_force_sync());
+}
+
+#[test]
 fn entry_mode_validation_requires_matching_global_flags() {
     let compressed_err = validate_entry_mode_against_global(
         GlobalFlags::NO_INDEX,
@@ -91,4 +102,11 @@ fn entry_mode_validation_accepts_consistent_bits() {
 
     validate_entry_mode_against_global(global_flags, entry_mode)
         .expect("entry mode should be valid");
+}
+
+#[test]
+fn entry_mode_reserved_bit_fails_closed() {
+    let err = validate_entry_mode_against_global(GlobalFlags::NO_INDEX, EntryMode::from_bits(1 << 12))
+        .expect_err("reserved bit 12 must fail");
+    assert!(matches!(err, SarError::ReservedValue(_)));
 }
