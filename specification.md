@@ -690,18 +690,22 @@ Non-AEAD algorithms (e.g., `AES256_CBC`, `CHACHA20`) MUST NOT be selected as def
 * `0xFF`: **OTHER**
 
 ### 8.4 Patching Algorithms (`SAR_L_PATCH`)
-Used only when `HAS_DELTA` (Bit 9) is set. This ID is stored in the **Patch Algo ID** field.
 
-* `0x00`: **STORE_PATCH** (Direct binary delta application)
-* `0x01`: **VCDIFF** (Standard Binary Diff - RFC 3284)
-* `0x02`: **BSDIFF** (High-efficiency binary patching)
-* `0x03`: **ZSTD_PATCH** (Zstd utilizing an external dictionary)
-* `0xF0–0xFF`: **CUSTOM** (Implementation-defined range)
+Patching algorithms are used only when `HAS_DELTA` (Bit 9) is set. The algorithm identifier is stored in the LFH **Patch Algo ID** field.
+
+| ID          | Name          | Description                                       |
+| ----------- | ------------- | ------------------------------------------------- |
+| `0x00`      | `STORE_PATCH` | Self-contained full-target patch payload.         |
+| `0x01`      | `VCDIFF`      | RFC 3284 VCDIFF delta stream.                     |
+| `0x02`      | `BSDIFF`      | SAR BSDIFF v1 delta payload.                      |
+| `0x03`      | `ZSTD_PATCH`  | Zstandard dictionary-based patch profile.         |
+| `0x04–0xEF` | Reserved      | Reserved for future SAR-defined patch algorithms. |
+| `0xF0–0xFF` | `CUSTOM`      | Implementation-defined range.                     |
 
 Implementations that support delta patch processing (`HAS_DELTA`) MUST implement:
 
-* `STORE_PATCH` (`0x00`)
-* `VCDIFF` (`0x01`)
+* `STORE_PATCH` (`0x00`);
+* `VCDIFF` (`0x01`).
 
 Support for `BSDIFF` (`0x02`) and `ZSTD_PATCH` (`0x03`) is OPTIONAL.
 
@@ -709,13 +713,58 @@ Implementations encountering an assigned but unsupported patch algorithm identif
 
 Implementations encountering a reserved patch algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
-Patch algorithms are classified by whether they require an external base object or dictionary to reconstruct the target logical data.
+#### Patch Transformation Domain
 
-`STORE_PATCH` (`0x00`) is self-contained. It does not require a base object. For `STORE_PATCH`, the `Delta Base Hash` field MAY be set to all zero bytes to indicate that no base object is required.
+Patch algorithms operate on decoded patch payload bytes.
+
+Patch application occurs after FEC repair, AEAD authentication/decryption, decompression, and fragment reassembly, and before sparse reconstruction.
+
+The delta transformation order is:
+
+```text
+Decode:
+  FEC repair, if applicable
+  Fragment reassembly, if applicable
+  AEAD authentication and decryption, if applicable
+  Decompression, if applicable
+  Patch application
+  Sparse reconstruction, if applicable
+```
+
+Encoding uses the reverse order:
+
+```text
+Encode:
+  Target logical data
+  Patch payload generation
+  Compression, if applicable
+  Encryption, if applicable
+  Fragmentation/FEC, if applicable
+```
+
+Patch algorithms MUST operate on logical patch payload bytes after SAR decompression. Patch algorithms MUST NOT define or apply an additional hidden compression layer unless explicitly defined by the patch algorithm profile.
+
+For `STORE_PATCH`, `VCDIFF`, and `BSDIFF`, compression is handled exclusively by the SAR compression layer.
+
+Therefore:
+
+* `STORE_PATCH` payloads MAY be SAR-compressed.
+* `VCDIFF` payloads MAY be SAR-compressed.
+* `BSDIFF` payloads MAY be SAR-compressed.
+* Encoders implementing `BSDIFF` MUST produce SAR BSDIFF v1 payloads using the `SARBSD01` format without internal bzip2 compression.
+* `ZSTD_PATCH` is reserved for a future dictionary-based patch profile and MUST define its own dictionary semantics before use.
+
+#### Base and Reconstruction Input Requirements
+
+Patch algorithms are classified by whether they require external reconstruction input.
+
+`STORE_PATCH` (`0x00`) is self-contained. It does not require a base object, dictionary, or external reconstruction input.
 
 `VCDIFF` (`0x01`) and `BSDIFF` (`0x02`) are base-object patch algorithms. Patch application requires the bytes of the identified base object.
 
-`ZSTD_PATCH` (`0x03`) is a dictionary-based patch algorithm. Patch application requires the identified external dictionary and, if the dictionary is derived from a base object, the corresponding base object or dictionary bytes.
+`ZSTD_PATCH` (`0x03`) is a dictionary-based patch algorithm. Patch application requires the identified dictionary bytes and any additional reconstruction input defined by the `ZSTD_PATCH` profile.
+
+For `STORE_PATCH`, the `Delta Base Hash` field SHOULD be set to all zero bytes to indicate that no base object is required.
 
 For any patch algorithm that requires a base object, dictionary, or other external reconstruction input, an all-zero `Delta Base Hash` MUST be treated as missing reconstruction input and MUST result in `SAR_ERR_BASE_MISSING` if patch application is attempted.
 
@@ -723,12 +772,44 @@ Implementations MUST NOT interpret an all-zero `Delta Base Hash` as “skip delt
 
 The `Delta Base Hash` field identifies the expected reconstruction input. Unless a hash algorithm is explicitly specified by this specification or by a negotiated extension, implementations MUST treat the field as an opaque identity value and MUST NOT guess the hash algorithm.
 
+Implementations MUST NOT perform automatic filesystem lookup, network access, external CAS lookup, or provider access during patch application unless such behavior is explicitly requested by an application layer and bounded by implementation policy.
+
+#### Patch Output Size
+
+For all patch algorithms, the reconstructed output size MUST equal the LFH `Uncompressed Size` field after patch application.
+
+If the reconstructed output size differs from LFH `Uncompressed Size`, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+
+Implementations MUST enforce configured `ResourceLimits` before allocating the reconstructed target buffer.
+
+#### Patch Error Behavior
+
+Malformed patch payloads MUST return `SAR_ERR_PATCH_FAILED`.
+
+Missing required base objects, dictionaries, or reconstruction inputs MUST return `SAR_ERR_BASE_MISSING`.
+
+Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
+
+`LOSS_TOLERANT` MUST NOT suppress patch failures.
+
+Implementations MUST NOT release finalized reconstructed output after patch failure.
+
+#### VCDIFF Secondary Compression
+
+SAR `VCDIFF` uses RFC 3284 as a patch payload format. SAR compression wraps the VCDIFF payload externally through the normal SAR compression layer.
+
+Implementations MUST NOT rely on VCDIFF-internal secondary compression for SAR `VCDIFF`.
+
+VCDIFF streams requiring unsupported secondary compressors MUST return `SAR_ERR_UNSUPPORTED`.
 
 #### 8.4.1 CUSTOM Patch Semantics
-For Custom patch algorithms following ruleset SHALL apply:
-* CUSTOM patch semantics MAY operate on arbitrary binary diff models.
-* CUSTOM patch semantics MUST be explicitly negotiated by application layer.
-* CUSTOM patch semantics MUST fail with `SAR_ERR_UNSUPPORTED` if unknown.
+
+For custom patch algorithms, the following rules apply:
+
+* `CUSTOM` patch semantics MAY operate on arbitrary binary diff models.
+* `CUSTOM` patch semantics MAY be used without explicit application-layer negotiation in controlled or closed environments where both encoder and decoder implementations are known to support the same custom algorithm. In interoperable or heterogeneous environments, explicit negotiation is RECOMMENDED.
+* Unknown or unnegotiated custom patch algorithms MUST fail with `SAR_ERR_UNSUPPORTED`.
+* Custom patch algorithms that require external reconstruction input MUST follow the base/reconstruction-input rules in Section 8.4.
 
 #### 8.4.2 STORE_PATCH (`0x00`)
 
@@ -740,71 +821,88 @@ No copy instructions, base reads, external dictionaries, or external base-object
 
 When applying `STORE_PATCH`, the decoder SHALL treat the decoded patch payload as the reconstructed target logical data.
 
-The reconstructed output size MUST equal the LFH `Uncompressed Size` field after patch application. If the decoded patch payload length differs from LFH `Uncompressed Size`, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+`STORE_PATCH` does not require base object bytes to be available for patch application.
 
-`STORE_PATCH` operates in the delta transformation domain defined by Section 13:
+If `Delta Base Hash` is nonzero, implementations MAY expose it as metadata or use it for diagnostics, but `STORE_PATCH` application MUST NOT fail solely because the base object is unavailable.
 
-```text
-Decrypt -> Decompress -> Apply Patch
-```
+For `STORE_PATCH`, a malformed payload is one whose decoded payload length does not exactly equal LFH `Uncompressed Size`, or whose decoded payload cannot be obtained because FEC repair, decryption, decompression, or an earlier decoding stage failed.
 
-Therefore, if compression and/or encryption are active, they are applied to the `STORE_PATCH` payload in the same way as any other patch payload:
+#### 8.4.3 VCDIFF (`0x01`)
 
-```text
-Encode: target logical data -> STORE_PATCH payload -> compress -> encrypt
-Decode: decrypt -> decompress -> STORE_PATCH payload -> reconstructed target logical data
-```
+`VCDIFF` (`0x01`) uses the RFC 3284 VCDIFF delta format.
 
-`STORE_PATCH` does not require the base object bytes to be available for patch application.
+The decoded patch payload is an RFC 3284 VCDIFF delta stream.
 
-If `Delta Base Hash` is present, implementations MAY use it for metadata consistency checks or base-selection diagnostics, but `STORE_PATCH` application MUST NOT fail solely because the base object is unavailable.
+`VCDIFF` is a base-object patch algorithm. Patch application requires explicit base object bytes.
 
-Implementations MUST still validate all sizes using `ResourceLimits`.
+If patch application is attempted without base object bytes, the decoder MUST return `SAR_ERR_BASE_MISSING`.
 
-Implementations MUST NOT allocate the reconstructed target buffer unless LFH `Uncompressed Size` is within configured limits.
+If the LFH `Delta Base Hash` field is all zero bytes, the decoder MUST return `SAR_ERR_BASE_MISSING`.
 
-Implementations encountering malformed `STORE_PATCH` payloads MUST return `SAR_ERR_PATCH_FAILED`.
+The decoder MUST reject malformed VCDIFF headers, windows, variable-length integers (varints), instructions, copy ranges, or truncated streams with `SAR_ERR_PATCH_FAILED`.
 
-For `STORE_PATCH`, a malformed payload is one whose decoded payload length does not exactly equal LFH `Uncompressed Size`, or whose decoded payload cannot be obtained because decryption, decompression, FEC repair, or earlier transformation stages failed.
+The decoder MUST enforce configured `ResourceLimits` for:
 
+* VCDIFF input size;
+* VCDIFF window count;
+* VCDIFF instruction count;
+* decoded target window size;
+* reconstructed target size;
+* total patch working set.
 
-#### 8.4.3 BSDIFF (`0x02`)
+Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
 
-`BSDIFF` (`0x02`) uses the SAR BSDIFF40 profile.
+#### 8.4.4 BSDIFF (`0x02`)
 
-The SAR BSDIFF40 profile is based on the classic `bsdiff` 4.x patch format.
+`BSDIFF` (`0x02`) uses the SAR BSDIFF v1 profile.
 
-A `BSDIFF` patch payload MUST have the following structure:
+SAR BSDIFF v1 is a SAR-native binary patch format derived from the classic bsdiff control/diff/extra model, but it does not embed bzip2 compression inside the patch payload.
+
+Compression of BSDIFF patch payloads is handled exclusively by the SAR compression layer.
+
+Encoders implementing `BSDIFF` MUST produce SAR BSDIFF v1 payloads using the `SARBSD01` magic and uncompressed Control, Diff, and Extra blocks.
+
+Decoders MAY support legacy classic BSDIFF40 payloads for interoperability. If a decoder encounters the `BSDIFF40` magic value, it MAY interpret the payload as a classic BSDIFF40 patch, including bzip2-compressed Control, Diff, and Extra blocks, and process it accordingly.
+
+Support for decoding classic BSDIFF40 is OPTIONAL. Implementations that do not support BSDIFF40 decoding MUST treat such payloads as malformed and return `SAR_ERR_PATCH_FAILED`.
+
+#### SAR BSDIFF v1 Payload Format
+
+The decoded BSDIFF patch payload has the following structure:
 
 ```text
 Header || Control_Block || Diff_Block || Extra_Block
 ```
 
+This structure is observed after all earlier SAR decoding transforms have completed.
+
 ##### Header
 
 The header is 32 bytes:
 
-| Field                  |    Size | Description                                             |
-| ---------------------- | ------: | ------------------------------------------------------- |
-| `Magic`                | 8 bytes | ASCII string `BSDIFF40`.                                |
-| `Control_Block_Length` | 8 bytes | Length in bytes of the compressed control block.        |
-| `Diff_Block_Length`    | 8 bytes | Length in bytes of the compressed diff block.           |
+| Field                  | Size    | Description                                             |
+| ---------------------- | ------- | ------------------------------------------------------- |
+| `Magic`                | 8 bytes | ASCII string `SARBSD01`.                                |
+| `Control_Block_Length` | 8 bytes | Length in bytes of the uncompressed control block.      |
+| `Diff_Block_Length`    | 8 bytes | Length in bytes of the uncompressed diff block.         |
 | `New_File_Size`        | 8 bytes | Size in bytes of the reconstructed target logical data. |
 
-The `Control_Block_Length`, `Diff_Block_Length`, and `New_File_Size` fields use the classic bsdiff signed 64-bit integer encoding.
+`Control_Block_Length`, `Diff_Block_Length`, and `New_File_Size` use the SAR BSDIFF signed 64-bit integer encoding.
 
-For SAR, these values MUST be non-negative. Negative lengths or target sizes MUST be rejected with `SAR_ERR_PATCH_FAILED`.
+For SAR BSDIFF v1, these values MUST be non-negative.
 
-The `New_File_Size` field MUST equal the LFH `Uncompressed Size` after patch application. If it does not match, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+Negative block lengths or target sizes MUST be rejected with `SAR_ERR_PATCH_FAILED`.
+
+`New_File_Size` MUST equal the LFH `Uncompressed Size` after patch application. If it does not match, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
 
 ##### Blocks
 
-After the header, the patch payload contains:
+After the header, the decoded patch payload contains:
 
 ```text
-Control_Block: bzip2-compressed control triples
-Diff_Block:    bzip2-compressed diff bytes
-Extra_Block:   bzip2-compressed extra bytes
+Control_Block: uncompressed control triples
+Diff_Block:    uncompressed diff bytes
+Extra_Block:   uncompressed extra bytes
 ```
 
 `Extra_Block` begins immediately after:
@@ -813,19 +911,21 @@ Extra_Block:   bzip2-compressed extra bytes
 32 + Control_Block_Length + Diff_Block_Length
 ```
 
-The end of `Extra_Block` is the end of the patch payload.
+The end of `Extra_Block` is the end of the decoded BSDIFF patch payload.
 
 All offset and length calculations MUST use checked arithmetic.
 
-#### Control triples
+##### Control Triples
 
-After bzip2 decompression, the Control Block contains a sequence of triples:
+The Control Block contains a sequence of triples:
 
 ```text
 (diff_len, extra_len, seek_adjust)
 ```
 
-Each field is encoded using the classic bsdiff signed 64-bit integer encoding.
+Each field uses the SAR BSDIFF signed 64-bit integer encoding.
+
+The Control Block length MUST be a multiple of 24 bytes.
 
 Patch application proceeds as follows:
 
@@ -836,28 +936,34 @@ Patch application proceeds as follows:
 5. Advance the base position by `seek_adjust`.
 6. Repeat until exactly `New_File_Size` output bytes have been produced.
 
-The decoder MUST reject:
+The decoder MUST reject with `SAR_ERR_PATCH_FAILED`:
 
+* invalid magic (except for optionally supported `BSDIFF40`);
+* negative `Control_Block_Length`;
+* negative `Diff_Block_Length`;
+* negative `New_File_Size`;
+* Control Block length not divisible by 24;
+* malformed or truncated control triples;
 * negative `diff_len`;
 * negative `extra_len`;
 * control triples that cause output to exceed `New_File_Size`;
-* reads beyond the decompressed Diff Block;
-* reads beyond the decompressed Extra Block;
+* reads beyond the Diff Block;
+* reads beyond the Extra Block;
+* trailing unused Diff Block bytes;
+* trailing unused Extra Block bytes;
 * base reads before byte offset `0`;
-* malformed bzip2 streams;
-* trailing malformed control data;
 * output size not exactly equal to `New_File_Size`.
 
-If a diff operation references base bytes beyond the end of the base object, missing base bytes SHALL be treated as `0x00`, matching classic bspatch behavior.
+If a diff operation references base bytes beyond the end of the base object, missing base bytes SHALL be treated as `0x00`.
 
-##### Resource limits
+##### BSDIFF Resource Limits
 
-Implementations MUST enforce configured resource limits for:
+Implementations MUST enforce configured `ResourceLimits` for:
 
-* compressed patch payload size;
-* decompressed Control Block size;
-* decompressed Diff Block size;
-* decompressed Extra Block size;
+* decoded BSDIFF patch payload size;
+* Control Block size;
+* Diff Block size;
+* Extra Block size;
 * control triple count;
 * base size;
 * reconstructed target size;
@@ -865,37 +971,21 @@ Implementations MUST enforce configured resource limits for:
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
 
-Malformed patches MUST return `SAR_ERR_PATCH_FAILED`.
-
 Missing base data MUST return `SAR_ERR_BASE_MISSING`.
 
-##### Base requirement
+#### 8.4.5 ZSTD_PATCH (`0x03`)
 
-`BSDIFF` is a base-requiring patch algorithm.
+`ZSTD_PATCH` (`0x03`) is reserved for a SAR-defined Zstandard dictionary-based patch profile.
 
-If patch application is attempted and no explicit base object is available, the decoder MUST return `SAR_ERR_BASE_MISSING`.
+The exact dictionary identity, dictionary source, dictionary verification method, payload format, and reconstruction semantics are not defined in this version of the specification.
 
-If the LFH `Delta Base Hash` field is all zero bytes, the decoder MUST return `SAR_ERR_BASE_MISSING`.
+Implementations encountering `ZSTD_PATCH` without support for a negotiated or future standardized profile MUST return `SAR_ERR_UNSUPPORTED`.
 
-The `Delta Base Hash` field identifies the expected base object. Unless the hash algorithm is explicitly specified elsewhere, implementations MUST treat the field as opaque identity bytes and MUST NOT guess the hash algorithm.
+#### 8.4.6 SAR BSDIFF Signed Integer Encoding
 
-#### Transformation order
+SAR BSDIFF v1 uses the classic bsdiff signed 64-bit integer encoding.
 
-`BSDIFF` follows the SAR delta transformation order:
-
-```text
-Encode: logical target -> BSDIFF patch -> compression -> encryption
-Decode: decryption -> decompression -> BSDIFF patch application -> reconstructed logical target
-```
-
-`BSDIFF` operates on fully decrypted and decompressed logical patch bytes and produces reconstructed logical target bytes.
-
-
-##### BSDIFF signed integer encoding
-
-SAR BSDIFF40 uses the classic bsdiff signed 64-bit integer encoding.
-
-This encoding is **not two’s complement**. Instead, it uses a **sign-magnitude representation** with a 63-bit magnitude and a separate sign bit.
+This encoding is not two’s complement. Instead, it uses a sign-magnitude representation with a 63-bit magnitude and a separate sign bit.
 
 An integer is encoded in 8 bytes:
 
@@ -903,7 +993,7 @@ An integer is encoded in 8 bytes:
 * Byte 7 contains:
 
   * Bits 0–6: the upper 7 bits of the magnitude.
-  * Bit 7 (the most significant bit): the sign bit.
+  * Bit 7: the sign bit.
 
 Decoding:
 
@@ -916,8 +1006,6 @@ This differs from two’s complement encoding: negative values are not formed by
 Decoders MUST reject integer values that cannot be represented safely in the implementation’s checked arithmetic.
 
 Fields that represent lengths or sizes MUST be non-negative.
-
-
 
 ### 8.5 CDC Algorithms (`SAR_L_CDC`)
 Used only when `CDC_SUPPORT` (Bit 5) is set. This ID is stored in the **CDC Algo ID** field of the LFH.
