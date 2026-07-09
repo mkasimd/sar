@@ -72,8 +72,11 @@ fn session_init_validates_flags_and_duplicate_streams() {
         .expect_err("reserved session flags must fail");
     assert!(matches!(err, SarError::ReservedValue(_)));
 
+    let mut invalid_combo = init_entry(1, 0, uuid, 0);
+    invalid_combo.payload[16] = 1 << 3;
+    invalid_combo.payload[17] = 0;
     let err = manager
-        .process_entry(&init_entry(1, 0, uuid, 1 << 3))
+        .process_entry(&invalid_combo)
         .expect_err("invalid flag combo must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 

@@ -44,8 +44,10 @@ fn close_emits_ack_when_supported() {
 
 #[test]
 fn resume_rules_are_enforced() {
-    let mut config = SessionManagerConfig::default();
-    config.support_resume = false;
+    let config = SessionManagerConfig {
+        support_resume: false,
+        ..SessionManagerConfig::default()
+    };
     let mut manager = SessionManager::new(config);
     manager
         .observe_global_header(&no_index_header())
