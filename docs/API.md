@@ -105,6 +105,7 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `sparse: bool` *(new in M8 final pass)* — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
   - `encryption: Option<EncryptionSettings>`
   - `fec: Option<FecSettings>`
+  - `lfh_size_field_policy: LfhSizeFieldPolicy` *(new in M11a.1)* — LFH size-field encoding policy (`Auto`, `Force32`, `Force64`)
   - `with_path: bool` *(new in M11a)* — sets `HAS_PATH` global flag; allows `EntryInput::path`
   - `with_permissions: bool` *(new in M11a)* — sets `HAS_PERMS` global flag; allows `EntryInput::permissions`
   - `with_uid_gid: bool` *(new in M11a)* — sets `EXT_UID_GID` global flag; allows `EntryInput::uid_gid`
@@ -156,6 +157,10 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `FecSettings`
   - `default_xor()`
   - `default_rs()`
+- `LfhSizeFieldPolicy` *(new in M11a.1)*
+  - `Auto` *(default)* — writer uses 32-bit LFH size fields when values fit `u32`; promotes to 64-bit before header emission when required
+  - `Force32` — writer emits 32-bit LFH size fields and fails closed if any required size exceeds `u32::MAX`
+  - `Force64` — writer emits 64-bit LFH size fields and sets global `SIZE_64BIT`
 - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
   - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
   - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
@@ -173,6 +178,10 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `parse_central_dictionary(input, flags, limits)`, `write_central_dictionary`
   - `parse_footer`, `write_footer`
   - `global_header_flags_bytes`
+  - `parse_lfh` and `write_lfh` select LFH size width strictly from global `SIZE_64BIT` (`4+4` bytes when unset, `8+8` bytes when set)
+  - 32-bit LFH writes fail closed on values above `u32::MAX` (no truncation)
+  - `compute_lfh_size` includes the physical `4-byte` vs `8-byte` LFH size-field width selected by global `SIZE_64BIT`
+  - Reader paths accept either valid layout for indexed and `NO_INDEX` archives and enforce `ResourceLimits` before allocation
 - TLV helpers:
   - `Tlv`
   - `parse_tlvs(input, limits)`, `write_tlvs`
@@ -340,6 +349,8 @@ Examples of validated fields:
 - `EntryInput::file_crc32` requires `ArchiveWriterOptions::with_per_file_crc = true`
 - `EntryInput::content_hash` requires `ArchiveWriterOptions::with_content_hash = true`
 - `EntryInput::kind = Symlink` requires `ArchiveWriterOptions::with_symlinks = true`
+
+`LfhSizeFieldPolicy` is an implementation writer policy for this crate/API surface; it is not a new normative SAR wire-format rule. Readers continue to parse either valid LFH size layout based on the global `SIZE_64BIT` flag.
 
 **M11a writer limitations**
 

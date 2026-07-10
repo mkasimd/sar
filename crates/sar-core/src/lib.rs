@@ -40,8 +40,8 @@ pub mod transform;
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, FecSettings, LogicalFile, SparseWriteOptions, StreamWriteState,
-    VerificationReport,
+    EntryReader, EntryWritten, FecSettings, LfhSizeFieldPolicy, LogicalFile, SparseWriteOptions,
+    StreamWriteState, VerificationReport,
 };
 pub use cdc::{
     CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,

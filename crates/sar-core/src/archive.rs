@@ -392,6 +392,21 @@ pub struct ArchiveWriterOptions {
     /// If `true`, set the global `HAS_SYMLINKS` flag.  Required when any
     /// entry has `kind = Some(EntryKind::Symlink)`.
     pub with_symlinks: bool,
+    /// LFH size-field encoding policy for `Uncompressed Size` and `Payload Size`.
+    pub lfh_size_field_policy: LfhSizeFieldPolicy,
+}
+
+/// LFH size-field encoding policy used by the archive writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LfhSizeFieldPolicy {
+    /// Default behavior. Uses 32-bit LFH size fields unless a 64-bit field is
+    /// required before the global header is emitted.
+    Auto,
+    /// Require 32-bit LFH size fields. Writing fails closed when any required
+    /// size exceeds `u32::MAX`.
+    Force32,
+    /// Always emit 64-bit LFH size fields and set global `SIZE_64BIT`.
+    Force64,
 }
 
 /// Archive writer compression settings.
@@ -428,6 +443,7 @@ impl Default for ArchiveWriterOptions {
             with_per_file_crc: false,
             with_content_hash: false,
             with_symlinks: false,
+            lfh_size_field_policy: LfhSizeFieldPolicy::Auto,
         }
     }
 }
@@ -1622,6 +1638,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 pub struct ArchiveWriter<W> {
     writer: W,
     flags: GlobalFlags,
+    lfh_size_field_policy: LfhSizeFieldPolicy,
     compression: CompressionSettings,
     position: u64,
     offsets: Vec<u64>,
@@ -1631,6 +1648,8 @@ pub struct ArchiveWriter<W> {
     encr_algo_id: Option<u8>,
     used_nonces: HashSet<[u8; 24]>,
     global_flags_section: Vec<u8>,
+    header_kms: Option<KmsData>,
+    header_written: bool,
     fec: Option<FecSettings>,
     stream_state: StreamWriteState,
 }
@@ -1638,7 +1657,7 @@ pub struct ArchiveWriter<W> {
 /// Structural write phases for stream-oriented archive emission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamWriteState {
-    /// Writer has emitted a global header and is ready for an LFH.
+    /// Writer is ready to emit an LFH (global header may be emitted lazily).
     NeedLocalFileHeader,
     /// Writer is currently emitting an LFH+payload sequence.
     NeedPayload,
@@ -1653,7 +1672,7 @@ pub enum StreamWriteState {
 }
 
 impl<W: Write> ArchiveWriter<W> {
-    /// Creates a new archive writer and writes the global header.
+    /// Creates a new archive writer.
     pub fn new(writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
         Self::new_with_compression_key_provider_and_cd_metadata(
             writer,
@@ -1715,20 +1734,35 @@ impl<W: Write> ArchiveWriter<W> {
     }
 
     fn new_with_compression_key_provider_and_cd_metadata(
-        mut writer: W,
+        writer: W,
         options: ArchiveWriterOptions,
         compression: CompressionSettings,
         key_provider: Option<Box<dyn KeyProvider>>,
         cd_metadata: Vec<Tlv>,
     ) -> Result<Self, SarError> {
-        if options.no_index && !cd_metadata.is_empty() {
+        let ArchiveWriterOptions {
+            no_index,
+            encryption,
+            fec,
+            sparse,
+            with_path,
+            with_permissions,
+            with_uid_gid,
+            with_timestamps,
+            with_per_file_crc,
+            with_content_hash,
+            with_symlinks,
+            lfh_size_field_policy,
+        } = options;
+
+        if no_index && !cd_metadata.is_empty() {
             return Err(SarError::FlagConflict(
                 "Central Dictionary metadata requires indexed archive output",
             ));
         }
 
         let mut flags = GlobalFlags::empty();
-        if options.no_index {
+        if no_index {
             flags |= GlobalFlags::NO_INDEX;
         }
         if !cd_metadata.is_empty() {
@@ -1743,37 +1777,40 @@ impl<W: Write> ArchiveWriter<W> {
         if compression.algo_id != COMP_ALGO_STORE {
             flags |= GlobalFlags::COMPRESSED;
         }
-        if options.fec.is_some() {
+        if fec.is_some() {
             flags |= GlobalFlags::SELECTIVE_FEC;
         }
-        if options.sparse {
+        if sparse {
             flags |= GlobalFlags::SPARSE_FILES;
         }
-        if options.with_path {
+        if with_path {
             flags |= GlobalFlags::HAS_PATH;
         }
-        if options.with_permissions {
+        if with_permissions {
             flags |= GlobalFlags::HAS_PERMS;
         }
-        if options.with_uid_gid {
+        if with_uid_gid {
             flags |= GlobalFlags::EXT_UID_GID;
         }
-        if options.with_timestamps {
+        if with_timestamps {
             flags |= GlobalFlags::EXT_TIME;
         }
-        if options.with_per_file_crc {
+        if with_per_file_crc {
             flags |= GlobalFlags::PER_FILE_CRC;
         }
-        if options.with_content_hash {
+        if with_content_hash {
             flags |= GlobalFlags::DEDUPLICATION;
         }
-        if options.with_symlinks {
+        if with_symlinks {
             flags |= GlobalFlags::HAS_SYMLINKS;
+        }
+        if matches!(lfh_size_field_policy, LfhSizeFieldPolicy::Force64) {
+            flags |= GlobalFlags::SIZE_64BIT;
         }
 
         let mut cek = None;
         let mut encr_algo_id = None;
-        let kms = if let Some(encryption) = &options.encryption {
+        let kms = if let Some(encryption) = &encryption {
             validate_encr_algo_id(encryption.algo_id).map_err(SarError::from)?;
             if !matches!(encryption.algo_id, ENCR_AES256_GCM | ENCR_XCHACHA20_POLY) {
                 return Err(SarError::Unsupported(
@@ -1807,30 +1844,23 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         validate_global_flags(flags)?;
-        let header = GlobalHeader {
-            version: 0x01,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
-            flags,
-            partition_descriptor: None,
-            kms,
-        };
-        let global_flags_section = global_header_flags_bytes(&header);
-        let bytes = write_global_header(&header)?;
-        writer.write_all(&bytes)?;
 
         Ok(Self {
             writer,
             flags,
+            lfh_size_field_policy,
             compression,
-            position: u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?,
+            position: 0,
             offsets: Vec::new(),
             cd_metadata,
             finished: false,
             cek,
             encr_algo_id,
             used_nonces: HashSet::new(),
-            global_flags_section,
-            fec: options.fec,
+            global_flags_section: Vec::new(),
+            header_kms: kms,
+            header_written: false,
+            fec,
             stream_state: StreamWriteState::NeedLocalFileHeader,
         })
     }
@@ -1839,6 +1869,61 @@ impl<W: Write> ArchiveWriter<W> {
     #[must_use]
     pub const fn stream_state(&self) -> StreamWriteState {
         self.stream_state
+    }
+
+    fn emit_global_header_if_needed(&mut self) -> Result<(), SarError> {
+        if self.header_written {
+            return Ok(());
+        }
+        validate_global_flags(self.flags)?;
+        let header = GlobalHeader {
+            version: 0x01,
+            flags_bytes: self.flags.bits().to_le_bytes().to_vec(),
+            flags: self.flags,
+            partition_descriptor: None,
+            kms: self.header_kms.clone(),
+        };
+        self.global_flags_section = global_header_flags_bytes(&header);
+        let bytes = write_global_header(&header)?;
+        self.writer.write_all(&bytes)?;
+        self.position = self
+            .position
+            .checked_add(u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?)
+            .ok_or(SarError::Overflow("archive position after header"))?;
+        self.header_written = true;
+        Ok(())
+    }
+
+    fn apply_size_policy(&mut self, uncompressed_size: u64, payload_size: u64) -> Result<(), SarError> {
+        let exceeds_u32 = uncompressed_size > u64::from(u32::MAX) || payload_size > u64::from(u32::MAX);
+        match self.lfh_size_field_policy {
+            LfhSizeFieldPolicy::Force64 => {
+                self.flags |= GlobalFlags::SIZE_64BIT;
+                Ok(())
+            }
+            LfhSizeFieldPolicy::Force32 => {
+                if exceeds_u32 {
+                    return Err(SarError::Overflow(
+                        "size does not fit 32-bit field under Force32 policy",
+                    ));
+                }
+                self.flags.remove(GlobalFlags::SIZE_64BIT);
+                Ok(())
+            }
+            LfhSizeFieldPolicy::Auto => {
+                if exceeds_u32 {
+                    if self.header_written && !self.flags.contains(GlobalFlags::SIZE_64BIT) {
+                        return Err(SarError::Overflow(
+                            "Auto policy cannot promote to 64-bit size fields after header emission",
+                        ));
+                    }
+                    self.flags |= GlobalFlags::SIZE_64BIT;
+                } else if !self.header_written {
+                    self.flags.remove(GlobalFlags::SIZE_64BIT);
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Adds one archive entry.
@@ -1877,6 +1962,8 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
         };
+        self.apply_size_policy(uncompressed_len, payload_len)?;
+        self.emit_global_header_if_needed()?;
         let mut lfh = LocalFileHeader::minimal_store(entry.name.as_bytes().to_vec(), payload_len);
         lfh.uncompressed_size = uncompressed_len;
 
@@ -2250,6 +2337,8 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
         };
+        self.apply_size_policy(sparse.logical_size, encoded_len)?;
+        self.emit_global_header_if_needed()?;
 
         // Build LFH: uncompressed_size = logical_size (full sparse extent including holes).
         let is_64bit = self.flags.contains(GlobalFlags::SIZE_64BIT);
@@ -2375,6 +2464,7 @@ impl<W: Write> ArchiveWriter<W> {
             self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
+        self.emit_global_header_if_needed()?;
         self.stream_state = StreamWriteState::NeedCentralDictionaryOrFooter;
 
         if !self.flags.contains(GlobalFlags::NO_INDEX) {
