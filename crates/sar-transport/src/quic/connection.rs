@@ -264,8 +264,8 @@ impl QuicSarConnection {
     /// `label` must be an ASCII TLS exporter label (e.g.
     /// [`sar_crypto::EXPORTER_LABEL_QUIC_AEAD`]).  `context` is the encoded
     /// TLS exporter context (e.g. from
-    /// [`sar_crypto::encode_tls_exporter_context_v1`]).  `output` receives
-    /// exactly `output.len()` bytes of derived keying material.
+    /// [`sar_crypto::encode_tls_exporter_context_v1`]).  `output` is filled
+    /// with exactly `output.len()` bytes of derived keying material.
     ///
     /// # Errors
     ///

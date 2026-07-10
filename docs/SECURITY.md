@@ -94,7 +94,7 @@ This document reflects current implemented behavior only.
 - QUIC/TLS protects transport bytes end-to-end.  SAR-layer AEAD provides an additional independent authentication and confidentiality layer.
 - **Server identity is explicit**: `QuicServerIdentity` requires a DER-encoded certificate chain and DER-encoded private key.  Private keys are never logged and never transmitted.
 - **Client trust is explicit**: `QuicClientTrust` requires either a custom CA DER or the clearly-named `InsecureSkipVerifyForTestsOnly` variant.  Insecure verification is never the default.
-- `InsecureSkipVerifyForTestsOnly` is a test-only helper intended only for tests and local diagnostics.  Production code must never use it.  Its name is its warning.  It must not be the default and must not be used in trusted production deployments.
+- `InsecureSkipVerifyForTestsOnly` is a test-only helper intended only for tests and local diagnostics.  Production code must never use it.  The variant name explicitly warns against production use.  It must not be the default and must not be used in trusted production deployments.
 - Certificate chain DER and private key DER buffers are validated before being accepted into QUIC server configuration; validation occurs on construction of `QuicServerIdentity`, before any connection is accepted.
 - All connection and stream limits are enforced before allocation: `max_connections`, `max_quic_streams_per_connection`, `max_active_sar_streams_per_connection`, `max_control_streams_per_sar_session`, `max_buffered_bytes`, `max_read_chunk`, `max_outbound_buffer_bytes`.
 - A malformed QUIC stream is rejected stream-locally; it does not close the entire QUIC connection or corrupt other active SAR sessions unless the error is connection-fatal.

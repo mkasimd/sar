@@ -336,7 +336,7 @@ fn mock_bidir_control_writes_status_bytes_to_outbound() {
 
 // ──────────────────────────────────────────────────────────────────────────────
 // write_all_sar_bytes on closed connection returns error
-// ──────────────────────────────────────────name──────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn write_on_closed_connection_returns_stream_closed() {
