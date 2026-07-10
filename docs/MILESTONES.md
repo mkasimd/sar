@@ -8,9 +8,17 @@ It is a project-planning and implementation-guidance document, not the wire-form
 
 `docs/MACHINE_READABLE_API.json` tracks the current public API surface exposed by the implementation.
 
+`docs/CRATE_RESPONSIBILITIES.md` tracks intended Rust crate ownership boundaries.
+
+`docs/LIBRARY_LAYOUT.md` tracks intended future shared-library/profile layout for C ABI, Python/PyO3, and other foreign-language bindings.
+
 If this milestone document conflicts with `specification.md`, `specification.md` wins.
 
 If this milestone document appears to describe APIs differently from `docs/MACHINE_READABLE_API.json`, treat `docs/MACHINE_READABLE_API.json` as the current implementation inventory and update whichever document is stale as part of the relevant milestone.
+
+If this milestone document appears to describe crate ownership differently from `docs/CRATE_RESPONSIBILITIES.md`, treat the relevant implementation milestone as responsible for reconciling the two documents.
+
+If this milestone document appears to describe library/profile layout differently from `docs/LIBRARY_LAYOUT.md`, treat `docs/LIBRARY_LAYOUT.md` as the intended profile-layout design and update whichever document is stale as part of the relevant milestone.
 
 ---
 
@@ -33,11 +41,11 @@ core primitives, error model, flags, and checked parsing foundations
 
 ## M2:
 
-Global Header, LFH, Central Directory, and Footer parsing
+Global Header, LFH, Central Dictionary, and Footer parsing
 
 * Global Header parse/validate
 * LFH parse/validate
-* Central Directory parse/validate
+* Central Dictionary parse/validate
 * Footer parse/validate
 * field presence from Global Flags
 * LFH physical-field layout enforcement
@@ -328,7 +336,7 @@ M10 final alignment: TLS_EXPORTER/AAD coverage and crate responsibility guardrai
 * test that additional control-stream AAD uses associated session Global Header bytes
 * test that additional control-stream AAD uses physically present LFH bytes
 * test that LFH tampering causes AEAD failure
-* confirm CTL! remains removed and rejected
+* confirm `CTL!` remains removed and rejected
 * add `docs/CRATE_RESPONSIBILITIES.md`
 * document intended crate ownership boundaries
 * inventory marker crates:
@@ -358,16 +366,12 @@ additional-control-stream TLS_EXPORTER AEAD decrypt/auth completion
 * keep `CTL!` removed and rejected
 * full workspace validation
 
----
-
-# Current and future milestones
-
 ## M11a:
 
 LFH metadata API completeness
 
 * expand `EntryInput` beyond name + payload
-* expand `EntryMetadata` beyond the current partial metadata summary
+* expand `EntryMetadata` beyond the previous partial metadata summary
 * add `EntryMetadata` / `EntryInput` support for:
 
   * path
@@ -389,11 +393,12 @@ LFH metadata API completeness
 * preserve Global Flags vs Entry Mode semantics
 * distinguish physically present LFH fields from semantically active metadata
 * ensure unsupported metadata is not silently dropped
-* expose metadata in a way that is suitable for future C/Python bindings
-* avoid filesystem restoration behavior in this milestone
-* no CLI extraction policy changes yet
+* expose metadata in a way suitable for future C/Python bindings
+* avoid filesystem restoration behavior
+* no CLI extraction policy changes
 
 ## M11a.1:
+
 64BIT_SIZE LFH layout audit, correction, and implementation default policy
 
 * audit Global Flag `64BIT_SIZE` support
@@ -408,9 +413,13 @@ LFH metadata API completeness
 * add or confirm direct tests proving 32-bit and 64-bit LFH layouts have different physical header sizes
 * add negative tests for overflow/truncation
 * define and document implementation writer default policy:
+
   * default writer behavior is `auto`
   * `auto` uses 32-bit LFH size fields when all per-entry Uncompressed Size and Payload Size values fit in `u32`
   * `auto` enables Global Flag `64BIT_SIZE` when any required LFH size value exceeds `u32::MAX`
+  * `auto` may promote to 64-bit only before the Global Header is emitted
+  * after the Global Header is emitted without `64BIT_SIZE`, entries requiring 64-bit LFH size fields must fail closed
+  * forward-only / non-rewindable writers must not rewrite or retroactively change Global Flags
   * API callers may explicitly force 64-bit LFH size fields
   * API callers may explicitly require 32-bit LFH size fields and receive a fail-closed error if any value exceeds `u32::MAX`
 * document this policy in `docs/API.md`
@@ -419,98 +428,163 @@ LFH metadata API completeness
 * preserve existing wire format
 * no new protocol features
 
-
-## M11b: ✅ implemented
+## M11b:
 
 filesystem metadata encode/decode behavior
 
-* HAS_PATH writer and reader support — complete (FieldPresence model, PresentInactive for absent-path-with-flag)
-* HAS_PERMS writer and reader support — complete (FieldPresence model, zero-values preserved)
-* EXT_UID_GID writer and reader support — complete (FieldPresence model, zero-values preserved)
-* EXT_TIME writer and reader support — complete (FieldPresence model, zero-values preserved)
-* HAS_SYMLINKS writer and reader support — complete (IS_SYMLINK→HAS_SYMLINKS validation added)
-* IS_DIRECTORY writer and reader support — complete (directory payload rule: must be zero bytes)
-* HIDDEN_ATTR writer and reader support — complete (round-trips through Entry Mode)
-* deterministic round-trip tests — 40 tests in `tests/filesystem_metadata_roundtrip_tests.rs`
-* zero/default handling when fields are physically present but semantically inactive — covered by FieldPresence model
-* directory-entry payload rules — writer rejects non-empty directory payload; reader rejects IS_DIRECTORY with payload_size != 0
-* symlink-entry payload/target rules — symlink target carried as UTF-8 payload; validated against HAS_SYMLINKS flag
-* invalid path/symlink metadata validation — strict UTF-8, u16 length bounds, fail-closed on missing flags
-* metadata interaction with encrypted/compressed entries — LFH fields parsed before payload transform; no plaintext exposure on auth failure
-* metadata interaction with `NO_INDEX` archives — tested; no CD dependency for metadata
-* metadata interaction with fragmented/sparse entries — field order preserved; write_sparse_entry limitation documented
-* no unsafe restoration defaults — no chmod/chown/utime/symlink creation/directory creation
+* HAS_PATH writer and reader support
+* HAS_PERMS writer and reader support
+* EXT_UID_GID writer and reader support
+* EXT_TIME writer and reader support
+* HAS_SYMLINKS writer and reader support
+* IS_DIRECTORY writer and reader support
+* HIDDEN_ATTR writer and reader support
+* `FieldPresence` model for physically-present filesystem metadata
+* deterministic round-trip tests
+* zero/default handling when fields are physically present
+* directory-entry payload rule: directory payload must be zero bytes
+* symlink-entry payload/target rule: symlink target is UTF-8 payload
+* `EntryMetadata::symlink_target`
+* invalid path/symlink metadata validation
+* strict UTF-8 behavior for metadata strings where required
+* metadata interaction with encrypted/compressed entries
+* metadata interaction with `NO_INDEX` archives
+* metadata interaction with fragmented/sparse entries
+* side-effect-free library parsing:
 
-## M11c: ✅ implemented
+  * no chmod
+  * no chown
+  * no timestamp restoration
+  * no directory creation
+  * no symlink creation
+  * no device/FIFO/socket creation
+* filesystem mutation is reserved for explicit CLI/application/profile extraction behavior
+
+---
+
+# Current and future milestones
+
+## M11c:
 
 crate-boundary implementation cleanup
 
-* populate or deliberately defer marker crates:
+* complete the M11c corrective crate-boundary pass
+* finish `sar-fragmentation` ownership of fragment semantic helpers
+* finish `sar-sparse` ownership of sparse semantic helpers
+* add or integrate `sar-loss-tolerant` policy helpers, or document integration deferral honestly
+* keep `sar-partition` deliberately deferred unless partition behavior becomes specified
+* remove compatibility-only semantic re-exports from `sar-core`
+* keep physical wire-format parse/write helpers in `sar-core`
+* keep LFH/GH/CD/Footer/TLV/status/error ownership in `sar-core`
+* preserve SAR wire format and archive interoperability
+* preserve status/error semantics unless a current error is clearly wrong
+* preserve M8 sparse/fragment/loss-tolerant behavior
+* preserve M10 streaming/transport behavior
+* fix fragment semantic validation gaps:
 
-  * `sar-fragmentation` — implemented: `FragmentError`, `FragmentLimits`, `FragmentDescriptor`, `FragmentEntry`, `validate_fragment_group`, `reconstruct_fragments` moved from `sar-core`; 11 unit tests added
-  * `sar-sparse` — implemented: `SparseError`, `SparseLimits`, `SparseExtent`, `validate_sparse_extents`, `apply_sparse_reconstruction` moved from `sar-core`; 12 unit tests added; `parse_sparse_map`/`write_sparse_map` remain in `sar-core`
-  * `sar-loss-tolerant` — implemented: `RecoveryStatus`, `gap_degraded_output_permitted`, `classify_recovery`; 5 unit tests; LOSS_TOLERANT invariant documented
-  * `sar-partition` — deliberately deferred; `PartitionDescriptor` and `PARTITIONED_ARCHIVE` remain in `sar-core`; deferral documented
-* moved semantic helper logic out of `sar-core` where appropriate
-* kept canonical wire-format structs and archive integration APIs in `sar-core`
-* preserved public high-level behavior via thin re-exports in `sar_core::fragment` and `sar_core::sparse`
-* preserved archive format and status codes
-* preserved M8 sparse/fragment/loss-tolerant behavior
-* preserved M10 streaming/transport behavior
-* added focused crate-level tests in `sar-fragmentation` (11) and `sar-sparse` (12) and `sar-loss-tolerant` (5)
-* updated workspace dependencies (`sar-core` depends on `sar-fragmentation` and `sar-sparse`)
-* updated `docs/CRATE_RESPONSIBILITIES.md` — M11c status sections added for all four crates
-* updated `docs/API.md` and `docs/MACHINE_READABLE_API.json` — new crate entries and breaking change notes
+  * payload length must match fragment descriptor size
+  * shorter payload must fail closed
+  * longer payload must fail closed
+  * duplicate fragment indexes must fail closed
+  * missing `LAST_FRAGMENT` behavior must be documented and tested
+* fix sparse semantic validation/docs consistency:
+
+  * zero-length sparse extents rejected unless explicitly allowed
+  * ordering and overlap checks preserved
+  * payload length agreement checked in the appropriate function
+  * documentation must not overclaim validation scope
+* fix 32-bit sparse-map write truncation:
+
+  * 32-bit sparse-map mode rejects offset/length values greater than `u32::MAX`
+  * 64-bit sparse-map mode preserves full `u64` values
+  * no silent truncation
+* verify `FragmentError` / `SparseError` conversions to `SarError`
+* update `docs/CRATE_RESPONSIBILITIES.md`
+* update `docs/API.md`
+* update `docs/MACHINE_READABLE_API.json`
+* update `docs/MILESTONES.md` only after milestone status is accurate
 * no new protocol features
-* breaking Rust API: `validate_sparse_extents`, `apply_sparse_reconstruction` return `SparseError`; `validate_fragment_group`, `reconstruct_fragments` return `FragmentError`; `From` impls preserve `?` propagation
-
-## M11c-cp: ✅ implemented
-
-crate-boundary corrective pass — finish cleanup gaps found in M11c review
-
-* **sar-core re-exports removed:**
-  * `sar_core::fragment` module deleted entirely (was a pure compatibility re-export of `sar-fragmentation` types with no architectural purpose)
-  * semantic sparse re-exports removed from `sar_core::sparse` (`SparseError`, `SparseLimits`, `validate_sparse_extents`, `apply_sparse_reconstruction`)
-  * `SparseExtent` kept as architectural re-export (required by `parse_sparse_map`/`write_sparse_map` signatures; documented in `CRATE_RESPONSIBILITIES.md`)
-  * all internal callers, CLI, tests updated to import from `sar-fragmentation` and `sar-sparse` directly
-
-* **sar-loss-tolerant integrated:**
-  * `sar-fragmentation` now depends on `sar-loss-tolerant`
-  * `reconstruct_fragments` calls `gap_degraded_output_permitted()` instead of inline `!is_loss_tolerant`
-  * LOSS_TOLERANT policy no longer duplicated in `sar-fragmentation`
-
-* **fragment semantic validation fixes:**
-  * `FragmentError::PayloadSizeMismatch` added — payload `.len()` must equal `fragment_size`; mismatch is always fatal (not suppressible by LOSS_TOLERANT)
-  * `FragmentError::DuplicateIndex` added — duplicate fragment index is always fatal (not suppressible by LOSS_TOLERANT)
-  * `reconstruct_fragments` checks both before any gap/degraded-output logic
-  * tests added: valid complete reassembly, payload shorter than descriptor fails, payload longer than descriptor fails, duplicate index fails, duplicate index with LOSS_TOLERANT fails, missing LAST_FRAGMENT, gap without LOSS_TOLERANT fails, gap with LOSS_TOLERANT produces degraded output
-
-* **sparse semantic validation fixes:**
-  * zero-length sparse extents now rejected in `validate_sparse_extents` (returns `SparseError::InvalidMap`)
-  * tests added: valid extents accepted, zero-length extent rejected, zero-length in list rejected, out-of-order extents rejected, reconstruction zero-fills holes correctly
-
-* **32-bit sparse-map write truncation fixed:**
-  * `write_sparse_map` signature changed to `-> Result<Vec<u8>, SarError>` (API-breaking)
-  * 32-bit mode now fails closed if any extent offset or length exceeds `u32::MAX`
-  * 64-bit mode writes full `u64` values without truncation
-  * tests added: 32-bit accepts fitting values, 32-bit rejects offset > `u32::MAX`, 32-bit rejects length > `u32::MAX`, 64-bit preserves large values
-
-* **error conversion bridges updated:**
-  * `FragmentError::PayloadSizeMismatch` → `SarError::Malformed` (structural)
-  * `FragmentError::DuplicateIndex` → `SarError::InvalidMap` (structural)
-  * representative tests added in `error_registry_tests.rs` for all `FragmentError` variant conversions
-
-* **docs updated:**
-  * `docs/CRATE_RESPONSIBILITIES.md` — removed re-export bullets, updated sar-loss-tolerant integration status, updated dependency graphs
-  * `docs/API.md` — recorded public API changes: `sar_core::fragment` removed, semantic sparse re-exports removed, `write_sparse_map` now returns `Result`, new `FragmentError` variants
-  * `docs/MACHINE_READABLE_API.json` — updated `sar-core` entry to reflect removed module, narrowed exports, new signature
-  * `docs/MILESTONES.md` — M11c-cp entry added
-
-* SAR wire format and archive interoperability preserved unchanged
-* all `cargo test --workspace --all-features` pass
-* `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean
+* full workspace validation
+* CodeQL/security scan where available
 
 ## M11d:
+
+archive API architecture split
+
+* separate canonical SAR wire-format ownership from high-level archive integration
+* introduce preferred new integration crate: `sar-archive`
+* keep `sar-core` focused on canonical wire-format, status/error, limits, and low-level parse/write helpers
+* move high-level archive reader/writer integration out of `sar-core` where appropriate
+* audit before moving code:
+
+  * all current public APIs in `sar-core`
+  * wire-format/status/limit APIs that must remain in `sar-core`
+  * high-level archive APIs that should move to `sar-archive`
+  * dependencies required by reader/writer logic
+  * impact on `sar-stream`
+  * impact on `sar-transport`
+  * impact on `sar-cli`
+  * circular dependency risk
+  * duplicate type risk
+* likely `sar-core` ownership:
+
+  * Global Header structs and parse/write helpers
+  * Local File Header structs and parse/write helpers
+  * Central Dictionary and Footer structs and parse/write helpers
+  * TLV parse/write helpers
+  * Global Flags
+  * Entry Mode
+  * SAR status/error model
+  * resource limits and checked-size helpers
+  * raw wire-format metadata structs
+  * canonical little-endian parsing/writing primitives
+  * low-level validation required to parse SAR wire data safely
+* likely `sar-archive` ownership:
+
+  * `ArchiveReader`
+  * `ArchiveWriter`
+  * archive verification
+  * `EntryInput`
+  * `EntryReader`
+  * `EntryMetadata`
+  * `EntryWritten`
+  * `LogicalFile`
+  * archive-level read/write options
+  * transform orchestration
+  * compression/encryption/FEC/CDC/delta integration
+  * sparse and fragment semantic integration
+  * loss-tolerant reconstruction policy integration
+  * indexed and `NO_INDEX` high-level archive flows
+  * high-level archive metadata reporting
+* prefer one `sar-archive` integration crate over immediate `sar-archive-reader` / `sar-archive-writer` split unless audit proves separate crates are cleaner
+* preserve M11a.1 LFH size-field policy during the split:
+
+  * `Auto` may promote to 64-bit only before the Global Header is emitted
+  * after the Global Header is emitted without `64BIT_SIZE`, entries requiring 64-bit LFH size fields fail closed
+  * forward-only / non-rewindable writers must not attempt to rewrite Global Flags
+  * streaming writers must require explicit size policy or fail closed when size requirements cannot be known before header emission
+* preserve side-effect-free library parsing:
+
+  * parsing and metadata decoding must not chmod, chown, set timestamps, create directories, create symlinks, or create device/FIFO/socket nodes
+  * filesystem mutations remain explicit CLI/application/profile extraction behavior
+* update `sar-cli`, `sar-stream`, `sar-transport`, tests, and docs for new ownership
+* allow Rust API-breaking changes
+* do not keep compatibility re-exports merely to avoid breakage
+* preserve SAR wire format and archive interoperability
+* preserve transform ordering
+* preserve M10 streaming/transport behavior
+* preserve M11a/M11b metadata behavior
+* update `docs/CRATE_RESPONSIBILITIES.md`
+* update `docs/API.md`
+* update `docs/MACHINE_READABLE_API.json`
+* update `docs/LIBRARY_LAYOUT.md` if the crate split changes intended profile/library boundaries
+* no filesystem restoration
+* no CLI metadata behavior
+* no C ABI/Python/mobile bindings yet
+* full workspace validation
+* CodeQL/security scan where available
+
+## M11e:
 
 CLI metadata support
 
@@ -529,8 +603,12 @@ CLI metadata support
 * platform-specific behavior documented
 * deterministic CLI round-trip tests
 * CLI metadata behavior uses library APIs rather than duplicating protocol logic
+* library parsing remains side-effect-free; only explicit CLI extraction paths perform filesystem mutation
+* update `docs/API.md`
+* update `docs/SECURITY.md`
+* update `docs/MACHINE_READABLE_API.json` if CLI/API surface changes
 
-## M11e:
+## M11f:
 
 API inventory, conformance profile, and security-doc refresh
 
@@ -539,10 +617,13 @@ API inventory, conformance profile, and security-doc refresh
 * `docs/CONFORMANCE.md` update
 * `docs/SECURITY.md` metadata behavior update
 * `docs/CRATE_RESPONSIBILITIES.md` consistency check
+* `docs/LIBRARY_LAYOUT.md` consistency check
 * `docs/SPEC_QUESTIONS.md` cleanup
 * profile conformance checker refreshed for M1-M11
 * metadata conformance profile added
 * crate-boundary audit result documented
+* archive API split result documented
+* CLI metadata behavior documented
 * no false Standard Compliance claims
 * binding-readiness notes updated for C/Python future work
 * full workspace validation
@@ -564,6 +645,7 @@ conformance profile validator and official vectors
 * stream/session vectors
 * filesystem metadata vectors
 * negative/error vectors
+* profile-specific vectors for static archive, package, stream package, backup, telemetry, and live-media profiles where applicable
 
 ## M12b:
 
@@ -573,6 +655,8 @@ fuzzing and malicious corpus
 * LFH fuzzing
 * CD/footer fuzzing
 * TLV fuzzing
+* low-level `sar-core` parser corpus
+* high-level `sar-archive` orchestration corpus
 * transform pipeline fuzzing
 * crypto/auth ordering corpus
 * decompression bomb corpus
@@ -580,6 +664,8 @@ fuzzing and malicious corpus
 * CDC/delta corpus
 * stream/session corpus
 * metadata edge-case corpus
+* malformed filesystem metadata corpus
+* profile-specific rejection corpus
 
 ## M12c:
 
@@ -592,6 +678,8 @@ docs/API/security posture hardening
 * compatibility notes
 * spec-question cleanup
 * public claims audit
+* crate-boundary consistency audit
+* library-layout consistency audit
 
 ## M13a:
 
@@ -606,6 +694,10 @@ security audit
 * metadata restoration risks
 * path traversal / symlink hazards
 * UID/GID/permission restoration hazards
+* crate-boundary attack surface
+* profile/library layout attack surface
+* transport/session attack surface
+* FFI readiness risks
 
 ## M13b:
 
@@ -615,34 +707,52 @@ refactoring/remediation from M13a
 * simplify risky abstractions
 * strengthen invariants
 * reduce attack surface
+* harden crate boundaries
+* harden profile/library boundaries
 * prepare stable public API surface
+* prepare C ABI/Python architecture after security findings
 
 ## M14a:
 
 C ABI security profile and split-library design
 
 * define C ABI security profiles before freezing the ABI
+* align profile design with `docs/LIBRARY_LAYOUT.md`
 * define intended shared-library/profile layout:
 
-  * core
-  * static archive
-  * tape
-  * static package
-  * stream package over QUIC
-  * backup
-  * telemetry
-  * live media
-  * generic stream
-  * full/developer
+  * `libsar_core.so`
+  * `libsar_archive.so`
+  * `libsar_profile_static_archive.so`
+  * `libsar_profile_tape.so`
+  * `libsar_profile_static_package.so`
+  * `libsar_profile_stream_package_quic.so`
+  * `libsar_profile_backup.so`
+  * `libsar_profile_backup_quic.so`
+  * `libsar_profile_backup_tcp.so`
+  * `libsar_profile_telemetry.so`
+  * `libsar_profile_live_media_quic.so`
+  * `libsar_profile_stream_generic.so`
+  * `libsar_profile_full.so`
 * decide which APIs are available in each profile
 * define which features are excluded from privileged profiles
 * define profile constructors for C callers
 * define default-deny behavior for unsupported/custom features
+* define FFI-safe metadata ownership:
+
+  * do not expose Rust `String`, `Vec`, `Option<T>`, borrowed references, slices, or lifetime-bearing structs directly across C ABI
+  * expose metadata through opaque handles or C-compatible owned mirror structs
+  * provide explicit destructor functions for all heap-owned metadata/results
+  * define string/buffer lifetime rules
+  * define whether returned strings are UTF-8, nul-terminated, length-delimited, or both
+  * define allocator/freeing side for every returned allocation
 * define ownership and callback rules per profile
+* define cancellation behavior for long-running operations
+* define thread-safety expectations
 * define dependency/linking expectations per profile
 * document that shared libraries do not provide process isolation
 * document helper-process model for high-risk/networked use
 * update `SECURITY.md` / future `SECURITY_PROFILES.md`
+* no stable ABI freeze yet unless the design is complete and reviewed
 
 ## M14b:
 
@@ -652,11 +762,17 @@ stable C ABI
 * opaque handle model
 * archive reader/writer C API
 * profile constructors
+* metadata handle API
+* entry/result destructor API
 * error/status mapping
 * memory ownership rules
 * callback conventions
+* cancellation conventions
+* thread-safety conventions
 * no Rust panic across FFI
 * ABI versioning
+* ABI compatibility tests
+* no raw Rust type layout exposed across C ABI
 
 ## M14c:
 
@@ -664,22 +780,43 @@ C ABI examples/tests
 
 * C build examples
 * C archive read/write examples
+* C metadata examples
 * C streaming examples where supported
 * C profile-selection examples
 * C package-profile examples
+* C backup-profile examples where supported
 * C error-handling examples
 * C ABI integration tests
 * sanitizer-friendly FFI tests
+* ownership/destructor misuse tests where practical
+* no-panic-across-FFI tests
 
 ## M14d:
 
 Python module
 
 * Python bindings over stable API surface
+* align Python package shape with `docs/LIBRARY_LAYOUT.md`
+* do not mirror every Rust crate as a public Python module
+* preferred Python package shape:
+
+  * `sar.archive`
+  * `sar.metadata`
+  * `sar.verify`
+  * `sar.profiles`
+  * `sar.stream` where enabled
+  * `sar.transport` where enabled
 * archive read/write API
 * metadata access API
+* verification API
+* profile-selection API
 * streaming/session API where appropriate
 * Python exceptions mapped from SAR status codes
+* Python-owned metadata objects or safe opaque-handle wrappers
+* PyO3 ownership conversion rules
+* no borrowed views into temporary archive buffers unless owner lifetime is enforced by Python object references
+* optional extras/features for archive/package/quic/backup/full profiles where appropriate
+* default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
 * wheel/build documentation
 * Python examples/tests
 
@@ -692,6 +829,7 @@ Swift/iOS package
 * archive read/write APIs
 * safe metadata handling
 * mobile storage constraints documented
+* profile selection documented
 * Swift examples/tests
 
 ## M15b:
@@ -703,5 +841,5 @@ Kotlin/Java Android package
 * archive read/write APIs
 * safe metadata handling
 * mobile storage constraints documented
+* profile selection documented
 * Android examples/tests
-
