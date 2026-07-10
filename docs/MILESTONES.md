@@ -567,6 +567,12 @@ archive API architecture split
 
   * parsing and metadata decoding must not chmod, chown, set timestamps, create directories, create symlinks, or create device/FIFO/socket nodes
   * filesystem mutations remain explicit CLI/application/profile extraction behavior
+* preserve secret-handling boundaries during the crate split:
+
+  * exporter-derived key material must remain inside crypto/transport security boundaries
+  * ordinary public SAR metadata parsing is not treated as secret
+  * AEAD/tag verification remains the authenticity oracle
+  * authentication failures must not reveal which AAD/context component failed
 * update `sar-cli`, `sar-stream`, `sar-transport`, tests, and docs for new ownership
 * allow Rust API-breaking changes
 * do not keep compatibility re-exports merely to avoid breakage
@@ -600,8 +606,30 @@ CLI metadata support
 * extraction does not restore setuid/setgid/sticky bits by default
 * symlink extraction is opt-in or policy-gated
 * directory permissions are applied after contents where applicable
+* safe extraction staging policy:
+
+  * create directories with restrictive temporary permissions, preferably `0700` on POSIX
+  * apply final directory permissions only after child entries are written
+  * reject absolute paths and path traversal by default
+  * prevent symlink-following during extraction where platform APIs allow it
+  * use directory-relative / `openat`-style operations where available
+  * symlink creation remains opt-in and policy-gated
+  * hardlink creation is rejected unless a future explicit profile allows it
+  * device/FIFO/socket creation is rejected
+  * UID/GID restoration is disabled by default
+  * setuid/setgid/sticky bits are disabled by default
+  * timestamps and permissions are applied only through explicit extraction policy
+  * document platform-specific limitations and best-effort behavior
 * platform-specific behavior documented
 * deterministic CLI round-trip tests
+* hostile extraction tests where practical:
+
+  * path traversal attempts
+  * absolute path attempts
+  * symlink traversal attempts
+  * unsafe metadata combinations
+  * directory permission ordering
+  * path replacement attempts where the platform test environment supports them
 * CLI metadata behavior uses library APIs rather than duplicating protocol logic
 * library parsing remains side-effect-free; only explicit CLI extraction paths perform filesystem mutation
 * update `docs/API.md`
@@ -624,6 +652,25 @@ API inventory, conformance profile, and security-doc refresh
 * crate-boundary audit result documented
 * archive API split result documented
 * CLI metadata behavior documented
+* side-channel and secret-handling boundaries documented:
+
+  * constant-time comparison is required for secret/authentication material where comparison is unavoidable
+  * public SAR metadata parsing is not treated as secret
+  * AEAD/tag verification is the authenticity oracle
+  * TLS_EXPORTER-derived key material must not be exposed or compared with ordinary equality
+  * authentication failures must not reveal which AAD/context component failed
+  * zeroization expectations for key/exporter-derived material documented where practical
+* transform DoS controls documented:
+
+  * transform initialization is resource-accounted
+  * algorithm switching is controlled by profile/resource limits, not treated as a core wire-format violation
+  * decompression, patching, sparse, fragment, FEC, CDC, and delta stages remain bounded
+  * profile-specific strict modes may reject excessive transform switching
+* cold-storage/tape structural-anchor risk documented without changing SAR v1.0 core wire format:
+
+  * ordinary SAR v1.0 archives must not gain duplicate Global Headers or duplicate Footer/CD blocks unless a future compatible profile/spec extension defines them
+  * recovery sidecars, external container parity, tape block parity, or profile-defined redundant manifests may be evaluated for cold-storage profiles
+  * any future redundancy mechanism must preserve interoperability with specification-compliant SAR readers or be explicitly profile-gated
 * no false Standard Compliance claims
 * binding-readiness notes updated for C/Python future work
 * full workspace validation
@@ -646,6 +693,15 @@ conformance profile validator and official vectors
 * filesystem metadata vectors
 * negative/error vectors
 * profile-specific vectors for static archive, package, stream package, backup, telemetry, and live-media profiles where applicable
+* strict-profile rejection vectors for:
+
+  * unsupported/custom algorithms
+  * unsafe filesystem metadata
+  * lossy package data
+  * unauthenticated post-binding stream entries
+  * excessive resource declarations
+  * profile-disallowed transport/session behavior
+* cold-storage/tape profile vectors only if the profile uses interoperable SAR v1.0 behavior or an explicitly defined sidecar/container/profile mechanism
 
 ## M12b:
 
@@ -658,13 +714,34 @@ fuzzing and malicious corpus
 * low-level `sar-core` parser corpus
 * high-level `sar-archive` orchestration corpus
 * transform pipeline fuzzing
+* transform-switching DoS corpus:
+
+  * many small entries with alternating compression algorithms
+  * alternating patch/compression/encryption combinations
+  * repeated decompressor initialization
+  * repeated patch-window initialization
+  * bounded rejection tests for strict profiles
 * crypto/auth ordering corpus
+* TLS_EXPORTER/AAD negative corpus:
+
+  * wrong Global Header AAD
+  * wrong LFH AAD
+  * wrong session binding
+  * bad tag/ciphertext
+  * generic authentication failure behavior
 * decompression bomb corpus
+* allocator-churn / repeated-initialization corpus
 * FEC/fragmentation corpus
 * CDC/delta corpus
 * stream/session corpus
 * metadata edge-case corpus
 * malformed filesystem metadata corpus
+* extraction-race malicious corpus where practical:
+
+  * path replacement attempts
+  * symlink traversal attempts
+  * unsafe directory permission ordering
+  * hostile metadata combinations
 * profile-specific rejection corpus
 
 ## M12c:
@@ -680,6 +757,8 @@ docs/API/security posture hardening
 * public claims audit
 * crate-boundary consistency audit
 * library-layout consistency audit
+* security-profile documentation draft if needed before M14a
+* document which hardening behavior is implementation/profile policy rather than SAR wire-format behavior
 
 ## M13a:
 
@@ -698,6 +777,31 @@ security audit
 * profile/library layout attack surface
 * transport/session attack surface
 * FFI readiness risks
+* side-channel and secret-handling audit:
+
+  * TLS_EXPORTER SAR-AEAD key derivation
+  * AEAD tag failure behavior
+  * constant-time handling of secret comparisons where comparison is unavoidable
+  * zeroization of exporter-derived material where practical
+  * no secret material exposed through logs/errors/debug APIs
+* transform resource-accounting audit:
+
+  * decompressor setup limits
+  * patch setup limits
+  * algorithm-switching profile limits
+  * allocator churn / repeated initialization DoS
+  * profile-specific strict-mode rejection behavior
+* filesystem extraction TOCTOU audit:
+
+  * directory staging permissions
+  * symlink/hardlink/path replacement races
+  * final metadata application ordering
+  * platform-specific extraction safety
+* cold-storage/tape resilience audit:
+
+  * identify which structural anchor failures are unrecoverable in plain SAR v1.0
+  * evaluate interoperable sidecar/container/profile approaches
+  * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
 
 ## M13b:
 
@@ -709,6 +813,9 @@ refactoring/remediation from M13a
 * reduce attack surface
 * harden crate boundaries
 * harden profile/library boundaries
+* harden transform resource accounting
+* harden extraction staging and metadata restoration paths
+* harden secret-handling and error-reporting paths
 * prepare stable public API surface
 * prepare C ABI/Python architecture after security findings
 
@@ -749,6 +856,19 @@ C ABI security profile and split-library design
 * define cancellation behavior for long-running operations
 * define thread-safety expectations
 * define dependency/linking expectations per profile
+* define side-channel and secret-handling expectations for FFI-facing APIs:
+
+  * secret/authentication material is not exposed through C ABI
+  * authentication failures remain generic
+  * no raw exporter-derived key material is returned to callers
+  * debug/log APIs must not expose secret material
+* evaluate cold-storage/tape structural-anchor resilience as profile design, not default SAR v1.0 wire-format behavior:
+
+  * sidecar recovery index
+  * external container parity
+  * tape block parity
+  * profile-defined redundant manifest
+  * compatibility impact for specification-compliant readers
 * document that shared libraries do not provide process isolation
 * document helper-process model for high-risk/networked use
 * update `SECURITY.md` / future `SECURITY_PROFILES.md`
@@ -773,6 +893,8 @@ stable C ABI
 * ABI versioning
 * ABI compatibility tests
 * no raw Rust type layout exposed across C ABI
+* C ABI errors do not reveal secret/AAD mismatch details
+* C ABI APIs do not expose raw key/exporter-derived material
 
 ## M14c:
 
@@ -790,6 +912,7 @@ C ABI examples/tests
 * sanitizer-friendly FFI tests
 * ownership/destructor misuse tests where practical
 * no-panic-across-FFI tests
+* secret material non-exposure tests where practical
 
 ## M14d:
 
@@ -817,6 +940,8 @@ Python module
 * no borrowed views into temporary archive buffers unless owner lifetime is enforced by Python object references
 * optional extras/features for archive/package/quic/backup/full profiles where appropriate
 * default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
+* Python exceptions must not reveal secret/AAD mismatch details
+* Python APIs must not expose raw key/exporter-derived material
 * wheel/build documentation
 * Python examples/tests
 
