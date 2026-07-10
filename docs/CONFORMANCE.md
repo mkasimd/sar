@@ -1,7 +1,6 @@
 # Conformance Statement
 
-This document reflects the current repository state after the Milestone 8 closeout and
-maintainability cleanup pass.
+This document reflects the current repository state after Milestones 10a–10f.
 
 ## Implemented
 
@@ -106,6 +105,136 @@ maintainability cleanup pass.
   - M8 final pass: `sparse_fragment_tests` — sparse map on fragment-0 applies to whole group; sparse map on non-zero fragment index returns `SAR_ERR_INVALID_MAP`; allow_lossy does not suppress `SAR_ERR_INVALID_MAP`; three-fragment scatter-gather via sparse map; trailing holes preserved across fragment boundaries; missing fragment without allow_lossy fails; missing fragment with allow_lossy+LOSS_TOLERANT succeeds with is_degraded=true; degraded sparse+fragment output is marked
   - M8 final pass: `sparse_writer_tests` — writer creates sparse entry with leading/middle/trailing holes; round-trips through reader; rejects overlapping extents; rejects extent beyond logical_size; rejects payload length mismatch (short and excess); requires sparse flag; edge cases (single full extent, empty extents, indexed archive)
   - Stage 3: `pipeline_memory_tests` — 25 tests covering sparse expansion-bomb reject and bounded-success, general memory-bound limits (max_decoded_entry_size, max_in_memory_buffer, max_total_pipeline_memory), sparse trailing-hole limit enforcement, fragment descriptor overflow, huge fragment group span, loss-tolerant gap limit, fragmented sparse expansion bomb, decompression output limit, compressed bomb limit, FEC/recovery working-set limits, failed-repair non-output guarantee
+- **Milestone 10a stateless stream parser/writer state model**
+  - `StreamArchiveParser` explicit phases: `NeedGlobalHeader`, `NeedLocalFileHeader`, `NeedPayload`, `TransformingEntry`, `EntryReady`, `NeedCentralDictionaryOrFooter`, `ArchiveComplete`, `Error`
+  - deterministic partial-input stepping via `StreamStep::{NeedMore, Ready, Complete}`
+  - forward-only parsing for `NO_INDEX` byte-stream paths with concatenated archive support
+  - LFH physical-field presence remains derived from Global Flags even when Entry Mode marks a feature inactive
+  - `IS_COMPRESSED` unset => STORE semantics even when compression field is physically present
+  - `IS_ENCRYPTED` unset => PLAINTEXT semantics even when encryption fields are physically present
+  - session OP_CODE fields and `SESSION_CONTROL` entries are structurally parsed only; no M10b session lifecycle semantics
+  - writer exposes structural phases through `StreamWriteState` / `ArchiveWriter::stream_state()`
+- **Milestone 10b in-memory stateful session layer**
+  - `sar-stream::SessionManager` activates stateful semantics only after `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT`
+  - Stream ID reuse while active returns `SAR_ERR_STREAM_STATE`; configured active-stream limit returns `SAR_ERR_TOO_MANY_STREAMS`
+  - `SESSION_INIT`, `SESSION_CLOSE`, `SESSION_RESUME`, `SESSION_HEARTBEAT`, `SESSION_STATUS`, `SESSION_ACK`, `SESSION_METADATA`, and `SESSION_CAPABILITIES` are parsed and validated in-memory
+  - Session Flags, Capability Flags, ACK flags, reserved entry-mode bit 12, and reserved session/filesystem opcodes fail closed
+  - sequence continuity is enforced for all accepted entries and wraps `0xFFFF -> 0x0000`
+  - filesystem `OP_CODE`s are validated and surfaced as in-memory actions only; no real filesystem mutation or transport I/O occurs
+  - `ATOMIC_WRITE` / `FORCE_SYNC` are exposed as action metadata only
+  - session-layer limits cover active streams, metadata size, status size, fragment buffers, and cumulative session memory
+  - degraded `LOSS_TOLERANT` output may emit `SAR_WARN_INCOMPLETE`, but auth, decompression, patch, and structural failures are never suppressed
+- **Milestone 10c transport abstraction + in-memory harness**
+  - `sar-transport` provides transport abstraction traits/types and deterministic in-memory harness only
+  - dependency direction is `sar-transport -> sar-stream -> sar-core` with no reverse dependency from `sar-stream` to `sar-transport`
+  - TCP-like policy is non-interleaved and emits abstract close/discard actions for invalid/unskippable stream failures
+  - QUIC-like policy supports concurrent transport streams and emits stream-local reset/reject actions
+  - active SAR Stream ID uniqueness is enforced connection-wide; duplicate active IDs fail closed
+  - rejected Stream IDs remain unbound
+  - `SESSION_CLOSE` unbinds Stream ID and permits later reuse
+  - status/ack hooks are emitted as abstract transport actions mapped from `sar-stream` events/actions
+  - heartbeat/watchdog hooks use explicit timestamp input (`record_valid_activity`, `check_inactivity`, `maybe_emit_heartbeat`); no background monitoring exists
+  - no real sockets, TCP networking, QUIC networking, TLS, async runtime integration, retransmission, or congestion control are implemented in M10c
+- **Milestone 10d SAR-over-TCP binding**
+  - `sar-transport::tcp::TcpSarConnection<S>` wraps any `Read + Write` stream and drives the M10c TCP-policy harness over real bytes
+  - TCP listener/client helpers: `TcpSarConnection::connect` / `TcpSarConnection::accept` / `TcpSarConnection::from_stream`
+  - TCP binding is **plaintext SAR-over-TCP only**; TCP+TLS is **not** implemented; STARTTLS is **not** implemented
+  - TCP streams use a single fixed `TransportStreamId(0)` per connection; no byte-interleaving of SAR sessions
+  - a new SAR session may start only after `SESSION_CLOSE` or end-of-archive on the same TCP connection
+  - invalid unskippable stream bytes emit `CloseConnection` action and mark the connection closed
+  - TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is closed
+  - duplicate active SAR Stream IDs produce `SAR_ERR_STREAM_STATE` and close the connection
+  - too many active streams produces `SAR_ERR_TOO_MANY_STREAMS` and closes the connection
+  - `SESSION_CLOSE` unbinds the SAR Stream ID and permits a later SAR session on the same TCP connection
+  - when bidirectional control is active, `EmitSessionStatus` and `EmitSessionAck` actions are serialized as SAR LFH control entries and written to the outbound stream; a NO_INDEX global header is sent before the first outbound control frame
+  - heartbeat/watchdog uses explicit `now_ms` input; no background thread or timer
+  - `TcpTransportConfig.read_buffer_size` caps bytes read per `process_available` call; `write_buffer_size` caps bytes accepted per `write_all_sar_bytes` call — both enforced before any allocation
+  - uses `std::net` (blocking I/O, no async runtime, no TLS, no QUIC)
+  - KMS Mode `0x04 TLS_EXPORTER` is recognized as a spec-defined mode; over a plaintext TCP stream it is **not** supported and the connection is rejected with `SAR_ERR_UNSUPPORTED`
+  - TCP must not and does not advertise `CAP_TLS_EXPORTER_AEAD` in its local capability set
+  - `CAP_TLS_EXPORTER_AEAD` (bit 6) is now a defined capability bit in `CapabilityFlags`; it passes `validate()` since it is spec-defined; reserved bits 7–15 still trigger `SAR_ERR_RESERVED_VALUE`
+  - loopback TCP integration tests and non-network buffer/limit tests added in `sar-transport`
+- **Milestone 10e SAR-over-QUIC binding**
+  - `sar-transport::quic` module added behind the `quic` Cargo feature flag (deps: `quinn 0.11`, `rustls 0.23`/ring, `tokio 1`)
+  - `QuicSarListener` accepts multiple concurrent QUIC connections over an async tokio runtime
+  - `QuicSarConnection` multiplexes multiple SAR sessions over one QUIC connection
+  - `QuicSarStream` drives the M10c QUIC-policy harness over a single QUIC bidirectional stream
+  - QUIC/TLS protects transport bytes; SAR AEAD is additionally available at the SAR layer
+  - `QuicServerIdentity` carries DER certificate chain + DER private key for TLS server identity
+  - `QuicClientTrust::CustomCaDer` supports custom CA certificate trust anchors
+  - `QuicClientTrust::InsecureSkipVerifyForTestsOnly` is test-only and clearly named; never the default
+  - `QuicTransportConfig`, `QuicServerConfig`, `QuicClientConfig` centralize QUIC limits and policies
+  - `connect_quic` is the async client connection entry point
+  - active SAR Stream ID uniqueness is enforced per QUIC connection; duplicate active IDs on the same connection fail closed with `SAR_ERR_STREAM_STATE`
+  - a duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same connection is rejected; the Stream ID remains unbound
+  - `SESSION_CLOSE` unbinds the SAR Stream ID and disassociates attached QUIC streams
+  - same numeric SAR Stream ID on different QUIC connections are independent sessions
+  - additional QUIC control streams carrying LFH-direct `SESSION_CONTROL` for an existing SAR Stream ID are accepted when the referenced Stream ID is active on the same QUIC connection
+  - additional control streams referencing an unknown or closed Stream ID are rejected stream-locally
+  - additional control streams must not carry a new `SESSION_INIT` for an already-bound Stream ID
+  - same bidirectional QUIC stream supports reverse `SESSION_ACK` / `SESSION_STATUS` entries when `CAP_BIDIRECTIONAL_CONTROL` is active
+  - Sequence Number wrap `0xFFFF → 0x0000` is correctly handled in QUIC mode without treating wrap as an error
+  - KMS Mode `0x04 TLS_EXPORTER` recognized and supported for QUIC connections (not for TCP)
+  - `TlsExporterParams`, `TlsExporterContextV1`, `parse_tls_exporter_kms_payload`, `serialize_tls_exporter_kms_payload`, and `encode_tls_exporter_context_v1` added to `sar-crypto`
+  - Context Version `0x01` exporter context encoding is deterministic and includes all required fields from spec §18.6
+  - `export_keying_material` uses the quinn TLS exporter API to derive keying material
+  - `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` key usages are correctly separated by TLS endpoint role
+  - KMS Mode `0x04 TLS_EXPORTER` selected by the SAR Global Header / KMS configuration is authoritative for TLS_EXPORTER SAR-AEAD; `CAP_TLS_EXPORTER_AEAD` advertises support only
+  - QUIC transport-only mode (without SAR-layer TLS_EXPORTER AEAD) is fully supported; `CAP_TLS_EXPORTER_AEAD` is only advertised when `QuicTransportConfig::advertise_tls_exporter_aead` is `true`
+  - When QUIC TLS_EXPORTER SAR-AEAD mode is required or negotiated, `CAP_TLS_EXPORTER_AEAD` and KMS Mode `0x04 TLS_EXPORTER` are used together; QUIC transport-only mode without SAR-layer AEAD remains supported without `CAP_TLS_EXPORTER_AEAD`
+  - TCP binding still does not advertise `CAP_TLS_EXPORTER_AEAD`; plaintext TCP still rejects KMS mode `0x04` with `SAR_ERR_UNSUPPORTED`
+  - all limits enforced before allocation: max connections, max QUIC streams per connection, max active SAR streams per connection, max control streams per SAR session, max buffered bytes, max read chunk, max outbound buffer
+  - malformed QUIC stream does not corrupt or close other active streams unless connection-fatal
+  - no `unsafe`, no production `unwrap`/`expect`/`panic`/`todo`/`unimplemented`
+  - TCP+TLS is **not** implemented; STARTTLS is **not** implemented; SESSION_RESUME is not extended for M10e
+  - TCP tests still pass; default-feature build (no `quic`) still works
+- **Milestone 10f M10 full closeout**
+  - Compile error fixed: `CapabilityFlags` usage in `quic_loopback_tests.rs` gated correctly; default-feature build compiles without errors
+  - TCP initial-byte rejection tests added: non-SAR bytes (`GET /`, TLS ClientHello, random garbage) close the TCP connection
+  - TCP SAR-magic-then-malformed-body test added: bytes starting with `SAR!` but with an invalid version byte close the connection with a structural SAR error (not `InvalidMagic`); no panic, no session bind
+  - TCP idle/no-data inactivity timeout tested via explicit timestamp injection (no background threads)
+  - TCP outbound control-frame sequence wrap (`0xFFFF → 0x0000`) documented and unit-tested
+  - QUIC SAR-magic-then-malformed-body test added: a QUIC stream starting with `SAR!` + invalid version is rejected stream-locally (not connection-fatal); other active streams on the same connection are unaffected
+  - QUIC client-disconnect test added: when a client drops a QUIC connection without opening SAR streams, the server's `accept_sar_stream` returns an error rather than blocking indefinitely
+  - `InsecureSkipVerifyForTestsOnly` is used only in test code and is clearly named; not the default; not for trusted production deployments
+  - All M10 validation commands pass (see Planned → M10f notes)
+- **Milestone 10h QUIC control-stream correction + TLS PQ/hybrid policy alignment**
+  - Primary SAR-over-QUIC streams begin with `SAR!` + SAR Global Header
+  - Additional QUIC control streams begin directly with LFH-encoded `SESSION_CONTROL`; there is no `CTL!`, private envelope, UUID preheader, or extra association header
+  - Additional control streams are associated only by QUIC connection + LFH `Stream ID`
+  - Baseline reverse-direction additional-control entries are `SESSION_ACK`, `SESSION_STATUS`, and `SESSION_CAPABILITIES` when bidirectional control is active
+  - Additional control streams do not establish new SAR sessions and must not carry `SESSION_INIT`
+  - **`TlsPqPolicy`** (Section 18.6.7): `ClassicalAllowed` / `PreferPq` / `RequirePqOrHybrid` / `RequirePqOnly` enum added to `QuicTransportConfig`
+  - Default policy is `ClassicalAllowed` because the bundled `ring` provider does not expose PQ-safe or hybrid key agreement groups
+  - `RequirePqOrHybrid` and `RequirePqOnly` fail closed with `SAR_ERR_UNSUPPORTED` at `QuicSarListener::bind` or `connect_quic` time when ring is the TLS provider
+  - `PreferPq` may fall back to classical with ring without error, but PQ/hybrid protection must not be claimed unless negotiated-group classification can be verified
+  - Negotiated-group verification is unavailable with the ring provider; this limitation is documented
+  - No TLS exporter output, derived SAR AEAD keys, private keys, or TLS secrets are logged or placed in KMS data
+
+- **Milestone 10i TLS_EXPORTER/AAD coverage and crate responsibility guardrails**
+  - **Post-binding enforcement**: for KMS Mode `0x04 TLS_EXPORTER`, after `SESSION_INIT` activates the session, every subsequent SAR entry on the primary stream and on attached additional QUIC control streams MUST carry `EntryMode::ENCRYPTED`; any unencrypted entry received after binding is active is rejected with `SAR_ERR_AUTH_FAILED`
+  - `SESSION_INIT` is the only mandatory plaintext bootstrap entry; it is accepted without AEAD encryption
+  - Post-binding plaintext downgrade is never allowed; `LOSS_TOLERANT` does not suppress AEAD enforcement
+  - `CTL!` remains removed and rejected (`SAR_ERR_INVALID_MAGIC`) regardless of KMS mode
+  - `InMemoryTransport::with_key_provider` added to allow test and production code to inject a CEK provider for inline AEAD decryption by `StreamArchiveParser`
+  - **Tests added (primary stream)**:
+    - `tls_exporter_session_init_is_accepted_as_plaintext`
+    - `tls_exporter_encrypted_post_binding_capabilities_is_accepted` (full AEAD round-trip with test key provider)
+    - `tls_exporter_plaintext_post_binding_capabilities_is_rejected`
+    - `tls_exporter_plaintext_post_binding_ack_is_rejected`
+    - `tls_exporter_plaintext_post_binding_status_is_rejected`
+    - `non_tls_session_coexists_with_tls_exporter_session`
+    - `tls_exporter_ctl_magic_is_still_rejected`
+  - **Tests added (additional control stream AAD)**:
+    - `tls_exporter_additional_control_stream_encrypted_entry_is_accepted`
+    - `tls_exporter_additional_control_stream_plaintext_entry_is_rejected`
+    - `tls_exporter_aead_failure_on_control_stream_is_stream_local`
+    - `build_aead_aad_is_concatenation_of_sections`
+    - `tampered_lfh_bytes_in_aad_cause_aead_failure`
+    - `correct_lfh_bytes_in_aad_allows_successful_decryption`
+    - `wrong_global_header_bytes_in_aad_cause_aead_failure`
+    - `aead_failure_does_not_expose_plaintext`
+    - `different_lfh_bytes_produce_different_aad`
 
 ## Partial
 
@@ -143,17 +272,20 @@ maintainability cleanup pass.
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- streaming/session APIs
-- transport-layer APIs
+- TCP+TLS (TLS is not implemented; SAR AEAD and/or external transport security is required for untrusted networks)
+- STARTTLS or any in-band TLS upgrade on the plaintext TCP binding
+- KMS Mode `0x04 TLS_EXPORTER` over plaintext TCP — fully implemented for QUIC connections; **rejected** on plaintext TCP with `SAR_ERR_UNSUPPORTED`
+- `CAP_TLS_EXPORTER_AEAD` over TCP — TCP bindings do not advertise `CAP_TLS_EXPORTER_AEAD`; QUIC bindings advertise it only when `advertise_tls_exporter_aead` is `true`
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
 ## Planned
 
-- later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`, `sar-stream`, `sar-transport`) remain placeholders
+- later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`) remain placeholders
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
-- **Milestone 10:** streaming/session APIs
+- **Milestone 10e:** real SAR-over-QUIC binding (completed)
+- **Milestone 10f:** M10 full closeout (completed — see M10f entry in Implemented above)
 - **Milestone 12:** stable FFI / C ABI for C, C++, and other language bindings
 
 ## Known Gaps

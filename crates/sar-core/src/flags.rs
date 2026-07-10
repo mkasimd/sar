@@ -58,6 +58,8 @@ pub struct EntryMode {
 }
 
 impl EntryMode {
+    /// Entry should be treated as hidden by filesystem integrations.
+    pub const HIDDEN_ATTR: u16 = 1 << 4;
     /// Entry payload is encrypted.
     pub const ENCRYPTED: u16 = 1 << 2;
     /// Entry payload is compressed.
@@ -68,6 +70,14 @@ impl EntryMode {
     pub const LAST_FRAGMENT: u16 = 1 << 6;
     /// Entry supports degraded loss-tolerant reconstruction.
     pub const LOSS_TOLERANT: u16 = 1 << 7;
+    /// Session-control opcode context toggle.
+    pub const SESSION_CONTROL: u16 = 1 << 13;
+    /// Request atomic visibility for the final filesystem state.
+    pub const ATOMIC_WRITE: u16 = 1 << 14;
+    /// Request conflict-resolution bypass / forced synchronization.
+    pub const FORCE_SYNC: u16 = 1 << 15;
+
+    const RESERVED: u16 = 1 << 12;
 
     /// Creates an entry mode from raw wire bits.
     #[must_use]
@@ -110,6 +120,36 @@ impl EntryMode {
     pub const fn is_loss_tolerant(self) -> bool {
         self.bits & Self::LOSS_TOLERANT != 0
     }
+
+    /// Returns true when opcode context is `SESSION_CONTROL`.
+    #[must_use]
+    pub const fn is_session_control(self) -> bool {
+        self.bits & Self::SESSION_CONTROL != 0
+    }
+
+    /// Returns true when hidden-attribute bit is set.
+    #[must_use]
+    pub const fn is_hidden_attr(self) -> bool {
+        self.bits & Self::HIDDEN_ATTR != 0
+    }
+
+    /// Returns true when atomic-write bit is set.
+    #[must_use]
+    pub const fn is_atomic_write(self) -> bool {
+        self.bits & Self::ATOMIC_WRITE != 0
+    }
+
+    /// Returns true when force-sync bit is set.
+    #[must_use]
+    pub const fn is_force_sync(self) -> bool {
+        self.bits & Self::FORCE_SYNC != 0
+    }
+
+    /// Returns the raw 4-bit `OP_CODE` field value.
+    #[must_use]
+    pub const fn op_code(self) -> u8 {
+        ((self.bits >> 8) & 0x0f) as u8
+    }
 }
 
 /// Validates global flag consistency.
@@ -141,6 +181,12 @@ pub fn validate_entry_mode_against_global(
     global_flags: GlobalFlags,
     entry_mode: EntryMode,
 ) -> Result<(), SarError> {
+    if entry_mode.bits() & EntryMode::RESERVED != 0 {
+        return Err(SarError::ReservedValue(
+            "entry mode reserved bit 12 must be zero",
+        ));
+    }
+
     if entry_mode.is_compressed() && !global_flags.contains(GlobalFlags::COMPRESSED) {
         return Err(SarError::FlagConflict(
             "IS_COMPRESSED requires global COMPRESSED",

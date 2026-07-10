@@ -639,7 +639,7 @@ sar-stream:
 
 Final role: transport abstraction plus concrete TCP/QUIC bindings.
 
-Current state appears mostly correct, except M10g introduced `CTL!`, which M10h should remove.
+Current state: M10i-complete.  `CTL!` was removed in M10h and remains absent.  `InMemoryTransport::with_key_provider` was added in M10i to support TLS_EXPORTER post-binding SAR-AEAD enforcement.
 
 Should contain:
 
@@ -663,6 +663,8 @@ Should contain:
   * no private envelope;
   * association by QUIC connection + LFH Stream ID.
 * TLS_EXPORTER integration with QUIC/TLS exporter material.
+* TLS_EXPORTER post-binding SAR-AEAD enforcement: after SESSION_INIT, all subsequent entries MUST carry EntryMode::ENCRYPTED; plaintext entries are rejected with AuthFailed.
+* Key provider injection (`with_key_provider`) for SAR-layer AEAD decryption.
 * PQ/hybrid TLS policy configuration.
 * stream-local vs connection-fatal error behavior.
 * loopback tests.

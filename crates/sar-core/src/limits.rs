@@ -140,6 +140,26 @@ pub struct ResourceLimits {
     /// set.  Default: 1 GiB.
     pub max_loss_tolerant_gap: u64,
 
+    // ── Stateful streaming session layer ──────────────────────────────────────
+    /// Maximum number of concurrently active stateful streams. Default: 1 024.
+    pub max_active_streams: usize,
+
+    /// Maximum size of a single `SESSION_METADATA` metadata blob in bytes.
+    /// Default: 1 MiB.
+    pub max_session_metadata_bytes: usize,
+
+    /// Maximum size of a single `SESSION_STATUS` message string in bytes.
+    /// Default: 4 KiB.
+    pub max_session_status_message_bytes: usize,
+
+    /// Maximum in-memory fragment/session payload buffer size used by the
+    /// stateful session layer. Default: 64 MiB.
+    pub max_session_fragment_buffer_bytes: u64,
+
+    /// Maximum cumulative in-memory state tracked by the stateful session
+    /// layer. Default: 64 MiB.
+    pub max_session_memory_bytes: u64,
+
     // ── FEC ──────────────────────────────────────────────────────────────────
     /// Maximum byte length of any FEC value field stored in an LFH.
     /// Default: 256 MiB (matches the internal `MAX_PARITY_SIZE` constant in
@@ -221,6 +241,11 @@ impl Default for ResourceLimits {
             max_fragment_count: 65_535,
             max_fragment_group_span: 1024 * 1024 * 1024,
             max_loss_tolerant_gap: 1024 * 1024 * 1024,
+            max_active_streams: 1_024,
+            max_session_metadata_bytes: 1024 * 1024,
+            max_session_status_message_bytes: 4 * 1024,
+            max_session_fragment_buffer_bytes: 64 * 1024 * 1024,
+            max_session_memory_bytes: 64 * 1024 * 1024,
             max_fec_value_bytes: 256 * 1024 * 1024,
             max_recovery_protected_range: 16 * 1024 * 1024 * 1024,
             max_repair_working_set: 2 * 1024 * 1024 * 1024,
@@ -264,6 +289,11 @@ impl ResourceLimits {
             max_fragment_count: usize::MAX,
             max_fragment_group_span: u64::MAX,
             max_loss_tolerant_gap: u64::MAX,
+            max_active_streams: usize::MAX,
+            max_session_metadata_bytes: usize::MAX,
+            max_session_status_message_bytes: usize::MAX,
+            max_session_fragment_buffer_bytes: u64::MAX,
+            max_session_memory_bytes: u64::MAX,
             max_fec_value_bytes: usize::MAX,
             max_recovery_protected_range: u64::MAX,
             max_repair_working_set: u64::MAX,
@@ -551,6 +581,61 @@ impl ResourceLimits {
         if bytes > self.max_loss_tolerant_gap {
             return Err(SarError::LimitExceeded(
                 "loss-tolerant gap exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that the active stateful-stream count does not exceed
+    /// `max_active_streams`.
+    pub fn check_active_streams(&self, count: usize) -> Result<(), SarError> {
+        if count > self.max_active_streams {
+            return Err(SarError::TooManyStreams(
+                "active stream count exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that session metadata bytes do not exceed
+    /// `max_session_metadata_bytes`.
+    pub fn check_session_metadata_bytes(&self, bytes: usize) -> Result<(), SarError> {
+        if bytes > self.max_session_metadata_bytes {
+            return Err(SarError::LimitExceeded(
+                "session metadata exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that a session status-message byte length does not exceed
+    /// `max_session_status_message_bytes`.
+    pub fn check_session_status_message_bytes(&self, bytes: usize) -> Result<(), SarError> {
+        if bytes > self.max_session_status_message_bytes {
+            return Err(SarError::LimitExceeded(
+                "session status message exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that a stateful fragment/session buffer does not exceed
+    /// `max_session_fragment_buffer_bytes`.
+    pub fn check_session_fragment_buffer_bytes(&self, bytes: u64) -> Result<(), SarError> {
+        if bytes > self.max_session_fragment_buffer_bytes {
+            return Err(SarError::LimitExceeded(
+                "session fragment buffer exceeds configured limit",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Checks that cumulative stateful session memory does not exceed
+    /// `max_session_memory_bytes`.
+    pub fn check_session_memory_bytes(&self, bytes: u64) -> Result<(), SarError> {
+        if bytes > self.max_session_memory_bytes {
+            return Err(SarError::LimitExceeded(
+                "session memory exceeds configured limit",
             ));
         }
         Ok(())

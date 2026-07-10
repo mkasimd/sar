@@ -4,8 +4,10 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use sar_compression::COMP_ALGO_STORE;
 use sar_crypto::aad::build_aead_aad;
 use sar_crypto::{
-    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KeyProvider, KmsContext, KmsParams, SecretBytes,
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KMS_TLS_EXPORTER, KeyProvider, KmsContext, KmsParams,
+    SecretBytes,
     aead::generate_nonce,
+    kms::tls_exporter::parse_tls_exporter_kms_payload,
     kms::types::{parse_kms_payload, serialize_kms_payload},
     provider::resolve_cek,
     validate_encr_algo_id,
@@ -461,7 +463,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         let (header, consumed) = parse_global_header(&header_bytes, &self.options.limits)?;
         if let Some(kms) = &header.kms {
-            let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+            // Mode 0x04 TLS_EXPORTER: structural validation is deferred to the
+            // transport layer (requires an active TLS session).  Skip generic
+            // parse_kms_payload which always returns Unsupported for that mode.
+            if kms.mode_id != KMS_TLS_EXPORTER {
+                let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+            }
         }
         let header_len = u64::try_from(consumed).map_err(|_| SarError::Overflow("header len"))?;
 
@@ -1341,6 +1348,24 @@ pub struct ArchiveWriter<W> {
     used_nonces: HashSet<[u8; 24]>,
     global_flags_section: Vec<u8>,
     fec: Option<FecSettings>,
+    stream_state: StreamWriteState,
+}
+
+/// Structural write phases for stream-oriented archive emission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamWriteState {
+    /// Writer has emitted a global header and is ready for an LFH.
+    NeedLocalFileHeader,
+    /// Writer is currently emitting an LFH+payload sequence.
+    NeedPayload,
+    /// Writer finished one full entry.
+    EntryReady,
+    /// Writer is ready to emit CD/footer for indexed output.
+    NeedCentralDictionaryOrFooter,
+    /// Archive writing has completed.
+    ArchiveComplete,
+    /// Writer entered a terminal error state.
+    Error,
 }
 
 impl<W: Write> ArchiveWriter<W> {
@@ -1501,12 +1526,20 @@ impl<W: Write> ArchiveWriter<W> {
             used_nonces: HashSet::new(),
             global_flags_section,
             fec: options.fec,
+            stream_state: StreamWriteState::NeedLocalFileHeader,
         })
+    }
+
+    /// Returns the current structural writer state.
+    #[must_use]
+    pub const fn stream_state(&self) -> StreamWriteState {
+        self.stream_state
     }
 
     /// Adds one archive entry.
     pub fn add_entry(&mut self, entry: EntryInput) -> Result<EntryWritten, SarError> {
         if self.finished {
+            self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
 
@@ -1663,6 +1696,7 @@ impl<W: Write> ArchiveWriter<W> {
         encoded_payload: Vec<u8>,
     ) -> Result<EntryWritten, SarError> {
         let lfh_offset = self.position;
+        self.stream_state = StreamWriteState::NeedPayload;
         self.writer.write_all(&lfh_bytes)?;
         self.writer.write_all(&encoded_payload)?;
 
@@ -1678,6 +1712,7 @@ impl<W: Write> ArchiveWriter<W> {
             .checked_add(written)
             .ok_or(SarError::Overflow("archive position"))?;
         self.offsets.push(lfh_offset);
+        self.stream_state = StreamWriteState::EntryReady;
 
         let _ = lfh;
         Ok(EntryWritten {
@@ -1722,6 +1757,7 @@ impl<W: Write> ArchiveWriter<W> {
         sparse: SparseWriteOptions,
     ) -> Result<EntryWritten, SarError> {
         if self.finished {
+            self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
         if !self.flags.contains(GlobalFlags::SPARSE_FILES) {
@@ -1896,8 +1932,10 @@ impl<W: Write> ArchiveWriter<W> {
     /// Finalizes archive and optionally writes CD/Footer.
     pub fn finish(mut self) -> Result<ArchiveSummary, SarError> {
         if self.finished {
+            self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
+        self.stream_state = StreamWriteState::NeedCentralDictionaryOrFooter;
 
         if !self.flags.contains(GlobalFlags::NO_INDEX) {
             let cd_offset = self.position;
@@ -1938,6 +1976,7 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         self.finished = true;
+        self.stream_state = StreamWriteState::ArchiveComplete;
         Ok(ArchiveSummary {
             entry_count: u64::try_from(self.offsets.len())
                 .map_err(|_| SarError::Overflow("entry count"))?,
@@ -1947,7 +1986,7 @@ impl<W: Write> ArchiveWriter<W> {
     }
 }
 
-fn compression_algorithm_name(algo_id: u8) -> &'static str {
+pub(crate) fn compression_algorithm_name(algo_id: u8) -> &'static str {
     match algo_id {
         0x00 => "STORE",
         0x01 => "DEFLATE",
@@ -1961,15 +2000,25 @@ fn kms_mode_id(params: &KmsParams) -> u8 {
         KmsParams::Pbkdf2(_) => sar_crypto::KMS_PBKDF2,
         KmsParams::Argon2(_) => sar_crypto::KMS_ARGON2,
         KmsParams::AsymmetricWrap(_) => sar_crypto::KMS_ASYMMETRIC_WRAP,
+        KmsParams::TlsExporter(_) => sar_crypto::KMS_TLS_EXPORTER,
     }
 }
 
-fn build_kms_context(header: &GlobalHeader) -> Result<KmsContext, SarError> {
+pub(crate) fn build_kms_context(header: &GlobalHeader) -> Result<KmsContext, SarError> {
     let kms = header
         .kms
         .as_ref()
         .ok_or(SarError::Malformed("encrypted archive is missing KMS data"))?;
-    let params = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+    let params = if kms.mode_id == KMS_TLS_EXPORTER {
+        // Mode 0x04: parse using the TLS_EXPORTER-specific parser so the
+        // transport layer can supply a key provider that wraps the pre-derived
+        // TLS exporter material.
+        parse_tls_exporter_kms_payload(&kms.payload)
+            .map(KmsParams::TlsExporter)
+            .map_err(SarError::from)?
+    } else {
+        parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?
+    };
     Ok(KmsContext {
         mode_id: kms.mode_id,
         params,
@@ -2081,7 +2130,7 @@ fn ceil_div_u64(a: u64, b: u64) -> Result<u64, SarError> {
 }
 
 /// Maps a [`sar_delta::PatchError`] to a [`SarError`].
-fn map_patch_error(e: sar_delta::PatchError) -> SarError {
+pub(crate) fn map_patch_error(e: sar_delta::PatchError) -> SarError {
     match e {
         sar_delta::PatchError::PatchFailed(m) => SarError::PatchFailed(m),
         sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
@@ -2092,7 +2141,7 @@ fn map_patch_error(e: sar_delta::PatchError) -> SarError {
 }
 
 /// Builds a [`BsdiffLimits`] from the unified [`ResourceLimits`].
-fn bsdiff_limits_from_resource_limits(r: &ResourceLimits) -> BsdiffLimits {
+pub(crate) fn bsdiff_limits_from_resource_limits(r: &ResourceLimits) -> BsdiffLimits {
     BsdiffLimits {
         max_patch_size: r.max_in_memory_buffer,
         max_control_bytes: r.max_bsdiff_control_bytes,
@@ -2104,7 +2153,7 @@ fn bsdiff_limits_from_resource_limits(r: &ResourceLimits) -> BsdiffLimits {
 }
 
 /// Builds a [`VcdiffLimits`] from the unified [`ResourceLimits`].
-fn vcdiff_limits_from_resource_limits(r: &ResourceLimits) -> VcdiffLimits {
+pub(crate) fn vcdiff_limits_from_resource_limits(r: &ResourceLimits) -> VcdiffLimits {
     let max_output = if r.max_vcdiff_output_size == 0 {
         r.max_decoded_entry_size
     } else {

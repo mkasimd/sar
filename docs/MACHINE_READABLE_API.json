@@ -615,9 +615,13 @@
         "stage-2",
         "stage-3",
         "stage-4",
-        "9a"
+        "9a",
+        "9b",
+        "10a"
       ],
-      "features": [],
+      "features": [
+        "Milestone 10a stateless forward-only stream parser/writer state model."
+      ],
       "modules": [
         {
           "name": "archive",
@@ -1347,6 +1351,46 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Useful for CLI/FFI verify reporting."
+            },
+            {
+              "name": "StreamWriteState",
+              "kind": "enum",
+              "signature": "pub enum StreamWriteState { NeedLocalFileHeader, NeedPayload, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Structural archive writer phases for stream-oriented emission.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "ArchiveWriter::stream_state",
+              "kind": "function",
+              "signature": "pub fn ArchiveWriter<W>::stream_state(&self) -> StreamWriteState",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Returns current writer structural phase.",
+              "parameters": [],
+              "returns": "StreamWriteState",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         },
@@ -4025,18 +4069,271 @@
               "ffi_notes": ""
             }
           ]
+        },
+        {
+          "name": "stream",
+          "path": "src/stream.rs",
+          "items": [
+            {
+              "name": "StreamParseState",
+              "kind": "enum",
+              "signature": "pub enum StreamParseState { NeedGlobalHeader, NeedLocalFileHeader, NeedPayload, TransformingEntry, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Explicit forward-only parser phases.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamStep",
+              "kind": "enum",
+              "signature": "pub enum StreamStep<T> { NeedMore { needed: Option<usize> }, Ready(T), Complete }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Deterministic incremental parser step result.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamEvent",
+              "kind": "enum",
+              "signature": "pub enum StreamEvent { GlobalHeader(Box<GlobalHeader>), Entry(Box<EntryReader>), ArchiveComplete(StreamArchiveSummary) }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Events emitted by StreamArchiveParser.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveSummary",
+              "kind": "struct",
+              "signature": "pub struct StreamArchiveSummary { pub entry_count: u64, pub flags: GlobalFlags, pub indexed: bool }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Per-archive completion summary emitted in stream mode.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser",
+              "kind": "struct",
+              "signature": "pub struct StreamArchiveParser { ... }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Forward-only stateless SAR byte-stream parser with partial-input support.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::new",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::new() -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Create parser with default options.",
+              "parameters": [],
+              "returns": "Self",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::with_options",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::with_options(options: ArchiveReaderOptions) -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Create parser with explicit options.",
+              "parameters": [],
+              "returns": "Self",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::with_key_provider",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::with_key_provider(self, key_provider: Box<dyn KeyProvider>) -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Attach key provider for encrypted entries.",
+              "parameters": [],
+              "returns": "Self",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::push_bytes",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::push_bytes(&mut self, chunk: &[u8]) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Append bytes to parser input buffer.",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::finalize_input",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::finalize_input(&mut self)",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Declare end-of-stream for truncated/error finalization.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::state",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::state(&self) -> StreamParseState",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Return current parser phase.",
+              "parameters": [],
+              "returns": "StreamParseState",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "StreamArchiveParser::step",
+              "kind": "function",
+              "signature": "pub fn StreamArchiveParser::step(&mut self) -> Result<StreamStep<StreamEvent>, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Run one deterministic parser step.",
+              "parameters": [],
+              "returns": "Result<StreamStep<StreamEvent>, SarError>",
+              "errors": [
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            }
+          ]
         }
       ]
     },
     {
       "name": "sar-crypto",
       "path": "crates/sar-crypto",
-      "purpose": "Hashing, AEAD, KMS parsing, key-provider abstraction, and zeroizing secret helpers.",
+      "purpose": "Hashing, AEAD, KMS parsing, key-provider abstraction, zeroizing secret helpers, and TLS_EXPORTER KMS mode types/context encoding (M10e).",
       "status": "partial",
       "milestones": [
-        "5"
+        "5",
+        "10e"
       ],
-      "features": [],
+      "features": [
+        "TlsExporterParams, TlsExporterContextV1, parse_tls_exporter_kms_payload, serialize_tls_exporter_kms_payload, encode_tls_exporter_context_v1 (M10e)"
+      ],
       "modules": [
         {
           "name": "aad",
@@ -5177,7 +5474,9 @@
       "path": "crates/sar-delta",
       "purpose": "Patch algorithm registry and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1.",
       "status": "implemented",
-      "milestones": ["9b"],
+      "milestones": [
+        "9b"
+      ],
       "features": [
         "sar_bsdiff_v1: normative",
         "legacy_bsdiff40_decode: unsupported"
@@ -5193,7 +5492,7 @@
               "signature": "pub enum PatchAlgoId { StorePatch, Vcdiff, Bsdiff, ZstdPatch, Custom(u8) }",
               "visibility": "public",
               "stability": "stable",
-              "description": "SAR patch algorithm identifiers from spec §8.4. Custom(u8) covers 0xF0–0xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
+              "description": "SAR patch algorithm identifiers from spec \u00a78.4. Custom(u8) covers 0xF0\u20130xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5201,7 +5500,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5221,7 +5522,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5233,15 +5536,26 @@
               "signature": "pub fn validate_patch_algo_id(id: u8) -> Result<PatchAlgoId, PatchError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04–0xEF, Unsupported for 0xF0–0xFF, and PatchAlgoId for assigned IDs 0x00–0x03. Does not apply any patch.",
-              "parameters": [{"name": "id", "type": "u8", "description": "Raw patch algorithm byte from LFH."}],
+              "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04\u20130xEF, Unsupported for 0xF0\u20130xFF, and PatchAlgoId for assigned IDs 0x00\u20130x03. Does not apply any patch.",
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "u8",
+                  "description": "Raw patch algorithm byte from LFH."
+                }
+              ],
               "returns": "Result<PatchAlgoId, PatchError>",
-              "errors": ["PatchError::ReservedValue (0x04–0xEF)", "PatchError::Unsupported (0xF0–0xFF)"],
+              "errors": [
+                "PatchError::ReservedValue (0x04\u20130xEF)",
+                "PatchError::Unsupported (0xF0\u20130xFF)"
+              ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5254,14 +5568,22 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Returns a display name string for any raw patch algorithm byte.",
-              "parameters": [{"name": "id", "type": "u8", "description": "Raw patch algorithm byte."}],
+              "parameters": [
+                {
+                  "name": "id",
+                  "type": "u8",
+                  "description": "Raw patch algorithm byte."
+                }
+              ],
               "returns": "&'static str",
               "errors": [],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5275,16 +5597,28 @@
               "stability": "stable",
               "description": "Applies STORE_PATCH (identity transform): returns the patch payload as the reconstructed target if its length equals expected_len, otherwise returns PatchFailed. No base reads, no instruction stream, no external dictionary.",
               "parameters": [
-                {"name": "patch_payload", "type": "&[u8]", "description": "Decoded patch payload bytes (already decompressed/decrypted)."},
-                {"name": "expected_len", "type": "u64", "description": "LFH Uncompressed Size; the output length must equal this value."}
+                {
+                  "name": "patch_payload",
+                  "type": "&[u8]",
+                  "description": "Decoded patch payload bytes (already decompressed/decrypted)."
+                },
+                {
+                  "name": "expected_len",
+                  "type": "u64",
+                  "description": "LFH Uncompressed Size; the output length must equal this value."
+                }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
-              "errors": ["PatchError::PatchFailed if patch_payload.len() != expected_len"],
+              "errors": [
+                "PatchError::PatchFailed if patch_payload.len() != expected_len"
+              ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5298,10 +5632,26 @@
               "stability": "stable",
               "description": "Applies a SAR BSDIFF v1 patch (`SARBSD01`) to the supplied base bytes. Validates the 32-byte header (magic, block lengths, new file size), reads uncompressed Control/Diff/Extra blocks, applies control triples using sign-magnitude decoding, and returns the reconstructed target. Base reads beyond the end of base use 0x00. Caller supplies base explicitly; no lookup is performed.",
               "parameters": [
-                {"name": "base", "type": "&[u8]", "description": "Base object bytes supplied explicitly by the caller."},
-                {"name": "patch", "type": "&[u8]", "description": "SAR BSDIFF v1 patch payload bytes (`SARBSD01`)."},
-                {"name": "expected_target_size", "type": "u64", "description": "Expected reconstructed target size (must equal LFH Uncompressed Size); must match New_File_Size in the patch header."},
-                {"name": "limits", "type": "&BsdiffLimits", "description": "Resource limits for block sizes, control triple count, and output size."}
+                {
+                  "name": "base",
+                  "type": "&[u8]",
+                  "description": "Base object bytes supplied explicitly by the caller."
+                },
+                {
+                  "name": "patch",
+                  "type": "&[u8]",
+                  "description": "SAR BSDIFF v1 patch payload bytes (`SARBSD01`)."
+                },
+                {
+                  "name": "expected_target_size",
+                  "type": "u64",
+                  "description": "Expected reconstructed target size (must equal LFH Uncompressed Size); must match New_File_Size in the patch header."
+                },
+                {
+                  "name": "limits",
+                  "type": "&BsdiffLimits",
+                  "description": "Resource limits for block sizes, control triple count, and output size."
+                }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
               "errors": [
@@ -5313,7 +5663,11 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4", "8.4.4", "8.4.6"],
+              "related_spec_sections": [
+                "8.4",
+                "8.4.4",
+                "8.4.6"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5327,10 +5681,26 @@
               "stability": "stable",
               "description": "Applies a VCDIFF (RFC 3284) patch to the supplied base bytes. Validates the 4-byte magic header, decodes windows and instruction tables, and reconstructs the target output. Supports VCD_SOURCE and VCD_TARGET address spaces; ADD, COPY, and RUN instructions; default code table. Caller supplies base explicitly; no lookup is performed.",
               "parameters": [
-                {"name": "base", "type": "&[u8]", "description": "Base object bytes supplied explicitly by the caller."},
-                {"name": "patch", "type": "&[u8]", "description": "VCDIFF patch stream bytes."},
-                {"name": "expected_target_size", "type": "u64", "description": "Expected reconstructed target size (must equal LFH Uncompressed Size)."},
-                {"name": "limits", "type": "&VcdiffLimits", "description": "Resource limits for window count, instruction count, and output size."}
+                {
+                  "name": "base",
+                  "type": "&[u8]",
+                  "description": "Base object bytes supplied explicitly by the caller."
+                },
+                {
+                  "name": "patch",
+                  "type": "&[u8]",
+                  "description": "VCDIFF patch stream bytes."
+                },
+                {
+                  "name": "expected_target_size",
+                  "type": "u64",
+                  "description": "Expected reconstructed target size (must equal LFH Uncompressed Size)."
+                },
+                {
+                  "name": "limits",
+                  "type": "&VcdiffLimits",
+                  "description": "Resource limits for window count, instruction count, and output size."
+                }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
               "errors": [
@@ -5343,7 +5713,10 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4", "8.4.3"],
+              "related_spec_sections": [
+                "8.4",
+                "8.4.3"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5363,7 +5736,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4.4"],
+              "related_spec_sections": [
+                "8.4.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5383,7 +5758,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4.3"],
+              "related_spec_sections": [
+                "8.4.3"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5402,7 +5779,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5422,7 +5801,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5442,7 +5823,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5462,7 +5845,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5474,7 +5859,7 @@
               "signature": "pub const PATCH_ALGO_CUSTOM_MIN: u8 = 0xF0;",
               "visibility": "public",
               "stability": "stable",
-              "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0–0xFF; all return Unsupported.",
+              "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0\u20130xFF; all return Unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5482,7 +5867,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -5494,7 +5881,7 @@
               "signature": "pub const PATCH_ALGO_CUSTOM_MAX: u8 = 0xFF;",
               "visibility": "public",
               "stability": "stable",
-              "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0–0xFF; all return Unsupported.",
+              "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0\u20130xFF; all return Unsupported.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -5502,7 +5889,9 @@
               "examples": [],
               "feature_flags": [],
               "since_milestone": "9b",
-              "related_spec_sections": ["8.4"],
+              "related_spec_sections": [
+                "8.4"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -6222,34 +6611,55 @@
     {
       "name": "sar-stream",
       "path": "crates/sar-stream",
-      "purpose": "Placeholder crate for future streaming API support.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "In-memory Stateful Streaming Mode session layer over sar-core structural parsing.",
+      "status": "implemented",
+      "milestones": [
+        "10b"
+      ],
+      "features": [
+        "Activation requires NO_INDEX + non-zero Stream ID + valid SESSION_INIT.",
+        "Session UUID binding, per-stream sequence continuity/wraparound, and SESSION_* frame parsing/writing.",
+        "Filesystem/session OP_CODE namespace validation with in-memory event/action output only.",
+        "LOSS_TOLERANT can surface authenticated degraded output as SAR_WARN_INCOMPLETE but does not suppress auth, decompression, patch, or structural failures.",
+        "No transport framing, networking, sockets, or async runtime."
+      ],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
+              "name": "SessionManager",
               "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "signature": "pub struct SessionManager { ... }",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented streaming functionality.",
+              "stability": "evolving",
+              "description": "In-memory Stateful Streaming Mode manager that binds Stream IDs to Session UUIDs, validates SESSION_* semantics, and emits actions/events without performing transport or filesystem I/O.",
               "parameters": [],
               "returns": "",
-              "errors": [],
-              "safety_notes": [],
+              "errors": [
+                "Returns SarError::ReservedValue for reserved flags/opcodes/bits.",
+                "Returns SarError::StreamState for invalid activation, duplicate Stream IDs, or sequence discontinuities.",
+                "Returns SarError::LimitExceeded / TooManyStreams when configured ResourceLimits are exceeded."
+              ],
+              "safety_notes": [
+                "Requires NO_INDEX + non-zero Stream ID + valid SESSION_INIT before stateful mode becomes active.",
+                "No network I/O, transport framing, or real filesystem mutation is performed."
+              ],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "since_milestone": "10b",
+              "related_spec_sections": [
+                "6.2",
+                "6.3",
+                "18.1",
+                "18.2",
+                "18.3"
+              ],
               "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Possible future opaque-handle wrapper because the API is already transport-free and in-memory."
             }
           ]
         }
@@ -6258,34 +6668,968 @@
     {
       "name": "sar-transport",
       "path": "crates/sar-transport",
-      "purpose": "Placeholder crate for future transport integration.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, SAR-over-TCP binding (M10d), and SAR-over-QUIC binding (M10e, quic feature).",
+      "status": "implemented",
+      "milestones": [
+        "10c",
+        "10d",
+        "10e"
+      ],
+      "features": [
+        "Transport abstraction surface: TransportBindingKind, TransportConfig, TransportStreamId, TransportStreamState, TransportAction, SarTransportBinding.",
+        "Deterministic in-memory harness with TCP-like non-interleaved policy and QUIC-like concurrent-stream policy.",
+        "Active SAR Stream ID uniqueness, duplicate/limit rejection, rejected-ID unbound invariant, and SESSION_CLOSE unbind/reuse behavior.",
+        "Status/ACK hooks mapped from sar-stream events/actions using SessionStatusFrame and SessionAckFrame types.",
+        "Explicit-time heartbeat/watchdog hooks with no background timers/tasks or real network I/O.",
+        "M10d TCP binding: TcpSarConnection<S> wraps any Read+Write stream and drives M10c TCP policy over real bytes (std::net, no async, no TLS, no QUIC).",
+        "M10d TCP binding enforces bounded read_buffer_size and write_buffer_size limits before any allocation.",
+        "M10d TCP binding serializes SESSION_STATUS/SESSION_ACK outbound frames when bidirectional control is active.",
+        "M10e QUIC binding (quic feature): QuicSarListener, QuicSarConnection, QuicSarStream, connect_quic using quinn 0.11 + rustls 0.23 + tokio 1.",
+        "M10e: explicit QuicServerIdentity (DER cert chain + DER private key) and QuicClientTrust (CustomCaDer or InsecureSkipVerifyForTestsOnly).",
+        "M10e: active SAR Stream ID uniqueness per QUIC connection; duplicate SESSION_INIT fails closed with SAR_ERR_STREAM_STATE.",
+        "M10h: additional QUIC control streams begin directly with LFH-encoded SESSION_CONTROL and associate by QUIC connection + LFH Stream ID.",
+        "M10e: same bidirectional QUIC stream supports reverse SESSION_ACK/SESSION_STATUS when CAP_BIDIRECTIONAL_CONTROL is active.",
+        "M10e: KMS Mode 0x04 TLS_EXPORTER supported for QUIC connections; export_keying_material derives keying material via quinn TLS exporter API.",
+        "M10e: all connection/stream limits enforced before allocation."
+      ],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "TransportBindingKind",
+              "kind": "enum",
+              "signature": "pub enum TransportBindingKind { Tcp, Quic, InMemory }",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented transport functionality.",
+              "stability": "experimental",
+              "description": "Transport binding family discriminator for TCP-like, QUIC-like, and in-memory harness modes.",
               "parameters": [],
               "returns": "",
               "errors": [],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.3",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Enum is simple and suitable for future opaque-handle APIs."
+            },
+            {
+              "name": "TransportConfig",
+              "kind": "struct",
+              "signature": "pub struct TransportConfig { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Configures transport-level stream limits, buffering bounds, status/ack queues, and heartbeat/watchdog timing.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "All feed/path action queues are bounded by explicit limits.",
+                "No background monitoring is performed; explicit timestamps are required."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Field set may evolve before transport binding milestones complete."
+            },
+            {
+              "name": "TransportStreamId",
+              "kind": "struct",
+              "signature": "pub struct TransportStreamId(pub u64);",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Opaque transport-stream identifier used by the harness policy layer.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Simple numeric handle."
+            },
+            {
+              "name": "TransportStreamState",
+              "kind": "enum",
+              "signature": "pub enum TransportStreamState { Idle, AwaitingGlobalHeader, AwaitingSessionInit, Active, Closing, Closed, Reset, Rejected }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Transport-stream state machine for policy/harness behavior.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.2",
+                "18.3.6"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "May evolve with M10d/M10e real binding integration."
+            },
+            {
+              "name": "TransportAction",
+              "kind": "enum",
+              "signature": "pub enum TransportAction { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Abstract action/event output from transport policy evaluation.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "Actions are abstract only; no real send/close/reset system call is performed in M10c."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.4",
+                "18.3.5",
+                "18.3.6"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Enum payload shape may grow before M10f."
+            },
+            {
+              "name": "SarTransportBinding",
+              "kind": "trait",
+              "signature": "pub trait SarTransportBinding { binding_kind, open_transport_stream, feed_bytes, close_transport_stream, reset_transport_stream }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Abstract transport-binding interface for opening streams, feeding bytes, and producing policy actions.",
+              "parameters": [],
+              "returns": "",
+              "errors": [
+                "Returns SarError::NotFound for unknown streams.",
+                "Returns SarError::LimitExceeded for configured transport bounds."
+              ],
+              "safety_notes": [
+                "M10c implementations are in-memory policy models only."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "requires_wrapper",
+              "ffi_notes": "Trait objects require an opaque wrapper for C ABI use."
+            },
+            {
+              "name": "InMemoryTransport",
+              "kind": "struct",
+              "signature": "pub struct InMemoryTransport { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Deterministic in-memory transport model implementing TCP-like and QUIC-like policy behaviors.  M10i adds with_key_provider() for TLS_EXPORTER post-binding AEAD enforcement.",
+              "parameters": [],
+              "returns": "",
+              "errors": [
+                "Returns stream/limit/state errors via Result and RejectSarStream actions."
+              ],
+              "safety_notes": [
+                "No sockets, async runtime, TLS, retransmission, or congestion control.",
+                "with_key_provider injects a CEK provider; key material is not logged or placed in SAR frames."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3",
+                "18.3.3",
+                "18"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Best exposed as an opaque handle in future FFI."
+            },
+            {
+              "name": "TcpPolicy",
+              "kind": "struct",
+              "signature": "pub struct TcpPolicy;",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Marker for TCP-like non-interleaved transport policy model.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Zero-sized marker."
+            },
+            {
+              "name": "QuicPolicy",
+              "kind": "struct",
+              "signature": "pub struct QuicPolicy;",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Marker for QUIC-like concurrent-stream transport policy model.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.1",
+                "18.3.1"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Zero-sized marker."
+            },
+            {
+              "name": "TransportHarness",
+              "kind": "struct",
+              "signature": "pub struct TransportHarness { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Convenience deterministic harness that accumulates transport actions for tests and integration scaffolding.",
+              "parameters": [],
+              "returns": "",
+              "errors": [
+                "Propagates transport binding errors from wrapped InMemoryTransport operations."
+              ],
+              "safety_notes": [
+                "Harness is deterministic and in-memory only."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10c",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Can be wrapped for deterministic test harness APIs in future bindings."
+            }
+          ]
+        },
+        {
+          "name": "tcp",
+          "path": "src/tcp.rs",
+          "items": [
+            {
+              "name": "TcpTransportConfig",
+              "kind": "struct",
+              "signature": "pub struct TcpTransportConfig { pub transport: TransportConfig, pub read_buffer_size: usize, pub write_buffer_size: usize }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Configuration for a TcpSarConnection. Extends TransportConfig with per-call read/write buffer size limits enforced before allocation.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "read_buffer_size caps bytes consumed per process_available call.",
+                "write_buffer_size caps bytes accepted per write_all_sar_bytes call.",
+                "Both limits are enforced before any allocation from network input."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3",
+                "18.3.1"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_notes": "Generic/network types are not suitable for direct FFI export."
+            },
+            {
+              "name": "TcpSarConnection",
+              "kind": "struct",
+              "signature": "pub struct TcpSarConnection<S>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "SAR-over-TCP connection binding. Generic over any Read+Write stream. Uses a single TransportStreamId(0). Drives M10c TCP policy. Uses std::net blocking I/O; no async runtime, no TLS, no QUIC.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "No TLS is implemented. For untrusted networks, SAR AEAD and/or external transport security is required.",
+                "No background threads or timers are spawned by production code.",
+                "All unsafe code is forbidden (#![forbid(unsafe_code)]).",
+                "No unwrap/expect/panic/todo/unimplemented in production paths."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18",
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "Generic over Read+Write; not suitable for direct FFI. A future concrete wrapper may expose a stable C API."
+            },
+            {
+              "name": "TcpSarConnection::connect",
+              "kind": "function",
+              "signature": "pub fn connect(addr: SocketAddr, config: TcpTransportConfig) -> Result<TcpSarConnection<TcpStream>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Connect to a remote SAR-over-TCP server. Returns a ready-to-use blocking connection.",
+              "parameters": [
+                {
+                  "name": "addr",
+                  "type": "std::net::SocketAddr",
+                  "description": "Remote address to connect to."
+                },
+                {
+                  "name": "config",
+                  "type": "TcpTransportConfig",
+                  "description": "Connection configuration."
+                }
+              ],
+              "returns": "Result<TcpSarConnection<TcpStream>, SarError>",
+              "errors": [
+                "SarError::Io on connection failure"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::accept",
+              "kind": "function",
+              "signature": "pub fn accept(stream: TcpStream, config: TcpTransportConfig) -> Result<TcpSarConnection<TcpStream>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Accept an already-connected TcpStream from a TcpListener::accept call.",
+              "parameters": [
+                {
+                  "name": "stream",
+                  "type": "std::net::TcpStream",
+                  "description": "Accepted TCP stream."
+                },
+                {
+                  "name": "config",
+                  "type": "TcpTransportConfig",
+                  "description": "Connection configuration."
+                }
+              ],
+              "returns": "Result<TcpSarConnection<TcpStream>, SarError>",
+              "errors": [
+                "SarError::StreamState if transport stream init fails"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::from_stream",
+              "kind": "function",
+              "signature": "pub fn from_stream(stream: S, config: TcpTransportConfig) -> Result<TcpSarConnection<S>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Construct a connection from any Read+Write stream. Used for in-memory or mock testing.",
+              "parameters": [
+                {
+                  "name": "stream",
+                  "type": "S: Read + Write",
+                  "description": "Any Read+Write stream."
+                },
+                {
+                  "name": "config",
+                  "type": "TcpTransportConfig",
+                  "description": "Connection configuration."
+                }
+              ],
+              "returns": "Result<TcpSarConnection<S>, SarError>",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::process_available",
+              "kind": "function",
+              "signature": "pub fn process_available(&mut self, now_ms: Option<u64>) -> Result<Vec<TransportAction>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Read one bounded chunk from the stream, feed to TCP policy, serialize outbound control frames, and return actions. Checks inactivity watchdog when now_ms is Some. Returns StreamClosed on EOF.",
+              "parameters": [
+                {
+                  "name": "now_ms",
+                  "type": "Option<u64>",
+                  "description": "Explicit monotonic millisecond timestamp for heartbeat/watchdog checks. None to skip time checks."
+                }
+              ],
+              "returns": "Result<Vec<TransportAction>, SarError>",
+              "errors": [
+                "SarError::StreamClosed on EOF or after connection is closed.",
+                "SarError::Timeout when inactivity watchdog fires.",
+                "SarError::Io on underlying stream I/O error."
+              ],
+              "safety_notes": [
+                "Read chunk is capped at read_buffer_size; no unbounded allocation from network.",
+                "Malformed bytes emit CloseConnection action; connection is permanently closed.",
+                "No raw payload bytes are exposed in actions."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18",
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::write_all_sar_bytes",
+              "kind": "function",
+              "signature": "pub fn write_all_sar_bytes(&mut self, bytes: &[u8]) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Write raw SAR archive bytes to the TCP connection. Caller constructs valid SAR bytes. Capped at write_buffer_size per call.",
+              "parameters": [
+                {
+                  "name": "bytes",
+                  "type": "&[u8]",
+                  "description": "Raw SAR archive bytes to write."
+                }
+              ],
+              "returns": "Result<(), SarError>",
+              "errors": [
+                "SarError::LimitExceeded if bytes.len() > write_buffer_size.",
+                "SarError::StreamClosed if connection is closed.",
+                "SarError::Io on write failure."
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TcpSarConnection::close",
+              "kind": "function",
+              "signature": "pub fn close(&mut self) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Close the connection gracefully. Marks the connection as closed, finalises the transport stream, and flushes the write buffer. Subsequent calls are no-ops.",
+              "parameters": [],
+              "returns": "Result<(), SarError>",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "STREAM_ID",
+              "kind": "const",
+              "signature": "pub const STREAM_ID: TransportStreamId = TransportStreamId(0);",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "The single fixed transport-stream ID used by all TCP connections (one SAR session at a time, no byte-interleaving).",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "10d",
+              "related_spec_sections": [
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            }
+          ]
+        },
+        {
+          "name": "quic",
+          "path": "src/quic",
+          "feature_flag": "quic",
+          "items": [
+            {
+              "name": "QuicServerIdentity",
+              "kind": "struct",
+              "signature": "pub struct QuicServerIdentity { pub cert_chain_der: Vec<Vec<u8>>, pub private_key_der: Vec<u8> }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Explicit TLS server identity for QUIC connections. Carries DER-encoded certificate chain and DER-encoded private key. Private key is never logged or transmitted.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "Private key bytes are never logged.",
+                "DER sizes are bounded by QuicTransportConfig.max_cert_chain_bytes and max_private_key_bytes."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "Carries owned byte buffers; not suitable for direct FFI without opaque handle."
+            },
+            {
+              "name": "QuicClientTrust",
+              "kind": "enum",
+              "signature": "pub enum QuicClientTrust { CustomCaDer(Vec<u8>), InsecureSkipVerifyForTestsOnly }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Client certificate trust configuration. CustomCaDer is the only production-safe variant. InsecureSkipVerifyForTestsOnly is test-only and must never be used in production.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "InsecureSkipVerifyForTestsOnly disables certificate verification; it must never be used outside tests.",
+                "Insecure verification is never the default."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "TlsPqPolicy",
+              "kind": "enum",
+              "signature": "pub enum TlsPqPolicy { ClassicalAllowed, PreferPq, RequirePqOrHybrid, RequirePqOnly }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "TLS key agreement policy for SAR-over-QUIC connections (Section 18.6.7). Controls which TLS key agreement algorithm classes are offered and accepted. Default is ClassicalAllowed when the TLS stack does not support PQ or hybrid groups. RequirePqOrHybrid and RequirePqOnly fail closed with SAR_ERR_UNSUPPORTED when PQ/hybrid key agreement is unavailable.",
+              "parameters": [],
+              "returns": "",
+              "errors": ["SAR_ERR_UNSUPPORTED when RequirePqOrHybrid or RequirePqOnly is set and the TLS provider does not support PQ or hybrid groups"],
+              "safety_notes": [
+                "RequirePqOrHybrid and RequirePqOnly fail closed if the TLS provider cannot satisfy the requirement.",
+                "PreferPq permits classical fallback but the connection MUST NOT be described as PQ-safe or HNDL-resistant if classical-only key agreement was negotiated.",
+                "No TLS secrets, exporter outputs, or derived keys are logged or placed in KMS Data."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10g",
+              "related_spec_sections": ["18.6.7"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicTransportConfig",
+              "kind": "struct",
+              "signature": "pub struct QuicTransportConfig { pub max_connections: usize, pub max_quic_streams_per_connection: usize, pub max_active_sar_streams_per_connection: usize, pub max_control_streams_per_sar_session: usize, pub max_buffered_bytes: usize, pub max_read_chunk: usize, pub max_outbound_buffer_bytes: usize, pub max_cert_chain_bytes: usize, pub max_private_key_bytes: usize, pub pq_policy: TlsPqPolicy }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Per-connection QUIC transport limits and policy settings. All limits are enforced before allocation. pq_policy controls TLS key agreement policy per Section 18.6.7.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "All limits are enforced before any allocation.",
+                "max_cert_chain_bytes and max_private_key_bytes bound credential material sizes.",
+                "pq_policy RequirePqOrHybrid/RequirePqOnly fail closed with SAR_ERR_UNSUPPORTED if the TLS provider does not support PQ/hybrid groups."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2", "18.6.7"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicServerConfig",
+              "kind": "struct",
+              "signature": "pub struct QuicServerConfig { pub identity: QuicServerIdentity, pub transport: QuicTransportConfig, pub alpn_protocols: Vec<Vec<u8>> }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Configuration for a QuicSarListener. Combines server identity, transport limits, and optional ALPN protocols.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicClientConfig",
+              "kind": "struct",
+              "signature": "pub struct QuicClientConfig { pub trust: QuicClientTrust, pub transport: QuicTransportConfig, pub alpn_protocols: Vec<Vec<u8>> }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Configuration for a QUIC client connection. Combines client trust, transport limits, and optional ALPN protocols.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarListener",
+              "kind": "struct",
+              "signature": "pub struct QuicSarListener { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "QUIC listener that accepts multiple concurrent QuicSarConnections. Built on quinn 0.11 + rustls 0.23 + tokio 1.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "Requires tokio async runtime.",
+                "max_connections limit enforced before accepting new connections."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarListener::bind",
+              "kind": "function",
+              "signature": "pub async fn bind(config: QuicServerConfig) -> Result<QuicSarListener, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Bind a QUIC listener on an OS-assigned port. Returns a ready-to-accept listener.",
+              "parameters": [
+                { "name": "config", "type": "QuicServerConfig", "description": "Server configuration." }
+              ],
+              "returns": "Result<QuicSarListener, SarError>",
+              "errors": ["SarError::Io on bind failure"],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarListener::accept",
+              "kind": "function",
+              "signature": "pub async fn accept(&self) -> Result<QuicSarConnection, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Accept the next incoming QUIC connection.",
+              "parameters": [],
+              "returns": "Result<QuicSarConnection, SarError>",
+              "errors": ["SarError::StreamClosed if listener is closed"],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarConnection",
+              "kind": "struct",
+              "signature": "pub struct QuicSarConnection { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "A single QUIC connection that multiplexes multiple SAR sessions. Active SAR Stream IDs are unique per connection. Duplicate SESSION_INIT for an active Stream ID fails closed with SAR_ERR_STREAM_STATE.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [
+                "All per-connection limits enforced before allocation.",
+                "Malformed QUIC stream does not corrupt other active streams unless connection-fatal."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarConnection::accept_stream",
+              "kind": "function",
+              "signature": "pub async fn accept_stream(&self) -> Result<QuicSarStream, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Accept the next incoming bidirectional QUIC stream on this connection.",
+              "parameters": [],
+              "returns": "Result<QuicSarStream, SarError>",
+              "errors": ["SarError::StreamClosed if connection is closed"],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarConnection::open_stream",
+              "kind": "function",
+              "signature": "pub async fn open_stream(&self) -> Result<QuicSarStream, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Open a new outgoing bidirectional QUIC stream on this connection.",
+              "parameters": [],
+              "returns": "Result<QuicSarStream, SarError>",
+              "errors": ["SarError::StreamClosed if connection is closed", "SarError::LimitExceeded if max_quic_streams_per_connection is reached"],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarConnection::feed_stream_bytes",
+              "kind": "function",
+              "signature": "pub fn feed_stream_bytes(&mut self, stream_id: TransportStreamId, bytes: &[u8]) -> Result<Vec<TransportAction>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Feed bytes for a specific QUIC stream into the M10c QUIC-policy harness. Returns transport actions. Control-frame bytes are buffered; call flush_pending_control_frames to send.",
+              "parameters": [
+                { "name": "stream_id", "type": "TransportStreamId", "description": "The transport stream ID from QuicSarStream::stream_id()." },
+                { "name": "bytes", "type": "&[u8]", "description": "Bytes received from the QUIC stream." }
+              ],
+              "returns": "Result<Vec<TransportAction>, SarError>",
+              "errors": ["SarError::StreamState on session protocol violation", "SarError::LimitExceeded on buffer/stream limit"],
+              "safety_notes": ["No plaintext is exposed before AEAD authentication succeeds."],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarConnection::flush_pending_control_frames",
+              "kind": "function",
+              "signature": "pub async fn flush_pending_control_frames(&mut self, stream: &mut SendStream) -> Result<(), SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Flush any control-frame bytes buffered by feed_stream_bytes to the QUIC send stream.",
+              "parameters": [
+                { "name": "stream", "type": "&mut quinn::SendStream", "description": "The QUIC send stream to write to." }
+              ],
+              "returns": "Result<(), SarError>",
+              "errors": ["SarError::Io on write failure"],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarConnection::export_keying_material",
+              "kind": "function",
+              "signature": "pub fn export_keying_material(&self, label: &[u8], context: &[u8], len: usize) -> Result<Vec<u8>, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Derive TLS exporter material from the active QUIC/TLS session using the given label, context, and output length. Used for TLS_EXPORTER SAR-AEAD key derivation.",
+              "parameters": [
+                { "name": "label", "type": "&[u8]", "description": "TLS exporter label (ASCII)." },
+                { "name": "context", "type": "&[u8]", "description": "TLS exporter context (encoded TlsExporterContextV1)." },
+                { "name": "len", "type": "usize", "description": "Output length in bytes (Derived Key Length from KMS data)." }
+              ],
+              "returns": "Result<Vec<u8>, SarError>",
+              "errors": ["SarError::Unsupported if exporter material is unavailable"],
+              "safety_notes": [
+                "Exporter output is never logged, never transmitted, and never placed in KMS Data.",
+                "Used only as SAR AEAD keying material input."
+              ],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["5.3", "18.6"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarStream",
+              "kind": "struct",
+              "signature": "pub struct QuicSarStream { ... }",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "A single bidirectional QUIC stream with its local TransportStreamId. Used to identify the stream in QuicSarConnection::feed_stream_bytes.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "QuicSarStream::stream_id",
+              "kind": "function",
+              "signature": "pub fn stream_id(&self) -> TransportStreamId",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Returns the local TransportStreamId for this QUIC stream. Used with feed_stream_bytes.",
+              "parameters": [],
+              "returns": "TransportStreamId",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
+            },
+            {
+              "name": "connect_quic",
+              "kind": "function",
+              "signature": "pub async fn connect_quic(server_name: &str, addr: SocketAddr, config: QuicClientConfig) -> Result<QuicSarConnection, SarError>",
+              "visibility": "public",
+              "stability": "experimental",
+              "description": "Async QUIC client entry point. Establishes a QUIC connection to a QuicSarListener. Returns a ready-to-use QuicSarConnection.",
+              "parameters": [
+                { "name": "server_name", "type": "&str", "description": "TLS SNI server name." },
+                { "name": "addr", "type": "SocketAddr", "description": "Remote address." },
+                { "name": "config", "type": "QuicClientConfig", "description": "Client configuration." }
+              ],
+              "returns": "Result<QuicSarConnection, SarError>",
+              "errors": ["SarError::Io on connection failure", "SarError::Unsupported if TLS config is invalid"],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": ["quic"],
+              "since_milestone": "10e",
+              "related_spec_sections": ["18.5.2"],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": ""
             }
           ]
         }

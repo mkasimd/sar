@@ -67,6 +67,41 @@ Rust workspace for the **SAR Protocol v1.0** reference implementation.
   - Legacy `BSDIFF40` decode support is not implemented in this profile; `BSDIFF40` magic is rejected as `SAR_ERR_PATCH_FAILED`
   - `LOSS_TOLERANT` does not suppress `SAR_ERR_PATCH_FAILED`
   - BSDIFF/VCDIFF `ResourceLimits`: `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples`, `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size`
+- **Milestone 10a — stateless forward-only SAR Byte Stream parser/writer state model**
+  - `sar-core::stream::StreamArchiveParser` provides explicit parsing phases and deterministic partial-input stepping (`NeedMore` / `Ready` / `Complete`)
+  - parser is forward-only for supported streaming paths and does not require backward seek
+  - parser supports concatenated `NO_INDEX` archives in one contiguous byte stream
+  - Global Flags still control physical LFH field presence; Entry Mode only controls semantic applicability
+  - `SESSION_CONTROL`/OP_CODE bits are parsed structurally only; no Stateful Streaming Mode lifecycle semantics are implemented in M10a
+  - `ArchiveWriter` exposes structural writing phases via `StreamWriteState` and `ArchiveWriter::stream_state()`
+- **Milestone 10b — in-memory Stateful Streaming Mode session layer**
+  - `sar-stream` implements session activation, Stream ID/UUID binding, sequence continuity, and strict `SESSION_*` parsing/writing
+  - Stateful mode activates only after `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT`
+  - Session and filesystem `OP_CODE` namespaces are validated separately; reserved values fail closed
+  - `LOSS_TOLERANT` may surface only authenticated degraded reconstruction as `SAR_WARN_INCOMPLETE`; it never suppresses auth, decompression, patch, or structural failures
+  - implementation is in-memory only: no transport framing, no networking, no QUIC/TCP, no async runtime
+- **Milestone 10c — `sar-transport` abstraction + in-memory transport harness**
+  - `sar-transport` now provides transport abstraction traits/types and deterministic in-memory TCP-like / QUIC-like policy models
+  - transport-level active transport streams and active SAR Stream ID tracking are enforced with duplicate/limit rejection
+  - rejected Stream IDs remain unbound; `SESSION_CLOSE` unbinds and allows later Stream ID reuse
+  - reverse-control hooks map `sar-stream` events to abstract `SESSION_STATUS` / `SESSION_ACK` transport actions (no real send path)
+  - heartbeat/watchdog policy uses explicit time input only; no timers/background tasks are spawned
+  - M10c does **not** implement real sockets, TCP networking, QUIC networking, TLS, retransmission, or congestion control
+- **Milestone 10d — SAR-over-TCP binding**
+  - `sar-transport::tcp::TcpSarConnection<S>` wraps any `Read + Write` stream (including `std::net::TcpStream`) and drives the M10c TCP-policy harness over real bytes
+  - `TcpSarConnection::connect` / `TcpSarConnection::accept` for real TCP; `TcpSarConnection::from_stream` for testing
+  - `process_available(now_ms)` reads bytes, feeds them to the transport policy, serializes outbound control frames, and returns resulting actions
+  - `write_all_sar_bytes(bytes)` writes raw SAR archive bytes to the stream
+  - TCP streams MUST NOT byte-interleave SAR sessions; a new SAR session may start only after `SESSION_CLOSE` or end-of-archive
+  - invalid unskippable bytes emit `CloseConnection` and permanently close the connection
+  - TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is closed
+  - KMS Mode `0x04 TLS_EXPORTER` is spec-defined but **not** supported on plaintext TCP; the connection is rejected with `SAR_ERR_UNSUPPORTED` if a peer uses this mode
+  - duplicate active Stream ID → `SAR_ERR_STREAM_STATE`; too many streams → `SAR_ERR_TOO_MANY_STREAMS`
+  - `SESSION_STATUS` / `SESSION_ACK` are serialized as SAR LFH control entries and written to the outbound stream when bidirectional control is enabled
+  - heartbeat/watchdog uses explicit `now_ms` input; no background timer or thread
+  - uses `std::net` (blocking); **no TLS, no TCP+TLS, no STARTTLS, no QUIC, no async runtime**
+  - **for untrusted networks, SAR AEAD encryption and/or external transport security is required**
+  - QUIC binding remains M10e
 - **Stage 2 security hardening**: unified `ResourceLimits` model and bounded parsing
   - `ArchiveReaderOptions` carries `ResourceLimits` for archive size, LFH, TLV, Central Dictionary, sparse, fragment, FEC, and repair limits
   - configured limits are enforced before dangerous allocation and return `SAR_ERR_LIMIT_EXCEEDED`
@@ -105,7 +140,7 @@ docs/
 fuzz/
 ```
 
-Placeholder crates compile but intentionally expose only a `NotImplemented` marker until later milestones.
+Placeholder crates still expose only a `NotImplemented` marker except where later milestones have now been implemented (`sar-stream` for M10b, `sar-transport` for M10c/M10d).
 
 ## CLI
 
@@ -174,6 +209,8 @@ Notes:
 - `extract`, `verify`, and `repair` use default `ResourceLimits` safety caps unless CLI overrides are supplied. Relevant defaults include `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, `max_archive_size = 16 GiB`, and `max_repair_working_set = 2 GiB`.
 - sparse apparent-size failures and repair working-set failures return `SAR_ERR_LIMIT_EXCEEDED` and do not leave final output files behind
 - `list` and `inspect` do **not** currently accept passwords, so encrypted archives are not fully supported by those commands.
+- `sar-stream` provides only the in-memory M10b session layer.
+- `sar-transport` (M10c/M10d) provides in-memory transport policy/harness and SAR-over-TCP binding; real SAR-over-QUIC (M10e) and full M10 closeout (M10f) are pending.
 
 ## Validation
 
