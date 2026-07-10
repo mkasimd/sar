@@ -299,8 +299,8 @@ Not implemented in this pass, even though some flags or structural fields alread
   - Helper: `is_absent()`, `is_present()`, `is_active()`, `value() -> Option<&T>`
 - `EntryKind` — `RegularFile`, `Directory`, `Symlink`, `EmptyArea`
 - `EntryPermissionMetadata { mode: u16 }`
-- `EntryOwnerMetadata { uid: u16, gid: u16 }`
-- `EntryTimestampMetadata { mtime_ns: u64, atime_ns: u64, ctime_ns: u64 }`
+- `EntryOwnerMetadata { uid_gid: u32 }` (use `uid()` / `gid()` accessors; low 16 bits = UID, high 16 bits = GID)
+- `EntryTimestampMetadata { mtime: u64, atime: u64, ctime: u64 }`
 - `EntryCompressionMetadata { algo_id: u8 }`
 - `EntryEncryptionMetadata { algo_id: u8, iv_nonce: [u8; 24] }`
 - `EntryFecMetadata { algo_id: u8 }`

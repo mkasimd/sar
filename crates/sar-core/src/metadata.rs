@@ -137,8 +137,8 @@ pub struct EntryPermissionMetadata {
 /// Owner UID/GID metadata.
 ///
 /// Present when the `EXT_UID_GID` global flag is set.
-/// The 32-bit field stores the 16-bit UID in the low half and 16-bit GID in
-/// the high half (as packed by the on-wire format).
+/// The 32-bit field packs the 16-bit UID in the low 16 bits and the 16-bit GID
+/// in the high 16 bits (i.e. `uid | (gid << 16)` on the wire).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct EntryOwnerMetadata {
     /// Raw packed 32-bit UID/GID field (low 16 = UID, high 16 = GID).
