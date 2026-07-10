@@ -1,6 +1,6 @@
 # Conformance Statement
 
-This document reflects the current repository state after Milestones 10a/10b/10c/10d.
+This document reflects the current repository state after Milestones 10a/10b/10c/10d/10e.
 
 ## Implemented
 
@@ -154,6 +154,38 @@ This document reflects the current repository state after Milestones 10a/10b/10c
   - TCP must not and does not advertise `CAP_TLS_EXPORTER_AEAD` in its local capability set
   - `CAP_TLS_EXPORTER_AEAD` (bit 6) is now a defined capability bit in `CapabilityFlags`; it passes `validate()` since it is spec-defined; reserved bits 7–15 still trigger `SAR_ERR_RESERVED_VALUE`
   - loopback TCP integration tests and non-network buffer/limit tests added in `sar-transport`
+- **Milestone 10e SAR-over-QUIC binding**
+  - `sar-transport::quic` module added behind the `quic` Cargo feature flag (deps: `quinn 0.11`, `rustls 0.23`/ring, `tokio 1`)
+  - `QuicSarListener` accepts multiple concurrent QUIC connections over an async tokio runtime
+  - `QuicSarConnection` multiplexes multiple SAR sessions over one QUIC connection
+  - `QuicSarStream` drives the M10c QUIC-policy harness over a single QUIC bidirectional stream
+  - QUIC/TLS protects transport bytes; SAR AEAD is additionally available at the SAR layer
+  - `QuicServerIdentity` carries DER certificate chain + DER private key for TLS server identity
+  - `QuicClientTrust::CustomCaDer` supports custom CA certificate trust anchors
+  - `QuicClientTrust::InsecureSkipVerifyForTestsOnly` is test-only and clearly named; never the default
+  - `QuicTransportConfig`, `QuicServerConfig`, `QuicClientConfig` centralize QUIC limits and policies
+  - `connect_quic` is the async client connection entry point
+  - active SAR Stream ID uniqueness is enforced per QUIC connection; duplicate active IDs on the same connection fail closed with `SAR_ERR_STREAM_STATE`
+  - a duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same connection is rejected; the Stream ID remains unbound
+  - `SESSION_CLOSE` unbinds the SAR Stream ID and disassociates attached QUIC streams
+  - same numeric SAR Stream ID on different QUIC connections are independent sessions
+  - additional QUIC control streams carrying `SESSION_CONTROL` for an existing SAR Stream ID + matching Session UUID are accepted
+  - additional control streams referencing an unknown Stream ID or mismatched Session UUID are rejected
+  - additional control streams must not carry a new `SESSION_INIT` for an already-bound Stream ID
+  - same bidirectional QUIC stream supports reverse `SESSION_ACK` / `SESSION_STATUS` entries when `CAP_BIDIRECTIONAL_CONTROL` is active
+  - Sequence Number wrap `0xFFFF → 0x0000` is correctly handled in QUIC mode without treating wrap as an error
+  - KMS Mode `0x04 TLS_EXPORTER` recognized and supported for QUIC connections (not for TCP)
+  - `TlsExporterParams`, `TlsExporterContextV1`, `parse_tls_exporter_kms_payload`, `serialize_tls_exporter_kms_payload`, and `encode_tls_exporter_context_v1` added to `sar-crypto`
+  - Context Version `0x01` exporter context encoding is deterministic and includes all required fields from spec §18.6
+  - `export_keying_material` uses the quinn TLS exporter API to derive keying material
+  - `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` key usages are correctly separated by TLS endpoint role
+  - QUIC endpoints advertising `CAP_TLS_EXPORTER_AEAD` require TLS_EXPORTER KMS mode
+  - TCP binding still does not advertise `CAP_TLS_EXPORTER_AEAD`; plaintext TCP still rejects KMS mode `0x04` with `SAR_ERR_UNSUPPORTED`
+  - all limits enforced before allocation: max connections, max QUIC streams per connection, max active SAR streams per connection, max control streams per SAR session, max buffered bytes, max read chunk, max outbound buffer
+  - malformed QUIC stream does not corrupt or close other active streams unless connection-fatal
+  - no `unsafe`, no production `unwrap`/`expect`/`panic`/`todo`/`unimplemented`
+  - TCP+TLS is **not** implemented; STARTTLS is **not** implemented; SESSION_RESUME is not extended for M10e
+  - TCP tests still pass; default-feature build (no `quic`) still works
 
 ## Partial
 
@@ -191,11 +223,11 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- real SAR-over-QUIC sockets/runtime integration (remains M10e)
-- TCP+TLS (TLS is not implemented in M10d; SAR AEAD and/or external transport security is required for untrusted networks)
+- real SAR-over-QUIC sockets/runtime integration (implemented in M10e)
+- TCP+TLS (TLS is not implemented; SAR AEAD and/or external transport security is required for untrusted networks)
 - STARTTLS or any in-band TLS upgrade on the plaintext TCP binding
-- KMS Mode `0x04 TLS_EXPORTER` — spec-defined, recognized, and exported as a constant (`KMS_TLS_EXPORTER`), but not implemented; requires an authenticated TLS session which the plaintext TCP binding does not provide
-- `CAP_TLS_EXPORTER_AEAD` — spec-defined capability bit (bit 6), recognized in parsing, but not advertised or implemented by the TCP binding
+- KMS Mode `0x04 TLS_EXPORTER` — fully implemented for QUIC connections; **not** supported on plaintext TCP
+- `CAP_TLS_EXPORTER_AEAD` — advertised and implemented by QUIC bindings; not advertised by TCP bindings
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
@@ -204,7 +236,7 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - later milestone crates (`sar-cdc`, `sar-delta`, `sar-fragmentation`, `sar-partition`, `sar-sparse`, `sar-loss-tolerant`) remain placeholders
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
-- **Milestone 10e:** real SAR-over-QUIC binding
+- **Milestone 10e:** real SAR-over-QUIC binding (completed)
 - **Milestone 10f:** M10 full closeout
 - **Milestone 12:** stable FFI / C ABI for C, C++, and other language bindings
 

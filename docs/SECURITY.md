@@ -88,6 +88,31 @@ This document reflects current implemented behavior only.
 - QUIC binding, TLS, retransmission, and congestion control are **not** implemented in M10d.
 - QUIC binding remains M10e.
 
+## M10e SAR-over-QUIC binding security notes
+
+- The M10e QUIC binding uses **quinn 0.11 + rustls 0.23** (ring provider) for all TLS and QUIC cryptography.  No custom TLS handshake, no custom QUIC crypto, no custom congestion logic is implemented.
+- QUIC/TLS protects transport bytes end-to-end.  SAR-layer AEAD provides an additional independent authentication and confidentiality layer.
+- **Server identity is explicit**: `QuicServerIdentity` requires a DER-encoded certificate chain and DER-encoded private key.  Private keys are never logged and never transmitted.
+- **Client trust is explicit**: `QuicClientTrust` requires either a custom CA DER or the clearly-named `InsecureSkipVerifyForTestsOnly` variant.  Insecure verification is never the default.
+- `InsecureSkipVerifyForTestsOnly` is a test-only helper.  Production code must never use it.  Its name is its warning.
+- Certificate chain DER and private key DER sizes are bounded by configured limits (`max_cert_chain_bytes`, `max_private_key_bytes`) before any allocation.
+- All connection and stream limits are enforced before allocation: `max_connections`, `max_quic_streams_per_connection`, `max_active_sar_streams_per_connection`, `max_control_streams_per_sar_session`, `max_buffered_bytes`, `max_read_chunk`, `max_outbound_buffer_bytes`.
+- A malformed QUIC stream is rejected stream-locally; it does not close the entire QUIC connection or corrupt other active SAR sessions unless the error is connection-fatal.
+- Rejected SAR Stream IDs remain unbound; no partial session state is retained.
+- `SESSION_CLOSE` unbinds a SAR Stream ID and disassociates all QUIC streams attached to that session; the Stream ID may be reused for a new session on the same QUIC connection afterward.
+- Duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same QUIC connection fails closed with `SAR_ERR_STREAM_STATE`; the incoming stream is rejected.
+- Additional QUIC control streams are accepted only when the Stream ID is active and the Session UUID matches; mismatched UUID or unknown Stream ID causes stream rejection.
+- No plaintext SAR payload is exposed before AEAD authentication succeeds, when AEAD is active.
+- `LOSS_TOLERANT` does not suppress AEAD authentication failures, structural errors, decompression errors, or patch failures in QUIC mode.
+- **TLS_EXPORTER key material is never transmitted in SAR frames, never logged, and never placed in KMS Data.**  The TLS exporter API is called internally to derive keying material used only as SAR AEAD input.
+- TLS_EXPORTER exporter output is used directly as SAR AEAD keying material; it is not re-encrypted or wrapped before use; it must not leave the process.
+- `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` key usages are bound to TLS endpoint roles (initiator vs. acceptor), not to SAR Sender/Receiver roles.  Receivers use only the single selected key usage; they do not retry with alternate key usages on AEAD failure.
+- AEAD authentication failure is a hard failure in QUIC mode; no retry, no fallback, no alternate key usage attempt.
+- Sequence Number wrap `0xFFFF → 0x0000` is handled correctly; wrap is not treated as an error.  Monotonic progression is still enforced modulo the sequence space.
+- Nonzero KDF Algo IDs, unsupported context versions, reserved flags, and reserved/unsupported AEAD/hash/key-usage IDs fail closed.
+- No `unsafe` code is present.  No production `unwrap`/`expect`/`panic`/`todo`/`unimplemented` is used.
+- **TCP+TLS is not implemented.  STARTTLS is not implemented.  TLS_EXPORTER over plaintext TCP is not implemented.**  Plain TCP remains plaintext SAR-over-TCP only.
+
 ## FEC and AEAD ordering
 
 Current implemented order is:

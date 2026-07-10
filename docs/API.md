@@ -13,9 +13,10 @@ Current scope:
 - Milestone 9b: delta metadata and patch application (`STORE_PATCH`, `VCDIFF`, `BSDIFF`)
 - Milestone 10a: stateless forward-only SAR byte-stream parser/writer state model
 - Milestone 10d: SAR-over-TCP binding (`sar-transport::tcp`)
+- Milestone 10e: SAR-over-QUIC binding (`sar-transport::quic`, `quic` feature flag)
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
-Feature flags: no workspace crate in the current tree defines Cargo feature flags.
+Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
 
 ## Workspace summary
 
@@ -33,7 +34,7 @@ Feature flags: no workspace crate in the current tree defines Cargo feature flag
 | `sar-sparse` | Future sparse-file support placeholder | placeholder |
 | `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
 | `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
-| `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d) | implemented |
+| `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature) | implemented |
 
 ## `sar-core`
 
@@ -313,6 +314,80 @@ Not implemented in this pass, even though some flags or structural fields alread
 - Heartbeat/watchdog is explicit-time: pass `now_ms` to `process_available`; no background timer.
 - Uses `std::net` only (blocking I/O, no async runtime, no TLS, no QUIC).
 - `TcpTransportConfig` holds `transport: TransportConfig`, `read_buffer_size`, and `write_buffer_size`; both buffer sizes are enforced before any allocation from network input.
+
+### M10e SAR-over-QUIC binding in `sar-transport::quic` (`quic` feature)
+
+- Requires the `quic` Cargo feature.  TCP/in-memory behavior is unchanged without this feature.
+- QUIC networking uses **quinn 0.11** + **rustls 0.23** (ring provider) + **tokio 1** async runtime.  These deps are isolated to `sar-transport` and never leak into `sar-core`, `sar-stream`, `sar-crypto`, etc.
+- M10e supports **SAR-over-QUIC** (QUIC/TLS protects transport bytes; SAR entries may remain unencrypted unless SAR AEAD is selected).
+- M10e supports **QUIC + TLS_EXPORTER SAR-AEAD** (KMS Mode `0x04`, `CAP_TLS_EXPORTER_AEAD`) when the quinn TLS exporter API is available.
+- **TCP+TLS is not implemented.  STARTTLS is not implemented.  TLS_EXPORTER over plaintext TCP is not implemented.**
+
+#### `QuicServerIdentity`
+
+Carries explicit server TLS identity: DER-encoded certificate chain (`cert_chain_der: Vec<Vec<u8>>`) and DER-encoded private key (`private_key_der: Vec<u8>`).  A test-only `self_signed` helper is available for tests.
+
+#### `QuicClientTrust`
+
+Enum with two variants:
+- `CustomCaDer(Vec<u8>)` — trust a custom CA certificate (DER bytes); the only production-safe variant.
+- `InsecureSkipVerifyForTestsOnly` — skip certificate verification; test-only, clearly named, never the default.
+
+#### `QuicTransportConfig`
+
+Holds all per-connection limits: `max_connections`, `max_quic_streams_per_connection`, `max_active_sar_streams_per_connection`, `max_control_streams_per_sar_session`, `max_buffered_bytes`, `max_read_chunk`, `max_outbound_buffer_bytes`, `max_cert_chain_bytes`, `max_private_key_bytes`.
+
+#### `QuicServerConfig`
+
+Holds `identity: QuicServerIdentity`, `transport: QuicTransportConfig`, and optional `alpn_protocols`.
+
+#### `QuicClientConfig`
+
+Holds `trust: QuicClientTrust`, `transport: QuicTransportConfig`, and optional `alpn_protocols`.
+
+#### `QuicSarListener`
+
+- `QuicSarListener::bind(server_config) -> Result<QuicSarListener, SarError>` — bind a QUIC listener on a random OS-assigned port.
+- `local_addr() -> SocketAddr` — returns the bound address.
+- `accept() -> Result<QuicSarConnection, SarError>` — accepts the next QUIC connection.
+
+#### `QuicSarConnection`
+
+- `QuicSarConnection` multiplexes multiple SAR sessions over one QUIC connection.
+- `accept_stream() -> Result<QuicSarStream, SarError>` — accepts the next incoming bidirectional QUIC stream.
+- `open_stream() -> Result<QuicSarStream, SarError>` — opens a new outgoing bidirectional QUIC stream.
+- `close()` — gracefully closes the connection.
+- `feed_stream_bytes(stream_id, bytes) -> Result<Vec<TransportAction>, SarError>` — feeds bytes for a specific QUIC stream into the M10c QUIC-policy harness and returns transport actions.
+- `flush_pending_control_frames(stream)` — flushes any control-frame bytes buffered by `feed_stream_bytes` to the actual QUIC stream.
+- `export_keying_material(label, context, len) -> Result<Vec<u8>, SarError>` — derives TLS exporter material from the active QUIC/TLS session.
+
+#### `QuicSarStream`
+
+- Represents a single bidirectional QUIC stream with its local `TransportStreamId`.
+- `stream_id() -> TransportStreamId` — the local stream ID used with `feed_stream_bytes`.
+
+#### `connect_quic`
+
+```rust
+pub async fn connect_quic(
+    server_name: &str,
+    addr: SocketAddr,
+    config: QuicClientConfig,
+) -> Result<QuicSarConnection, SarError>
+```
+
+Establishes a QUIC connection to a `QuicSarListener`.
+
+#### Connection model summary
+
+- A `QuicSarListener` accepts multiple `QuicSarConnection`s.
+- Each `QuicSarConnection` may carry multiple simultaneous SAR sessions.
+- Active SAR Stream IDs are scoped to a single QUIC connection and must be unique per connection.
+- The same numeric SAR Stream ID may be active on different QUIC connections as independent sessions.
+- A duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same QUIC connection is rejected with `SAR_ERR_STREAM_STATE`; the rejected Stream ID remains unbound.
+- `SESSION_CLOSE` unbinds the SAR Stream ID on that QUIC connection.
+- Additional QUIC control streams carrying `SESSION_CONTROL` for an existing SAR Stream ID and matching Session UUID are accepted.
+- Additional control streams referencing an unknown Stream ID or mismatched Session UUID are rejected.
 
 ---
 
@@ -1008,8 +1083,8 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 ### `sar-transport`
 
-- Purpose: transport abstraction and deterministic in-memory transport harness layered over `sar-stream`; SAR-over-TCP binding (M10d)
-- Status: implemented for Milestone 10c policy/harness scope + Milestone 10d TCP binding
+- Purpose: transport abstraction and deterministic in-memory transport harness layered over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature)
+- Status: implemented for Milestone 10c policy/harness scope + Milestone 10d TCP binding + Milestone 10e QUIC binding
 - Public APIs:
   - `TransportBindingKind`, `TransportConfig`, `TransportStreamId`, `TransportStreamState`, `TransportAction`
   - `SarTransportBinding`
@@ -1019,6 +1094,15 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - `tcp::TcpTransportConfig` *(M10d, experimental)*
   - `tcp::TcpSarConnection<S>` *(M10d, experimental)*
   - `tcp::STREAM_ID` *(M10d, experimental)*
+  - `quic::QuicTransportConfig` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicServerConfig` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicClientConfig` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicServerIdentity` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicClientTrust` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicSarListener` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicSarConnection` *(M10e, experimental, `quic` feature)*
+  - `quic::QuicSarStream` *(M10e, experimental, `quic` feature)*
+  - `quic::connect_quic` *(M10e, experimental, `quic` feature)*
 - FFI readiness: `not_applicable` for generic/network types; `candidate` for policy/harness types
 - Notes:
   - M10d TCP binding: `TcpSarConnection<S>` wraps any `Read + Write` stream and drives the M10c TCP policy
@@ -1029,11 +1113,20 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected/closed
   - `SESSION_STATUS`/`SESSION_ACK` serialization to outbound bytes requires bidirectional control to be enabled
   - heartbeat/watchdog is explicit-time with `now_ms` parameter; no background timer
-  - TLS is not implemented; for untrusted networks, SAR AEAD and/or external transport security (e.g. WireGuard, IPsec) is required
+  - TLS is not implemented for TCP; for untrusted networks, SAR AEAD and/or external transport security (e.g. WireGuard, IPsec) is required
   - KMS Mode `0x04 TLS_EXPORTER` is defined by the spec but is **not** supported over plaintext TCP; the connection is rejected with `SAR_ERR_UNSUPPORTED` if a peer uses this mode
   - TCP must not and does not advertise `CAP_TLS_EXPORTER_AEAD` in its local capability set
-  - QUIC binding remains M10e
-  - M10f (full closeout) remains pending
+  - **M10e QUIC binding** (`quic` feature): `QuicSarListener` accepts multiple concurrent QUIC connections; `QuicSarConnection` multiplexes multiple SAR sessions over one QUIC connection; `QuicSarStream` drives the M10c QUIC-policy harness over a single QUIC bidirectional stream
+  - `QuicServerIdentity` requires explicit DER certificate chain + DER private key; no implicit or self-signed fallback in production
+  - `QuicClientTrust::CustomCaDer` supports custom CA certificate trust; `QuicClientTrust::InsecureSkipVerifyForTestsOnly` is test-only and never the default
+  - QUIC/TLS protects transport bytes; SAR AEAD is additionally available at the SAR layer
+  - QUIC endpoints supporting TLS_EXPORTER SAR-AEAD advertise `CAP_TLS_EXPORTER_AEAD`; QUIC transport-only mode does not require it
+  - same numeric SAR Stream ID may be active on different QUIC connections as independent sessions; duplicate active IDs on the same QUIC connection fail closed with `SAR_ERR_STREAM_STATE`
+  - additional QUIC control streams carrying `SESSION_CONTROL` for an existing SAR Stream ID + matching Session UUID are accepted; mismatched UUID or unknown Stream ID causes stream rejection
+  - same bidirectional QUIC stream supports reverse `SESSION_ACK` / `SESSION_STATUS` when `CAP_BIDIRECTIONAL_CONTROL` is active
+  - `connect_quic(server_name, addr, config)` is the async client entry point
+  - QUIC networking uses `quinn 0.11` + `rustls 0.23`/ring + `tokio 1`; these deps are isolated to `sar-transport` behind the `quic` feature
+  - TCP/in-memory behavior is unchanged when the `quic` feature is disabled
 
 ## Foreign-Language Interface Readiness
 
