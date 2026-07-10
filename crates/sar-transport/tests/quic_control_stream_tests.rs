@@ -77,7 +77,11 @@ fn lfh_direct_session_ack_on_additional_quic_control_stream_is_accepted() {
     let mut t = setup_active_session(3, [0xAA; 16]);
     open_control_stream(&mut t);
     let actions = t
-        .feed_bytes(TransportStreamId(2), &additional_control_ack_bytes(3, 2), Some(3))
+        .feed_bytes(
+            TransportStreamId(2),
+            &additional_control_ack_bytes(3, 2),
+            Some(3),
+        )
         .expect("ack feed");
     assert!(has_attach_control_stream(&actions));
     assert!(!has_reject_or_reset(&actions, SarStatus::ErrStreamState));
@@ -172,8 +176,10 @@ fn filesystem_entry_on_additional_control_stream_is_rejected() {
 #[test]
 fn malformed_lfh_direct_control_stream_is_stream_local() {
     let mut t = setup_active_session(17, [0x22; 16]);
-    t.open_transport_stream(TransportStreamId(2)).expect("open B");
-    t.open_transport_stream(TransportStreamId(3)).expect("open C");
+    t.open_transport_stream(TransportStreamId(2))
+        .expect("open B");
+    t.open_transport_stream(TransportStreamId(3))
+        .expect("open C");
 
     let actions_b = t
         .feed_bytes(TransportStreamId(2), &[1, 0, 0, 0, 0, 0, 17, 0], Some(3))
@@ -183,7 +189,11 @@ fn malformed_lfh_direct_control_stream_is_stream_local() {
         .any(|a| matches!(a, TransportAction::ResetTransportStream { transport_stream_id, .. } if *transport_stream_id == TransportStreamId(2))));
 
     let actions_c = t
-        .feed_bytes(TransportStreamId(3), &additional_control_ack_bytes(17, 2), Some(4))
+        .feed_bytes(
+            TransportStreamId(3),
+            &additional_control_ack_bytes(17, 2),
+            Some(4),
+        )
         .expect("unrelated stream feed");
     assert!(has_attach_control_stream(&actions_c));
 }
@@ -191,7 +201,8 @@ fn malformed_lfh_direct_control_stream_is_stream_local() {
 #[test]
 fn duplicate_session_init_for_active_stream_id_fails_closed() {
     let mut t = setup_active_session(19, [0x33; 16]);
-    t.open_transport_stream(TransportStreamId(2)).expect("open B");
+    t.open_transport_stream(TransportStreamId(2))
+        .expect("open B");
     let actions = t
         .feed_bytes(
             TransportStreamId(2),
@@ -217,23 +228,26 @@ fn additional_control_stream_does_not_create_new_sar_session() {
     let mut t = setup_active_session(23, [0x66; 16]);
     open_control_stream(&mut t);
     let actions = t
-        .feed_bytes(TransportStreamId(2), &additional_control_ack_bytes(23, 2), Some(3))
+        .feed_bytes(
+            TransportStreamId(2),
+            &additional_control_ack_bytes(23, 2),
+            Some(3),
+        )
         .expect("ack feed");
-    assert!(
-        !actions.iter().any(|a| matches!(
-            a,
-            TransportAction::BindSarStream {
-                transport_stream_id,
-                ..
-            } if *transport_stream_id == TransportStreamId(2)
-        ))
-    );
+    assert!(!actions.iter().any(|a| matches!(
+        a,
+        TransportAction::BindSarStream {
+            transport_stream_id,
+            ..
+        } if *transport_stream_id == TransportStreamId(2)
+    )));
 }
 
 #[test]
 fn closed_stream_id_on_lfh_direct_control_stream_is_rejected() {
     let mut t = setup_active_session(25, [0x77; 16]);
-    t.close_transport_stream(TransportStreamId(1)).expect("close primary");
+    t.close_transport_stream(TransportStreamId(1))
+        .expect("close primary");
     open_control_stream(&mut t);
     let actions = t
         .feed_bytes(
@@ -248,7 +262,8 @@ fn closed_stream_id_on_lfh_direct_control_stream_is_rejected() {
 #[test]
 fn additional_control_stream_does_not_affect_other_sessions() {
     let mut t = setup_active_session(27, [0x88; 16]);
-    t.open_transport_stream(TransportStreamId(3)).expect("open C");
+    t.open_transport_stream(TransportStreamId(3))
+        .expect("open C");
     t.feed_bytes(
         TransportStreamId(3),
         &session_archive_init_bytes(28, 0, [0x99; 16]),
@@ -257,7 +272,11 @@ fn additional_control_stream_does_not_affect_other_sessions() {
     .expect("init C");
     open_control_stream(&mut t);
     let _ = t
-        .feed_bytes(TransportStreamId(2), &additional_control_ack_bytes(27, 2), Some(4))
+        .feed_bytes(
+            TransportStreamId(2),
+            &additional_control_ack_bytes(27, 2),
+            Some(4),
+        )
         .expect("ack feed");
     assert!(t.is_sar_stream_bound(27));
     assert!(t.is_sar_stream_bound(28));
@@ -270,7 +289,14 @@ fn invalid_magic_rejection_is_stream_local_error() {
     let actions = t
         .feed_bytes(TransportStreamId(2), b"CTL!", Some(3))
         .expect("ctl reject");
-    assert!(actions.iter().any(
-        |a| matches!(a, TransportAction::ResetTransportStream { error: SarError::StreamState(_), .. } | TransportAction::ResetTransportStream { error: SarError::InvalidMagic, .. })
-    ));
+    assert!(actions.iter().any(|a| matches!(
+        a,
+        TransportAction::ResetTransportStream {
+            error: SarError::StreamState(_),
+            ..
+        } | TransportAction::ResetTransportStream {
+            error: SarError::InvalidMagic,
+            ..
+        }
+    )));
 }

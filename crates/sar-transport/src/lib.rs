@@ -713,7 +713,8 @@ impl InMemoryTransport {
                         "additional control stream loop missing attachment",
                     ));
                 };
-                let Some(active_header) = self.active_global_headers.get(&attached_sar_stream_id) else {
+                let Some(active_header) = self.active_global_headers.get(&attached_sar_stream_id)
+                else {
                     return Err(SarError::Internal(
                         "additional control stream missing active global header",
                     ));
@@ -729,7 +730,9 @@ impl InMemoryTransport {
                     ControlLoopEvent::NeedMore
                 } else {
                     match Self::additional_control_header_size(&context.quic_pending_bytes) {
-                        None => ControlLoopEvent::ParserError(SarError::Overflow("LFH header size")),
+                        None => {
+                            ControlLoopEvent::ParserError(SarError::Overflow("LFH header size"))
+                        }
                         Some(header_size) => {
                             if let Err(err) = context.limits.check_lfh_header_bytes(header_size) {
                                 ControlLoopEvent::ParserError(err)
@@ -742,9 +745,9 @@ impl InMemoryTransport {
                                     &context.limits,
                                 ) {
                                     Ok((lfh, _)) => match usize::try_from(lfh.payload_size) {
-                                        Err(_) => ControlLoopEvent::ParserError(SarError::Overflow(
-                                            "additional control payload size",
-                                        )),
+                                        Err(_) => ControlLoopEvent::ParserError(
+                                            SarError::Overflow("additional control payload size"),
+                                        ),
                                         Ok(payload_size) => {
                                             match header_size.checked_add(payload_size) {
                                                 None => ControlLoopEvent::ParserError(
@@ -1255,7 +1258,11 @@ impl SarTransportBinding for InMemoryTransport {
                     .get_mut(&transport_stream_id)
                     .ok_or(SarError::NotFound("unknown transport stream"))?;
                 context.quic_pending_bytes.extend_from_slice(bytes);
-                return self.run_additional_control_stream_loop(transport_stream_id, now_ms, actions);
+                return self.run_additional_control_stream_loop(
+                    transport_stream_id,
+                    now_ms,
+                    actions,
+                );
             }
 
             if current_state == TransportStreamState::AwaitingGlobalHeader {
@@ -1278,7 +1285,11 @@ impl SarTransportBinding for InMemoryTransport {
                     return self.run_feed_loop(transport_stream_id, now_ms, actions);
                 }
                 if pending.starts_with(b"CTL!") {
-                    self.policy_error_actions(transport_stream_id, SarError::InvalidMagic, &mut actions)?;
+                    self.policy_error_actions(
+                        transport_stream_id,
+                        SarError::InvalidMagic,
+                        &mut actions,
+                    )?;
                     return Ok(actions);
                 }
                 if pending.len() < 8 {
@@ -1289,13 +1300,19 @@ impl SarTransportBinding for InMemoryTransport {
                 let sar_stream_id = u16::from_le_bytes([pending[6], pending[7]]);
 
                 if !entry_mode.is_session_control() {
-                    self.policy_error_actions(transport_stream_id, SarError::InvalidMagic, &mut actions)?;
+                    self.policy_error_actions(
+                        transport_stream_id,
+                        SarError::InvalidMagic,
+                        &mut actions,
+                    )?;
                     return Ok(actions);
                 }
                 if !self.active_sar_streams.contains_key(&sar_stream_id) {
                     self.policy_error_actions(
                         transport_stream_id,
-                        SarError::StreamState("additional control stream references unknown SAR Stream ID"),
+                        SarError::StreamState(
+                            "additional control stream references unknown SAR Stream ID",
+                        ),
                         &mut actions,
                     )?;
                     return Ok(actions);
@@ -1332,7 +1349,11 @@ impl SarTransportBinding for InMemoryTransport {
                         sar_stream_id,
                     },
                 )?;
-                return self.run_additional_control_stream_loop(transport_stream_id, now_ms, actions);
+                return self.run_additional_control_stream_loop(
+                    transport_stream_id,
+                    now_ms,
+                    actions,
+                );
             }
         }
         // ── Normal SAR stream path ────────────────────────────────────────────
