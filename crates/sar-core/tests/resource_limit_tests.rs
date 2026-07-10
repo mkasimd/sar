@@ -228,7 +228,7 @@ fn archive_reader_rejects_excessive_cd_region() {
                 encryption: None,
                 fec: None,
                 sparse: false,
-            ..Default::default()
+                ..Default::default()
             },
         )
         .expect("writer");

@@ -567,7 +567,9 @@ impl StreamArchiveParser {
         };
 
         let sparse_extents: Option<Vec<crate::sparse::SparseExtent>> =
-            if archive.header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
+            if archive.header.flags.contains(GlobalFlags::SPARSE_FILES)
+                && !lfh.sparse_map.is_empty()
+            {
                 let is_64bit = archive.header.flags.contains(GlobalFlags::SIZE_64BIT);
                 Some(crate::sparse::parse_sparse_map(
                     &lfh.sparse_map,
@@ -578,7 +580,8 @@ impl StreamArchiveParser {
                 None
             };
 
-        let cdc_algo_id_opt: Option<u8> = if archive.header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+        let cdc_algo_id_opt: Option<u8> = if archive.header.flags.contains(GlobalFlags::CDC_SUPPORT)
+        {
             let algo_id = lfh.cdc_algo_id.unwrap_or(0);
             crate::cdc::validate_cdc_algo_id(algo_id)?;
             Some(algo_id)
@@ -633,14 +636,19 @@ impl StreamArchiveParser {
             crate::metadata::FieldPresence::Absent
         };
 
-        let frag_desc_new = lfh.fragment_descriptor.as_ref().map(|fd| {
-            crate::fragment::FragmentDescriptor {
-                absolute_offset: fd.absolute_offset,
-                fragment_size: fd.fragment_size,
-            }
-        });
+        let frag_desc_new =
+            lfh.fragment_descriptor
+                .as_ref()
+                .map(|fd| crate::fragment::FragmentDescriptor {
+                    absolute_offset: fd.absolute_offset,
+                    fragment_size: fd.fragment_size,
+                });
 
-        let fragment_presence = if archive.header.flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
+        let fragment_presence = if archive
+            .header
+            .flags
+            .contains(GlobalFlags::FILE_FRAGMENTATION)
+        {
             let frag_id = lfh.fragment_id.unwrap_or(0);
             let frag_idx = lfh.fragment_index.unwrap_or(0);
             let fm = crate::metadata::EntryFragmentMetadata {
@@ -672,9 +680,11 @@ impl StreamArchiveParser {
         };
 
         let sparse: Option<crate::metadata::EntrySparseMetadata> =
-            sparse_extents.as_ref().map(|extents| crate::metadata::EntrySparseMetadata {
-                extents: extents.clone(),
-            });
+            sparse_extents
+                .as_ref()
+                .map(|extents| crate::metadata::EntrySparseMetadata {
+                    extents: extents.clone(),
+                });
 
         let has_crc = archive.header.flags.contains(GlobalFlags::PER_FILE_CRC);
         let has_hash = archive.header.flags.contains(GlobalFlags::DEDUPLICATION);
@@ -714,7 +724,11 @@ impl StreamArchiveParser {
             file_crc32: lfh.file_crc32,
             content_hash: lfh.content_hash,
             cdc_algo_id: cdc_algo_id_opt,
-            patch_algo_id: if is_has_delta { Some(patch_raw_id) } else { None },
+            patch_algo_id: if is_has_delta {
+                Some(patch_raw_id)
+            } else {
+                None
+            },
             delta_base_hash: if is_has_delta {
                 Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
             } else {
@@ -725,15 +739,19 @@ impl StreamArchiveParser {
             stream_id: lfh.stream_id,
             sequence_no: lfh.sequence_no,
             is_hidden: lfh.entry_mode.is_hidden_attr(),
-            permissions: lfh.permissions.map(|mode| {
-                crate::metadata::EntryPermissionMetadata { mode }
-            }),
-            owner: lfh.uid_gid.map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
-            timestamps: lfh.timestamps.map(|ts| crate::metadata::EntryTimestampMetadata {
-                mtime: ts[0],
-                atime: ts[1],
-                ctime: ts[2],
-            }),
+            permissions: lfh
+                .permissions
+                .map(|mode| crate::metadata::EntryPermissionMetadata { mode }),
+            owner: lfh
+                .uid_gid
+                .map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
+            timestamps: lfh
+                .timestamps
+                .map(|ts| crate::metadata::EntryTimestampMetadata {
+                    mtime: ts[0],
+                    atime: ts[1],
+                    ctime: ts[2],
+                }),
             compression_presence,
             encryption_presence,
             fec_presence,

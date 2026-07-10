@@ -312,7 +312,10 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file("enc", b"secret-compressed-payload".to_vec()))
+            .add_entry(EntryInput::file(
+                "enc",
+                b"secret-compressed-payload".to_vec(),
+            ))
             .expect("entry");
         writer.finish().expect("finish");
     }

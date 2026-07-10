@@ -544,7 +544,7 @@ fn archive_reader_decompression_respects_entry_limit() {
                 encryption: None,
                 fec: None,
                 sparse: false,
-            ..Default::default()
+                ..Default::default()
             },
             sar_core::CompressionSettings {
                 algo_id: COMP_ALGO_DEFLATE,

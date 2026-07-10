@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 10d source audit)
+# API Inventory (post–Milestone 11a source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -14,6 +14,7 @@ Current scope:
 - Milestone 10a: stateless forward-only SAR byte-stream parser/writer state model
 - Milestone 10d: SAR-over-TCP binding (`sar-transport::tcp`)
 - Milestone 10e: SAR-over-QUIC binding (`sar-transport::quic`, `quic` feature flag)
+- Milestone 11a: LFH Metadata API Completeness — expanded `EntryInput`, expanded `EntryMetadata`, `FieldPresence<T>`, all metadata structs, entry kind representation, complete metadata round-trip
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
@@ -59,6 +60,7 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `format`
 - `fragment`  *(new in M8)*
 - `io`
+- `metadata`  *(new in M11a)*
 - `profile`
 - `recovery`  *(new in M8)*
 - `sparse`    *(new in M8)*
@@ -103,6 +105,13 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `sparse: bool` *(new in M8 final pass)* — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
   - `encryption: Option<EncryptionSettings>`
   - `fec: Option<FecSettings>`
+  - `with_path: bool` *(new in M11a)* — sets `HAS_PATH` global flag; allows `EntryInput::path`
+  - `with_permissions: bool` *(new in M11a)* — sets `HAS_PERMS` global flag; allows `EntryInput::permissions`
+  - `with_uid_gid: bool` *(new in M11a)* — sets `EXT_UID_GID` global flag; allows `EntryInput::uid_gid`
+  - `with_timestamps: bool` *(new in M11a)* — sets `EXT_TIME` global flag; allows `EntryInput::timestamps`
+  - `with_per_file_crc: bool` *(new in M11a)* — sets `PER_FILE_CRC` global flag; allows `EntryInput::file_crc32`
+  - `with_content_hash: bool` *(new in M11a)* — sets `DEDUPLICATION` global flag; allows `EntryInput::content_hash`
+  - `with_symlinks: bool` *(new in M11a)* — sets `HAS_SYMLINKS` global flag; allows `EntryInput::kind = Symlink`
 - `SparseWriteOptions` *(new in M8 final pass)*
   - `logical_size: u64` — full apparent file size including holes; written to LFH `Uncompressed Size`
   - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
@@ -148,6 +157,9 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `default_xor()`
   - `default_rs()`
 - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
+  - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
+  - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
+  - `EntryMetadata` fields *(new in M11a)*: `kind: EntryKind`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
 - `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
 #### Format and parser APIs
@@ -170,6 +182,9 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `GlobalFlags`
 - `EntryMode`
   - `ENCRYPTED`, `COMPRESSED`, `FRAGMENT`, `LAST_FRAGMENT`, `LOSS_TOLERANT`
+  - `IS_SYMLINK` *(new in M11a)* — bit 0; entry is a symbolic link
+  - `IS_DIRECTORY` *(new in M11a)* — bit 1; entry is a directory
+  - `HIDDEN_ATTR` *(new in M11a)* — bit; entry is marked hidden
   - `from_bits(bits)`
   - `bits()`
   - `is_encrypted()`
@@ -177,6 +192,8 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `is_fragment()`
   - `is_last_fragment()`
   - `is_loss_tolerant()`  *(new in M8)*
+  - `is_symlink()`  *(new in M11a)*
+  - `is_directory()`  *(new in M11a)*
 - `validate_global_flags()`
 - `validate_entry_mode_against_global()`
 - `SarStatus`, `SarStatusParseError`, `SarError`
@@ -230,7 +247,7 @@ use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 
 let file = File::create("archive.sar")?;
 let mut writer = ArchiveWriter::new(file, ArchiveWriterOptions::default())?;
-writer.add_entry(EntryInput { name: "hello.txt".into(), payload: b"hello".to_vec() })?;
+writer.add_entry(EntryInput::file("hello.txt", b"hello".to_vec()))?;
 writer.finish()?;
 
 let mut reader = ArchiveReader::new(BufReader::new(File::open("archive.sar")?))?;
@@ -268,6 +285,80 @@ Not implemented in this pass, even though some flags or structural fields alread
 - partition reassembly logic
 - transport-layer Stateful Streaming bindings and real network I/O
 - stable FFI / C ABI (Milestone 12)
+
+### M11a metadata API notes
+
+**New public module: `metadata`**
+
+`sar_core::metadata` exposes the following types (all re-exported at crate root):
+
+- `FieldPresence<T>` — three-state presence enum:
+  - `Absent` — Global Flag not set; field physically missing from the wire
+  - `PresentInactive(T)` — Global Flag set but Entry Mode bit unset; field present on wire but semantically inactive
+  - `PresentActive(T)` — Global Flag set and Entry Mode bit set; field present and active
+  - Helper: `is_absent()`, `is_present()`, `is_active()`, `value() -> Option<&T>`
+- `EntryKind` — `RegularFile`, `Directory`, `Symlink`, `EmptyArea`
+- `EntryPermissionMetadata { mode: u16 }`
+- `EntryOwnerMetadata { uid: u16, gid: u16 }`
+- `EntryTimestampMetadata { mtime_ns: u64, atime_ns: u64, ctime_ns: u64 }`
+- `EntryCompressionMetadata { algo_id: u8 }`
+- `EntryEncryptionMetadata { algo_id: u8, iv_nonce: [u8; 24] }`
+- `EntryFecMetadata { algo_id: u8 }`
+- `EntryCdcMetadata { algo_id: u8 }`
+- `EntryDeltaMetadata { algo_id: u8, base_hash: [u8; 32] }`
+- `EntryFragmentMetadata { fragment_id: u32, fragment_index: u32, absolute_offset: u64, fragment_size: u32 }`
+- `EntrySparseMetadata { logical_size: u64, extents: Vec<SparseExtent> }`
+- `EntryHashMetadata { algo_id: u8, hash: [u8; 32] }`
+
+**Global Flags vs Entry Mode semantics**
+
+Global Flags determine which LFH fields are physically present on the wire.
+Entry Mode bits determine whether physically present fields are semantically active for a particular entry.
+
+When a Global Flag is set but the corresponding Entry Mode bit is unset, the field is *physically present but semantically inactive*.  The reader surfaces this as `FieldPresence::PresentInactive(T)`.
+
+The four `FieldPresence`-typed fields in `EntryMetadata` cover the LFH fields that have both a Global Flag and an Entry Mode toggle:
+
+| Field | Global Flag | Entry Mode bit |
+|---|---|---|
+| `compression_presence` | `COMPRESSED` | `IS_COMPRESSED` |
+| `encryption_presence` | `ENCRYPTED` | `IS_ENCRYPTED` |
+| `fec_presence` | `SELECTIVE_FEC` | n/a (uses `fec_algo_id != 0`) |
+| `fragment_presence` | `FILE_FRAGMENTATION` | `IS_FRAGMENT` |
+
+Fields with only a Global Flag (no Entry Mode toggle) use `Option<T>`: `cdc`, `delta`, `sparse`, `file_crc32`, `content_hash`, `permissions`, `uid_gid`, `timestamps`.
+
+**Writer validation**
+
+The writer validates metadata against enabled Global Flags before writing.  Requesting metadata that requires a flag that is not set fails with `SarError::FlagConflict`.  No metadata is silently dropped.
+
+Examples of validated fields:
+- `EntryInput::path` requires `ArchiveWriterOptions::with_path = true`
+- `EntryInput::permissions` requires `ArchiveWriterOptions::with_permissions = true`
+- `EntryInput::uid_gid` requires `ArchiveWriterOptions::with_uid_gid = true`
+- `EntryInput::timestamps` requires `ArchiveWriterOptions::with_timestamps = true`
+- `EntryInput::file_crc32` requires `ArchiveWriterOptions::with_per_file_crc = true`
+- `EntryInput::content_hash` requires `ArchiveWriterOptions::with_content_hash = true`
+- `EntryInput::kind = Symlink` requires `ArchiveWriterOptions::with_symlinks = true`
+
+**M11a writer limitations**
+
+- Fragment, sparse, FEC, CDC, and delta metadata passed in `EntryInput` are not yet wired to the corresponding LFH field writers.  These fields are accepted in the API but have no effect on the on-wire format for this milestone.
+- Encryption IV and FEC value derivation continue to be handled internally by the writer pipeline.
+- No filesystem restoration is performed.
+- No CLI metadata flags are added.
+- No UID/GID, permission, or timestamp restoration occurs.
+
+**M11a non-goals**
+
+The following are explicitly out of scope for M11a:
+- CLI metadata flags
+- Filesystem restoration (symlink extraction, UID/GID restoration, permission restoration, timestamp restoration)
+- Crate-boundary refactor
+- New conformance vector suite
+- C ABI or Python bindings
+- New transport behavior
+- New CDC/delta/FEC semantics
 
 ### M10a stream model notes
 

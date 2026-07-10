@@ -632,7 +632,7 @@ fn create_archive(
                 encryption: Some(settings),
                 fec: fec_settings,
                 sparse: false,
-            ..Default::default()
+                ..Default::default()
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -647,7 +647,7 @@ fn create_archive(
                 encryption: None,
                 fec: fec_settings,
                 sparse: false,
-            ..Default::default()
+                ..Default::default()
             },
             CompressionSettings {
                 algo_id: compression.algo_id,

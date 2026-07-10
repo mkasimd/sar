@@ -158,14 +158,16 @@ pub struct EntryMetadata {
     /// the inner value contains the raw algo_id even though the effective
     /// algorithm is STORE.
     #[serde(skip)]
-    pub compression_presence: crate::metadata::FieldPresence<crate::metadata::EntryCompressionMetadata>,
+    pub compression_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryCompressionMetadata>,
     /// Encryption field presence model.
     ///
     /// Distinguishes between the encryption fields being absent (global
     /// `ENCRYPTED` not set), physically present but inactive (`IS_ENCRYPTED`
     /// entry-mode bit unset), and present and active.
     #[serde(skip)]
-    pub encryption_presence: crate::metadata::FieldPresence<crate::metadata::EntryEncryptionMetadata>,
+    pub encryption_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryEncryptionMetadata>,
     /// FEC field presence model.
     ///
     /// `Absent` when global `SELECTIVE_FEC` is not set.
@@ -1028,12 +1030,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
             };
 
         // Fragment descriptor for new metadata.
-        let frag_desc_new = lfh.fragment_descriptor.as_ref().map(|fd| {
-            crate::fragment::FragmentDescriptor {
-                absolute_offset: fd.absolute_offset,
-                fragment_size: fd.fragment_size,
-            }
-        });
+        let frag_desc_new =
+            lfh.fragment_descriptor
+                .as_ref()
+                .map(|fd| crate::fragment::FragmentDescriptor {
+                    absolute_offset: fd.absolute_offset,
+                    fragment_size: fd.fragment_size,
+                });
 
         // Fragment presence model.
         let fragment_presence: crate::metadata::FieldPresence<
@@ -1073,9 +1076,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         // Sparse metadata.
         let sparse: Option<crate::metadata::EntrySparseMetadata> =
-            sparse_extents.as_ref().map(|extents| crate::metadata::EntrySparseMetadata {
-                extents: extents.clone(),
-            });
+            sparse_extents
+                .as_ref()
+                .map(|extents| crate::metadata::EntrySparseMetadata {
+                    extents: extents.clone(),
+                });
 
         // Hash metadata.
         let has_crc = header.flags.contains(GlobalFlags::PER_FILE_CRC);
@@ -1116,7 +1121,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // Patch fields: present when HAS_DELTA is globally set.
             // Registry validation and patch application have already been performed
             // above; this block only surfaces the validated ID and opaque hash bytes.
-            patch_algo_id: if is_has_delta { Some(patch_raw_id) } else { None },
+            patch_algo_id: if is_has_delta {
+                Some(patch_raw_id)
+            } else {
+                None
+            },
             delta_base_hash: if is_has_delta {
                 Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
             } else {
@@ -1128,15 +1137,19 @@ impl<R: Read + Seek> ArchiveReader<R> {
             stream_id: lfh.stream_id,
             sequence_no: lfh.sequence_no,
             is_hidden: lfh.entry_mode.is_hidden_attr(),
-            permissions: lfh.permissions.map(|mode| {
-                crate::metadata::EntryPermissionMetadata { mode }
-            }),
-            owner: lfh.uid_gid.map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
-            timestamps: lfh.timestamps.map(|ts| crate::metadata::EntryTimestampMetadata {
-                mtime: ts[0],
-                atime: ts[1],
-                ctime: ts[2],
-            }),
+            permissions: lfh
+                .permissions
+                .map(|mode| crate::metadata::EntryPermissionMetadata { mode }),
+            owner: lfh
+                .uid_gid
+                .map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
+            timestamps: lfh
+                .timestamps
+                .map(|ts| crate::metadata::EntryTimestampMetadata {
+                    mtime: ts[0],
+                    atime: ts[1],
+                    ctime: ts[2],
+                }),
             compression_presence,
             encryption_presence,
             fec_presence,
@@ -2027,12 +2040,12 @@ impl<W: Write> ArchiveWriter<W> {
         use crate::metadata::EntryKind;
 
         // Symlink entries require HAS_SYMLINKS.
-        if matches!(entry.kind, Some(EntryKind::Symlink)) {
-            if !self.flags.contains(GlobalFlags::HAS_SYMLINKS) {
-                return Err(SarError::FlagConflict(
-                    "Symlink entry requires ArchiveWriterOptions::with_symlinks = true",
-                ));
-            }
+        if matches!(entry.kind, Some(EntryKind::Symlink))
+            && !self.flags.contains(GlobalFlags::HAS_SYMLINKS)
+        {
+            return Err(SarError::FlagConflict(
+                "Symlink entry requires ArchiveWriterOptions::with_symlinks = true",
+            ));
         }
 
         // Path requires HAS_PATH.
@@ -2096,12 +2109,10 @@ impl<W: Write> ArchiveWriter<W> {
         lfh.sequence_no = entry.sequence_no.unwrap_or(0);
 
         // Entry kind → entry mode bits.
-        let effective_kind = entry.kind.unwrap_or_else(|| {
-            if entry.name.is_empty() {
-                EntryKind::EmptyArea
-            } else {
-                EntryKind::RegularFile
-            }
+        let effective_kind = entry.kind.unwrap_or(if entry.name.is_empty() {
+            EntryKind::EmptyArea
+        } else {
+            EntryKind::RegularFile
         });
         match effective_kind {
             EntryKind::Directory => {
@@ -2117,23 +2128,22 @@ impl<W: Write> ArchiveWriter<W> {
 
         // Hidden attribute.
         if entry.is_hidden {
-            lfh.entry_mode =
-                EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::HIDDEN_ATTR);
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::HIDDEN_ATTR);
         }
 
         // Optional metadata fields (only when the global flag is set).
-        if self.flags.contains(GlobalFlags::HAS_PATH) {
-            if let Some(ref path) = entry.path {
-                lfh.path = path.as_bytes().to_vec();
-            }
+        if self.flags.contains(GlobalFlags::HAS_PATH)
+            && let Some(ref path) = entry.path
+        {
+            lfh.path = path.as_bytes().to_vec();
         }
 
         if self.flags.contains(GlobalFlags::HAS_PERMS) {
-            lfh.permissions = Some(entry.permissions.unwrap_or(0));
+            lfh.permissions = entry.permissions.or(Some(0));
         }
 
         if self.flags.contains(GlobalFlags::EXT_UID_GID) {
-            lfh.uid_gid = Some(entry.uid_gid.unwrap_or(0));
+            lfh.uid_gid = entry.uid_gid.or(Some(0));
         }
 
         if self.flags.contains(GlobalFlags::EXT_TIME) {

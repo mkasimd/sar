@@ -230,9 +230,7 @@ pub struct EntryDeltaMetadata {
     /// Patch algorithm ID from the LFH.
     pub patch_algo_id: u8,
     /// Delta base hash (32 bytes, opaque).  All-zero = no base required.
-    #[serde(
-        serialize_with = "serialize_hash_hex"
-    )]
+    #[serde(serialize_with = "serialize_hash_hex")]
     pub base_hash: [u8; 32],
 }
 
