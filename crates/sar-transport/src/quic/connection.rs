@@ -15,7 +15,7 @@ use sar_core::{
 };
 use sar_stream::{CapabilityFlags, SessionOpCode};
 
-use crate::quic::config::{QuicClientConfig, QuicServerConfig, QuicTransportConfig};
+use crate::quic::config::{QuicClientConfig, QuicServerConfig, QuicTransportConfig, TlsPqPolicy};
 use crate::quic::identity::QuicClientTrust;
 use crate::{InMemoryTransport, SarTransportBinding, TransportAction, TransportStreamId};
 
@@ -117,7 +117,7 @@ pub async fn connect_quic(
     server_name: &str,
     config: QuicClientConfig,
 ) -> Result<QuicSarConnection, SarError> {
-    let client_tls = build_rustls_client_config(&config.trust)?;
+    let client_tls = build_rustls_client_config(&config.trust, config.transport.pq_policy)?;
     let quic_client_cfg = RustlsQuicClientConfig::try_from(client_tls)
         .map_err(|_| SarError::Internal("QUIC client TLS config conversion"))?;
     let client_cfg = quinn::ClientConfig::new(Arc::new(quic_client_cfg));
@@ -654,7 +654,32 @@ impl QuicSarStream {
 // TLS configuration builders
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// Enforce the TLS key agreement policy before attempting to build a TLS config.
+///
+/// The `ring` cryptographic provider used by this crate does not expose
+/// post-quantum-safe or hybrid key agreement groups (e.g. X25519MLKEM768).
+/// For `REQUIRE_PQ_OR_HYBRID` and `REQUIRE_PQ_ONLY` this function returns
+/// `SAR_ERR_UNSUPPORTED` to fail closed as required by Section 18.6.7.
+///
+/// For `PREFER_PQ` the function succeeds; the classical fallback is used and
+/// the caller MUST NOT claim PQ or HNDL protection for the connection.
+/// For `CLASSICAL_ALLOWED` the function always succeeds.
+fn enforce_pq_policy(policy: TlsPqPolicy) -> Result<(), SarError> {
+    if policy.requires_pq() {
+        return Err(SarError::Unsupported(
+            "TLS PQ/hybrid key agreement required by policy but not available with \
+             the current TLS provider (ring); configure a TLS provider that supports \
+             X25519MLKEM768 or another PQ-safe/hybrid key agreement algorithm",
+        ));
+    }
+    Ok(())
+}
+
 fn build_rustls_server_config(config: &QuicServerConfig) -> Result<RustlsServerConfig, SarError> {
+    // PQ policy enforcement.  The ring provider does not expose PQ-safe or
+    // hybrid key agreement groups.  Fail closed for required-PQ modes.
+    enforce_pq_policy(config.transport.pq_policy)?;
+
     let key = config.identity.private_key.clone_key();
     let cert_chain = config.identity.cert_chain.clone();
 
@@ -687,7 +712,14 @@ fn build_rustls_server_config(config: &QuicServerConfig) -> Result<RustlsServerC
         .map_err(|_| SarError::Internal("QUIC server TLS config conversion failed"))
 }
 
-fn build_rustls_client_config(trust: &QuicClientTrust) -> Result<rustls::ClientConfig, SarError> {
+fn build_rustls_client_config(
+    trust: &QuicClientTrust,
+    pq_policy: TlsPqPolicy,
+) -> Result<rustls::ClientConfig, SarError> {
+    // PQ policy enforcement.  The ring provider does not expose PQ-safe or
+    // hybrid key agreement groups.  Fail closed for required-PQ modes.
+    enforce_pq_policy(pq_policy)?;
+
     let mut provider = rustls::crypto::ring::default_provider();
     provider.cipher_suites = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
 

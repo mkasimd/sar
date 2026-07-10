@@ -115,6 +115,23 @@ This document reflects current implemented behavior only.
 - No `unsafe` code is present.  No production `unwrap`/`expect`/`panic`/`todo`/`unimplemented` is used.
 - **TCP+TLS is not implemented.  STARTTLS is not implemented.  TLS_EXPORTER over plaintext TCP is not implemented.**  Plain TCP remains plaintext SAR-over-TCP only.
 
+## M10g TLS PQ/hybrid key agreement policy (Section 18.6.7)
+
+- `TlsPqPolicy` variants: `ClassicalAllowed`, `PreferPq`, `RequirePqOrHybrid`, `RequirePqOnly`.
+- The bundled `ring` TLS provider does **not** support PQ-safe or hybrid key agreement groups.  The default policy is therefore `ClassicalAllowed`.
+- `RequirePqOrHybrid` and `RequirePqOnly` **fail closed** with `SAR_ERR_UNSUPPORTED` at `QuicSarListener::bind` or `connect_quic` time when `ring` is the TLS provider.  No classical connection is established when a PQ/hybrid requirement cannot be satisfied.
+- `PreferPq` silently falls back to classical with `ring`.  A connection using `PreferPq` with classical-only negotiation **MUST NOT** be described as providing PQ-safe or HNDL-resistant protection for TLS_EXPORTER SAR AEAD keying material.
+- Negotiated-group verification is not available with the `ring` provider and `quinn` in the current configuration.  If a TLS provider that does expose negotiated group information is configured, negotiated-group verification SHOULD be implemented and used for `RequirePqOrHybrid` and `RequirePqOnly`.
+- TLS_EXPORTER SAR AEAD inherits HNDL properties from the negotiated TLS session key agreement.  Classical-only negotiation yields no HNDL protection regardless of `TlsPqPolicy` setting.
+- No TLS secrets, exporter outputs, derived SAR AEAD keys, or private keys are logged, placed in KMS Data, or transmitted in any SAR frame.
+
+## M10g CTL! additional control-stream framing security notes
+
+- CTL!-associated control streams must carry a valid 22-byte association header (`CTL!` + u16 LE stream_id + 16-byte session UUID).
+- The stream_id must reference an active SAR session and the UUID must match exactly; mismatches are rejected with `SAR_ERR_STREAM_STATE` stream-locally.
+- CTL!-associated streams do not establish new SAR sessions and are not permitted to carry `SESSION_INIT`.
+- CTL! stream errors are stream-local and do not corrupt or close unrelated QUIC streams.
+
 ## FEC and AEAD ordering
 
 Current implemented order is:

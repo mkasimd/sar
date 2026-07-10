@@ -23,6 +23,116 @@ pub const MAX_OUTBOUND_WRITE_BYTES: usize = 64 * 1024;
 pub const MAX_STATUS_ACK_BYTES: usize = 4096;
 
 // ──────────────────────────────────────────────────────────────────────────────
+// TLS PQ/hybrid key agreement policy (Section 18.6.7)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// TLS key agreement policy for SAR-over-QUIC connections.
+///
+/// Aligns with Section 18.6.7 of the SAR specification.  Controls which TLS
+/// key agreement algorithms are offered and accepted, and how the implementation
+/// behaves when the desired algorithm class cannot be negotiated or verified.
+///
+/// # Spec names
+///
+/// Each variant maps to one of the four spec-defined policy names:
+///
+/// | Variant | Spec name |
+/// |---|---|
+/// | `ClassicalAllowed` | `CLASSICAL_ALLOWED` |
+/// | `PreferPq` | `PREFER_PQ` |
+/// | `RequirePqOrHybrid` | `REQUIRE_PQ_OR_HYBRID` |
+/// | `RequirePqOnly` | `REQUIRE_PQ_ONLY` |
+///
+/// # Default
+///
+/// The default is [`ClassicalAllowed`] when the TLS stack does not expose any
+/// PQ-safe or hybrid key agreement algorithms accepted by local policy (as is
+/// the case with the `ring` provider used in this crate).  If a TLS provider
+/// that supports PQ or hybrid groups is configured, the default SHOULD be
+/// changed to [`PreferPq`] in accordance with the spec.
+///
+/// [`ClassicalAllowed`]: TlsPqPolicy::ClassicalAllowed
+/// [`PreferPq`]: TlsPqPolicy::PreferPq
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TlsPqPolicy {
+    /// **`CLASSICAL_ALLOWED`** — Classical, hybrid post-quantum, and
+    /// post-quantum-safe TLS key agreement algorithms are all permitted when
+    /// supported by the TLS stack and accepted by local policy.
+    ///
+    /// If PQ-safe or hybrid algorithms are available, they SHOULD be preferred
+    /// over classical algorithms where the TLS stack allows preference ordering.
+    ///
+    /// This is the default when no PQ-safe or hybrid key agreement algorithm is
+    /// supported by the active TLS provider.
+    #[default]
+    ClassicalAllowed,
+
+    /// **`PREFER_PQ`** — Post-quantum-safe or hybrid post-quantum TLS key
+    /// agreement is preferred.
+    ///
+    /// Classical TLS key agreement remains permitted only if no acceptable
+    /// PQ-safe or hybrid algorithm can be negotiated.  With the `ring` provider
+    /// used in this crate, no PQ/hybrid groups are available and this policy
+    /// falls back to classical without error.
+    ///
+    /// Implementations MUST NOT claim PQ or HNDL protection for a connection
+    /// where only classical key agreement was negotiated.
+    PreferPq,
+
+    /// **`REQUIRE_PQ_OR_HYBRID`** — The TLS session MUST negotiate a
+    /// post-quantum-safe or hybrid post-quantum TLS key agreement accepted by
+    /// policy.
+    ///
+    /// Classical-only key agreement MUST fail closed.  If the TLS stack cannot
+    /// configure, negotiate, or confirm an acceptable PQ-safe or hybrid group,
+    /// the connection attempt MUST fail with [`SarError::Unsupported`].
+    ///
+    /// This mode is currently **not supported** with the `ring` TLS provider
+    /// because `ring` does not expose PQ or hybrid key agreement groups.
+    /// Attempting to build a [`QuicServerConfig`] or [`QuicClientConfig`] with
+    /// this policy and the `ring` provider returns `SAR_ERR_UNSUPPORTED`.
+    ///
+    /// [`SarError::Unsupported`]: sar_core::SarError::Unsupported
+    /// [`QuicServerConfig`]: crate::quic::QuicServerConfig
+    /// [`QuicClientConfig`]: crate::quic::QuicClientConfig
+    RequirePqOrHybrid,
+
+    /// **`REQUIRE_PQ_ONLY`** — The TLS session MUST negotiate a post-quantum-
+    /// safe TLS key agreement accepted by policy.  Hybrid and classical key
+    /// agreement MUST fail closed.
+    ///
+    /// This mode is currently **not supported** with the `ring` TLS provider.
+    /// Attempting to build a [`QuicServerConfig`] or [`QuicClientConfig`] with
+    /// this policy and the `ring` provider returns `SAR_ERR_UNSUPPORTED`.
+    ///
+    /// [`QuicServerConfig`]: crate::quic::QuicServerConfig
+    /// [`QuicClientConfig`]: crate::quic::QuicClientConfig
+    RequirePqOnly,
+}
+
+impl TlsPqPolicy {
+    /// Returns `true` if this policy permits classical-only TLS key agreement.
+    #[must_use]
+    pub const fn allows_classical_fallback(self) -> bool {
+        matches!(self, Self::ClassicalAllowed | Self::PreferPq)
+    }
+
+    /// Returns `true` if this policy requires PQ-safe or hybrid key agreement
+    /// and MUST fail closed when it cannot be satisfied.
+    #[must_use]
+    pub const fn requires_pq(self) -> bool {
+        matches!(self, Self::RequirePqOrHybrid | Self::RequirePqOnly)
+    }
+
+    /// Returns `true` if this policy requires PQ-only (non-hybrid) key
+    /// agreement and MUST fail closed when it cannot be satisfied.
+    #[must_use]
+    pub const fn requires_pq_only(self) -> bool {
+        matches!(self, Self::RequirePqOnly)
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // Transport config
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -44,6 +154,18 @@ pub struct QuicTransportConfig {
     /// Set to `true` only when TLS exporter material is expected to be
     /// available (i.e. in a QUIC + TLS session using quinn ≥ 0.11).
     pub advertise_tls_exporter_aead: bool,
+    /// TLS key agreement policy per Section 18.6.7.
+    ///
+    /// Controls which TLS key agreement algorithm classes are offered and
+    /// required.  The default is [`TlsPqPolicy::ClassicalAllowed`] because the
+    /// bundled `ring` TLS provider does not expose PQ-safe or hybrid key
+    /// agreement groups.  Set to [`TlsPqPolicy::PreferPq`] when a TLS provider
+    /// that supports PQ or hybrid groups is in use.
+    ///
+    /// Setting this to [`TlsPqPolicy::RequirePqOrHybrid`] or
+    /// [`TlsPqPolicy::RequirePqOnly`] with the `ring` provider will cause
+    /// connection setup to fail with `SAR_ERR_UNSUPPORTED`.
+    pub pq_policy: TlsPqPolicy,
 }
 
 impl Default for QuicTransportConfig {
@@ -55,6 +177,7 @@ impl Default for QuicTransportConfig {
             max_quic_streams_per_connection: MAX_QUIC_STREAMS_PER_CONNECTION,
             max_connections: MAX_CONNECTIONS,
             advertise_tls_exporter_aead: true,
+            pq_policy: TlsPqPolicy::ClassicalAllowed,
         }
     }
 }

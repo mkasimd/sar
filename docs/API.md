@@ -338,6 +338,38 @@ Enum with two variants:
 
 Holds all per-connection limits: `max_connections`, `max_quic_streams_per_connection`, `max_active_sar_streams_per_connection`, `max_control_streams_per_sar_session`, `max_buffered_bytes`, `max_read_chunk`, `max_outbound_buffer_bytes`, `max_cert_chain_bytes`, `max_private_key_bytes`.
 
+Also holds `pq_policy: TlsPqPolicy` (M10g) — see below.
+
+#### `TlsPqPolicy` (M10g)
+
+```rust
+pub enum TlsPqPolicy {
+    ClassicalAllowed,  // CLASSICAL_ALLOWED
+    PreferPq,          // PREFER_PQ
+    RequirePqOrHybrid, // REQUIRE_PQ_OR_HYBRID
+    RequirePqOnly,     // REQUIRE_PQ_ONLY
+}
+```
+
+Controls which TLS key agreement algorithm classes are offered and required on QUIC connections.  Aligns with Section 18.6.7 of the SAR specification.
+
+| Variant | Spec name | Semantics |
+|---|---|---|
+| `ClassicalAllowed` | `CLASSICAL_ALLOWED` | Classical, hybrid PQ, and PQ-safe key agreement are all permitted.  Default when no PQ/hybrid group is available. |
+| `PreferPq` | `PREFER_PQ` | PQ-safe or hybrid PQ key agreement is preferred; classical fallback is permitted.  Should be default when a PQ/hybrid group is available. |
+| `RequirePqOrHybrid` | `REQUIRE_PQ_OR_HYBRID` | The TLS session MUST negotiate PQ-safe or hybrid key agreement.  Fails closed with `SAR_ERR_UNSUPPORTED` if unavailable. |
+| `RequirePqOnly` | `REQUIRE_PQ_ONLY` | The TLS session MUST negotiate PQ-safe (non-hybrid) key agreement.  Fails closed with `SAR_ERR_UNSUPPORTED` if unavailable. |
+
+**Current provider limitation:** the bundled `ring` TLS provider does not expose PQ-safe or hybrid key agreement groups (e.g. X25519MLKEM768).  `RequirePqOrHybrid` and `RequirePqOnly` return `SAR_ERR_UNSUPPORTED` at `QuicSarListener::bind` or `connect_quic` time.  `PreferPq` silently falls back to classical.  The default is `ClassicalAllowed`.
+
+**TLS_EXPORTER interaction:** TLS_EXPORTER SAR-AEAD inherits HNDL properties from the negotiated TLS session key agreement.  If classical-only key agreement was negotiated, TLS_EXPORTER SAR-AEAD MUST NOT be described as PQ-safe or HNDL-resistant.
+
+Helper methods:
+
+- `allows_classical_fallback() -> bool` — true for `ClassicalAllowed` and `PreferPq`.
+- `requires_pq() -> bool` — true for `RequirePqOrHybrid` and `RequirePqOnly`.
+- `requires_pq_only() -> bool` — true for `RequirePqOnly`.
+
 #### `QuicServerConfig`
 
 Holds `identity: QuicServerIdentity`, `transport: QuicTransportConfig`, and optional `alpn_protocols`.
@@ -389,6 +421,8 @@ Establishes a QUIC connection to a `QuicSarListener`.
 - `SESSION_CLOSE` unbinds the SAR Stream ID on that QUIC connection.
 - Additional QUIC control streams carrying `SESSION_CONTROL` for an existing SAR Stream ID and matching Session UUID are accepted.
 - Additional control streams referencing an unknown Stream ID or mismatched Session UUID are rejected.
+- **CTL! framing** (M10g): additional QUIC control streams may start with the 22-byte CTL! association header (`CTL!` magic + stream_id + session UUID) instead of the primary SAR `SAR!` magic.  A CTL!-associated stream does not require a new SAR Global Header and does not establish a new SAR session.  Primary SAR streams still begin with the SAR Global Header / `SAR!` magic.
+- **TLS PQ/hybrid key agreement policy** (M10g, `TlsPqPolicy`): configures which TLS key agreement algorithm classes are offered and accepted on QUIC connections.  See `TlsPqPolicy` below.
 
 ---
 
@@ -1123,11 +1157,14 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - QUIC/TLS protects transport bytes; SAR AEAD is additionally available at the SAR layer
   - QUIC transport-only mode is supported; `CAP_TLS_EXPORTER_AEAD` is advertised only when `QuicTransportConfig::advertise_tls_exporter_aead` is `true`; advertising this flag does not force every session to use TLS_EXPORTER AEAD
   - same numeric SAR Stream ID may be active on different QUIC connections as independent sessions; duplicate active IDs on the same QUIC connection fail closed with `SAR_ERR_STREAM_STATE`
-  - additional QUIC control streams are limited to `SESSION_CONTROL` traffic in M10e; they do not establish new SAR sessions; they require an active Stream ID and a matching Session UUID; mismatched UUID, unknown Stream ID, closed session, or a new `SESSION_INIT` on a control stream cause stream rejection
+  - additional QUIC control streams are limited to `SESSION_CONTROL` traffic; they do not establish new SAR sessions; they require an active Stream ID and a matching Session UUID; mismatched UUID, unknown Stream ID, closed session, or a new `SESSION_INIT` on a control stream cause stream rejection
   - same bidirectional QUIC stream supports reverse `SESSION_ACK` / `SESSION_STATUS` when `CAP_BIDIRECTIONAL_CONTROL` is active
   - `connect_quic(server_name, addr, config)` is the async client entry point
   - QUIC networking uses `quinn 0.11` + `rustls 0.23`/ring + `tokio 1`; these deps are isolated to `sar-transport` behind the `quic` feature
   - TCP/in-memory behavior is unchanged when the `quic` feature is disabled
+  - **M10g: CTL! additional control-stream framing**: additional QUIC control streams may use a 22-byte CTL! association header (`CTL!` magic + u16 LE stream_id + 16-byte session UUID) instead of a primary SAR Global Header.  CTL!-associated streams are not required to start with SAR `SAR!` magic, do not create new SAR sessions, and do not require a new SAR Global Header.  Primary SAR streams still require SAR magic and a Global Header.
+  - **M10g: `TlsPqPolicy`**: `ClassicalAllowed` (default with ring), `PreferPq`, `RequirePqOrHybrid`, `RequirePqOnly`.  PQ/hybrid key agreement is preferred when available.  `RequirePqOrHybrid` and `RequirePqOnly` fail closed with `SAR_ERR_UNSUPPORTED` when the TLS stack does not support PQ or hybrid groups (as is the case with the current ring provider).  Negotiated-group verification is not available with the ring provider; document this limitation when using `PreferPq`.
+  - No TLS exporter output, derived SAR AEAD keys, private keys, or TLS secrets are logged or placed in KMS data.
 
 ## Foreign-Language Interface Readiness
 

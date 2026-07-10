@@ -891,11 +891,8 @@ async fn quic_client_drop_without_streams_causes_server_accept_to_fail() {
 
     // The server's accept_sar_stream should return an error once the connection
     // is closed.  We allow up to 5 s in CI before declaring a hang.
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        srv.accept_sar_stream(),
-    )
-    .await;
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(5), srv.accept_sar_stream()).await;
 
     match result {
         Ok(Err(_)) => {

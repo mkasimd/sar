@@ -188,7 +188,7 @@ This document reflects the current repository state after Milestones 10a–10f.
   - no `unsafe`, no production `unwrap`/`expect`/`panic`/`todo`/`unimplemented`
   - TCP+TLS is **not** implemented; STARTTLS is **not** implemented; SESSION_RESUME is not extended for M10e
   - TCP tests still pass; default-feature build (no `quic`) still works
-- **Milestone 10f M10 full closeout (this milestone)**
+- **Milestone 10f M10 full closeout**
   - Compile error fixed: `CapabilityFlags` usage in `quic_loopback_tests.rs` gated correctly; default-feature build compiles without errors
   - TCP initial-byte rejection tests added: non-SAR bytes (`GET /`, TLS ClientHello, random garbage) close the TCP connection
   - TCP SAR-magic-then-malformed-body test added: bytes starting with `SAR!` but with an invalid version byte close the connection with a structural SAR error (not `InvalidMagic`); no panic, no session bind
@@ -198,6 +198,18 @@ This document reflects the current repository state after Milestones 10a–10f.
   - QUIC client-disconnect test added: when a client drops a QUIC connection without opening SAR streams, the server's `accept_sar_stream` returns an error rather than blocking indefinitely
   - `InsecureSkipVerifyForTestsOnly` is used only in test code and is clearly named; not the default; not for trusted production deployments
   - All M10 validation commands pass (see Planned → M10f notes)
+- **Milestone 10g QUIC control-stream interoperability + TLS PQ/hybrid policy alignment**
+  - **CTL! additional control-stream framing** (Section 18.5.2): additional QUIC control streams associated with an active SAR session via the 22-byte CTL! header (`CTL!` + u16 LE stream_id + 16-byte session UUID) are accepted without requiring SAR `SAR!` magic or a new SAR Global Header
+  - Primary SAR streams still require SAR `SAR!` magic and a SAR Global Header
+  - CTL!-associated streams must reference an active Stream ID with a matching Session UUID; unknown Stream ID and mismatched UUID are rejected with `SAR_ERR_STREAM_STATE`
+  - SESSION_INIT on a CTL!-attached control stream is rejected with `SAR_ERR_STREAM_STATE`
+  - CTL!-associated stream errors are stream-local and do not corrupt or close unrelated QUIC streams
+  - **`TlsPqPolicy`** (Section 18.6.7): `ClassicalAllowed` / `PreferPq` / `RequirePqOrHybrid` / `RequirePqOnly` enum added to `QuicTransportConfig`
+  - Default policy is `ClassicalAllowed` because the bundled `ring` provider does not expose PQ-safe or hybrid key agreement groups
+  - `RequirePqOrHybrid` and `RequirePqOnly` fail closed with `SAR_ERR_UNSUPPORTED` at `QuicSarListener::bind` or `connect_quic` time when ring is the TLS provider
+  - `PreferPq` falls back to classical with ring without error; the connection MUST NOT be described as PQ-safe or HNDL-resistant in this case
+  - Negotiated-group verification is unavailable with the ring provider; this limitation is documented
+  - No TLS exporter output, derived SAR AEAD keys, private keys, or TLS secrets are logged or placed in KMS data
 
 ## Partial
 

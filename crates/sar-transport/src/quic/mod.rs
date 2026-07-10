@@ -36,6 +36,6 @@ pub mod config;
 pub mod connection;
 pub mod identity;
 
-pub use config::{QuicClientConfig, QuicServerConfig, QuicTransportConfig};
+pub use config::{QuicClientConfig, QuicServerConfig, QuicTransportConfig, TlsPqPolicy};
 pub use connection::{QuicSarConnection, QuicSarListener, QuicSarStream, connect_quic};
 pub use identity::{QuicClientTrust, QuicServerIdentity};
