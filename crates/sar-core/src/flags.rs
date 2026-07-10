@@ -203,6 +203,12 @@ pub fn validate_entry_mode_against_global(
         ));
     }
 
+    if entry_mode.is_symlink() && !global_flags.contains(GlobalFlags::HAS_SYMLINKS) {
+        return Err(SarError::FlagConflict(
+            "IS_SYMLINK requires global HAS_SYMLINKS",
+        ));
+    }
+
     if entry_mode.is_compressed() && !global_flags.contains(GlobalFlags::COMPRESSED) {
         return Err(SarError::FlagConflict(
             "IS_COMPRESSED requires global COMPRESSED",

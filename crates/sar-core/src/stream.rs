@@ -589,7 +589,16 @@ impl StreamArchiveParser {
             None
         };
 
-        let name_str = String::from_utf8_lossy(&lfh.name).into_owned();
+        let name_str = String::from_utf8(lfh.name.clone())
+            .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
+
+        // Validate directory entry payload rule.
+        if lfh.entry_mode.is_directory() && lfh.payload_size != 0 {
+            return Err(SarError::Malformed(
+                "IS_DIRECTORY entry must have zero Payload Size",
+            ));
+        }
+
         let entry_kind =
             crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
 
@@ -706,7 +715,9 @@ impl StreamArchiveParser {
             path: if lfh.path.is_empty() {
                 None
             } else {
-                Some(String::from_utf8_lossy(&lfh.path).into_owned())
+                let p = String::from_utf8(lfh.path.clone())
+                    .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                Some(p)
             },
             payload_size: lfh.payload_size,
             uncompressed_size: lfh.uncompressed_size,
@@ -752,6 +763,46 @@ impl StreamArchiveParser {
                     atime: ts[1],
                     ctime: ts[2],
                 }),
+            // M11b filesystem metadata presence model.
+            path_presence: if archive.header.flags.contains(GlobalFlags::HAS_PATH) {
+                if lfh.path.is_empty() {
+                    crate::metadata::FieldPresence::PresentInactive(String::new())
+                } else {
+                    let p = String::from_utf8(lfh.path.clone())
+                        .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                    crate::metadata::FieldPresence::PresentActive(p)
+                }
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            permissions_presence: if archive.header.flags.contains(GlobalFlags::HAS_PERMS) {
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryPermissionMetadata {
+                        mode: lfh.permissions.unwrap_or(0),
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            owner_presence: if archive.header.flags.contains(GlobalFlags::EXT_UID_GID) {
+                crate::metadata::FieldPresence::PresentActive(crate::metadata::EntryOwnerMetadata {
+                    uid_gid: lfh.uid_gid.unwrap_or(0),
+                })
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            timestamps_presence: if archive.header.flags.contains(GlobalFlags::EXT_TIME) {
+                let ts = lfh.timestamps.unwrap_or([0u64; 3]);
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryTimestampMetadata {
+                        mtime: ts[0],
+                        atime: ts[1],
+                        ctime: ts[2],
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
             compression_presence,
             encryption_presence,
             fec_presence,

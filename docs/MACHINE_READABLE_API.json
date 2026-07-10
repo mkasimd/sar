@@ -618,11 +618,13 @@
         "9a",
         "9b",
         "10a",
-        "11a"
+        "11a",
+        "11b"
       ],
       "features": [
         "Milestone 10a stateless forward-only stream parser/writer state model.",
-        "Milestone 11a LFH Metadata API Completeness: expanded EntryInput, expanded EntryMetadata, FieldPresence<T> presence model, EntryKind, all metadata structs, complete LFH metadata round-trip."
+        "Milestone 11a LFH Metadata API Completeness: expanded EntryInput, expanded EntryMetadata, FieldPresence<T> presence model, EntryKind, all metadata structs, complete LFH metadata round-trip.",
+        "Milestone 11b Filesystem Metadata Encode/Decode: FieldPresence-typed path_presence/permissions_presence/owner_presence/timestamps_presence in EntryMetadata, directory payload validation, IS_SYMLINK->HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests."
       ],
       "modules": [
         {
@@ -1235,10 +1237,10 @@
             {
               "name": "EntryMetadata",
               "kind": "struct",
-              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8>, pub kind: EntryKind, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub compression_presence: FieldPresence<EntryCompressionMetadata>, pub encryption_presence: FieldPresence<EntryEncryptionMetadata>, pub fec_presence: FieldPresence<EntryFecMetadata>, pub fragment_presence: FieldPresence<EntryFragmentMetadata>, pub cdc: Option<EntryCdcMetadata>, pub delta: Option<EntryDeltaMetadata>, pub sparse: Option<EntrySparseMetadata>, pub content_hash_meta: Option<EntryHashMetadata>, pub raw_entry_mode: u16 }",
+              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8>, pub kind: EntryKind, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub compression_presence: FieldPresence<EntryCompressionMetadata>, pub encryption_presence: FieldPresence<EntryEncryptionMetadata>, pub fec_presence: FieldPresence<EntryFecMetadata>, pub fragment_presence: FieldPresence<EntryFragmentMetadata>, pub cdc: Option<EntryCdcMetadata>, pub delta: Option<EntryDeltaMetadata>, pub sparse: Option<EntrySparseMetadata>, pub content_hash_meta: Option<EntryHashMetadata>, pub raw_entry_mode: u16, pub path_presence: FieldPresence<String>, pub permissions_presence: FieldPresence<EntryPermissionMetadata>, pub owner_presence: FieldPresence<EntryOwnerMetadata>, pub timestamps_presence: FieldPresence<EntryTimestampMetadata> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Complete metadata for a parsed archive entry. Includes all LFH fields and M11a presence-model fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but entry mode bit unset), PresentActive(T) (global flag set and active). kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value.",
+              "description": "Complete metadata for a parsed archive entry. Includes all LFH fields, M11a presence-model fields, and M11b filesystem metadata FieldPresence fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but semantically inactive), PresentActive(T) (global flag set and active). New in M11b: path_presence (HAS_PATH), permissions_presence (HAS_PERMS), owner_presence (EXT_UID_GID), timestamps_presence (EXT_TIME). Zero values are preserved and never collapsed to Absent. kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value.",
               "parameters": [],
               "returns": "",
               "errors": [],

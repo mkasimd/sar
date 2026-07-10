@@ -150,6 +150,43 @@ pub struct EntryMetadata {
     /// is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamps: Option<crate::metadata::EntryTimestampMetadata>,
+
+    // -----------------------------------------------------------------------
+    // M11b filesystem metadata presence model
+    // -----------------------------------------------------------------------
+    /// Path field presence model (M11b).
+    ///
+    /// `Absent` when global `HAS_PATH` is not set.
+    /// `PresentInactive("")` when `HAS_PATH` is set but path length is zero
+    /// (field is physically present in LFH but no path is provided for this entry).
+    /// `PresentActive(path)` when `HAS_PATH` is set and a non-empty path is provided.
+    ///
+    /// Do not collapse `PresentInactive` into `None`; zero-length path is not
+    /// the same as an absent path field.
+    #[serde(skip)]
+    pub path_presence: crate::metadata::FieldPresence<String>,
+    /// Permissions field presence model (M11b).
+    ///
+    /// `Absent` when global `HAS_PERMS` is not set.
+    /// `PresentActive(value)` when `HAS_PERMS` is set (including when value
+    /// is zero/default — a zero mode is not the same as an absent field).
+    #[serde(skip)]
+    pub permissions_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryPermissionMetadata>,
+    /// UID/GID field presence model (M11b).
+    ///
+    /// `Absent` when global `EXT_UID_GID` is not set.
+    /// `PresentActive(value)` when `EXT_UID_GID` is set (including zero).
+    #[serde(skip)]
+    pub owner_presence: crate::metadata::FieldPresence<crate::metadata::EntryOwnerMetadata>,
+    /// Timestamps field presence model (M11b).
+    ///
+    /// `Absent` when global `EXT_TIME` is not set.
+    /// `PresentActive(value)` when `EXT_TIME` is set (including all-zero timestamps).
+    #[serde(skip)]
+    pub timestamps_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryTimestampMetadata>,
+
     /// Compression field presence model.
     ///
     /// Distinguishes between the compression field being absent (global
@@ -990,7 +1027,19 @@ impl<R: Read + Seek> ArchiveReader<R> {
         };
 
         // Derive entry name string (for entry-kind determination).
-        let name_str = String::from_utf8_lossy(&lfh.name).into_owned();
+        // The SAR specification requires all strings to be UTF-8.  Reject
+        // any entry whose name bytes are not valid UTF-8.
+        let name_str = String::from_utf8(lfh.name.clone())
+            .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
+
+        // Validate directory entry payload rule: IS_DIRECTORY entries MUST have
+        // Payload Size == 0 (spec §15, IS_DIRECTORY entry mode bit 1).
+        if lfh.entry_mode.is_directory() && lfh.payload_size != 0 {
+            return Err(SarError::Malformed(
+                "IS_DIRECTORY entry must have zero Payload Size",
+            ));
+        }
+
         let entry_kind =
             crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
 
@@ -1113,10 +1162,15 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let metadata = EntryMetadata {
             lfh_offset: self.next_offset,
             name: name_str,
+            // `path` retains backward-compatible Option<String> semantics: None
+            // when HAS_PATH is not set or path is empty.  Use `path_presence` for
+            // the authoritative three-state presence model.
             path: if lfh.path.is_empty() {
                 None
             } else {
-                Some(String::from_utf8_lossy(&lfh.path).into_owned())
+                let p = String::from_utf8(lfh.path.clone())
+                    .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                Some(p)
             },
             payload_size: lfh.payload_size,
             uncompressed_size: lfh.uncompressed_size,
@@ -1166,6 +1220,46 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     atime: ts[1],
                     ctime: ts[2],
                 }),
+            // M11b filesystem metadata presence model.
+            path_presence: if header.flags.contains(GlobalFlags::HAS_PATH) {
+                if lfh.path.is_empty() {
+                    crate::metadata::FieldPresence::PresentInactive(String::new())
+                } else {
+                    let p = String::from_utf8(lfh.path.clone())
+                        .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                    crate::metadata::FieldPresence::PresentActive(p)
+                }
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            permissions_presence: if header.flags.contains(GlobalFlags::HAS_PERMS) {
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryPermissionMetadata {
+                        mode: lfh.permissions.unwrap_or(0),
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            owner_presence: if header.flags.contains(GlobalFlags::EXT_UID_GID) {
+                crate::metadata::FieldPresence::PresentActive(crate::metadata::EntryOwnerMetadata {
+                    uid_gid: lfh.uid_gid.unwrap_or(0),
+                })
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            timestamps_presence: if header.flags.contains(GlobalFlags::EXT_TIME) {
+                let ts = lfh.timestamps.unwrap_or([0u64; 3]);
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryTimestampMetadata {
+                        mtime: ts[0],
+                        atime: ts[1],
+                        ctime: ts[2],
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
             compression_presence,
             encryption_presence,
             fec_presence,
@@ -2140,10 +2234,31 @@ impl<W: Write> ArchiveWriter<W> {
             ));
         }
 
+        // Directory entries must have zero payload.
+        if matches!(entry.kind, Some(EntryKind::Directory)) && !entry.payload.is_empty() {
+            return Err(SarError::Malformed(
+                "Directory entry must have zero-length payload",
+            ));
+        }
+
         // Path requires HAS_PATH.
         if entry.path.is_some() && !self.flags.contains(GlobalFlags::HAS_PATH) {
             return Err(SarError::FlagConflict(
                 "EntryInput::path requires ArchiveWriterOptions::with_path = true",
+            ));
+        }
+
+        // Path length must fit in a u16 LFH field (max 65535 bytes).
+        if matches!(&entry.path, Some(p) if p.len() > usize::from(u16::MAX)) {
+            return Err(SarError::Overflow(
+                "path length exceeds LFH u16 field capacity",
+            ));
+        }
+
+        // Name length must fit in a u16 LFH field (max 65535 bytes).
+        if entry.name.len() > usize::from(u16::MAX) {
+            return Err(SarError::Overflow(
+                "name length exceeds LFH u16 field capacity",
             ));
         }
 

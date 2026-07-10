@@ -15,6 +15,7 @@ Current scope:
 - Milestone 10d: SAR-over-TCP binding (`sar-transport::tcp`)
 - Milestone 10e: SAR-over-QUIC binding (`sar-transport::quic`, `quic` feature flag)
 - Milestone 11a: LFH Metadata API Completeness — expanded `EntryInput`, expanded `EntryMetadata`, `FieldPresence<T>`, all metadata structs, entry kind representation, complete metadata round-trip
+- Milestone 11b: Filesystem Metadata Encode/Decode — `FieldPresence`-typed path/permissions/owner/timestamps in `EntryMetadata`, directory payload validation, IS_SYMLINK→HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
@@ -165,6 +166,7 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
   - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
   - `EntryMetadata` fields *(new in M11a)*: `kind: EntryKind`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
+  - *(new in M11b)* `EntryMetadata` adds `path_presence: FieldPresence<String>`, `permissions_presence: FieldPresence<EntryPermissionMetadata>`, `owner_presence: FieldPresence<EntryOwnerMetadata>`, `timestamps_presence: FieldPresence<EntryTimestampMetadata>` — these expose the three-state presence model for filesystem metadata fields
 - `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
 #### Format and parser APIs
@@ -335,7 +337,11 @@ The four `FieldPresence`-typed fields in `EntryMetadata` cover the LFH fields th
 | `fec_presence` | `SELECTIVE_FEC` | n/a (uses `fec_algo_id != 0`) |
 | `fragment_presence` | `FILE_FRAGMENTATION` | `IS_FRAGMENT` |
 
-Fields with only a Global Flag (no Entry Mode toggle) use `Option<T>`: `cdc`, `delta`, `sparse`, `file_crc32`, `content_hash`, `permissions`, `uid_gid`, `timestamps`.
+Fields with only a Global Flag (no Entry Mode toggle) use `Option<T>`: `cdc`, `delta`, `sparse`, `file_crc32`, `content_hash`.
+
+Fields that have a Global Flag but no per-entry Entry Mode toggle (always physically present if the flag is set) now use `FieldPresence<T>` to distinguish *absent* from *physically present*: `permissions_presence`, `owner_presence`, `timestamps_presence`.
+
+The `path_presence` field uses `FieldPresence<String>` and additionally surfaces `PresentInactive("")` for the case where `HAS_PATH` is set but the LFH path length is zero (field present on wire, no path for this entry).
 
 **Writer validation**
 
@@ -370,6 +376,65 @@ The following are explicitly out of scope for M11a:
 - C ABI or Python bindings
 - New transport behavior
 - New CDC/delta/FEC semantics
+
+### M11b filesystem metadata encode/decode notes
+
+**New `FieldPresence` fields on `EntryMetadata`**
+
+| Field | Global Flag | Semantics |
+|---|---|---|
+| `path_presence` | `HAS_PATH` | `Absent` = flag not set; `PresentInactive("")` = flag set, path_len=0; `PresentActive(s)` = flag set, non-empty path |
+| `permissions_presence` | `HAS_PERMS` | `Absent` = flag not set; `PresentActive(EntryPermissionMetadata)` = flag set |
+| `owner_presence` | `EXT_UID_GID` | `Absent` = flag not set; `PresentActive(EntryOwnerMetadata)` = flag set |
+| `timestamps_presence` | `EXT_TIME` | `Absent` = flag not set; `PresentActive(EntryTimestampMetadata)` = flag set |
+
+`PresentInactive` is not used for permissions, owner, or timestamps because these fields have no Entry Mode toggle — they are always active when the Global Flag is set.
+
+Zero values for permissions/UID/GID/timestamps are preserved and never collapsed to `Absent`.
+
+**Directory entry payload rule**
+
+When `EntryMode::IS_DIRECTORY` is set, the payload MUST be zero bytes.  The writer rejects directory entries with non-empty payload (`SarError::Malformed`).  The reader rejects LFH entries where `IS_DIRECTORY` is set and `payload_size != 0` (`SarError::Malformed`).
+
+**IS_SYMLINK → HAS_SYMLINKS validation**
+
+The reader calls `validate_entry_mode_against_global` for each LFH.  If `IS_SYMLINK` is set in Entry Mode but the `HAS_SYMLINKS` Global Flag is absent, parsing fails with `SarError::FlagConflict`.  The writer also validates `EntryInput` before writing and rejects symlink entries if `with_symlinks` is not set.
+
+**Symlink representation**
+
+Symlink entries use `EntryInput::kind = Some(EntryKind::Symlink)` and carry the symlink target as the entry payload (UTF-8 encoded path string).  `EntryMetadata::entry_kind` is `EntryKind::Symlink` on read-back.  No symlinks are created on the host filesystem; the target string is only decoded and exposed through the metadata API.
+
+**String encoding**
+
+Name and path strings MUST be valid UTF-8.  The reader strictly rejects invalid UTF-8 bytes with `SarError::Malformed` (changed from lossy conversion in M11b).  The writer already requires `String` inputs, which are always valid UTF-8.
+
+**Path and name length validation**
+
+The writer validates that path length and name length each fit in a `u16` LFH field (max 65535 bytes).  Oversized strings are rejected with `SarError::Overflow` before writing.
+
+**Writer fail-closed behavior**
+
+Providing metadata that requires a Global Flag that is not set → `SarError::FlagConflict`.  No metadata is silently dropped.  This applies to path (`HAS_PATH`), permissions (`HAS_PERMS`), UID/GID (`EXT_UID_GID`), timestamps (`EXT_TIME`), and symlink entries (`HAS_SYMLINKS`).
+
+**NO_INDEX archives**
+
+All filesystem metadata (path, permissions, UID/GID, timestamps, symlinks, directories, hidden) encodes and parses identically in `NO_INDEX` archives.  No Central Directory is required for LFH metadata interpretation.
+
+**Compressed/encrypted entries**
+
+LFH metadata fields are always in the LFH header before the payload transforms.  Metadata remains parseable without decompressing or decrypting the payload.  Metadata fields are not encrypted.  AEAD/authentication ordering is unchanged.
+
+**Fragment/sparse entries**
+
+Fragment descriptors and sparse map fields coexist with filesystem metadata fields in the LFH.  Field order follows the SAR specification exactly.  The `write_sparse_entry` helper does not accept `EntryInput` (writer limitation); sparse entries created via that path carry only the fields set by the sparse helper.
+
+**M11b non-goals**
+
+- No filesystem restoration (chmod, chown, utime, symlink creation, directory creation, hidden attribute setting).
+- No CLI metadata flags.
+- No new wire-format fields, magic bytes, or end markers.
+- No path canonicalization for extraction.
+- Extraction safety (path traversal prevention, symlink extraction policy) belongs to M11d.
 
 ### M10a stream model notes
 

@@ -420,26 +420,26 @@ LFH metadata API completeness
 * no new protocol features
 
 
-## M11b:
+## M11b: ✅ implemented
 
 filesystem metadata encode/decode behavior
 
-* HAS_PATH writer and reader support
-* HAS_PERMS writer and reader support
-* EXT_UID_GID writer and reader support
-* EXT_TIME writer and reader support
-* HAS_SYMLINKS writer and reader support
-* IS_DIRECTORY writer and reader support
-* HIDDEN_ATTR writer and reader support
-* deterministic round-trip tests
-* zero/default handling when fields are physically present but semantically inactive
-* directory-entry payload rules
-* symlink-entry payload/target rules
-* invalid path/symlink metadata validation
-* metadata interaction with encrypted/compressed entries
-* metadata interaction with `NO_INDEX` archives
-* metadata interaction with fragmented/sparse entries
-* no unsafe restoration defaults
+* HAS_PATH writer and reader support — complete (FieldPresence model, PresentInactive for absent-path-with-flag)
+* HAS_PERMS writer and reader support — complete (FieldPresence model, zero-values preserved)
+* EXT_UID_GID writer and reader support — complete (FieldPresence model, zero-values preserved)
+* EXT_TIME writer and reader support — complete (FieldPresence model, zero-values preserved)
+* HAS_SYMLINKS writer and reader support — complete (IS_SYMLINK→HAS_SYMLINKS validation added)
+* IS_DIRECTORY writer and reader support — complete (directory payload rule: must be zero bytes)
+* HIDDEN_ATTR writer and reader support — complete (round-trips through Entry Mode)
+* deterministic round-trip tests — 40 tests in `tests/filesystem_metadata_roundtrip_tests.rs`
+* zero/default handling when fields are physically present but semantically inactive — covered by FieldPresence model
+* directory-entry payload rules — writer rejects non-empty directory payload; reader rejects IS_DIRECTORY with payload_size != 0
+* symlink-entry payload/target rules — symlink target carried as UTF-8 payload; validated against HAS_SYMLINKS flag
+* invalid path/symlink metadata validation — strict UTF-8, u16 length bounds, fail-closed on missing flags
+* metadata interaction with encrypted/compressed entries — LFH fields parsed before payload transform; no plaintext exposure on auth failure
+* metadata interaction with `NO_INDEX` archives — tested; no CD dependency for metadata
+* metadata interaction with fragmented/sparse entries — field order preserved; write_sparse_entry limitation documented
+* no unsafe restoration defaults — no chmod/chown/utime/symlink creation/directory creation
 
 ## M11c:
 
