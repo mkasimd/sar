@@ -228,14 +228,12 @@ fn archive_reader_rejects_excessive_cd_region() {
                 encryption: None,
                 fec: None,
                 sparse: false,
+            ..Default::default()
             },
         )
         .expect("writer");
         writer
-            .add_entry(sar_core::EntryInput {
-                name: "a.txt".into(),
-                payload: b"abc".to_vec(),
-            })
+            .add_entry(sar_core::EntryInput::file("a.txt", b"abc".to_vec()))
             .expect("entry");
         writer.finish().expect("finish");
     }

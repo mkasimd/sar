@@ -26,14 +26,12 @@ fn build_simple_archive(name: &str, payload: &[u8]) -> Vec<u8> {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: name.to_string(),
-            payload: payload.to_vec(),
-        })
+        .add_entry(EntryInput::file(name.to_string(), payload.to_vec()))
         .expect("add entry");
     writer.finish().expect("finish");
     out
@@ -117,20 +115,15 @@ fn read_all_logical_files_multiple_entries() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "a.txt".into(),
-            payload: b"AAAA".to_vec(),
-        })
+        .add_entry(EntryInput::file("a.txt", b"AAAA".to_vec()))
         .expect("a");
     writer
-        .add_entry(EntryInput {
-            name: "b.txt".into(),
-            payload: b"BBBB".to_vec(),
-        })
+        .add_entry(EntryInput::file("b.txt", b"BBBB".to_vec()))
         .expect("b");
     writer.finish().expect("finish");
 

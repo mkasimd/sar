@@ -632,6 +632,7 @@ fn create_archive(
                 encryption: Some(settings),
                 fec: fec_settings,
                 sparse: false,
+            ..Default::default()
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -646,6 +647,7 @@ fn create_archive(
                 encryption: None,
                 fec: fec_settings,
                 sparse: false,
+            ..Default::default()
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -660,7 +662,7 @@ fn create_archive(
             .map(|s| s.to_string_lossy().into_owned())
             .ok_or(SarError::Malformed("input file name is missing"))?;
         let payload = fs::read(&input)?;
-        writer.add_entry(EntryInput { name, payload })?;
+        writer.add_entry(EntryInput::file(name, payload))?;
     } else if input.is_dir() {
         for entry in WalkDir::new(&input).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file() {
@@ -672,7 +674,7 @@ fn create_archive(
                 .map_err(|_| SarError::Malformed("failed to compute relative path"))?;
             let name = rel.to_string_lossy().replace('\\', "/");
             let payload = fs::read(entry.path())?;
-            writer.add_entry(EntryInput { name, payload })?;
+            writer.add_entry(EntryInput::file(name, payload))?;
         }
     } else {
         return Err(SarError::Malformed(

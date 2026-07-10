@@ -58,12 +58,16 @@ pub struct EntryMode {
 }
 
 impl EntryMode {
-    /// Entry should be treated as hidden by filesystem integrations.
-    pub const HIDDEN_ATTR: u16 = 1 << 4;
+    /// Entry payload contains a symlink target path string (bit 0).
+    pub const IS_SYMLINK: u16 = 1 << 0;
+    /// Entry is a directory; Payload Data MUST be 0 (bit 1).
+    pub const IS_DIRECTORY: u16 = 1 << 1;
     /// Entry payload is encrypted.
     pub const ENCRYPTED: u16 = 1 << 2;
     /// Entry payload is compressed.
     pub const COMPRESSED: u16 = 1 << 3;
+    /// Entry should be treated as hidden by filesystem integrations.
+    pub const HIDDEN_ATTR: u16 = 1 << 4;
     /// Entry is a fragment.
     pub const FRAGMENT: u16 = 1 << 5;
     /// Entry is the last fragment in its group.
@@ -101,6 +105,18 @@ impl EntryMode {
     #[must_use]
     pub const fn is_compressed(self) -> bool {
         self.bits & Self::COMPRESSED != 0
+    }
+
+    /// Returns true when entry is a directory.
+    #[must_use]
+    pub const fn is_directory(self) -> bool {
+        self.bits & Self::IS_DIRECTORY != 0
+    }
+
+    /// Returns true when entry is a symbolic link.
+    #[must_use]
+    pub const fn is_symlink(self) -> bool {
+        self.bits & Self::IS_SYMLINK != 0
     }
 
     /// Returns true when entry is marked as fragment.

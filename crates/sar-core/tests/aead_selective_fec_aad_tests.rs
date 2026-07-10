@@ -166,6 +166,7 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
         }),
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
 
     let mut archive = Vec::new();
@@ -181,10 +182,7 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "entry.bin".to_string(),
-                payload: payload.clone(),
-            })
+            .add_entry(EntryInput::file("entry.bin".to_string(), payload.clone()))
             .expect("add entry");
         writer.finish().expect("finish");
     }
@@ -252,14 +250,12 @@ fn payload_data_starts_at_lfh_start_plus_header_size() {
                 encryption: None,
                 fec: Some(FecSettings::default_xor()),
                 sparse: false,
+                ..Default::default()
             },
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "offset.bin".to_string(),
-                payload: payload.clone(),
-            })
+            .add_entry(EntryInput::file("offset.bin".to_string(), payload.clone()))
             .expect("add entry");
         writer.finish().expect("finish");
     }

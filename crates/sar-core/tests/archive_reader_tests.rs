@@ -83,14 +83,12 @@ fn writer_reader_store_no_index_roundtrip() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "a.txt".into(),
-            payload: b"abc".to_vec(),
-        })
+        .add_entry(EntryInput::file("a.txt", b"abc".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 

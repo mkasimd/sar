@@ -23,14 +23,12 @@ fn valid_indexed_archive_roundtrip_offsets_verify() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "one.txt".into(),
-            payload: b"one".to_vec(),
-        })
+        .add_entry(EntryInput::file("one.txt", b"one".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
@@ -51,14 +49,12 @@ fn valid_no_index_archive_roundtrip_verify() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "one.txt".into(),
-            payload: b"one".to_vec(),
-        })
+        .add_entry(EntryInput::file("one.txt", b"one".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 

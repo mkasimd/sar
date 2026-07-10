@@ -804,14 +804,12 @@ fn non_sparse_writer_roundtrip_unaffected() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "x.txt".into(),
-            payload: b"hello".to_vec(),
-        })
+        .add_entry(EntryInput::file("x.txt", b"hello".to_vec()))
         .expect("add");
     writer.finish().expect("finish");
 

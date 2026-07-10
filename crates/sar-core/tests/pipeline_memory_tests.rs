@@ -544,6 +544,7 @@ fn archive_reader_decompression_respects_entry_limit() {
                 encryption: None,
                 fec: None,
                 sparse: false,
+            ..Default::default()
             },
             sar_core::CompressionSettings {
                 algo_id: COMP_ALGO_DEFLATE,
@@ -553,10 +554,7 @@ fn archive_reader_decompression_respects_entry_limit() {
         .expect("writer");
         // 8 KiB of compressible data
         writer
-            .add_entry(EntryInput {
-                name: "big.bin".into(),
-                payload: b"AAAA".repeat(2048),
-            })
+            .add_entry(EntryInput::file("big.bin", b"AAAA".repeat(2048)))
             .expect("entry");
         writer.finish().expect("finish");
     }

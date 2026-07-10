@@ -34,12 +34,19 @@ pub mod stream;
 pub mod tlv;
 /// Transform pipeline primitives.
 pub mod transform;
+/// Expanded LFH metadata types (M11a).
+pub mod metadata;
 
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
     EntryReader, EntryWritten, FecSettings, LogicalFile, SparseWriteOptions, StreamWriteState,
     VerificationReport,
+};
+pub use metadata::{
+    EntryCdcMetadata, EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata,
+    EntryFecMetadata, EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
+    EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FieldPresence,
 };
 pub use cdc::{
     CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
