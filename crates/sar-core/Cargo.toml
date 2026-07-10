@@ -1,0 +1,11 @@
+[package]
+name = "sar-core"
+version = "0.1.0"
+edition = "2021"
+description = "SAR (Streaming ARchive) core library"
+license = "Apache-2.0"
+
+[lib]
+name = "sar_core"
+
+[dev-dependencies]

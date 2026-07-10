@@ -1,0 +1,190 @@
+{
+  "milestone": "M11a",
+  "title": "LFH Metadata API Completeness",
+  "version": "0.1.0",
+  "workspace": {
+    "members": ["crates/sar-core", "crates/sar-cli"],
+    "resolver": "2"
+  },
+  "wire_format": {
+    "magic": "SAR1",
+    "version": 1,
+    "endian": "little",
+    "end_magic": "SAREND!!",
+    "header_bytes": 13,
+    "fields_controlled_by": "GlobalFlags"
+  },
+  "global_flags": {
+    "type": "u32",
+    "bits": {
+      "PATH":        {"bit": 0, "controls": "path field in LFH"},
+      "STREAM_ID":   {"bit": 1, "controls": "stream_id field"},
+      "SEQ_NO":      {"bit": 2, "controls": "sequence_no field"},
+      "PERMISSIONS": {"bit": 3, "controls": "permissions field"},
+      "OWNER":       {"bit": 4, "controls": "uid and gid fields"},
+      "TIMESTAMPS":  {"bit": 5, "controls": "mtime/atime/ctime fields"},
+      "HIDDEN":      {"bit": 6, "controls": "hidden_value field"},
+      "COMPRESSION": {"bit": 7, "controls": "compression algorithm and compressed_size"},
+      "ENCRYPTION":  {"bit": 8, "controls": "encryption algorithm and key_id"},
+      "CDC":         {"bit": 9, "controls": "CDC algorithm and chunk sizes"},
+      "FEC":         {"bit": 10, "controls": "FEC algorithm, block_size, shards"},
+      "DELTA":       {"bit": 11, "controls": "delta algorithm and base reference"},
+      "FRAGMENT":    {"bit": 12, "controls": "fragment index, count, id"},
+      "SPARSE":      {"bit": 13, "controls": "sparse hole list"},
+      "CRC32":       {"bit": 14, "controls": "CRC32 checksum"},
+      "HASH":        {"bit": 15, "controls": "content hash"}
+    }
+  },
+  "entry_mode": {
+    "type": "u32",
+    "kind_bits": {
+      "mask": "0b111",
+      "values": {
+        "0": "RegularFile",
+        "1": "Directory",
+        "2": "Symlink",
+        "3": "EmptyArea"
+      }
+    },
+    "active_bits": {
+      "PATH_ACTIVE":        {"bit": 3},
+      "STREAM_ID_ACTIVE":   {"bit": 4},
+      "SEQ_NO_ACTIVE":      {"bit": 5},
+      "PERMISSIONS_ACTIVE": {"bit": 6},
+      "OWNER_ACTIVE":       {"bit": 7},
+      "TIMESTAMPS_ACTIVE":  {"bit": 8},
+      "HIDDEN_ACTIVE":      {"bit": 9},
+      "COMPRESSION_ACTIVE": {"bit": 10},
+      "ENCRYPTION_ACTIVE":  {"bit": 11},
+      "CDC_ACTIVE":         {"bit": 12},
+      "FEC_ACTIVE":         {"bit": 13},
+      "DELTA_ACTIVE":       {"bit": 14},
+      "FRAGMENT_ACTIVE":    {"bit": 15},
+      "SPARSE_ACTIVE":      {"bit": 16},
+      "CRC32_ACTIVE":       {"bit": 17},
+      "HASH_ACTIVE":        {"bit": 18}
+    }
+  },
+  "presence_model": {
+    "enum": "FieldPresence<T>",
+    "variants": {
+      "Absent":          "GlobalFlag not set; field bytes not in LFH",
+      "PresentInactive": "GlobalFlag set, EntryMode active bit unset; field bytes present with defaults",
+      "PresentActive":   "GlobalFlag set and EntryMode active bit set; field bytes present with real value"
+    }
+  },
+  "crates": {
+    "sar-core": {
+      "library_name": "sar_core",
+      "public_types": {
+        "ArchiveWriter": {
+          "kind": "struct",
+          "methods": ["new(GlobalFlags)", "add_entry(EntryInput)", "write_to(Write)", "global_flags()", "entry_count()"]
+        },
+        "ArchiveReader": {
+          "kind": "struct",
+          "generic": "R: Read",
+          "methods": ["new(R)", "global_flags()", "entry_count()", "next_entry()"],
+          "implements": ["Iterator<Item = Result<(EntryMetadata, Vec<u8>), SarError>>"]
+        },
+        "GlobalFlags": {
+          "kind": "struct",
+          "inner": "u32",
+          "operators": ["BitOr", "BitAnd", "Not", "BitOrAssign", "BitAndAssign"]
+        },
+        "EntryMode": {
+          "kind": "struct",
+          "inner": "u32",
+          "operators": ["BitOr", "BitOrAssign"]
+        },
+        "FieldPresence": {
+          "kind": "enum",
+          "generic": "T",
+          "variants": ["Absent", "PresentInactive(T)", "PresentActive(T)"]
+        },
+        "EntryKind": {
+          "kind": "enum",
+          "variants": ["RegularFile", "Directory", "Symlink", "EmptyArea", "Reserved(u32)"]
+        },
+        "EntryInput": {
+          "kind": "struct",
+          "constructors": ["file(name, payload)", "directory(name)", "symlink(name, target)", "empty_area(name)"],
+          "fields": ["name", "path", "payload", "kind", "permissions", "owner", "timestamps", "hidden", "stream_id", "sequence_no", "fragment", "sparse", "fec", "cdc", "delta", "encryption", "compression", "crc32", "content_hash"]
+        },
+        "EntryMetadata": {
+          "kind": "struct",
+          "fields": ["name", "path", "kind", "permissions", "owner", "timestamps", "hidden", "stream_id", "sequence_no", "fragment", "sparse", "fec", "cdc", "delta", "encryption", "compression", "crc32", "content_hash", "entry_mode_raw", "payload_size"]
+        },
+        "sub_structs": [
+          "EntryPermissionMetadata",
+          "EntryOwnerMetadata",
+          "EntryTimestampMetadata",
+          "EntryTimestamp",
+          "EntryCompressionMetadata",
+          "EntryEncryptionMetadata",
+          "EntryCdcMetadata",
+          "EntryFecMetadata",
+          "EntryDeltaMetadata",
+          "EntryFragmentMetadata",
+          "EntrySparseMetadata",
+          "SparseHole",
+          "EntryHashMetadata"
+        ],
+        "algorithm_enums": [
+          "CompressionAlgorithm",
+          "EncryptionAlgorithm",
+          "CdcAlgorithm",
+          "FecAlgorithm",
+          "DeltaAlgorithm",
+          "HashAlgorithm"
+        ],
+        "SarError": {
+          "kind": "enum",
+          "variants": [
+            "Io(io::Error)",
+            "InvalidMagic",
+            "UnsupportedVersion(u8)",
+            "InvalidUtf8(FromUtf8Error)",
+            "EntryMetadataRequiresFlag { field, required_flag }",
+            "InvalidEntryKind(u32)",
+            "TruncatedInput",
+            "InvalidEndMagic",
+            "NameTooLong(usize)",
+            "PathTooLong(usize)",
+            "HashTooLong(usize)",
+            "SparseTooManyHoles(usize)"
+          ]
+        }
+      }
+    },
+    "sar-cli": {
+      "subcommands": [
+        {"name": "list", "args": ["<archive>"], "description": "Print entry names"},
+        {"name": "info", "args": ["<archive>"], "description": "Print global flags and entry count"}
+      ],
+      "m11a_limitations": ["No metadata flags", "No extraction", "No creation"]
+    }
+  },
+  "writer_limitations_m11a": [
+    "No actual compression is applied; caller must pre-compress and supply compressed_size",
+    "No actual encryption, CDC, FEC, or delta processing is applied",
+    "No filesystem restoration is performed"
+  ],
+  "non_goals_m11a": [
+    "CLI metadata flags",
+    "Filesystem restoration",
+    "Symlink/UID/GID/permission/timestamp restoration on disk",
+    "Crate-boundary refactoring",
+    "Conformance test vector suite",
+    "C ABI",
+    "Python bindings",
+    "New CDC/delta/FEC wire semantics",
+    "Split-library profile"
+  ],
+  "spec_gaps": [
+    {"item": "Actual compression/encryption", "note": "M11a stores pre-computed bytes only; no algorithm is applied by the library"},
+    {"item": "Standard compliance", "note": "Not claimed; this format is the authoritative specification"},
+    {"item": "Entry count overflow", "note": "entry_count is u32; archives with more than 2^32 entries are not supported"},
+    {"item": "Symlink extraction policy", "note": "Symlink entries are representable but no extraction policy is enforced"}
+  ]
+}

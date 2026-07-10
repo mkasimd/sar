@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/sar-core", "crates/sar-cli"]
+resolver = "2"

@@ -1,0 +1,13 @@
+[package]
+name = "sar-cli"
+version = "0.1.0"
+edition = "2021"
+description = "SAR archive CLI tool"
+license = "Apache-2.0"
+
+[[bin]]
+name = "sar-cli"
+path = "src/main.rs"
+
+[dependencies]
+sar-core = { path = "../sar-core" }
