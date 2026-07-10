@@ -601,6 +601,15 @@ impl StreamArchiveParser {
 
         let entry_kind =
             crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
+        let symlink_target = if matches!(entry_kind, crate::metadata::EntryKind::Symlink) {
+            Some(
+                std::str::from_utf8(&decoded)
+                    .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
 
         let compression_presence = if archive.header.flags.contains(GlobalFlags::COMPRESSED) {
             let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
@@ -719,6 +728,7 @@ impl StreamArchiveParser {
                     .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
                 Some(p)
             },
+            symlink_target,
             payload_size: lfh.payload_size,
             uncompressed_size: lfh.uncompressed_size,
             compression_algo_id: effective_comp_algo_id,

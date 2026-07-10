@@ -50,10 +50,17 @@ pub struct ArchiveMetadata {
 pub struct EntryMetadata {
     /// Absolute LFH offset.
     pub lfh_offset: u64,
-    /// Name bytes interpreted as UTF-8 lossily.
+    /// Name bytes interpreted as UTF-8.
     pub name: String,
-    /// Optional path bytes interpreted as UTF-8 lossily.
+    /// Optional path bytes interpreted as UTF-8.
     pub path: Option<String>,
+    /// Decoded symlink target for symlink entries.
+    ///
+    /// This is `Some(target)` only when `entry_kind == EntryKind::Symlink`.
+    /// The target is decoded strictly from the entry payload bytes (no lossy
+    /// conversion). Invalid UTF-8 payload for symlink entries is rejected by
+    /// the reader.
+    pub symlink_target: Option<String>,
     /// Encoded payload size.
     pub payload_size: u64,
     /// Logical uncompressed size.
@@ -288,8 +295,9 @@ pub struct EntryReader {
 /// Use [`EntryInput::file`] to construct a simple regular-file entry.
 /// All metadata fields are optional and default to `None`/`false`/`0`.
 /// Fields that require a corresponding global flag in
-/// [`ArchiveWriterOptions`] will be silently ignored (or return an error,
-/// see [`ArchiveWriter::add_entry`]) if the flag is not enabled.
+/// [`ArchiveWriterOptions`] are validated fail-closed by
+/// [`ArchiveWriter::add_entry`]. If the required flag is not enabled, writing
+/// fails with an error.
 #[derive(Debug, Clone, Default)]
 pub struct EntryInput {
     /// Entry name.
@@ -1042,6 +1050,15 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         let entry_kind =
             crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
+        let symlink_target = if matches!(entry_kind, crate::metadata::EntryKind::Symlink) {
+            Some(
+                std::str::from_utf8(&decoded)
+                    .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
 
         // Compression presence model.
         let compression_presence: crate::metadata::FieldPresence<
@@ -1172,6 +1189,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
                 Some(p)
             },
+            symlink_target,
             payload_size: lfh.payload_size,
             uncompressed_size: lfh.uncompressed_size,
             compression_algo_id: effective_comp_algo_id,
@@ -2231,6 +2249,13 @@ impl<W: Write> ArchiveWriter<W> {
         {
             return Err(SarError::FlagConflict(
                 "Symlink entry requires ArchiveWriterOptions::with_symlinks = true",
+            ));
+        }
+        if matches!(entry.kind, Some(EntryKind::Symlink))
+            && std::str::from_utf8(&entry.payload).is_err()
+        {
+            return Err(SarError::Malformed(
+                "Symlink entry payload must be valid UTF-8",
             ));
         }
 

@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 11a source audit)
+# API Inventory (post–Milestone 11b source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -165,7 +165,7 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
   - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
   - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
-  - `EntryMetadata` fields *(new in M11a)*: `kind: EntryKind`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
+  - `EntryMetadata` fields *(new in M11a/M11b)*: `kind: EntryKind`, `path: Option<String>`, `symlink_target: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
   - *(new in M11b)* `EntryMetadata` adds `path_presence: FieldPresence<String>`, `permissions_presence: FieldPresence<EntryPermissionMetadata>`, `owner_presence: FieldPresence<EntryOwnerMetadata>`, `timestamps_presence: FieldPresence<EntryTimestampMetadata>` — these expose the three-state presence model for filesystem metadata fields
 - `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
@@ -402,11 +402,11 @@ The reader calls `validate_entry_mode_against_global` for each LFH.  If `IS_SYML
 
 **Symlink representation**
 
-Symlink entries use `EntryInput::kind = Some(EntryKind::Symlink)` and carry the symlink target as the entry payload (UTF-8 encoded path string).  `EntryMetadata::entry_kind` is `EntryKind::Symlink` on read-back.  No symlinks are created on the host filesystem; the target string is only decoded and exposed through the metadata API.
+Symlink entries use `EntryInput::kind = Some(EntryKind::Symlink)` and carry the symlink target as the entry payload (UTF-8 encoded path string).  `EntryMetadata::entry_kind` is `EntryKind::Symlink` on read-back and the decoded target is exposed as `EntryMetadata::symlink_target`.  The raw payload bytes remain available in `EntryReader::payload`.  No symlinks are created on the host filesystem, no target resolution is performed, and no path canonicalization is performed in M11b.
 
 **String encoding**
 
-Name and path strings MUST be valid UTF-8.  The reader strictly rejects invalid UTF-8 bytes with `SarError::Malformed` (changed from lossy conversion in M11b).  The writer already requires `String` inputs, which are always valid UTF-8.
+Name and path strings MUST be valid UTF-8.  The reader strictly rejects invalid UTF-8 bytes with `SarError::Malformed` (changed from lossy conversion in M11b).  For symlink entries, the payload is also strictly validated as UTF-8 by both reader and writer; invalid payload bytes are rejected with `SarError::Malformed`.
 
 **Path and name length validation**
 
