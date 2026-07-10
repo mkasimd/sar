@@ -60,8 +60,8 @@ fn compute_lfh_size_differs_between_32bit_and_64bit_layouts() {
     let lfh = LocalFileHeader::minimal_store(b"name".to_vec(), 5);
 
     let size32 = compute_lfh_size(&GlobalFlags::NO_INDEX, &lfh).expect("size32");
-    let size64 = compute_lfh_size(&(GlobalFlags::NO_INDEX | GlobalFlags::SIZE_64BIT), &lfh)
-        .expect("size64");
+    let size64 =
+        compute_lfh_size(&(GlobalFlags::NO_INDEX | GlobalFlags::SIZE_64BIT), &lfh).expect("size64");
 
     assert_eq!(size64 - size32, 8);
 }
@@ -73,7 +73,10 @@ fn parser_cursor_alignment_after_32bit_size_fields() {
     let bytes = write_lfh(&flags, &lfh).expect("write lfh");
 
     let name_len_offset = 4 + 2 + 2 + 2 + 4 + 4;
-    assert_eq!(u16::from_le_bytes([bytes[name_len_offset], bytes[name_len_offset + 1]]), 1);
+    assert_eq!(
+        u16::from_le_bytes([bytes[name_len_offset], bytes[name_len_offset + 1]]),
+        1
+    );
 
     let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse lfh");
     assert_eq!(parsed.name, b"z");
@@ -86,7 +89,10 @@ fn parser_cursor_alignment_after_64bit_size_fields() {
     let bytes = write_lfh(&flags, &lfh).expect("write lfh");
 
     let name_len_offset = 4 + 2 + 2 + 2 + 8 + 8;
-    assert_eq!(u16::from_le_bytes([bytes[name_len_offset], bytes[name_len_offset + 1]]), 1);
+    assert_eq!(
+        u16::from_le_bytes([bytes[name_len_offset], bytes[name_len_offset + 1]]),
+        1
+    );
 
     let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse lfh");
     assert_eq!(parsed.name, b"z");

@@ -1894,8 +1894,13 @@ impl<W: Write> ArchiveWriter<W> {
         Ok(())
     }
 
-    fn apply_size_policy(&mut self, uncompressed_size: u64, payload_size: u64) -> Result<(), SarError> {
-        let exceeds_u32 = uncompressed_size > u64::from(u32::MAX) || payload_size > u64::from(u32::MAX);
+    fn apply_size_policy(
+        &mut self,
+        uncompressed_size: u64,
+        payload_size: u64,
+    ) -> Result<(), SarError> {
+        let exceeds_u32 =
+            uncompressed_size > u64::from(u32::MAX) || payload_size > u64::from(u32::MAX);
         match self.lfh_size_field_policy {
             LfhSizeFieldPolicy::Force64 => {
                 self.flags |= GlobalFlags::SIZE_64BIT;
