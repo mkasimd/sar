@@ -28,6 +28,14 @@ pub use algorithm::{
     PBKDF2_PRF_HMAC_SHA512, validate_encr_algo_id, validate_kms_mode_id,
 };
 pub use error::SarCryptoError;
+pub use kms::tls_exporter::{
+    EXPORTER_LABEL_QUIC_AEAD, EXPORTER_LABEL_TCP_TLS_AEAD, TLS_EXPORTER_CONTEXT_VERSION_1,
+    TLS_EXPORTER_KDF_DIRECT, TLS_EXPORTER_KEY_USAGE_CLIENT_TO_SERVER,
+    TLS_EXPORTER_KEY_USAGE_SERVER_TO_CLIENT, TLS_EXPORTER_TRANSPORT_QUIC,
+    TLS_EXPORTER_TRANSPORT_TCP_TLS, TlsExporterContextV1, TlsExporterParams,
+    encode_tls_exporter_context_v1, parse_tls_exporter_kms_payload,
+    serialize_tls_exporter_kms_payload,
+};
 pub use kms::types::{
     Argon2Params, AsymmetricRecipient, AsymmetricWrapParams, KmsContext, KmsParams, Pbkdf2Params,
     parse_kms_payload, serialize_kms_payload,

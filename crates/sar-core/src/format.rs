@@ -267,12 +267,7 @@ pub fn parse_global_header(
     let kms = if flags.contains(GlobalFlags::ENCRYPTED) {
         let mode_id = cursor.read_u8()?;
         match mode_id {
-            0x01..=0x03 => {}
-            0x04 => {
-                return Err(SarError::Unsupported(
-                    "KMS_TLS_EXPORTER requires an authenticated TLS session; unsupported on plaintext TCP",
-                ));
-            }
+            0x01..=0x04 => {}
             0xF0..=0xFF => return Err(SarError::Unsupported("custom KMS mode")),
             _ => return Err(SarError::ReservedValue("unknown KMS mode")),
         }

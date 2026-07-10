@@ -54,5 +54,13 @@ pub fn resolve_cek(
                 "no recipient key available for ASYMMETRIC_WRAP",
             ))
         }
+        KmsParams::TlsExporter(_) => {
+            // TLS_EXPORTER key derivation requires the transport layer to
+            // supply the exporter material.  A key provider that wraps a
+            // pre-derived key should override `external_key` above.
+            Err(SarCryptoError::Unsupported(
+                "KMS_TLS_EXPORTER requires a transport-provided TlsExporterKeyProvider",
+            ))
+        }
     }
 }

@@ -6,8 +6,11 @@
 //! Milestone coverage:
 //! - M10c: in-memory harness, TCP/QUIC policy models, transport actions
 //! - M10d: SAR-over-TCP binding ([`tcp`] module)
+//! - M10e: SAR-over-QUIC binding ([`quic`] module, feature `quic`)
 
 pub mod tcp;
+#[cfg(feature = "quic")]
+pub mod quic;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,6 +18,7 @@ use sar_core::{
     ArchiveReaderOptions, ResourceLimits, SarError, SarStatus, StreamArchiveParser, StreamEvent,
     StreamStep,
 };
+use sar_crypto::KMS_TLS_EXPORTER;
 use sar_stream::{
     CapabilityFlags, ProcessResult, SessionAckFrame, SessionAction, SessionEntry, SessionEvent,
     SessionManager, SessionManagerConfig, SessionStatusFrame,
@@ -50,6 +54,8 @@ pub struct TransportConfig {
     pub max_status_ack_actions: usize,
     /// Maximum remembered rejected SAR stream IDs.
     pub max_rejected_stream_ids: usize,
+    /// Maximum additional control-stream attachments per SAR session (QUIC only).
+    pub max_control_streams_per_sar_session: usize,
     /// Sender/receiver negotiated reverse control support.
     pub bidirectional_control: bool,
     /// Sender/receiver negotiated reverse data-stream support.
@@ -73,6 +79,7 @@ impl Default for TransportConfig {
             max_pending_actions: 128,
             max_status_ack_actions: 32,
             max_rejected_stream_ids: 1024,
+            max_control_streams_per_sar_session: 4,
             bidirectional_control: true,
             bidirectional_stream: false,
             strict_validation: true,
@@ -117,6 +124,19 @@ pub enum TransportAction {
         /// Transport stream ID.
         transport_stream_id: TransportStreamId,
         /// Bound SAR Stream ID.
+        sar_stream_id: u16,
+        /// Session UUID bound by `SESSION_INIT`.
+        session_uuid: [u8; 16],
+    },
+    /// Attach an additional control stream to an existing SAR session (QUIC only).
+    ///
+    /// Emitted when a QUIC transport stream sends a `SESSION_INIT` for an
+    /// already-active SAR Stream ID with a matching Session UUID.  The stream
+    /// is not rejected; it is marked as a control attachment for that session.
+    AttachControlStream {
+        /// Control transport stream ID.
+        transport_stream_id: TransportStreamId,
+        /// SAR Stream ID of the existing session being attached to.
         sar_stream_id: u16,
     },
     /// Reject SAR Stream ID activation and keep it unbound.
@@ -290,6 +310,10 @@ pub struct InMemoryTransport {
     policy: PolicyMode,
     streams: BTreeMap<TransportStreamId, TransportStreamContext>,
     active_sar_streams: BTreeMap<u16, TransportStreamId>,
+    /// Session UUIDs for active SAR stream IDs.
+    active_session_uuids: BTreeMap<u16, [u8; 16]>,
+    /// Control stream attachments (QUIC only): transport stream ID → SAR stream ID.
+    control_stream_attachments: BTreeMap<TransportStreamId, u16>,
     rejected_sar_stream_ids: BTreeSet<u16>,
     connection_last_activity_ms: Option<u64>,
 }
@@ -303,6 +327,8 @@ impl InMemoryTransport {
             policy: PolicyMode::Tcp,
             streams: BTreeMap::new(),
             active_sar_streams: BTreeMap::new(),
+            active_session_uuids: BTreeMap::new(),
+            control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
         }
@@ -316,6 +342,8 @@ impl InMemoryTransport {
             policy: PolicyMode::Quic,
             streams: BTreeMap::new(),
             active_sar_streams: BTreeMap::new(),
+            active_session_uuids: BTreeMap::new(),
+            control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
         }
@@ -356,6 +384,28 @@ impl InMemoryTransport {
     #[must_use]
     pub fn is_sar_stream_bound(&self, sar_stream_id: u16) -> bool {
         self.active_sar_streams.contains_key(&sar_stream_id)
+    }
+
+    /// Returns the session UUID for an active SAR stream, if known.
+    #[must_use]
+    pub fn session_uuid_for(&self, sar_stream_id: u16) -> Option<[u8; 16]> {
+        self.active_session_uuids.get(&sar_stream_id).copied()
+    }
+
+    /// Returns true if the transport stream is a control attachment (QUIC only).
+    #[must_use]
+    pub fn is_control_stream(&self, transport_stream_id: TransportStreamId) -> bool {
+        self.control_stream_attachments.contains_key(&transport_stream_id)
+    }
+
+    /// Returns the SAR stream ID that the given transport stream is attached to
+    /// as a control stream, if applicable.
+    #[must_use]
+    pub fn control_sar_stream_id(
+        &self,
+        transport_stream_id: TransportStreamId,
+    ) -> Option<u16> {
+        self.control_stream_attachments.get(&transport_stream_id).copied()
     }
 
     /// Returns current state for a transport stream.
@@ -630,7 +680,7 @@ impl InMemoryTransport {
             match event {
                 SessionEvent::SessionActivated {
                     stream_id,
-                    session_uuid: _,
+                    session_uuid,
                     flags,
                 } => {
                     if stream_id == 0 {
@@ -645,6 +695,53 @@ impl InMemoryTransport {
                     }
 
                     if self.active_sar_streams.contains_key(&stream_id) {
+                        // In QUIC mode, if the UUID matches the active session,
+                        // treat this as a control-stream attachment rather than
+                        // a duplicate session.  Sessions on different QUIC
+                        // streams may share the same SAR Stream ID only when
+                        // they carry the same Session UUID (control traffic).
+                        if self.policy == PolicyMode::Quic
+                            && self.active_session_uuids.get(&stream_id) == Some(&session_uuid)
+                        {
+                            // Check control stream limit.
+                            let control_count = self
+                                .control_stream_attachments
+                                .values()
+                                .filter(|&&sid| sid == stream_id)
+                                .count();
+                            if control_count
+                                >= self.config.max_control_streams_per_sar_session
+                            {
+                                self.reject_stream_with_policy(
+                                    transport_stream_id,
+                                    Some(stream_id),
+                                    SarError::LimitExceeded(
+                                        "too many control streams for SAR session",
+                                    ),
+                                    header_sequence,
+                                    actions,
+                                )?;
+                                continue;
+                            }
+                            // Mark as control attachment.
+                            self.control_stream_attachments
+                                .insert(transport_stream_id, stream_id);
+                            if let Some(context) = self.streams.get_mut(&transport_stream_id) {
+                                context.state = TransportStreamState::Active;
+                                context.bound_sar_stream_id = Some(stream_id);
+                                context.awaiting_session_init = false;
+                            }
+                            Self::push_action(
+                                &self.config,
+                                actions,
+                                TransportAction::AttachControlStream {
+                                    transport_stream_id,
+                                    sar_stream_id: stream_id,
+                                },
+                            )?;
+                            continue;
+                        }
+                        // UUID mismatch or TCP mode: reject as duplicate.
                         self.reject_stream_with_policy(
                             transport_stream_id,
                             Some(stream_id),
@@ -698,6 +795,7 @@ impl InMemoryTransport {
 
                     self.active_sar_streams
                         .insert(stream_id, transport_stream_id);
+                    self.active_session_uuids.insert(stream_id, session_uuid);
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.state = TransportStreamState::Active;
                         context.bound_sar_stream_id = Some(stream_id);
@@ -709,6 +807,7 @@ impl InMemoryTransport {
                         TransportAction::BindSarStream {
                             transport_stream_id,
                             sar_stream_id: stream_id,
+                            session_uuid,
                         },
                     )?;
                 }
@@ -717,6 +816,10 @@ impl InMemoryTransport {
                     session_uuid: _,
                 } => {
                     self.active_sar_streams.remove(&stream_id);
+                    self.active_session_uuids.remove(&stream_id);
+                    // Detach any control streams for this session.
+                    self.control_stream_attachments
+                        .retain(|_, &mut sid| sid != stream_id);
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.bound_sar_stream_id = None;
                         context.state = TransportStreamState::Closing;
@@ -891,7 +994,31 @@ impl SarTransportBinding for InMemoryTransport {
                     Ok(StreamStep::NeedMore { .. }) => LoopEvent::NeedMore,
                     Ok(StreamStep::Complete) => LoopEvent::Complete,
                     Ok(StreamStep::Ready(StreamEvent::GlobalHeader(header))) => {
-                        if let Err(err) = context.manager.observe_global_header(&header) {
+                        // TCP does not support TLS_EXPORTER KMS mode.  Reject
+                        // immediately on global header to prevent partial
+                        // session setup before the failure would otherwise
+                        // surface during CEK derivation.
+                        if self.policy == PolicyMode::Tcp {
+                            if let Some(kms) = &header.kms {
+                                if kms.mode_id == KMS_TLS_EXPORTER {
+                                    LoopEvent::ParserError(SarError::Unsupported(
+                                        "KMS_TLS_EXPORTER is not supported over plaintext TCP",
+                                    ))
+                                } else if let Err(err) = context.manager.observe_global_header(&header) {
+                                    LoopEvent::ParserError(err)
+                                } else {
+                                    context.state = TransportStreamState::AwaitingSessionInit;
+                                    context.awaiting_session_init = true;
+                                    LoopEvent::Continue
+                                }
+                            } else if let Err(err) = context.manager.observe_global_header(&header) {
+                                LoopEvent::ParserError(err)
+                            } else {
+                                context.state = TransportStreamState::AwaitingSessionInit;
+                                context.awaiting_session_init = true;
+                                LoopEvent::Continue
+                            }
+                        } else if let Err(err) = context.manager.observe_global_header(&header) {
                             LoopEvent::ParserError(err)
                         } else {
                             context.state = TransportStreamState::AwaitingSessionInit;
@@ -963,8 +1090,17 @@ impl SarTransportBinding for InMemoryTransport {
 
         let detached = context.bound_sar_stream_id;
         if let Some(sar_stream_id) = detached {
-            self.active_sar_streams.remove(&sar_stream_id);
+            // Only remove primary binding (not control attachments).
+            if !self.control_stream_attachments.contains_key(&transport_stream_id) {
+                self.active_sar_streams.remove(&sar_stream_id);
+                self.active_session_uuids.remove(&sar_stream_id);
+                // Detach any control streams for this session.
+                self.control_stream_attachments
+                    .retain(|_, &mut sid| sid != sar_stream_id);
+            }
         }
+        // Remove this stream from control attachments if it is one.
+        self.control_stream_attachments.remove(&transport_stream_id);
 
         context.state = TransportStreamState::Closed;
         let mut actions = Vec::new();
@@ -990,8 +1126,14 @@ impl SarTransportBinding for InMemoryTransport {
             .ok_or(SarError::NotFound("unknown transport stream"))?;
         let detached = context.bound_sar_stream_id;
         if let Some(sar_stream_id) = detached {
-            self.active_sar_streams.remove(&sar_stream_id);
+            if !self.control_stream_attachments.contains_key(&transport_stream_id) {
+                self.active_sar_streams.remove(&sar_stream_id);
+                self.active_session_uuids.remove(&sar_stream_id);
+                self.control_stream_attachments
+                    .retain(|_, &mut sid| sid != sar_stream_id);
+            }
         }
+        self.control_stream_attachments.remove(&transport_stream_id);
         context.state = TransportStreamState::Reset;
 
         let mut actions = Vec::new();

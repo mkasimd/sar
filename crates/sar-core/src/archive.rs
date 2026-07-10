@@ -4,10 +4,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use sar_compression::COMP_ALGO_STORE;
 use sar_crypto::aad::build_aead_aad;
 use sar_crypto::{
-    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KeyProvider, KmsContext, KmsParams, SecretBytes,
-    aead::generate_nonce,
-    kms::types::{parse_kms_payload, serialize_kms_payload},
-    provider::resolve_cek,
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KMS_TLS_EXPORTER, KeyProvider, KmsContext, KmsParams,
+    SecretBytes, aead::generate_nonce, kms::tls_exporter::parse_tls_exporter_kms_payload,
+    kms::types::{parse_kms_payload, serialize_kms_payload}, provider::resolve_cek,
     validate_encr_algo_id,
 };
 use sar_delta::{
@@ -461,7 +460,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         let (header, consumed) = parse_global_header(&header_bytes, &self.options.limits)?;
         if let Some(kms) = &header.kms {
-            let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+            // Mode 0x04 TLS_EXPORTER: structural validation is deferred to the
+            // transport layer (requires an active TLS session).  Skip generic
+            // parse_kms_payload which always returns Unsupported for that mode.
+            if kms.mode_id != KMS_TLS_EXPORTER {
+                let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+            }
         }
         let header_len = u64::try_from(consumed).map_err(|_| SarError::Overflow("header len"))?;
 
@@ -1993,6 +1997,7 @@ fn kms_mode_id(params: &KmsParams) -> u8 {
         KmsParams::Pbkdf2(_) => sar_crypto::KMS_PBKDF2,
         KmsParams::Argon2(_) => sar_crypto::KMS_ARGON2,
         KmsParams::AsymmetricWrap(_) => sar_crypto::KMS_ASYMMETRIC_WRAP,
+        KmsParams::TlsExporter(_) => sar_crypto::KMS_TLS_EXPORTER,
     }
 }
 
@@ -2001,7 +2006,16 @@ pub(crate) fn build_kms_context(header: &GlobalHeader) -> Result<KmsContext, Sar
         .kms
         .as_ref()
         .ok_or(SarError::Malformed("encrypted archive is missing KMS data"))?;
-    let params = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
+    let params = if kms.mode_id == KMS_TLS_EXPORTER {
+        // Mode 0x04: parse using the TLS_EXPORTER-specific parser so the
+        // transport layer can supply a key provider that wraps the pre-derived
+        // TLS exporter material.
+        parse_tls_exporter_kms_payload(&kms.payload)
+            .map(KmsParams::TlsExporter)
+            .map_err(SarError::from)?
+    } else {
+        parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?
+    };
     Ok(KmsContext {
         mode_id: kms.mode_id,
         params,

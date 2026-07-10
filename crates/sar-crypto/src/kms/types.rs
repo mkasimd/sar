@@ -6,6 +6,9 @@ use crate::algorithm::{
     PBKDF2_PRF_HMAC_SHA512,
 };
 use crate::error::SarCryptoError;
+use crate::kms::tls_exporter::{
+    TlsExporterParams, serialize_tls_exporter_kms_payload,
+};
 
 /// Parsed PBKDF2 KMS payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,6 +69,12 @@ pub enum KmsParams {
     Argon2(Argon2Params),
     /// Asymmetric wrap parameters.
     AsymmetricWrap(AsymmetricWrapParams),
+    /// TLS_EXPORTER derivation parameters (Mode 0x04).
+    ///
+    /// The payload contains derivation metadata only; no raw keys or TLS
+    /// exporter output.  Key derivation is performed by the transport layer
+    /// via the TLS exporter API.
+    TlsExporter(TlsExporterParams),
 }
 
 /// Key-resolution context passed to `KeyProvider` implementations.
@@ -114,10 +123,16 @@ pub fn serialize_kms_payload(params: &KmsParams) -> Vec<u8> {
             }
             out
         }
+        KmsParams::TlsExporter(p) => serialize_tls_exporter_kms_payload(p),
     }
 }
 
 /// Parse a KMS payload using its `mode_id`.
+///
+/// Returns [`SarCryptoError::Unsupported`] for Mode `0x04 TLS_EXPORTER`,
+/// which requires a transport-layer TLS session.  To parse TLS_EXPORTER
+/// payload bytes directly, use
+/// [`crate::kms::tls_exporter::parse_tls_exporter_kms_payload`].
 pub fn parse_kms_payload(mode_id: u8, payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
     match mode_id {
         KMS_PBKDF2 => parse_pbkdf2(payload),
