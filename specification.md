@@ -3157,59 +3157,55 @@ In the `SAR-over-QUIC` profile, SAR streams are carried over QUIC streams.
 
 A QUIC connection MAY carry multiple simultaneous SAR streams.
 
-Each QUIC stream defines an independent SAR byte-stream boundary.
-
-Bytes from different QUIC streams MUST NOT be interleaved before presentation to the SAR parser.
+Each QUIC stream defines an independent SAR byte-stream boundary. Bytes from different QUIC streams MUST NOT be interleaved before presentation to the SAR parser.
 
 A single QUIC stream SHOULD carry at most one active SAR session lifecycle at a time.
 
-A QUIC connection MAY carry multiple active SAR Stream IDs concurrently, provided that each active SAR Stream ID is unique within that QUIC connection.
+Active SAR Stream IDs MUST be unique within a single QUIC connection. A duplicate active SAR Stream ID on the same QUIC connection MUST fail closed with `SAR_ERR_STREAM_STATE`.
 
-The same SAR Stream ID MAY be active on different QUIC connections.
+The same numeric SAR Stream ID MAY be active on different QUIC connections. Such sessions are independent unless a future resumption profile explicitly defines otherwise.
 
-A duplicate active SAR Stream ID on the same QUIC connection MUST fail closed with `SAR_ERR_STREAM_STATE`.
+Bidirectional SAR communication MUST use the same SAR Stream ID and Session UUID as the SAR session it belongs to.
 
-Bidirectional SAR streaming MAY occur on the same SAR Stream ID.
-
-For SAR-over-QUIC, a single bidirectional QUIC stream MAY carry both forward-direction SAR entries and reverse-direction SAR entries associated with the same SAR Stream ID and Session UUID.
+A bidirectional QUIC stream MAY carry both forward-direction and reverse-direction SAR entries for the same SAR Stream ID and Session UUID.
 
 All SAR-over-QUIC implementations that advertise `CAP_BIDIRECTIONAL_CONTROL` MUST support transmitting and receiving reverse-direction `SESSION_ACK` and `SESSION_STATUS` entries on the same bidirectional QUIC stream as the corresponding SAR session.
 
 All SAR-over-QUIC implementations that advertise `CAP_BIDIRECTIONAL_STREAM` MUST support transmitting and receiving reverse-direction Filesystem Mode entries and Session Mode entries on the same bidirectional QUIC stream as the corresponding SAR session.
 
-Endpoints MUST use the same SAR Stream ID for bidirectional communication associated with the same SAR stream, regardless of whether communication occurs on one QUIC stream or across multiple QUIC streams.
+Additional QUIC streams MAY carry `SESSION_CONTROL` messages for an already-active SAR session on the same QUIC connection.
 
-Additional QUIC streams MAY be opened on the same QUIC connection for `SESSION_CONTROL` messages associated with an existing SAR Stream ID.
+A `SESSION_CONTROL` message carried on an additional QUIC stream MUST reference an active SAR Stream ID and the matching Session UUID.
 
-For example, the TLS client MAY open a second QUIC stream on the same QUIC connection to transmit `SESSION_ACK` or `SESSION_STATUS` messages to the TLS server for a SAR session whose primary data flow is server-to-client.
+A QUIC stream carrying only `SESSION_CONTROL` messages for an existing SAR Stream ID does not establish a new SAR session and MUST NOT cause the receiver to reinitialize the SAR session.
 
-A `SESSION_CONTROL` message transmitted on an additional QUIC stream MUST reference the same SAR Stream ID and Session UUID as the SAR session it controls.
+Additional QUIC control streams MUST NOT contain a new `SESSION_INIT` for an already-active SAR Stream ID.
 
-An endpoint MUST NOT transmit `SESSION_CONTROL` messages on an additional QUIC stream unless the peer has explicitly advertised or been configured to support separate control streams.
+All SAR-over-QUIC implementations that support bidirectional control MUST accept additional QUIC control streams carrying `SESSION_ACK` and `SESSION_STATUS` for an active SAR Stream ID and matching Session UUID.
 
-A QUIC stream carrying only `SESSION_CONTROL` messages for an existing SAR Stream ID does not establish a new SAR stream and MUST NOT cause the receiver to reinitialize the SAR session.
+If an additional QUIC control stream references an unknown Stream ID, a mismatched Session UUID, a closed session, or an ambiguous session state, the receiver MUST reject that QUIC stream with `SAR_ERR_STREAM_STATE` where supported by the QUIC API.
 
 If multiple QUIC streams are associated with the same SAR Stream ID, the receiver MUST apply `SESSION_CONTROL` messages according to `Sequence No` ordering and MUST reject ambiguous or contradictory state transitions with `SAR_ERR_STREAM_STATE`.
 
-Use of additional QUIC streams for `SESSION_CONTROL` messages MUST NOT relax SAR Stream ID uniqueness, Session UUID binding, Sequence No validation, AEAD authentication, or session lifecycle rules.
+Use of multiple QUIC streams for one SAR session MUST NOT relax Stream ID uniqueness, Session UUID binding, Sequence No validation, AEAD authentication, KMS state, or session lifecycle rules.
 
-Implementations MUST ensure that session ordering, state transitions, and message semantics remain consistent regardless of whether communication occurs on a single QUIC stream or across multiple QUIC streams.
+A SAR-over-QUIC listener’s forward-direction encoding MUST be decodable by every conforming SAR-over-QUIC client implementation.
+
+When bidirectional control is active, a SAR-over-QUIC client’s reverse-direction `SESSION_ACK` and `SESSION_STATUS` encoding MUST be decodable by every conforming SAR-over-QUIC listener implementation.
 
 When a SAR stream carried on a QUIC stream is rejected, malformed, or exceeds limits, the receiver SHOULD reset, discard, or reject only the affected QUIC stream where supported by the QUIC API.
 
-Termination of a SAR stream MUST unbind the SAR Stream ID and MUST cause all QUIC streams associated exclusively with that SAR Stream ID to be closed, reset, drained, or disassociated according to transport policy.
-
-If all QUIC streams within a connection are terminated or scheduled for termination, the implementation SHOULD close the entire QUIC connection unless policy requires otherwise.
-
 A stream-local error SHOULD NOT require closing the entire QUIC connection unless the error is connection-fatal or policy requires connection termination.
+
+Termination of a SAR session MUST unbind the SAR Stream ID and Session UUID on that QUIC connection and MUST cause QUIC streams associated exclusively with that SAR session to be closed, reset, drained, or disassociated according to transport policy.
 
 SAR-over-QUIC endpoints SHOULD support `CAP_TLS_EXPORTER_AEAD`.
 
 SAR-over-QUIC deployments SHOULD use SAR-layer AEAD protection derived through KMS Mode `0x04 TLS_EXPORTER`.
 
-SAR-over-QUIC deployments SHOULD use SAR-layer AEAD protection in addition to QUIC/TLS transport protection.
-
 Deployments MAY operate with QUIC/TLS transport protection only. In that mode, QUIC/TLS protects transport bytes, but SAR entries do not receive independent SAR-layer AEAD confidentiality or AAD authentication unless the archive itself uses SAR encryption.
+
+SAR-over-QUIC deployments concerned with harvest-now-decrypt-later attacks SHOULD prefer or require post-quantum-safe or hybrid post-quantum TLS key agreement according to Section 18.6.7.
 
 
 ### 18.6 TLS_EXPORTER SAR AEAD Profile
@@ -3243,6 +3239,8 @@ TLS-exporter SAR-AEAD mode is RECOMMENDED for SAR-over-QUIC.
 Transport-only TLS mode is allowed.
 
 If application policy, profile negotiation, or archive metadata requires TLS-exporter SAR-AEAD mode, endpoints MUST NOT silently downgrade to transport-only TLS mode.
+
+When TLS-exporter SAR-AEAD mode is used, the post-quantum or harvest-now-decrypt-later security of the derived SAR AEAD keying material depends on the negotiated TLS session secrets. Deployments requiring harvest-now-decrypt-later resistance SHOULD configure TLS key agreement policy according to Section 18.6.7.
 
 
 #### 18.6.2 TLS_EXPORTER KMS Requirements
@@ -3400,6 +3398,104 @@ Implementations MUST NOT:
 * allow `LOSS_TOLERANT` to suppress AEAD failures;
 * silently downgrade from required TLS-exporter SAR-AEAD mode to transport-only TLS mode.
 
+#### 18.6.7 Post-Quantum and Hybrid TLS Key Agreement Policy
+
+SAR transport bindings that use TLS SHOULD support cryptographic agility for TLS key agreement and TLS peer authentication algorithms.
+
+For deployments concerned with harvest-now-decrypt-later attacks, SAR transport bindings that use TLS SHOULD prefer post-quantum-safe or hybrid post-quantum TLS key agreement algorithms when such algorithms are supported by the TLS stack and allowed by local security policy.
+
+This section applies to TLS-based SAR transport bindings, including SAR-over-QUIC and SAR-over-TCP when TCP is wrapped in TLS.
+
+For purposes of this specification:
+
+* A **post-quantum-safe TLS key agreement** is a TLS key agreement mechanism based on a post-quantum algorithm that is considered acceptable by the implementation's active security policy.
+* A **hybrid post-quantum TLS key agreement** is a TLS key agreement mechanism that combines a classical key agreement component with a post-quantum key agreement or KEM component.
+* A **classical TLS key agreement** is a non-post-quantum key agreement mechanism such as ECDHE over a classical elliptic-curve group.
+
+Examples of hybrid post-quantum TLS key agreement mechanisms include `X25519MLKEM768`. This example is non-exclusive. Implementations SHOULD remain algorithm-agile and MUST NOT treat any single named algorithm as permanently preferred by this specification.
+
+TLS key agreement selection is governed by the active transport policy.
+
+The active transport policy determines:
+
+1. which TLS key agreement algorithm classes are allowed;
+2. which concrete TLS key agreement algorithms are allowed within each class;
+3. the preference order used when constructing TLS supported-group, key-share, or equivalent key-agreement configuration;
+4. whether the negotiated TLS key agreement must be verified after handshake completion.
+
+When constructing the TLS key agreement candidate list, implementations MUST omit algorithms that are disallowed by the active transport policy.
+
+When multiple acceptable TLS key agreement algorithms are supported by the TLS stack and allowed by policy, implementations SHOULD order the candidate list so that the most preferred mutually supported algorithm can be negotiated with the peer according to TLS rules.
+
+Unless local policy specifies a different order, implementations SHOULD prefer algorithm classes in the following order:
+
+1. post-quantum-safe TLS key agreement algorithms accepted by policy;
+2. hybrid post-quantum TLS key agreement algorithms accepted by policy;
+3. classical TLS key agreement algorithms accepted by policy.
+
+This ordering defines preference among allowed candidates. It does not require an implementation to support every class, and it does not permit offering algorithms that the active policy has disabled.
+
+If a policy mode disallows classical TLS key agreement, classical TLS key agreement algorithms MUST be omitted from the offered or configured candidate list.
+
+If a policy mode disallows hybrid post-quantum TLS key agreement, hybrid algorithms MUST be omitted from the offered or configured candidate list unless local policy explicitly classifies a specific hybrid algorithm as satisfying that mode.
+
+If a policy mode disallows post-quantum-safe TLS key agreement algorithms, those algorithms MUST be omitted from the offered or configured candidate list.
+
+Classical TLS key agreement algorithms MAY remain supported while they are considered acceptable by the implementation's active security policy.
+
+Classical certificate authentication algorithms, including RSA and ECDSA, MAY remain supported while they are considered acceptable by the implementation's active security policy. Such certificate algorithms authenticate the peer identity but do not by themselves provide post-quantum confidentiality for recorded TLS sessions.
+
+Post-quantum or hybrid post-quantum TLS key agreement and post-quantum certificate authentication solve different problems:
+
+* TLS key agreement protects the confidentiality of the session secrets and is the primary concern for harvest-now-decrypt-later resistance.
+* TLS certificate authentication validates peer identity and protects against impersonation under the certificate validation policy.
+
+A TLS session using a classical certificate algorithm and a post-quantum-safe or hybrid post-quantum key agreement MAY provide post-quantum or hybrid confidentiality for the session, subject to the security of the negotiated key agreement and TLS stack.
+
+A TLS session using a post-quantum certificate algorithm but a classical-only key agreement MUST NOT be described as providing post-quantum harvest-now-decrypt-later protection for session confidentiality.
+
+When TLS-exporter SAR-AEAD mode is used, the SAR AEAD keying material inherits the harvest-now-decrypt-later security properties of the negotiated TLS session secrets.
+
+If the underlying TLS session negotiated a classical-only key agreement, TLS-exporter SAR-AEAD MUST NOT be described as post-quantum-safe or harvest-now-decrypt-later resistant.
+
+If the underlying TLS session negotiated a post-quantum-safe or hybrid post-quantum key agreement accepted by policy, TLS-exporter SAR-AEAD MAY be described as providing the corresponding post-quantum or hybrid harvest-now-decrypt-later protection for SAR-layer AEAD keying material.
+
+Implementations SHOULD expose transport policy controls that allow applications to configure at least the following modes:
+
+| Policy Mode            | Meaning                                                                                                                                                                                                                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CLASSICAL_ALLOWED`    | Classical, hybrid post-quantum, and post-quantum-safe TLS key agreement algorithms are permitted when supported by the TLS stack and accepted by policy. Post-quantum-safe or hybrid algorithms SHOULD still be preferred over classical algorithms when available and accepted by policy.                            |
+| `PREFER_PQ`            | Post-quantum-safe or hybrid post-quantum TLS key agreement is preferred. Classical TLS key agreement remains permitted only if no acceptable post-quantum-safe or hybrid algorithm can be negotiated.                                                                                                                 |
+| `REQUIRE_PQ_OR_HYBRID` | The TLS session MUST negotiate a post-quantum-safe or hybrid post-quantum TLS key agreement accepted by policy. Classical-only key agreement algorithms MUST be omitted from the candidate list and MUST fail closed if negotiated.                                                                                   |
+| `REQUIRE_PQ_ONLY`      | The TLS session MUST negotiate a post-quantum-safe TLS key agreement accepted by policy. Hybrid and classical-only key agreement algorithms MUST be omitted from the candidate list and MUST fail closed if negotiated, unless local policy explicitly treats a specific hybrid group as satisfying this requirement. |
+
+If an implementation supports at least one post-quantum-safe or hybrid post-quantum TLS key agreement algorithm that is accepted by its active security policy, the default transport policy SHOULD be `PREFER_PQ`.
+
+If an implementation supports only classical TLS key agreement algorithms accepted by its active security policy, the default transport policy MAY be `CLASSICAL_ALLOWED`.
+
+An implementation MUST NOT advertise, offer, or configure a TLS key agreement algorithm that is disallowed by its active transport policy.
+
+An implementation SHOULD allow its default algorithm set and preference order to change over time as cryptographic guidance, implementation support, or community consensus changes.
+
+Algorithms that are deprecated, known-weakened, or disallowed by the active security policy MUST be disabled or omitted from the candidate list, even if they would otherwise belong to an allowed policy class.
+
+Implementations SHOULD document their default policy mode, supported TLS key agreement classes, and algorithm preference order.
+
+If policy requires post-quantum-safe or hybrid post-quantum key agreement and the TLS stack cannot configure, negotiate, or confirm an acceptable key agreement, the connection MUST fail closed.
+
+If the TLS stack exposes the negotiated key agreement group or equivalent security classification, implementations enforcing `REQUIRE_PQ_OR_HYBRID` or `REQUIRE_PQ_ONLY` MUST verify that the negotiated value satisfies policy before using TLS exporter material for SAR AEAD key derivation.
+
+If the TLS stack does not expose enough information to verify the negotiated key agreement, implementations MUST NOT claim post-quantum or hybrid protection. If policy requires such protection, the connection MUST fail closed.
+
+Implementations MUST NOT silently downgrade from a required post-quantum-safe or hybrid post-quantum TLS key agreement to a classical-only TLS key agreement.
+
+Implementations SHOULD disable or deprioritize TLS key agreement algorithms that are deprecated, known-weakened, or disallowed by the active security policy.
+
+When a downgrade is detected, suspected, or caused by inability to satisfy required post-quantum-safe or hybrid policy, implementations MUST fail closed with `SAR_ERR_UNSUPPORTED`, `SAR_ERR_KMS_FAILED`, `SAR_ERR_AUTH_FAILED`, or the closest applicable transport-authentication error.
+
+The negotiated TLS key agreement algorithm is transport security state. It MUST NOT be encoded as secret SAR payload data, MUST NOT be placed in KMS Data as a secret, and MUST NOT be used to bypass SAR AEAD, AAD, KMS, signature, hash, or transformation-ordering requirements.
+
+Implementations MAY record the negotiated TLS key agreement algorithm or policy classification in non-secret diagnostics or audit metadata, provided that doing so does not expose TLS secrets, exporter output, derived SAR AEAD keys, private keys, or plaintext payload.
 
 
 ## 19. Archive Partitioning and File Fragmentation
