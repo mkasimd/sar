@@ -9,9 +9,6 @@ use sar_stream::{
     SessionInitFrame, SessionOpCode, SessionStatusFrame,
 };
 
-// ── Re-export CTL! constants for test use ─────────────────────────────────
-pub use sar_transport::{CTL_STREAM_HEADER_LEN, CTL_STREAM_MAGIC};
-
 pub fn no_index_global_header_bytes() -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX;
     let header = GlobalHeader {
@@ -125,40 +122,17 @@ pub fn malformed_lfh_prefix() -> Vec<u8> {
     3u32.to_le_bytes().to_vec()
 }
 
-// ── CTL! additional control-stream helpers ────────────────────────────────
-
-/// Build the 22-byte CTL! association header for the given stream ID and UUID.
-/// Format: `CTL!` (4 bytes) + stream_id LE u16 (2 bytes) + UUID (16 bytes).
-pub fn ctl_stream_assoc_header_bytes(stream_id: u16, session_uuid: [u8; 16]) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(CTL_STREAM_HEADER_LEN);
-    bytes.extend_from_slice(&CTL_STREAM_MAGIC);
-    bytes.extend_from_slice(&stream_id.to_le_bytes());
-    bytes.extend_from_slice(&session_uuid);
-    bytes
-}
-
-/// Build a SAR global header + SESSION_ACK entry suitable for delivery on an
-/// additional CTL! control stream after the association header.
-pub fn ctl_stream_sar_ack_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> {
+pub fn additional_control_ack_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> {
     let payload = SessionAckFrame {
         ref_sequence: sequence_no,
         flags: AckFlags::from_bits(0),
     }
     .to_bytes()
     .expect("ack frame");
-    let mut bytes = no_index_global_header_bytes();
-    bytes.extend_from_slice(&session_control_entry_bytes(
-        stream_id,
-        sequence_no,
-        SessionOpCode::Ack as u8,
-        payload,
-    ));
-    bytes
+    session_control_entry_bytes(stream_id, sequence_no, SessionOpCode::Ack as u8, payload)
 }
 
-/// Build a SAR global header + SESSION_STATUS entry suitable for delivery on
-/// an additional CTL! control stream after the association header.
-pub fn ctl_stream_sar_status_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> {
+pub fn additional_control_status_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> {
     let limits = ResourceLimits::default();
     let payload = SessionStatusFrame {
         ref_sequence: sequence_no,
@@ -167,28 +141,13 @@ pub fn ctl_stream_sar_status_bytes(stream_id: u16, sequence_no: u16) -> Vec<u8> 
     }
     .to_bytes(&limits)
     .expect("status frame");
-    let mut bytes = no_index_global_header_bytes();
-    bytes.extend_from_slice(&session_control_entry_bytes(
-        stream_id,
-        sequence_no,
-        SessionOpCode::Status as u8,
-        payload,
-    ));
-    bytes
+    session_control_entry_bytes(stream_id, sequence_no, SessionOpCode::Status as u8, payload)
 }
 
-/// Build a complete CTL! stream carrying a SESSION_ACK:
-/// association header + SAR global header + ACK entry.
-pub fn ctl_stream_with_ack(stream_id: u16, session_uuid: [u8; 16], sequence_no: u16) -> Vec<u8> {
-    let mut bytes = ctl_stream_assoc_header_bytes(stream_id, session_uuid);
-    bytes.extend_from_slice(&ctl_stream_sar_ack_bytes(stream_id, sequence_no));
-    bytes
-}
-
-/// Build a complete CTL! stream carrying a SESSION_STATUS:
-/// association header + SAR global header + STATUS entry.
-pub fn ctl_stream_with_status(stream_id: u16, session_uuid: [u8; 16], sequence_no: u16) -> Vec<u8> {
-    let mut bytes = ctl_stream_assoc_header_bytes(stream_id, session_uuid);
-    bytes.extend_from_slice(&ctl_stream_sar_status_bytes(stream_id, sequence_no));
-    bytes
+pub fn additional_control_capabilities_bytes(
+    stream_id: u16,
+    sequence_no: u16,
+    flags: CapabilityFlags,
+) -> Vec<u8> {
+    session_capabilities_entry_bytes(stream_id, sequence_no, flags)
 }

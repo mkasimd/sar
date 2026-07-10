@@ -15,13 +15,13 @@ pub mod tcp;
 use std::collections::{BTreeMap, BTreeSet};
 
 use sar_core::{
-    ArchiveReaderOptions, ResourceLimits, SarError, SarStatus, StreamArchiveParser, StreamEvent,
-    StreamStep,
+    ArchiveReaderOptions, EntryMode, GlobalHeader, ResourceLimits, SarError, SarStatus,
+    StreamArchiveParser, StreamEvent, StreamStep, parse_lfh,
 };
 use sar_crypto::KMS_TLS_EXPORTER;
 use sar_stream::{
     CapabilityFlags, ProcessResult, SessionAckFrame, SessionAction, SessionEntry, SessionEvent,
-    SessionManager, SessionManagerConfig, SessionStatusFrame,
+    SessionManager, SessionManagerConfig, SessionOpCode, SessionStatusFrame,
 };
 
 /// Transport binding family.
@@ -90,25 +90,6 @@ impl Default for TransportConfig {
     }
 }
 
-/// 4-byte magic that identifies a SAR additional control-stream association header.
-///
-/// An additional QUIC control stream may begin with these bytes instead of the
-/// primary SAR magic `SAR!` (`0x53 0x41 0x52 0x21`).  The magic is followed by
-/// a 2-byte SAR Stream ID (u16 LE) and a 16-byte Session UUID, forming the
-/// 22-byte [`CTL_STREAM_HEADER_LEN`] association header.
-///
-/// After the association header the stream carries a SAR Global Header and
-/// `SESSION_CONTROL` entries (`SESSION_ACK`, `SESSION_STATUS`) for the
-/// already-active session.  It MUST NOT carry `SESSION_INIT`.
-///
-/// See Section 18.5.2 of the SAR specification.
-pub const CTL_STREAM_MAGIC: [u8; 4] = *b"CTL!";
-
-/// Total byte length of the CTL! additional control-stream association header.
-///
-/// Layout: `CTL!` (4 bytes) + SAR Stream ID u16 LE (2 bytes) + Session UUID (16 bytes) = 22 bytes.
-pub const CTL_STREAM_HEADER_LEN: usize = 22;
-
 /// Transport stream lifecycle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportStreamState {
@@ -116,14 +97,6 @@ pub enum TransportStreamState {
     Idle,
     /// Awaiting a valid SAR global header.
     AwaitingGlobalHeader,
-    /// Detected CTL! magic; buffering the 22-byte control-stream association header.
-    ///
-    /// Once the full header is received, the stream will be attached to an
-    /// existing SAR session and transition back to [`AwaitingGlobalHeader`]
-    /// to receive the first SAR entry block.
-    ///
-    /// [`AwaitingGlobalHeader`]: TransportStreamState::AwaitingGlobalHeader
-    AwaitingControlAssocHeader,
     /// Global header consumed; first entry must activate with `SESSION_INIT`.
     AwaitingSessionInit,
     /// Stream has an active SAR binding.
@@ -157,9 +130,8 @@ pub enum TransportAction {
     },
     /// Attach an additional control stream to an existing SAR session (QUIC only).
     ///
-    /// Emitted when a QUIC transport stream sends a `SESSION_INIT` for an
-    /// already-active SAR Stream ID with a matching Session UUID.  The stream
-    /// is not rejected; it is marked as a control attachment for that session.
+    /// Emitted when a QUIC transport stream begins directly with a canonical
+    /// LFH-encoded `SESSION_CONTROL` entry for an already-active SAR Stream ID.
     AttachControlStream {
         /// Control transport stream ID.
         transport_stream_id: TransportStreamId,
@@ -289,16 +261,15 @@ enum PolicyMode {
 struct TransportStreamContext {
     parser: StreamArchiveParser,
     manager: SessionManager,
+    limits: ResourceLimits,
     state: TransportStreamState,
     bound_sar_stream_id: Option<u16>,
     awaiting_session_init: bool,
     peer_capabilities: CapabilityFlags,
     last_valid_activity_ms: Option<u64>,
     last_heartbeat_emit_ms: Option<u64>,
-    /// Buffer for the 22-byte CTL! association header on additional control streams.
-    ///
-    /// Non-empty only while `state == AwaitingControlAssocHeader`.
-    ctl_assoc_buf: Vec<u8>,
+    current_global_header: Option<GlobalHeader>,
+    quic_pending_bytes: Vec<u8>,
 }
 
 impl TransportStreamContext {
@@ -325,13 +296,15 @@ impl TransportStreamContext {
         Self {
             parser,
             manager: SessionManager::new(manager_config),
+            limits,
             state: TransportStreamState::Idle,
             bound_sar_stream_id: None,
             awaiting_session_init: false,
             peer_capabilities: CapabilityFlags::NONE,
             last_valid_activity_ms: None,
             last_heartbeat_emit_ms: None,
-            ctl_assoc_buf: Vec::new(),
+            current_global_header: None,
+            quic_pending_bytes: Vec::new(),
         }
     }
 }
@@ -344,6 +317,8 @@ pub struct InMemoryTransport {
     active_sar_streams: BTreeMap<u16, TransportStreamId>,
     /// Session UUIDs for active SAR stream IDs.
     active_session_uuids: BTreeMap<u16, [u8; 16]>,
+    /// Canonical global headers for active SAR stream IDs.
+    active_global_headers: BTreeMap<u16, GlobalHeader>,
     /// Control stream attachments (QUIC only): transport stream ID → SAR stream ID.
     control_stream_attachments: BTreeMap<TransportStreamId, u16>,
     rejected_sar_stream_ids: BTreeSet<u16>,
@@ -360,6 +335,7 @@ impl InMemoryTransport {
             streams: BTreeMap::new(),
             active_sar_streams: BTreeMap::new(),
             active_session_uuids: BTreeMap::new(),
+            active_global_headers: BTreeMap::new(),
             control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
@@ -375,6 +351,7 @@ impl InMemoryTransport {
             streams: BTreeMap::new(),
             active_sar_streams: BTreeMap::new(),
             active_session_uuids: BTreeMap::new(),
+            active_global_headers: BTreeMap::new(),
             control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
@@ -669,6 +646,194 @@ impl InMemoryTransport {
         Ok(())
     }
 
+    fn additional_control_header_size(bytes: &[u8]) -> Option<usize> {
+        (bytes.len() >= 4).then(|| {
+            usize::try_from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])).ok()
+        })?
+    }
+
+    fn validate_additional_control_entry(
+        bidirectional_control: bool,
+        attached_sar_stream_id: u16,
+        entry: &SessionEntry,
+    ) -> Result<(), SarError> {
+        if entry.header.stream_id != attached_sar_stream_id {
+            return Err(SarError::StreamState(
+                "additional control stream Stream ID does not match attached SAR session",
+            ));
+        }
+        if !entry.header.entry_mode.is_session_control() {
+            return Err(SarError::StreamState(
+                "filesystem entries are not permitted on additional QUIC control streams",
+            ));
+        }
+        let op = SessionOpCode::try_from(entry.header.entry_mode.op_code())?;
+        match op {
+            SessionOpCode::Init => Err(SarError::StreamState(
+                "SESSION_INIT is not permitted on an additional QUIC control stream",
+            )),
+            SessionOpCode::Ack | SessionOpCode::Status | SessionOpCode::Capabilities => {
+                if bidirectional_control {
+                    Ok(())
+                } else {
+                    Err(SarError::StreamState(
+                        "bidirectional control is unavailable for additional QUIC control streams",
+                    ))
+                }
+            }
+            _ => Err(SarError::StreamState(
+                "session-control opcode is not permitted on an additional QUIC control stream",
+            )),
+        }
+    }
+
+    fn run_additional_control_stream_loop(
+        &mut self,
+        transport_stream_id: TransportStreamId,
+        now_ms: Option<u64>,
+        mut actions: Vec<TransportAction>,
+    ) -> Result<Vec<TransportAction>, SarError> {
+        loop {
+            enum ControlLoopEvent {
+                NeedMore,
+                SessionResult {
+                    sequence_no: u16,
+                    result: Result<ProcessResult, SarError>,
+                },
+                ParserError(SarError),
+            }
+
+            let loop_event = {
+                let Some(attached_sar_stream_id) = self
+                    .control_stream_attachments
+                    .get(&transport_stream_id)
+                    .copied()
+                else {
+                    return Err(SarError::Internal(
+                        "additional control stream loop missing attachment",
+                    ));
+                };
+                let Some(active_header) = self.active_global_headers.get(&attached_sar_stream_id) else {
+                    return Err(SarError::Internal(
+                        "additional control stream missing active global header",
+                    ));
+                };
+                let active_flags = active_header.flags;
+                let bidirectional_control = self.config.bidirectional_control;
+                let context = self
+                    .streams
+                    .get_mut(&transport_stream_id)
+                    .ok_or(SarError::NotFound("unknown transport stream"))?;
+
+                if context.quic_pending_bytes.len() < 4 {
+                    ControlLoopEvent::NeedMore
+                } else {
+                    match Self::additional_control_header_size(&context.quic_pending_bytes) {
+                        None => ControlLoopEvent::ParserError(SarError::Overflow("LFH header size")),
+                        Some(header_size) => {
+                            if let Err(err) = context.limits.check_lfh_header_bytes(header_size) {
+                                ControlLoopEvent::ParserError(err)
+                            } else if context.quic_pending_bytes.len() < header_size {
+                                ControlLoopEvent::NeedMore
+                            } else {
+                                match parse_lfh(
+                                    &context.quic_pending_bytes[..header_size],
+                                    &active_flags,
+                                    &context.limits,
+                                ) {
+                                    Ok((lfh, _)) => match usize::try_from(lfh.payload_size) {
+                                        Err(_) => ControlLoopEvent::ParserError(SarError::Overflow(
+                                            "additional control payload size",
+                                        )),
+                                        Ok(payload_size) => {
+                                            match header_size.checked_add(payload_size) {
+                                                None => ControlLoopEvent::ParserError(
+                                                    SarError::Overflow(
+                                                        "additional control entry size",
+                                                    ),
+                                                ),
+                                                Some(total_size) => {
+                                                    if context.quic_pending_bytes.len() < total_size
+                                                    {
+                                                        ControlLoopEvent::NeedMore
+                                                    } else {
+                                                        let entry = SessionEntry {
+                                                            header: lfh,
+                                                            payload: context.quic_pending_bytes
+                                                                [header_size..total_size]
+                                                                .to_vec(),
+                                                            degraded: false,
+                                                        };
+                                                        let validation =
+                                                            Self::validate_additional_control_entry(
+                                                                bidirectional_control,
+                                                                attached_sar_stream_id,
+                                                                &entry,
+                                                            );
+                                                        if let Err(err) = validation {
+                                                            ControlLoopEvent::ParserError(err)
+                                                        } else {
+                                                            context
+                                                                .quic_pending_bytes
+                                                                .drain(..total_size);
+                                                            if let Some(now) = now_ms {
+                                                                context.last_valid_activity_ms =
+                                                                    Some(now);
+                                                                self.connection_last_activity_ms =
+                                                                    Some(now);
+                                                            }
+                                                            let sequence_no =
+                                                                entry.header.sequence_no;
+                                                            let result = context
+                                                                .manager
+                                                                .process_entry(&entry);
+                                                            ControlLoopEvent::SessionResult {
+                                                                sequence_no,
+                                                                result,
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    Err(err) => ControlLoopEvent::ParserError(err),
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            match loop_event {
+                ControlLoopEvent::NeedMore => break,
+                ControlLoopEvent::SessionResult {
+                    sequence_no,
+                    result,
+                } => match result {
+                    Ok(result) => {
+                        self.process_session_result(
+                            transport_stream_id,
+                            result,
+                            sequence_no,
+                            &mut actions,
+                        )?;
+                    }
+                    Err(err) => {
+                        self.policy_error_actions(transport_stream_id, err, &mut actions)?;
+                        break;
+                    }
+                },
+                ControlLoopEvent::ParserError(err) => {
+                    self.policy_error_actions(transport_stream_id, err, &mut actions)?;
+                    break;
+                }
+            }
+        }
+
+        Ok(actions)
+    }
+
     fn process_session_result(
         &mut self,
         transport_stream_id: TransportStreamId,
@@ -727,78 +892,6 @@ impl InMemoryTransport {
                     }
 
                     if self.active_sar_streams.contains_key(&stream_id) {
-                        // In QUIC mode, if the UUID matches the active session and
-                        // the transport stream is NOT already an attached control
-                        // stream, treat this as a new control-stream attachment
-                        // (SESSION_INIT-based association).  This is supported for
-                        // backward compatibility alongside the CTL!-based framing.
-                        //
-                        // If the transport stream IS already an attached control
-                        // stream (e.g. attached via CTL! framing), a SESSION_INIT
-                        // for the same Stream ID is a protocol error — spec Section
-                        // 18.5.2: "Additional QUIC control streams MUST NOT contain
-                        // a new SESSION_INIT for an already-active SAR Stream ID."
-                        if self.policy == PolicyMode::Quic
-                            && self.active_session_uuids.get(&stream_id) == Some(&session_uuid)
-                            && !self
-                                .control_stream_attachments
-                                .contains_key(&transport_stream_id)
-                        {
-                            // Check control stream limit.
-                            let control_count = self
-                                .control_stream_attachments
-                                .values()
-                                .filter(|&&sid| sid == stream_id)
-                                .count();
-                            if control_count >= self.config.max_control_streams_per_sar_session {
-                                self.reject_stream_with_policy(
-                                    transport_stream_id,
-                                    Some(stream_id),
-                                    SarError::LimitExceeded(
-                                        "too many control streams for SAR session",
-                                    ),
-                                    header_sequence,
-                                    actions,
-                                )?;
-                                continue;
-                            }
-                            // Mark as control attachment.
-                            self.control_stream_attachments
-                                .insert(transport_stream_id, stream_id);
-                            if let Some(context) = self.streams.get_mut(&transport_stream_id) {
-                                context.state = TransportStreamState::Active;
-                                context.bound_sar_stream_id = Some(stream_id);
-                                context.awaiting_session_init = false;
-                            }
-                            Self::push_action(
-                                &self.config,
-                                actions,
-                                TransportAction::AttachControlStream {
-                                    transport_stream_id,
-                                    sar_stream_id: stream_id,
-                                },
-                            )?;
-                            continue;
-                        }
-                        // SESSION_INIT on an already-attached control stream is
-                        // forbidden (Section 18.5.2).  Reject with StreamState.
-                        if self.policy == PolicyMode::Quic
-                            && self
-                                .control_stream_attachments
-                                .contains_key(&transport_stream_id)
-                        {
-                            self.reject_stream_with_policy(
-                                transport_stream_id,
-                                Some(stream_id),
-                                SarError::StreamState(
-                                    "SESSION_INIT not permitted on an attached control stream",
-                                ),
-                                header_sequence,
-                                actions,
-                            )?;
-                            continue;
-                        }
-                        // UUID mismatch or TCP mode: reject as duplicate.
                         self.reject_stream_with_policy(
                             transport_stream_id,
                             Some(stream_id),
@@ -853,6 +946,13 @@ impl InMemoryTransport {
                     self.active_sar_streams
                         .insert(stream_id, transport_stream_id);
                     self.active_session_uuids.insert(stream_id, session_uuid);
+                    if let Some(header) = self
+                        .streams
+                        .get(&transport_stream_id)
+                        .and_then(|context| context.current_global_header.clone())
+                    {
+                        self.active_global_headers.insert(stream_id, header);
+                    }
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.state = TransportStreamState::Active;
                         context.bound_sar_stream_id = Some(stream_id);
@@ -874,6 +974,7 @@ impl InMemoryTransport {
                 } => {
                     self.active_sar_streams.remove(&stream_id);
                     self.active_session_uuids.remove(&stream_id);
+                    self.active_global_headers.remove(&stream_id);
                     // Detach any control streams for this session.
                     self.control_stream_attachments
                         .retain(|_, &mut sid| sid != stream_id);
@@ -957,10 +1058,6 @@ impl InMemoryTransport {
     }
 
     /// Inner loop that steps the SAR stream parser and processes session events.
-    ///
-    /// Extracted to avoid code duplication between the normal SAR stream path
-    /// and the CTL! additional control-stream path that re-enters after parsing
-    /// the association header.
     fn run_feed_loop(
         &mut self,
         transport_stream_id: TransportStreamId,
@@ -980,7 +1077,7 @@ impl InMemoryTransport {
             }
 
             let step_event = {
-                let is_ctl_stream = self
+                let is_additional_control_stream = self
                     .control_stream_attachments
                     .contains_key(&transport_stream_id);
                 let context = self
@@ -991,6 +1088,7 @@ impl InMemoryTransport {
                     Ok(StreamStep::NeedMore { .. }) => LoopEvent::NeedMore,
                     Ok(StreamStep::Complete) => LoopEvent::Complete,
                     Ok(StreamStep::Ready(StreamEvent::GlobalHeader(header))) => {
+                        context.current_global_header = Some((*header).clone());
                         // TCP does not support TLS_EXPORTER KMS mode.  Reject
                         // immediately on global header to prevent partial
                         // session setup before the failure would otherwise
@@ -1021,10 +1119,10 @@ impl InMemoryTransport {
                         } else if let Err(err) = context.manager.observe_global_header(&header) {
                             LoopEvent::ParserError(err)
                         } else {
-                            // For CTL!-attached control streams the session is
-                            // already active; SESSION_INIT is not expected.
+                            // For additional control streams the session is already
+                            // active; `SESSION_INIT` is not expected.
                             context.state = TransportStreamState::AwaitingSessionInit;
-                            context.awaiting_session_init = !is_ctl_stream;
+                            context.awaiting_session_init = !is_additional_control_stream;
                             LoopEvent::Continue
                         }
                     }
@@ -1138,183 +1236,103 @@ impl SarTransportBinding for InMemoryTransport {
 
         let mut actions = Vec::new();
 
-        // ── CTL! additional control-stream detection (QUIC only) ─────────────
-        //
-        // When the first bytes arriving on a fresh QUIC transport stream start
-        // with CTL_STREAM_MAGIC (b"CTL!") rather than the primary SAR magic
-        // (b"SAR!"), the stream is an additional control stream as defined in
-        // Section 18.5.2.  The 22-byte association header is buffered until
-        // complete, then validated and attached before the remaining bytes are
-        // forwarded to the regular SAR stream parser.
         if self.policy == PolicyMode::Quic {
-            let (current_state, ctl_buf_len) = {
+            let (current_state, is_attached) = {
                 let context = self
                     .streams
                     .get(&transport_stream_id)
                     .ok_or(SarError::NotFound("unknown transport stream"))?;
-                (context.state, context.ctl_assoc_buf.len())
+                (
+                    context.state,
+                    self.control_stream_attachments
+                        .contains_key(&transport_stream_id),
+                )
             };
 
-            let entering_ctl = current_state == TransportStreamState::AwaitingGlobalHeader
-                && ctl_buf_len == 0
-                && bytes.starts_with(&CTL_STREAM_MAGIC);
-
-            let in_ctl_header = current_state == TransportStreamState::AwaitingControlAssocHeader;
-
-            if entering_ctl || in_ctl_header {
-                // Check terminal states before any mutation.
-                {
-                    let context = self
-                        .streams
-                        .get(&transport_stream_id)
-                        .ok_or(SarError::NotFound("unknown transport stream"))?;
-                    if matches!(
-                        context.state,
-                        TransportStreamState::Closed
-                            | TransportStreamState::Reset
-                            | TransportStreamState::Rejected
-                    ) {
-                        return Err(SarError::StreamClosed(
-                            "cannot feed bytes to closed/reset/rejected transport stream",
-                        ));
-                    }
-                }
-
-                // Buffer incoming bytes into the CTL! association header buffer.
-                {
-                    let context = self
-                        .streams
-                        .get_mut(&transport_stream_id)
-                        .ok_or(SarError::NotFound("unknown transport stream"))?;
-                    context.state = TransportStreamState::AwaitingControlAssocHeader;
-                    context.ctl_assoc_buf.extend_from_slice(bytes);
-                }
-
-                // Check whether we have accumulated the full 22-byte header.
-                let buf_len = self
+            if is_attached {
+                let context = self
                     .streams
-                    .get(&transport_stream_id)
-                    .map_or(0, |c| c.ctl_assoc_buf.len());
+                    .get_mut(&transport_stream_id)
+                    .ok_or(SarError::NotFound("unknown transport stream"))?;
+                context.quic_pending_bytes.extend_from_slice(bytes);
+                return self.run_additional_control_stream_loop(transport_stream_id, now_ms, actions);
+            }
 
-                if buf_len < CTL_STREAM_HEADER_LEN {
-                    // Need more bytes; nothing further to do this call.
+            if current_state == TransportStreamState::AwaitingGlobalHeader {
+                let context = self
+                    .streams
+                    .get_mut(&transport_stream_id)
+                    .ok_or(SarError::NotFound("unknown transport stream"))?;
+                context.quic_pending_bytes.extend_from_slice(bytes);
+
+                let pending = context.quic_pending_bytes.clone();
+                if pending.len() < 4 {
+                    return Ok(actions);
+                }
+                if pending.starts_with(b"SAR!") {
+                    if let Err(err) = context.parser.push_bytes(&pending) {
+                        self.policy_error_actions(transport_stream_id, err, &mut actions)?;
+                        return Ok(actions);
+                    }
+                    context.quic_pending_bytes.clear();
+                    return self.run_feed_loop(transport_stream_id, now_ms, actions);
+                }
+                if pending.starts_with(b"CTL!") {
+                    self.policy_error_actions(transport_stream_id, SarError::InvalidMagic, &mut actions)?;
+                    return Ok(actions);
+                }
+                if pending.len() < 8 {
                     return Ok(actions);
                 }
 
-                // Parse the association header.
-                let (ctl_stream_id, ctl_uuid, remaining_start) = {
-                    let context = self
-                        .streams
-                        .get(&transport_stream_id)
-                        .ok_or(SarError::NotFound("unknown transport stream"))?;
-                    let buf = &context.ctl_assoc_buf;
-                    // bytes 0..4 = magic (already verified)
-                    let sid = u16::from_le_bytes([buf[4], buf[5]]);
-                    let mut uuid = [0u8; 16];
-                    uuid.copy_from_slice(&buf[6..22]);
-                    (sid, uuid, 22usize)
-                };
+                let entry_mode = EntryMode::from_bits(u16::from_le_bytes([pending[4], pending[5]]));
+                let sar_stream_id = u16::from_le_bytes([pending[6], pending[7]]);
 
-                // Validate: stream_id must be active and UUID must match.
-                if !self.active_sar_streams.contains_key(&ctl_stream_id) {
-                    self.reject_stream_with_policy(
+                if !entry_mode.is_session_control() {
+                    self.policy_error_actions(transport_stream_id, SarError::InvalidMagic, &mut actions)?;
+                    return Ok(actions);
+                }
+                if !self.active_sar_streams.contains_key(&sar_stream_id) {
+                    self.policy_error_actions(
                         transport_stream_id,
-                        None,
-                        SarError::StreamState("CTL! stream: unknown SAR Stream ID"),
-                        0,
+                        SarError::StreamState("additional control stream references unknown SAR Stream ID"),
                         &mut actions,
                     )?;
                     return Ok(actions);
                 }
-                if self.active_session_uuids.get(&ctl_stream_id) != Some(&ctl_uuid) {
-                    self.reject_stream_with_policy(
-                        transport_stream_id,
-                        None,
-                        SarError::StreamState("CTL! stream: Session UUID mismatch"),
-                        0,
-                        &mut actions,
-                    )?;
-                    return Ok(actions);
-                }
-
-                // Check control stream count limit.
                 let control_count = self
                     .control_stream_attachments
                     .values()
-                    .filter(|&&sid| sid == ctl_stream_id)
+                    .filter(|&&sid| sid == sar_stream_id)
                     .count();
                 if control_count >= self.config.max_control_streams_per_sar_session {
-                    self.reject_stream_with_policy(
+                    self.policy_error_actions(
                         transport_stream_id,
-                        None,
                         SarError::LimitExceeded("too many control streams for SAR session"),
-                        0,
                         &mut actions,
                     )?;
                     return Ok(actions);
                 }
 
-                // Attach the control stream.
                 self.control_stream_attachments
-                    .insert(transport_stream_id, ctl_stream_id);
-                {
-                    let context = self
-                        .streams
-                        .get_mut(&transport_stream_id)
-                        .ok_or(SarError::NotFound("unknown transport stream"))?;
-                    context.state = TransportStreamState::AwaitingGlobalHeader;
-                    context.bound_sar_stream_id = Some(ctl_stream_id);
-                    context.ctl_assoc_buf.clear();
-                    // The session is already active; control streams do not need
-                    // to carry SESSION_INIT.
-                    context.awaiting_session_init = false;
-                }
+                    .insert(transport_stream_id, sar_stream_id);
+                context.state = TransportStreamState::Active;
+                context.bound_sar_stream_id = Some(sar_stream_id);
+                context.awaiting_session_init = false;
+                context.manager.observe_global_header(
+                    self.active_global_headers
+                        .get(&sar_stream_id)
+                        .ok_or(SarError::Internal("active global header missing"))?,
+                )?;
                 Self::push_action(
                     &self.config,
                     &mut actions,
                     TransportAction::AttachControlStream {
                         transport_stream_id,
-                        sar_stream_id: ctl_stream_id,
+                        sar_stream_id,
                     },
                 )?;
-
-                // Feed bytes after the association header to the SAR parser.
-                let remaining: Vec<u8> = {
-                    // The accumulated header may span multiple `feed_bytes` calls.
-                    // `buf_len` is the total bytes accumulated (captured above
-                    // before we cleared ctl_assoc_buf).  The portion of `bytes`
-                    // in this call that belongs to the header is
-                    // `remaining_start - prior`, where `prior` is the number of
-                    // header bytes received in previous calls.
-                    let prior = buf_len.saturating_sub(bytes.len());
-                    let used_this_call = remaining_start.saturating_sub(prior);
-                    if used_this_call < bytes.len() {
-                        bytes[used_this_call..].to_vec()
-                    } else {
-                        Vec::new()
-                    }
-                };
-
-                if remaining.is_empty() {
-                    return Ok(actions);
-                }
-
-                // Push remaining bytes into the SAR parser and fall through to
-                // the main processing loop below.
-                {
-                    let context = self
-                        .streams
-                        .get_mut(&transport_stream_id)
-                        .ok_or(SarError::NotFound("unknown transport stream"))?;
-                    if let Err(e) = context.parser.push_bytes(&remaining) {
-                        let e_owned = e;
-                        let _ = context;
-                        self.policy_error_actions(transport_stream_id, e_owned, &mut actions)?;
-                        return Ok(actions);
-                    }
-                }
-                // Fall through to the processing loop.
-                return self.run_feed_loop(transport_stream_id, now_ms, actions);
+                return self.run_additional_control_stream_loop(transport_stream_id, now_ms, actions);
             }
         }
         // ── Normal SAR stream path ────────────────────────────────────────────

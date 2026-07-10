@@ -35,8 +35,8 @@ use sar_transport::quic::{
 
 #[cfg(feature = "quic")]
 use common::{
-    no_index_global_header_bytes, session_archive_init_bytes, session_close_entry_bytes,
-    session_control_entry_bytes,
+    additional_control_ack_bytes, no_index_global_header_bytes, session_archive_init_bytes,
+    session_close_entry_bytes, session_control_entry_bytes,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -414,9 +414,9 @@ async fn additional_control_stream_matching_uuid_produces_attach_action() {
         .expect("feed");
     assert!(has_bind_sar_stream(&a, 7));
 
-    // Second QUIC stream for stream 7, same UUID — control attachment.
+    // Second QUIC stream for stream 7 carrying LFH-direct ACK.
     let mut cs_ctl = cli.open_sar_stream().await.expect("control");
-    cli.write_sar_bytes(&mut cs_ctl, &session_archive_init_bytes(7, 0, uuid))
+    cli.write_sar_bytes(&mut cs_ctl, &additional_control_ack_bytes(7, 1))
         .await
         .expect("write control");
 
@@ -432,7 +432,7 @@ async fn additional_control_stream_matching_uuid_produces_attach_action() {
 
     assert!(
         has_attach_control_stream(&a2),
-        "same UUID second stream must produce AttachControlStream; got {a2:?}"
+        "lfh-direct second stream must produce AttachControlStream; got {a2:?}"
     );
     assert!(!has_reject_sar_stream(&a2));
     // Session remains bound.

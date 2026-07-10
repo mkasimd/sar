@@ -102,7 +102,7 @@ This document reflects current implemented behavior only.
 - Rejected SAR Stream IDs remain unbound; no partial session state is retained.
 - `SESSION_CLOSE` unbinds a SAR Stream ID and disassociates all QUIC streams attached to that session; the Stream ID may be reused for a new session on the same QUIC connection afterward.
 - Duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same QUIC connection fails closed with `SAR_ERR_STREAM_STATE`; the incoming stream is rejected.
-- Additional QUIC control streams are accepted only when they carry `SESSION_CONTROL` traffic for an active Stream ID with a matching Session UUID.  Additional control streams do not establish new SAR sessions.  Mismatched UUID, unknown Stream ID, closed session, or a new `SESSION_INIT` on a control stream cause stream rejection.
+- Additional QUIC control streams are accepted only when they begin directly with LFH-encoded `SESSION_CONTROL` traffic for an active Stream ID on the same QUIC connection.  Additional control streams do not establish new SAR sessions.  Unknown Stream ID, closed session, malformed LFH, filesystem entries, `SESSION_INIT`, and private magic prefixes such as `CTL!` cause stream-local rejection.
 - Same numeric SAR Stream ID on different QUIC connections are independent sessions; uniqueness is scoped per connection.
 - No plaintext SAR payload is exposed before AEAD authentication succeeds, when AEAD is active.
 - `LOSS_TOLERANT` does not suppress AEAD authentication failures, structural errors, decompression errors, or patch failures in QUIC mode.
@@ -120,17 +120,17 @@ This document reflects current implemented behavior only.
 - `TlsPqPolicy` variants: `ClassicalAllowed`, `PreferPq`, `RequirePqOrHybrid`, `RequirePqOnly`.
 - The bundled `ring` TLS provider does **not** support PQ-safe or hybrid key agreement groups.  The default policy is therefore `ClassicalAllowed`.
 - `RequirePqOrHybrid` and `RequirePqOnly` **fail closed** with `SAR_ERR_UNSUPPORTED` at `QuicSarListener::bind` or `connect_quic` time when `ring` is the TLS provider.  No classical connection is established when a PQ/hybrid requirement cannot be satisfied.
-- `PreferPq` silently falls back to classical with `ring`.  A connection using `PreferPq` with classical-only negotiation **MUST NOT** be described as providing PQ-safe or HNDL-resistant protection for TLS_EXPORTER SAR AEAD keying material.
-- Negotiated-group verification is not available with the `ring` provider and `quinn` in the current configuration.  If a TLS provider that does expose negotiated group information is configured, negotiated-group verification SHOULD be implemented and used for `RequirePqOrHybrid` and `RequirePqOnly`.
+- `PreferPq` may fall back to classical with `ring`.  A connection using `PreferPq` with classical-only negotiation **MUST NOT** be described as providing PQ-safe or HNDL-resistant protection for TLS_EXPORTER SAR AEAD keying material.
+- Negotiated-group verification is not available with the `ring` provider and `quinn` in the current configuration.  Required-PQ modes therefore fail closed before TLS exporter material is used.  If a TLS provider that does expose negotiated group information is configured, negotiated-group verification SHOULD be implemented and used for `RequirePqOrHybrid` and `RequirePqOnly`.
 - TLS_EXPORTER SAR AEAD inherits HNDL properties from the negotiated TLS session key agreement.  Classical-only negotiation yields no HNDL protection regardless of `TlsPqPolicy` setting.
 - No TLS secrets, exporter outputs, derived SAR AEAD keys, or private keys are logged, placed in KMS Data, or transmitted in any SAR frame.
 
-## M10g CTL! additional control-stream framing security notes
+## M10h additional QUIC control-stream security notes
 
-- CTL!-associated control streams must carry a valid 22-byte association header (`CTL!` + u16 LE stream_id + 16-byte session UUID).
-- The stream_id must reference an active SAR session and the UUID must match exactly; mismatches are rejected with `SAR_ERR_STREAM_STATE` stream-locally.
-- CTL!-associated streams do not establish new SAR sessions and are not permitted to carry `SESSION_INIT`.
-- CTL! stream errors are stream-local and do not corrupt or close unrelated QUIC streams.
+- Additional QUIC control streams start directly with the LFH bytes physically present on that stream; they do not use `CTL!`, UUID preheaders, private envelopes, or extra association metadata.
+- Association is by QUIC connection + LFH `Stream ID` only.  The referenced Stream ID must already be active on that QUIC connection.
+- Additional control streams do not establish new SAR sessions and are not permitted to carry `SESSION_INIT`.
+- Additional control-stream errors are stream-local and do not corrupt or close unrelated QUIC streams.
 
 ## FEC and AEAD ordering
 

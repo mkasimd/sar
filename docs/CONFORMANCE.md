@@ -169,8 +169,8 @@ This document reflects the current repository state after Milestones 10a–10f.
   - a duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same connection is rejected; the Stream ID remains unbound
   - `SESSION_CLOSE` unbinds the SAR Stream ID and disassociates attached QUIC streams
   - same numeric SAR Stream ID on different QUIC connections are independent sessions
-  - additional QUIC control streams carrying `SESSION_CONTROL` for an existing SAR Stream ID + matching Session UUID are accepted
-  - additional control streams referencing an unknown Stream ID or mismatched Session UUID are rejected
+  - additional QUIC control streams carrying LFH-direct `SESSION_CONTROL` for an existing SAR Stream ID are accepted when the referenced Stream ID is active on the same QUIC connection
+  - additional control streams referencing an unknown or closed Stream ID are rejected stream-locally
   - additional control streams must not carry a new `SESSION_INIT` for an already-bound Stream ID
   - same bidirectional QUIC stream supports reverse `SESSION_ACK` / `SESSION_STATUS` entries when `CAP_BIDIRECTIONAL_CONTROL` is active
   - Sequence Number wrap `0xFFFF → 0x0000` is correctly handled in QUIC mode without treating wrap as an error
@@ -179,7 +179,7 @@ This document reflects the current repository state after Milestones 10a–10f.
   - Context Version `0x01` exporter context encoding is deterministic and includes all required fields from spec §18.6
   - `export_keying_material` uses the quinn TLS exporter API to derive keying material
   - `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` key usages are correctly separated by TLS endpoint role
-  - QUIC endpoints advertising `CAP_TLS_EXPORTER_AEAD` require TLS_EXPORTER KMS mode
+  - KMS Mode `0x04 TLS_EXPORTER` selected by the SAR Global Header / KMS configuration is authoritative for TLS_EXPORTER SAR-AEAD; `CAP_TLS_EXPORTER_AEAD` advertises support only
   - QUIC transport-only mode (without SAR-layer TLS_EXPORTER AEAD) is fully supported; `CAP_TLS_EXPORTER_AEAD` is only advertised when `QuicTransportConfig::advertise_tls_exporter_aead` is `true`
   - When QUIC TLS_EXPORTER SAR-AEAD mode is required or negotiated, `CAP_TLS_EXPORTER_AEAD` and KMS Mode `0x04 TLS_EXPORTER` are used together; QUIC transport-only mode without SAR-layer AEAD remains supported without `CAP_TLS_EXPORTER_AEAD`
   - TCP binding still does not advertise `CAP_TLS_EXPORTER_AEAD`; plaintext TCP still rejects KMS mode `0x04` with `SAR_ERR_UNSUPPORTED`
@@ -198,16 +198,16 @@ This document reflects the current repository state after Milestones 10a–10f.
   - QUIC client-disconnect test added: when a client drops a QUIC connection without opening SAR streams, the server's `accept_sar_stream` returns an error rather than blocking indefinitely
   - `InsecureSkipVerifyForTestsOnly` is used only in test code and is clearly named; not the default; not for trusted production deployments
   - All M10 validation commands pass (see Planned → M10f notes)
-- **Milestone 10g QUIC control-stream interoperability + TLS PQ/hybrid policy alignment**
-  - **CTL! additional control-stream framing** (Section 18.5.2): additional QUIC control streams associated with an active SAR session via the 22-byte CTL! header (`CTL!` + u16 LE stream_id + 16-byte session UUID) are accepted without requiring SAR `SAR!` magic or a new SAR Global Header
-  - Primary SAR streams still require SAR `SAR!` magic and a SAR Global Header
-  - CTL!-associated streams must reference an active Stream ID with a matching Session UUID; unknown Stream ID and mismatched UUID are rejected with `SAR_ERR_STREAM_STATE`
-  - SESSION_INIT on a CTL!-attached control stream is rejected with `SAR_ERR_STREAM_STATE`
-  - CTL!-associated stream errors are stream-local and do not corrupt or close unrelated QUIC streams
+- **Milestone 10h QUIC control-stream correction + TLS PQ/hybrid policy alignment**
+  - Primary SAR-over-QUIC streams begin with `SAR!` + SAR Global Header
+  - Additional QUIC control streams begin directly with LFH-encoded `SESSION_CONTROL`; there is no `CTL!`, private envelope, UUID preheader, or extra association header
+  - Additional control streams are associated only by QUIC connection + LFH `Stream ID`
+  - Baseline reverse-direction additional-control entries are `SESSION_ACK`, `SESSION_STATUS`, and `SESSION_CAPABILITIES` when bidirectional control is active
+  - Additional control streams do not establish new SAR sessions and must not carry `SESSION_INIT`
   - **`TlsPqPolicy`** (Section 18.6.7): `ClassicalAllowed` / `PreferPq` / `RequirePqOrHybrid` / `RequirePqOnly` enum added to `QuicTransportConfig`
   - Default policy is `ClassicalAllowed` because the bundled `ring` provider does not expose PQ-safe or hybrid key agreement groups
   - `RequirePqOrHybrid` and `RequirePqOnly` fail closed with `SAR_ERR_UNSUPPORTED` at `QuicSarListener::bind` or `connect_quic` time when ring is the TLS provider
-  - `PreferPq` falls back to classical with ring without error; the connection MUST NOT be described as PQ-safe or HNDL-resistant in this case
+  - `PreferPq` may fall back to classical with ring without error, but PQ/hybrid protection must not be claimed unless negotiated-group classification can be verified
   - Negotiated-group verification is unavailable with the ring provider; this limitation is documented
   - No TLS exporter output, derived SAR AEAD keys, private keys, or TLS secrets are logged or placed in KMS data
 

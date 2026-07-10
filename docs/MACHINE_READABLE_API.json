@@ -6687,7 +6687,7 @@
         "M10e QUIC binding (quic feature): QuicSarListener, QuicSarConnection, QuicSarStream, connect_quic using quinn 0.11 + rustls 0.23 + tokio 1.",
         "M10e: explicit QuicServerIdentity (DER cert chain + DER private key) and QuicClientTrust (CustomCaDer or InsecureSkipVerifyForTestsOnly).",
         "M10e: active SAR Stream ID uniqueness per QUIC connection; duplicate SESSION_INIT fails closed with SAR_ERR_STREAM_STATE.",
-        "M10e: additional QUIC control streams for existing SAR Stream ID + matching Session UUID accepted.",
+        "M10h: additional QUIC control streams begin directly with LFH-encoded SESSION_CONTROL and associate by QUIC connection + LFH Stream ID.",
         "M10e: same bidirectional QUIC stream supports reverse SESSION_ACK/SESSION_STATUS when CAP_BIDIRECTIONAL_CONTROL is active.",
         "M10e: KMS Mode 0x04 TLS_EXPORTER supported for QUIC connections; export_keying_material derives keying material via quinn TLS exporter API.",
         "M10e: all connection/stream limits enforced before allocation."
