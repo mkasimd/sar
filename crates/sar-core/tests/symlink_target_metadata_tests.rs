@@ -3,7 +3,10 @@ use std::io::Cursor;
 use tempfile::tempdir;
 
 use sar_core::format::{GlobalHeader, write_global_header};
-use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, EntryKind, EntryMode, GlobalFlags, SarError};
+use sar_core::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, EntryKind, EntryMode,
+    GlobalFlags, SarError,
+};
 
 fn write_read_entry(
     opts: ArchiveWriterOptions,
