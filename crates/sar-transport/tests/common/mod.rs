@@ -137,36 +137,235 @@ pub fn tls_exporter_session_archive_init_bytes(stream_id: u16, session_uuid: [u8
     bytes
 }
 
-/// Builds a post-binding SESSION_CONTROL entry with `EntryMode::ENCRYPTED` set,
-/// simulating a properly AEAD-protected entry for a TLS_EXPORTER session.
+/// Builds a truly AEAD-encrypted additional QUIC control stream entry.
 ///
-/// The payload is not truly AEAD-encrypted in test helpers — the transport
-/// harness only enforces the structural `EntryMode::ENCRYPTED` bit.  Actual
-/// AEAD verification is tested separately via `sar-crypto` unit tests.
+/// Performs real AES-256-GCM encryption so that the additional-control-stream
+/// path in `run_additional_control_stream_loop` can authenticate and decrypt
+/// the entry using `key`.  The AAD is constructed as:
+///
+/// ```text
+/// global_header_flags_bytes(NO_INDEX | ENCRYPTED) || lfh_bytes
+/// ```
+///
+/// which matches what the receiver computes from the active session's global
+/// header and the raw LFH bytes on the additional control stream.
+///
+/// `key` must be the same 32-byte key that the [`MockTlsExporterKeyProvider`]
+/// returns (i.e. [`TEST_KEY`]).
 pub fn tls_exporter_encrypted_control_entry_bytes(
     stream_id: u16,
     sequence_no: u16,
     opcode: u8,
     inner_payload: Vec<u8>,
+    key: &[u8; 32],
 ) -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
-    let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), inner_payload.len() as u64);
+
+    // Compute the global-flags section that the receiver uses as the first
+    // half of the AAD.  This matches `global_header_flags_bytes` on the
+    // active session header (KMS excluded from the flags section).
+    let gfs_header = GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    let global_flags_section = sar_core::global_header_flags_bytes(&gfs_header);
+
+    // Valid AES-256-GCM nonce: first 12 bytes are the IV, bytes 12-23 must
+    // be zero (SAR convention for AES-GCM in the 24-byte nonce field).
+    let mut nonce = [0u8; 24];
+    nonce[..12].copy_from_slice(&[0xABu8; 12]);
+
+    let ciphertext_size = inner_payload.len() + AEAD_TAG_SIZE;
+
+    let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), ciphertext_size as u64);
     lfh.stream_id = stream_id;
     lfh.sequence_no = sequence_no;
-    // Set EntryMode::ENCRYPTED to signal that this entry is AEAD-protected.
     lfh.entry_mode = EntryMode::from_bits(
         (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL | EntryMode::ENCRYPTED,
     );
-    lfh.payload_size = inner_payload.len() as u64;
+    lfh.payload_size = ciphertext_size as u64;
     lfh.uncompressed_size = inner_payload.len() as u64;
     lfh.encr_algo_id = Some(ENCR_AES256_GCM);
-    lfh.iv_nonce = Some([0xAAu8; 24]); // non-zero dummy nonce
-    let mut bytes = write_lfh(&flags, &lfh).expect("tls_exporter encrypted LFH");
-    bytes.extend_from_slice(&inner_payload);
+    lfh.iv_nonce = Some(nonce);
+
+    let lfh_bytes = write_lfh(&flags, &lfh).expect("tls_exporter encrypted control LFH");
+    let aad = build_aead_aad(&global_flags_section, &lfh_bytes);
+    let secret_key = Zeroizing::new(key.to_vec());
+    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &secret_key, &nonce, &aad, &inner_payload)
+        .expect("aead_encrypt in tls_exporter_encrypted_control_entry_bytes");
+
+    let mut bytes = lfh_bytes;
+    bytes.extend_from_slice(&ciphertext);
     bytes
 }
 
-/// Builds a post-binding SESSION_CONTROL entry WITHOUT `EntryMode::ENCRYPTED`.
+/// Builds an AEAD-encrypted additional control stream entry but uses a
+/// different sequence number in the AAD LFH than is written on the wire.
+///
+/// This simulates "wrong LFH AAD": the ciphertext tag is computed over an
+/// LFH with `aad_sequence_no` as the sequence number, while the actual LFH
+/// on the wire carries `wire_sequence_no`.  The receiver will compute AAD
+/// from the wire LFH (with `wire_sequence_no`) and authentication MUST fail.
+pub fn tls_exporter_encrypted_control_entry_wrong_lfh_aad(
+    stream_id: u16,
+    wire_sequence_no: u16,
+    aad_sequence_no: u16,
+    opcode: u8,
+    inner_payload: Vec<u8>,
+    key: &[u8; 32],
+) -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
+    let gfs_header = GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    let global_flags_section = global_header_flags_bytes(&gfs_header);
+
+    let mut nonce = [0u8; 24];
+    nonce[..12].copy_from_slice(&[0xACu8; 12]);
+    let ciphertext_size = inner_payload.len() + AEAD_TAG_SIZE;
+
+    // Wire LFH (what gets sent on the additional control stream).
+    let mut wire_lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), ciphertext_size as u64);
+    wire_lfh.stream_id = stream_id;
+    wire_lfh.sequence_no = wire_sequence_no;
+    wire_lfh.entry_mode = EntryMode::from_bits(
+        (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL | EntryMode::ENCRYPTED,
+    );
+    wire_lfh.payload_size = ciphertext_size as u64;
+    wire_lfh.uncompressed_size = inner_payload.len() as u64;
+    wire_lfh.encr_algo_id = Some(ENCR_AES256_GCM);
+    wire_lfh.iv_nonce = Some(nonce);
+    let wire_lfh_bytes = write_lfh(&flags, &wire_lfh).expect("wrong-lfh-aad wire LFH");
+
+    // AAD LFH (different sequence_no — used only for encryption, not sent).
+    let mut aad_lfh = wire_lfh.clone();
+    aad_lfh.sequence_no = aad_sequence_no;
+    let aad_lfh_bytes = write_lfh(&flags, &aad_lfh).expect("wrong-lfh-aad AAD LFH");
+
+    let aad = build_aead_aad(&global_flags_section, &aad_lfh_bytes);
+    let secret_key = Zeroizing::new(key.to_vec());
+    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &secret_key, &nonce, &aad, &inner_payload)
+        .expect("aead_encrypt for wrong-lfh-aad test");
+
+    let mut bytes = wire_lfh_bytes;
+    bytes.extend_from_slice(&ciphertext);
+    bytes
+}
+
+/// Builds an AEAD-encrypted additional control stream entry but uses a
+/// different global-flags section in the AAD than the active session has.
+///
+/// This simulates "wrong Global Header AAD": the ciphertext tag is bound to
+/// `wrong_gh_flags_bits`, but the receiver's active session uses the standard
+/// `NO_INDEX | ENCRYPTED` flags.  Authentication MUST fail.
+pub fn tls_exporter_encrypted_control_entry_wrong_gh_aad(
+    stream_id: u16,
+    sequence_no: u16,
+    opcode: u8,
+    inner_payload: Vec<u8>,
+    key: &[u8; 32],
+    wrong_gh_flags_bits: u32,
+) -> Vec<u8> {
+    let wire_flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
+    let wrong_flags = GlobalFlags::from_bits_truncate(wrong_gh_flags_bits);
+
+    // Wrong global-flags section used only for encryption.
+    let wrong_gfs_header = GlobalHeader {
+        version: 1,
+        flags_bytes: wrong_flags.bits().to_le_bytes().to_vec(),
+        flags: wrong_flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    let wrong_global_flags_section = global_header_flags_bytes(&wrong_gfs_header);
+
+    let mut nonce = [0u8; 24];
+    nonce[..12].copy_from_slice(&[0xADu8; 12]);
+    let ciphertext_size = inner_payload.len() + AEAD_TAG_SIZE;
+
+    let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), ciphertext_size as u64);
+    lfh.stream_id = stream_id;
+    lfh.sequence_no = sequence_no;
+    lfh.entry_mode = EntryMode::from_bits(
+        (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL | EntryMode::ENCRYPTED,
+    );
+    lfh.payload_size = ciphertext_size as u64;
+    lfh.uncompressed_size = inner_payload.len() as u64;
+    lfh.encr_algo_id = Some(ENCR_AES256_GCM);
+    lfh.iv_nonce = Some(nonce);
+
+    let lfh_bytes = write_lfh(&wire_flags, &lfh).expect("wrong-gh-aad LFH");
+    let aad = build_aead_aad(&wrong_global_flags_section, &lfh_bytes);
+    let secret_key = Zeroizing::new(key.to_vec());
+    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &secret_key, &nonce, &aad, &inner_payload)
+        .expect("aead_encrypt for wrong-gh-aad test");
+
+    let mut bytes = lfh_bytes;
+    bytes.extend_from_slice(&ciphertext);
+    bytes
+}
+
+/// Builds an encrypted additional control stream entry with a deliberately
+/// corrupted AEAD tag (last byte flipped).  Authentication MUST fail.
+pub fn tls_exporter_encrypted_control_entry_bad_tag(
+    stream_id: u16,
+    sequence_no: u16,
+    opcode: u8,
+    inner_payload: Vec<u8>,
+    key: &[u8; 32],
+) -> Vec<u8> {
+    let mut bytes = tls_exporter_encrypted_control_entry_bytes(
+        stream_id,
+        sequence_no,
+        opcode,
+        inner_payload,
+        key,
+    );
+    // Flip the last byte of the ciphertext+tag to corrupt the AEAD tag.
+    if let Some(last) = bytes.last_mut() {
+        *last ^= 0xFF;
+    }
+    bytes
+}
+
+/// Builds an additional control stream entry with `EntryMode::ENCRYPTED` set
+/// but with random bytes as the payload (not valid AEAD ciphertext+tag).
+/// Authentication MUST fail.
+pub fn tls_exporter_encrypted_control_entry_random_payload(
+    stream_id: u16,
+    sequence_no: u16,
+    opcode: u8,
+    random_payload_len: usize,
+) -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
+    let mut nonce = [0u8; 24];
+    nonce[..12].copy_from_slice(&[0xAEu8; 12]);
+    let random_bytes: Vec<u8> = (0..random_payload_len)
+        .map(|i| (i as u8).wrapping_mul(7).wrapping_add(13))
+        .collect();
+
+    let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), random_bytes.len() as u64);
+    lfh.stream_id = stream_id;
+    lfh.sequence_no = sequence_no;
+    lfh.entry_mode = EntryMode::from_bits(
+        (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL | EntryMode::ENCRYPTED,
+    );
+    lfh.payload_size = random_bytes.len() as u64;
+    lfh.uncompressed_size = random_bytes.len() as u64;
+    lfh.encr_algo_id = Some(ENCR_AES256_GCM);
+    lfh.iv_nonce = Some(nonce);
+
+    let mut bytes = write_lfh(&flags, &lfh).expect("random-payload LFH");
+    bytes.extend_from_slice(&random_bytes);
+    bytes
+}
 ///
 /// This simulates a plaintext entry arriving after TLS_EXPORTER binding is
 /// active.  The transport layer MUST reject this with `SarError::AuthFailed`.

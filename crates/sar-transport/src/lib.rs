@@ -16,11 +16,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use sar_core::{
-    ArchiveReaderOptions, EntryMode, GlobalHeader, KeyProvider, KmsContext, ResourceLimits,
-    SarCryptoError, SarError, SarStatus, SecretBytes, StreamArchiveParser, StreamEvent, StreamStep,
-    parse_lfh,
+    ArchiveReaderOptions, EntryMode, GlobalHeader, KeyProvider, KmsContext, KmsData, KmsParams,
+    LocalFileHeader, ResourceLimits, SarCryptoError, SarError, SarStatus, SecretBytes,
+    StreamArchiveParser, StreamEvent, StreamStep, global_header_flags_bytes, parse_lfh,
 };
-use sar_crypto::{KMS_TLS_EXPORTER, SecretString};
+use sar_crypto::{
+    KMS_TLS_EXPORTER, SecretString, aad::build_aead_aad, aead::aead_decrypt,
+    parse_tls_exporter_kms_payload, resolve_cek,
+};
 
 /// Wraps an `Arc<dyn KeyProvider>` so it can be placed in a `Box<dyn KeyProvider>`
 /// owned by `StreamArchiveParser`.  All methods simply delegate to the inner Arc.
@@ -825,6 +828,10 @@ impl InMemoryTransport {
                                                     {
                                                         ControlLoopEvent::NeedMore
                                                     } else {
+                                                        // Capture raw bytes before draining.
+                                                        let lfh_bytes_for_aad = context
+                                                            .quic_pending_bytes[..header_size]
+                                                            .to_vec();
                                                         let entry = SessionEntry {
                                                             header: lfh,
                                                             payload: context.quic_pending_bytes
@@ -856,28 +863,86 @@ impl InMemoryTransport {
                                                             ControlLoopEvent::ParserError(
                                                                 SarError::AuthFailed(
                                                                     "TLS_EXPORTER binding active: \
-                                                                     unencrypted additional control \
-                                                                     stream entry rejected",
+                                                                         unencrypted additional control \
+                                                                         stream entry rejected",
                                                                 ),
                                                             )
                                                         } else {
-                                                            context
-                                                                .quic_pending_bytes
-                                                                .drain(..total_size);
-                                                            if let Some(now) = now_ms {
-                                                                context.last_valid_activity_ms =
-                                                                    Some(now);
-                                                                self.connection_last_activity_ms =
-                                                                    Some(now);
-                                                            }
-                                                            let sequence_no =
-                                                                entry.header.sequence_no;
-                                                            let result = context
-                                                                .manager
-                                                                .process_entry(&entry);
-                                                            ControlLoopEvent::SessionResult {
-                                                                sequence_no,
-                                                                result,
+                                                            // When TLS_EXPORTER binding is active
+                                                            // and the entry is marked ENCRYPTED,
+                                                            // authenticate and decrypt the payload
+                                                            // before passing to SessionManager.
+                                                            // Only decrypted plaintext is forwarded.
+                                                            let plaintext_result = if self
+                                                                .tls_exporter_bound
+                                                                .contains(&attached_sar_stream_id)
+                                                                && entry
+                                                                    .header
+                                                                    .entry_mode
+                                                                    .is_encrypted()
+                                                            {
+                                                                match self
+                                                                            .key_provider
+                                                                            .as_ref()
+                                                                        {
+                                                                            None => {
+                                                                                Err(SarError::AuthFailed(
+                                                                                    "no key provider \
+                                                                                     for additional \
+                                                                                     control stream \
+                                                                                     AEAD decryption",
+                                                                                ))
+                                                                            }
+                                                                            Some(kp) => {
+                                                                                decrypt_additional_control_payload(
+                                                                                    kp,
+                                                                                    active_header,
+                                                                                    &entry.header,
+                                                                                    &lfh_bytes_for_aad,
+                                                                                    &entry.payload,
+                                                                                )
+                                                                            }
+                                                                        }
+                                                            } else {
+                                                                // Not TLS_EXPORTER bound:
+                                                                // forward payload as-is.
+                                                                Ok(entry.payload)
+                                                            };
+
+                                                            match plaintext_result {
+                                                                Err(err) => {
+                                                                    ControlLoopEvent::ParserError(
+                                                                        err,
+                                                                    )
+                                                                }
+                                                                Ok(plaintext) => {
+                                                                    context
+                                                                        .quic_pending_bytes
+                                                                        .drain(..total_size);
+                                                                    if let Some(now) = now_ms {
+                                                                        context.last_valid_activity_ms =
+                                                                                Some(now);
+                                                                        self.connection_last_activity_ms =
+                                                                                Some(now);
+                                                                    }
+                                                                    let sequence_no =
+                                                                        entry.header.sequence_no;
+                                                                    let processed_entry =
+                                                                        SessionEntry {
+                                                                            header: entry.header,
+                                                                            payload: plaintext,
+                                                                            degraded: false,
+                                                                        };
+                                                                    let result = context
+                                                                        .manager
+                                                                        .process_entry(
+                                                                            &processed_entry,
+                                                                        );
+                                                                    ControlLoopEvent::SessionResult {
+                                                                            sequence_no,
+                                                                            result,
+                                                                        }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -1306,6 +1371,77 @@ impl InMemoryTransport {
         }
         Ok(actions)
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// AEAD helpers for additional-control-stream decryption (M10i)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Authenticate and decrypt a ciphertext payload from an additional QUIC
+/// control stream entry.
+///
+/// # AAD construction
+///
+/// `AAD = global_header_flags_bytes(active_header) || lfh_bytes`
+///
+/// where `active_header` is the canonical Global Header of the SAR session
+/// identified by the LFH Stream ID, and `lfh_bytes` are the raw LFH bytes
+/// physically present on the additional control stream.
+///
+/// # Errors
+///
+/// Returns [`SarError::AuthFailed`] on any failure: missing LFH fields,
+/// CEK resolution failure, or AEAD tag mismatch.  Partially decrypted
+/// buffers are never exposed on failure.
+fn decrypt_additional_control_payload(
+    key_provider: &Arc<dyn KeyProvider>,
+    active_header: &GlobalHeader,
+    lfh: &LocalFileHeader,
+    lfh_bytes: &[u8],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, SarError> {
+    let encr_algo_id = lfh.encr_algo_id.ok_or(SarError::AuthFailed(
+        "ENCRYPTED additional control entry missing encr_algo_id",
+    ))?;
+    let iv_nonce = lfh.iv_nonce.ok_or(SarError::AuthFailed(
+        "ENCRYPTED additional control entry missing iv_nonce",
+    ))?;
+
+    // Derive CEK from key provider using active session's KMS context.
+    let kms_context = build_kms_context_for_additional_control(active_header)?;
+    let cek = resolve_cek(key_provider.as_ref(), &kms_context).map_err(|_| {
+        SarError::AuthFailed("CEK resolution failed for additional control stream AEAD")
+    })?;
+
+    // Build AAD: global-flags section || LFH bytes.
+    let global_flags_section = global_header_flags_bytes(active_header);
+    let aad = build_aead_aad(&global_flags_section, lfh_bytes);
+
+    // Authenticate and decrypt; never expose plaintext on failure.
+    aead_decrypt(encr_algo_id, &cek, &iv_nonce, &aad, ciphertext).map_err(|_| {
+        SarError::AuthFailed("AEAD authentication failed on additional control stream")
+    })
+}
+
+/// Build a [`KmsContext`] for AEAD key derivation on an additional control
+/// stream, using the KMS metadata from the active session's Global Header.
+fn build_kms_context_for_additional_control(
+    active_header: &GlobalHeader,
+) -> Result<KmsContext, SarError> {
+    let kms: &KmsData = active_header.kms.as_ref().ok_or(SarError::Internal(
+        "tls_exporter_bound session missing KMS data",
+    ))?;
+    if kms.mode_id != KMS_TLS_EXPORTER {
+        return Err(SarError::Internal(
+            "unexpected KMS mode in tls_exporter_bound session",
+        ));
+    }
+    let tls_params = parse_tls_exporter_kms_payload(&kms.payload)
+        .map_err(|_| SarError::AuthFailed("failed to parse TLS_EXPORTER KMS payload for AEAD"))?;
+    Ok(KmsContext {
+        mode_id: kms.mode_id,
+        params: KmsParams::TlsExporter(tls_params),
+    })
 }
 
 impl SarTransportBinding for InMemoryTransport {

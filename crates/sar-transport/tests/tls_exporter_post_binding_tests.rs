@@ -260,8 +260,13 @@ fn tls_exporter_additional_control_stream_encrypted_entry_is_accepted() {
     // Feed the encrypted entry — this is also the first entry, triggering
     // the control-stream attachment probe.  The LFH has stream_id=11 and
     // EntryMode::ENCRYPTED set.
-    let entry =
-        tls_exporter_encrypted_control_entry_bytes(11, 0, SessionOpCode::Ack as u8, ack_payload(0));
+    let entry = tls_exporter_encrypted_control_entry_bytes(
+        11,
+        0,
+        SessionOpCode::Ack as u8,
+        ack_payload(0),
+        &TEST_KEY,
+    );
     let actions = t
         .feed_bytes(TransportStreamId(2), &entry, Some(2))
         .expect("feed encrypted ack");
@@ -363,8 +368,13 @@ fn tls_exporter_aead_failure_on_control_stream_is_stream_local() {
     );
 
     // Feed an encrypted entry to stream C — must be accepted.
-    let good_entry =
-        tls_exporter_encrypted_control_entry_bytes(15, 0, SessionOpCode::Ack as u8, ack_payload(0));
+    let good_entry = tls_exporter_encrypted_control_entry_bytes(
+        15,
+        0,
+        SessionOpCode::Ack as u8,
+        ack_payload(0),
+        &TEST_KEY,
+    );
     let actions_c = t
         .feed_bytes(TransportStreamId(3), &good_entry, Some(3))
         .expect("feed good entry to C");

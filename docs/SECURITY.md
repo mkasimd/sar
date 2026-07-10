@@ -136,12 +136,25 @@ This document reflects current implemented behavior only.
 
 - **Post-binding enforcement**: for KMS Mode `0x04 TLS_EXPORTER`, `SESSION_INIT` is the only permitted plaintext bootstrap entry.  After `SESSION_INIT` activates the session, every subsequent SAR entry on the primary stream and on all attached additional QUIC control streams MUST carry `EntryMode::ENCRYPTED`.
 - Any unencrypted SAR entry received after binding is active is rejected with `SAR_ERR_AUTH_FAILED`.  The transport never falls back to plaintext and never silently downgrades from required TLS_EXPORTER SAR-AEAD mode.
+
+### Additional QUIC control-stream AEAD decryption (wired in `run_additional_control_stream_loop`)
+
+For LFH-direct additional QUIC control streams after TLS_EXPORTER SAR-AEAD binding is active, the implementation **authenticates and decrypts** the payload before passing it to `SessionManager::process_entry`.  Only decrypted plaintext bytes are forwarded; ciphertext bytes are never forwarded.
+
+- **AAD construction**: `global_header_flags_bytes(active_session_global_header) || wire_lfh_bytes`.  The global-flags section is derived from the canonical Global Header of the SAR session identified by the LFH Stream ID (KMS payload excluded from the flags section, consistent with `build_aead_aad`).  The LFH bytes are those physically present on the additional control stream.
+- **Key derivation**: the CEK is resolved from the `KeyProvider` supplied to `InMemoryTransport::with_key_provider` via `resolve_cek`.  For TLS_EXPORTER sessions this is expected to be a pre-derived key supplied by the transport binding.
+- **Algorithm**: determined by `encr_algo_id` in the LFH (set by the sender).
+- **Rejection policy**:
+  - Plaintext entries (no `EntryMode::ENCRYPTED` bit) → `SAR_ERR_AUTH_FAILED`.
+  - `EntryMode::ENCRYPTED` set but tag verification fails (wrong key, wrong AAD, tampered ciphertext, tampered LFH bytes, wrong Global Header bytes, random payload) → `SAR_ERR_AUTH_FAILED`.
+  - Missing `encr_algo_id` or `iv_nonce` in a marked-encrypted LFH → `SAR_ERR_AUTH_FAILED`.
+  - No key provider present when decryption is required → `SAR_ERR_AUTH_FAILED`.
 - `LOSS_TOLERANT` does not suppress post-binding plaintext enforcement.  AEAD failures are never treated as acceptable degraded output.
 - AEAD failure on one additional QUIC control stream is stream-local; the QUIC policy resets only the affected stream and does not close the connection or affect other sessions.
 - Plaintext is never exposed on AEAD authentication failure: `aead_decrypt` zeroizes the output buffer before returning `SAR_ERR_AUTH_FAILED`.
-- Receivers must not try multiple key usages after authentication failure.
-- `CTL!` remains removed and rejected with `SAR_ERR_INVALID_MAGIC` regardless of KMS mode.
-- `InMemoryTransport::with_key_provider` allows production and test code to inject a `KeyProvider` that supplies the TLS-exporter-derived CEK for inline `StreamArchiveParser` AEAD decryption; no key material is stored in SAR frames or logs.
+- The implementation never tries multiple key usages after authentication failure.
+- `CTL!` remains rejected with `SAR_ERR_INVALID_MAGIC` regardless of KMS mode.
+- `InMemoryTransport::with_key_provider` allows production and test code to inject a `KeyProvider` that supplies the TLS-exporter-derived CEK for both `StreamArchiveParser` AEAD decryption (primary stream) and the additional-control-stream manual AEAD path; no key material is stored in SAR frames or logs.
 
 ## FEC and AEAD ordering
 
