@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["rt", "net", "io-util", "sync"], optional =
 [dev-dependencies]
 rcgen = "0.14"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net"] }
+zeroize = { workspace = true }
 
 [lints]
 workspace = true

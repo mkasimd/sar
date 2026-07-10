@@ -323,6 +323,14 @@ pub struct InMemoryTransport {
     control_stream_attachments: BTreeMap<TransportStreamId, u16>,
     rejected_sar_stream_ids: BTreeSet<u16>,
     connection_last_activity_ms: Option<u64>,
+    /// SAR Stream IDs for which TLS_EXPORTER SAR-AEAD binding is active.
+    ///
+    /// After `SESSION_INIT` completes for a `KMS_TLS_EXPORTER` session, every
+    /// subsequent SAR entry on the primary stream and on attached additional
+    /// QUIC control streams MUST have `EntryMode::ENCRYPTED` set.  Any
+    /// unencrypted entry received after binding is active is rejected with
+    /// [`SarError::AuthFailed`]; the transport never falls back to plaintext.
+    tls_exporter_bound: BTreeSet<u16>,
 }
 
 impl InMemoryTransport {
@@ -339,6 +347,7 @@ impl InMemoryTransport {
             control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
+            tls_exporter_bound: BTreeSet::new(),
         }
     }
 
@@ -355,6 +364,7 @@ impl InMemoryTransport {
             control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
+            tls_exporter_bound: BTreeSet::new(),
         }
     }
 
@@ -393,6 +403,14 @@ impl InMemoryTransport {
     #[must_use]
     pub fn is_sar_stream_bound(&self, sar_stream_id: u16) -> bool {
         self.active_sar_streams.contains_key(&sar_stream_id)
+    }
+
+    /// Returns `true` when TLS_EXPORTER SAR-AEAD binding is active for the
+    /// given SAR Stream ID (i.e. `SESSION_INIT` was processed and all further
+    /// entries must be encrypted).
+    #[must_use]
+    pub fn is_tls_exporter_bound(&self, sar_stream_id: u16) -> bool {
+        self.tls_exporter_bound.contains(&sar_stream_id)
     }
 
     /// Returns the session UUID for an active SAR stream, if known.
@@ -775,6 +793,26 @@ impl InMemoryTransport {
                                                             );
                                                         if let Err(err) = validation {
                                                             ControlLoopEvent::ParserError(err)
+                                                        } else if self
+                                                            .tls_exporter_bound
+                                                            .contains(&attached_sar_stream_id)
+                                                            && !entry
+                                                                .header
+                                                                .entry_mode
+                                                                .is_encrypted()
+                                                        {
+                                                            // TLS_EXPORTER binding is active for
+                                                            // the attached session; plaintext
+                                                            // entries on additional control streams
+                                                            // are rejected as an authentication
+                                                            // failure.
+                                                            ControlLoopEvent::ParserError(
+                                                                SarError::AuthFailed(
+                                                                    "TLS_EXPORTER binding active: \
+                                                                     unencrypted additional control \
+                                                                     stream entry rejected",
+                                                                ),
+                                                            )
                                                         } else {
                                                             context
                                                                 .quic_pending_bytes
@@ -954,8 +992,24 @@ impl InMemoryTransport {
                         .get(&transport_stream_id)
                         .and_then(|context| context.current_global_header.clone())
                     {
+                        // Activate TLS_EXPORTER SAR-AEAD binding when the
+                        // global header used KMS Mode 0x04.  From this point
+                        // all entries on this SAR stream (including entries on
+                        // attached additional QUIC control streams) MUST have
+                        // EntryMode::ENCRYPTED set; unencrypted entries are
+                        // rejected with SarError::AuthFailed.
+                        if header
+                            .kms
+                            .as_ref()
+                            .map(|k| k.mode_id == KMS_TLS_EXPORTER)
+                            .unwrap_or(false)
+                        {
+                            self.tls_exporter_bound.insert(stream_id);
+                        }
                         self.active_global_headers.insert(stream_id, header);
                     }
+                    // Clear pending state regardless of whether TLS_EXPORTER
+                    // was active (idempotent remove).
                     if let Some(context) = self.streams.get_mut(&transport_stream_id) {
                         context.state = TransportStreamState::Active;
                         context.bound_sar_stream_id = Some(stream_id);
@@ -978,6 +1032,7 @@ impl InMemoryTransport {
                     self.active_sar_streams.remove(&stream_id);
                     self.active_session_uuids.remove(&stream_id);
                     self.active_global_headers.remove(&stream_id);
+                    self.tls_exporter_bound.remove(&stream_id);
                     // Detach any control streams for this session.
                     self.control_stream_attachments
                         .retain(|_, &mut sid| sid != stream_id);
@@ -1135,12 +1190,35 @@ impl InMemoryTransport {
                             self.connection_last_activity_ms = Some(now);
                         }
                         let sequence_no = entry.header.sequence_no;
-                        let result = context
-                            .manager
-                            .process_entry(&SessionEntry::from_entry_reader(*entry));
-                        LoopEvent::SessionResult {
-                            sequence_no,
-                            result,
+                        // TLS_EXPORTER post-binding enforcement: after SESSION_INIT
+                        // binds the session, every subsequent entry MUST carry
+                        // EntryMode::ENCRYPTED.  Plaintext entries received after
+                        // binding is active are a hard authentication failure.
+                        if let Some(sar_stream_id) = context.bound_sar_stream_id {
+                            if self.tls_exporter_bound.contains(&sar_stream_id)
+                                && !entry.header.entry_mode.is_encrypted()
+                            {
+                                LoopEvent::ParserError(SarError::AuthFailed(
+                                    "TLS_EXPORTER binding active: \
+                                     unencrypted SAR entry rejected post-binding",
+                                ))
+                            } else {
+                                let result = context
+                                    .manager
+                                    .process_entry(&SessionEntry::from_entry_reader(*entry));
+                                LoopEvent::SessionResult {
+                                    sequence_no,
+                                    result,
+                                }
+                            }
+                        } else {
+                            let result = context
+                                .manager
+                                .process_entry(&SessionEntry::from_entry_reader(*entry));
+                            LoopEvent::SessionResult {
+                                sequence_no,
+                                result,
+                            }
                         }
                     }
                     Ok(StreamStep::Ready(StreamEvent::ArchiveComplete(_))) => {
@@ -1396,6 +1474,7 @@ impl SarTransportBinding for InMemoryTransport {
             {
                 self.active_sar_streams.remove(&sar_stream_id);
                 self.active_session_uuids.remove(&sar_stream_id);
+                self.tls_exporter_bound.remove(&sar_stream_id);
                 // Detach any control streams for this session.
                 self.control_stream_attachments
                     .retain(|_, &mut sid| sid != sar_stream_id);
@@ -1434,6 +1513,7 @@ impl SarTransportBinding for InMemoryTransport {
         {
             self.active_sar_streams.remove(&sar_stream_id);
             self.active_session_uuids.remove(&sar_stream_id);
+            self.tls_exporter_bound.remove(&sar_stream_id);
             self.control_stream_attachments
                 .retain(|_, &mut sid| sid != sar_stream_id);
         }
