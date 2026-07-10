@@ -18,6 +18,8 @@ use sar_delta::{
     vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
+use sar_fragmentation::FragmentDescriptor;
+use sar_sparse::{SparseExtent, apply_sparse_reconstruction, validate_sparse_extents};
 use serde::Serialize;
 
 use crate::{
@@ -83,7 +85,7 @@ pub struct EntryMetadata {
     pub fragment_index: Option<u32>,
     /// Typed fragment descriptor (absolute offset + declared size).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fragment_descriptor: Option<crate::fragment::FragmentDescriptor>,
+    pub fragment_descriptor: Option<FragmentDescriptor>,
     /// True when the `IS_FRAGMENT` entry mode bit is set.
     pub is_fragment: bool,
     /// True when the `LAST_FRAGMENT` entry mode bit is set.
@@ -93,7 +95,7 @@ pub struct EntryMetadata {
     /// Parsed sparse extents.  `None` when `SPARSE_FILES` is not enabled or
     /// the sparse map is empty.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
+    pub sparse_extents: Option<Vec<SparseExtent>>,
     /// Per-file CRC32.  `None` when `PER_FILE_CRC` global flag is not set
     /// or the field contains zero.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -511,7 +513,7 @@ pub struct SparseWriteOptions {
     /// The writer will not derive this value from the extents alone.
     pub logical_size: u64,
     /// Ordered, non-overlapping sparse extents that describe the data regions.
-    pub extents: Vec<crate::sparse::SparseExtent>,
+    pub extents: Vec<SparseExtent>,
 }
 
 /// Reader-side limits.
@@ -1013,7 +1015,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         };
 
         // Parse sparse extents (needed for both legacy and new metadata fields).
-        let sparse_extents: Option<Vec<crate::sparse::SparseExtent>> =
+        let sparse_extents: Option<Vec<SparseExtent>> =
             if header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
                 let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
                 Some(crate::sparse::parse_sparse_map(
@@ -1112,13 +1114,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
             };
 
         // Fragment descriptor for new metadata.
-        let frag_desc_new =
-            lfh.fragment_descriptor
-                .as_ref()
-                .map(|fd| crate::fragment::FragmentDescriptor {
-                    absolute_offset: fd.absolute_offset,
-                    fragment_size: fd.fragment_size,
-                });
+        let frag_desc_new = lfh
+            .fragment_descriptor
+            .as_ref()
+            .map(|fd| FragmentDescriptor {
+                absolute_offset: fd.absolute_offset,
+                fragment_size: fd.fragment_size,
+            });
 
         // Fragment presence model.
         let fragment_presence: crate::metadata::FieldPresence<
@@ -1409,13 +1411,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// address automatically:
     ///
     /// * **Fragment groups** — entries sharing a `fragment_id` are assembled
-    ///   using [`crate::fragment::reconstruct_fragments`].  All fragments must
+    ///   using [`sar_fragmentation::reconstruct_fragments`].  All fragments must
     ///   be present unless `allow_lossy` is `true` **and** the group has
     ///   `LOSS_TOLERANT` set.
     /// * **Sparse entries** — when global `SPARSE_FILES` is active and an entry
     ///   carries a sparse map, the raw data segments are scattered into a
     ///   zero-filled logical-size buffer via
-    ///   [`crate::sparse::apply_sparse_reconstruction`].
+    ///   [`apply_sparse_reconstruction`].
     ///
     /// # Loss-tolerant behavior
     ///
@@ -1481,7 +1483,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         &mut self,
         allow_lossy: bool,
     ) -> Result<Vec<LogicalFile>, SarError> {
-        use crate::fragment::{FragmentEntry, reconstruct_fragments};
+        use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
         use std::collections::HashMap;
 
         // Ensure global header is read.
@@ -1515,7 +1517,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             entries: Vec<EntryReader>,
             /// Sparse extents from fragment index 0.  `None` when this group
             /// has no sparse map.
-            sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
+            sparse_extents: Option<Vec<SparseExtent>>,
             /// LFH `Uncompressed Size` from fragment index 0 for sparse
             /// reconstruction.  Meaningful only when `sparse_extents.is_some()`.
             sparse_uncompressed_size: u64,
@@ -1679,12 +1681,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         "sparse logical file size exceeds configured limit",
                     ));
                 }
-                crate::sparse::validate_sparse_extents(
+                validate_sparse_extents(
                     extents,
                     group_sparse_uncompressed_size,
                     &self.options.limits.sparse_limits(),
                 )?;
-                crate::sparse::apply_sparse_reconstruction(
+                apply_sparse_reconstruction(
                     &raw,
                     extents,
                     group_sparse_uncompressed_size,
@@ -1730,7 +1732,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     fn apply_sparse_if_needed(
         limits: &ResourceLimits,
         payload: Vec<u8>,
-        sparse_extents: &Option<Vec<crate::sparse::SparseExtent>>,
+        sparse_extents: &Option<Vec<SparseExtent>>,
         uncompressed_size: u64,
     ) -> Result<Vec<u8>, SarError> {
         let Some(extents) = sparse_extents else {
@@ -1744,12 +1746,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // This correctly handles trailing sparse holes that extend beyond the
         // last extent.
         limits.check_decoded_entry_size(uncompressed_size)?;
-        crate::sparse::validate_sparse_extents(
-            extents,
-            uncompressed_size,
-            &limits.sparse_limits(),
-        )?;
-        Ok(crate::sparse::apply_sparse_reconstruction(
+        validate_sparse_extents(extents, uncompressed_size, &limits.sparse_limits())?;
+        Ok(apply_sparse_reconstruction(
             &payload,
             extents,
             uncompressed_size,
@@ -2456,7 +2454,7 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         // Validate extents against logical_size (overlap and bounds).
-        crate::sparse::validate_sparse_extents(
+        validate_sparse_extents(
             &sparse.extents,
             sparse.logical_size,
             &ResourceLimits::unlimited().sparse_limits(),
@@ -2504,7 +2502,7 @@ impl<W: Write> ArchiveWriter<W> {
 
         // Build LFH: uncompressed_size = logical_size (full sparse extent including holes).
         let is_64bit = self.flags.contains(GlobalFlags::SIZE_64BIT);
-        let sparse_map_bytes = crate::sparse::write_sparse_map(&sparse.extents, is_64bit);
+        let sparse_map_bytes = crate::sparse::write_sparse_map(&sparse.extents, is_64bit)?;
 
         let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), encoded_len);
         lfh.uncompressed_size = sparse.logical_size;

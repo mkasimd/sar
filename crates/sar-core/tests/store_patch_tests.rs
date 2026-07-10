@@ -304,7 +304,7 @@ fn store_patch_with_sparse_applies_patch_before_sparse_reconstruction() {
     gathered.extend_from_slice(data_a);
     gathered.extend_from_slice(data_b);
 
-    let sparse_map = write_sparse_map(&extents, false);
+    let sparse_map = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA | GlobalFlags::SPARSE_FILES;
     let mut archive = write_global_header(&GlobalHeader {

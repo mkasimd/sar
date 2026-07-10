@@ -118,13 +118,18 @@ pub struct SparseExtent {
 /// Validates a sparse extent list against the logical file size.
 ///
 /// Checks that:
+/// - No extent has a zero `length` field.
 /// - No extent's `offset + length` exceeds `logical_size`.
 /// - No two extents overlap (extents must be sorted by offset in ascending
-///   order with no overlap).
+///   order with no overlap; out-of-order entries fail the overlap check).
+///
+/// **Does not check** payload-length agreement — that check lives in
+/// [`apply_sparse_reconstruction`], which receives the actual payload bytes.
 ///
 /// # Errors
 ///
-/// Returns [`SparseError::InvalidMap`] on overlap or bounds violation.
+/// Returns [`SparseError::InvalidMap`] on zero-length extent, overlap, or
+/// bounds violation.
 /// Returns [`SparseError::Overflow`] on arithmetic overflow.
 pub fn validate_sparse_extents(
     extents: &[SparseExtent],
@@ -135,6 +140,9 @@ pub fn validate_sparse_extents(
     let mut last_end: u64 = 0;
     let mut total_length: u64 = 0;
     for extent in extents {
+        if extent.length == 0 {
+            return Err(SparseError::InvalidMap("zero-length sparse extent"));
+        }
         let end = extent
             .offset
             .checked_add(extent.length)
@@ -260,10 +268,43 @@ mod tests {
     }
 
     #[test]
+    fn zero_length_extent_rejected() {
+        // Zero-length extents are not permitted.
+        let extents = vec![ext(0, 0)];
+        let result = validate_sparse_extents(&extents, 8, &limits());
+        assert!(
+            matches!(result, Err(SparseError::InvalidMap(_))),
+            "expected InvalidMap for zero-length extent, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn zero_length_extent_in_list_rejected() {
+        // A zero-length extent embedded in a larger list is rejected.
+        let extents = vec![ext(0, 0), ext(2, 3)];
+        let result = validate_sparse_extents(&extents, 10, &limits());
+        assert!(
+            matches!(result, Err(SparseError::InvalidMap(_))),
+            "expected InvalidMap for zero-length extent in list, got {result:?}"
+        );
+    }
+
+    #[test]
     fn overlapping_extents_rejected() {
         let extents = vec![ext(0, 8), ext(4, 4)];
         let result = validate_sparse_extents(&extents, 16, &limits());
         assert!(matches!(result, Err(SparseError::InvalidMap(_))));
+    }
+
+    #[test]
+    fn out_of_order_extents_rejected() {
+        // Extents not in ascending order of offset are caught by the overlap check.
+        let extents = vec![ext(8, 4), ext(0, 4)];
+        let result = validate_sparse_extents(&extents, 16, &limits());
+        assert!(
+            matches!(result, Err(SparseError::InvalidMap(_))),
+            "expected InvalidMap for out-of-order extents, got {result:?}"
+        );
     }
 
     #[test]
@@ -347,6 +388,20 @@ mod tests {
         let extents = vec![ext(0, 4)];
         let result = apply_sparse_reconstruction(b"DATA", &extents, 16, &limits);
         assert!(matches!(result, Err(SparseError::LimitExceeded(_))));
+    }
+
+    #[test]
+    fn reconstruction_zero_fills_holes_correctly() {
+        // Verify that gaps between extents are always zero-filled.
+        let extents = vec![ext(0, 2), ext(5, 2)];
+        let payload = b"ABCD";
+        let output = apply_sparse_reconstruction(payload, &extents, 8, &limits())
+            .expect("reconstruction ok");
+        assert_eq!(output.len(), 8);
+        assert_eq!(&output[0..2], b"AB");
+        assert_eq!(&output[2..5], b"\x00\x00\x00"); // hole
+        assert_eq!(&output[5..7], b"CD");
+        assert_eq!(&output[7..8], b"\x00"); // trailing hole
     }
 
     #[test]

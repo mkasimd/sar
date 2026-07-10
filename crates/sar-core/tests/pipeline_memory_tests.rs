@@ -17,17 +17,17 @@ use std::io::Cursor;
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions};
 use sar_core::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput,
-    FragmentError, FragmentLimits, GlobalFlags, ResourceLimits, SarError, SparseError,
-    SparseLimits,
+    GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
     },
-    fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
-    sparse::{
-        SparseExtent, apply_sparse_reconstruction, validate_sparse_extents, write_sparse_map,
-    },
+    sparse::{SparseExtent, write_sparse_map},
 };
+use sar_fragmentation::{
+    FragmentDescriptor, FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments,
+};
+use sar_sparse::{SparseError, SparseLimits, apply_sparse_reconstruction, validate_sparse_extents};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -342,7 +342,7 @@ fn excessive_sparse_map_size_fails_at_parse_stage() {
 /// Fragment descriptor end overflow is caught.
 #[test]
 fn fragment_descriptor_end_overflow_fails() {
-    use sar_core::fragment::validate_fragment_group;
+    use sar_fragmentation::validate_fragment_group;
     let fragments = vec![FragmentEntry {
         fragment_index: 0,
         is_last_fragment: true,
@@ -442,7 +442,7 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
         offset: 1023,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
@@ -712,7 +712,7 @@ fn read_all_logical_files_rejects_sparse_expansion_bomb() {
         offset: 1024,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
@@ -753,7 +753,7 @@ fn read_all_logical_files_sparse_bounded_success() {
         offset: 1023,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 

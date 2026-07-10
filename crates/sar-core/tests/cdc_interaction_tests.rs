@@ -330,7 +330,7 @@ fn cdc_support_with_sparse_entry_works() {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,

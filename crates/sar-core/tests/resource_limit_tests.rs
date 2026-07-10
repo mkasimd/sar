@@ -1,19 +1,17 @@
 use std::io::Cursor;
 
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, FragmentError, GlobalFlags, ResourceLimits, SarError,
-    SparseError,
+    ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
     format::{
         CentralDictionary, GlobalHeader, LocalFileHeader, lfh_bytes_for_aad,
         parse_central_dictionary, parse_global_header, parse_lfh, write_central_dictionary,
         write_global_header, write_lfh,
     },
-    fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
-    sparse::{
-        SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
-    },
+    sparse::{SparseExtent, parse_sparse_map},
     tlv::{Tlv, parse_tlvs, write_tlvs},
 };
+use sar_fragmentation::{FragmentDescriptor, FragmentEntry, FragmentError, reconstruct_fragments};
+use sar_sparse::{SparseError, apply_sparse_reconstruction, validate_sparse_extents};
 
 fn base_limits() -> ResourceLimits {
     ResourceLimits::default()

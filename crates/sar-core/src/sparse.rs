@@ -1,15 +1,25 @@
 //! Sparse-file map parsing, writing, and scatter-gather reconstruction.
 //!
-//! This module provides:
+//! This module provides physical LFH sparse map parse/write functions:
 //!
-//! * Physical LFH sparse map parse/write (`parse_sparse_map`, `write_sparse_map`):
-//!   these are wire-format functions and remain in `sar-core`.
-//! * Re-exports of semantic validation and reconstruction from [`sar_sparse`]:
-//!   `SparseExtent`, `validate_sparse_extents`, `apply_sparse_reconstruction`.
+//! * [`parse_sparse_map`] — decodes the on-wire byte blob into a
+//!   `Vec<SparseExtent>`.
+//! * [`write_sparse_map`] — encodes `SparseExtent` values to the on-wire byte
+//!   format.  Returns an error rather than silently truncating `u64` values
+//!   that exceed `u32::MAX` in 32-bit sparse-map mode.
+//!
+//! Semantic validation ([`sar_sparse::validate_sparse_extents`]) and
+//! scatter-gather reconstruction ([`sar_sparse::apply_sparse_reconstruction`])
+//! are owned by the `sar-sparse` crate.  Import them directly from there.
+//!
+//! # Architectural note on `SparseExtent` re-export
+//!
+//! [`SparseExtent`] is re-exported here because it is the shared data type
+//! between the wire-format functions in this module and the semantic functions
+//! in `sar-sparse`.  Callers of [`parse_sparse_map`] and [`write_sparse_map`]
+//! need to name the type without an additional direct dependency on `sar-sparse`.
 
-pub use sar_sparse::{
-    SparseError, SparseExtent, SparseLimits, apply_sparse_reconstruction, validate_sparse_extents,
-};
+pub use sar_sparse::SparseExtent;
 
 use crate::{error::SarError, limits::ResourceLimits};
 
@@ -77,7 +87,13 @@ pub fn parse_sparse_map(
 ///
 /// When `is_64bit` is `true` each entry is written as two little-endian `u64`
 /// values; otherwise as two little-endian `u32` values.
-pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8> {
+///
+/// # Errors
+///
+/// In 32-bit mode (`is_64bit = false`), returns [`SarError::Overflow`] if any
+/// extent's `offset` or `length` exceeds [`u32::MAX`].  Silent truncation is
+/// never permitted.
+pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError> {
     let entry_size: usize = if is_64bit { 16 } else { 8 };
     let mut bytes = Vec::with_capacity(extents.len() * entry_size);
     for extent in extents {
@@ -85,11 +101,15 @@ pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8> {
             bytes.extend_from_slice(&extent.offset.to_le_bytes());
             bytes.extend_from_slice(&extent.length.to_le_bytes());
         } else {
-            #[allow(clippy::cast_possible_truncation)]
-            bytes.extend_from_slice(&(extent.offset as u32).to_le_bytes());
-            #[allow(clippy::cast_possible_truncation)]
-            bytes.extend_from_slice(&(extent.length as u32).to_le_bytes());
+            let offset32 = u32::try_from(extent.offset).map_err(|_| {
+                SarError::Overflow("sparse extent offset exceeds u32::MAX in 32-bit sparse map")
+            })?;
+            let length32 = u32::try_from(extent.length).map_err(|_| {
+                SarError::Overflow("sparse extent length exceeds u32::MAX in 32-bit sparse map")
+            })?;
+            bytes.extend_from_slice(&offset32.to_le_bytes());
+            bytes.extend_from_slice(&length32.to_le_bytes());
         }
     }
-    bytes
+    Ok(bytes)
 }

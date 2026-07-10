@@ -16,11 +16,6 @@ pub mod fec;
 pub mod flags;
 /// Binary format structures and parser/writer functions.
 pub mod format;
-/// Fragment-group reassembly integration (Section 19).
-///
-/// Semantic logic lives in [`sar_fragmentation`]; this module re-exports it and
-/// owns wire-format integration with LFH fields.
-pub mod fragment;
 /// Checked binary parsing/writing primitives.
 pub mod io;
 /// Unified resource-limit model for the parse/read/write pipeline.
@@ -31,10 +26,11 @@ pub mod metadata;
 pub mod profile;
 /// Archive-level Data Recovery TLV inspection, planning, and repair.
 pub mod recovery;
-/// Sparse-file map parsing/writing and scatter-gather reconstruction integration.
+/// Sparse-file map parsing/writing.
 ///
-/// Wire-format parse/write lives here; semantic validation and reconstruction
-/// are re-exported from [`sar_sparse`].
+/// Wire-format parse/write lives here (`parse_sparse_map`, `write_sparse_map`).
+/// Semantic validation and reconstruction are owned by [`sar_sparse`]; import
+/// them directly from that crate.
 pub mod sparse;
 /// Forward-only stateless SAR byte-stream parser state model.
 pub mod stream;
@@ -67,10 +63,6 @@ pub use format::{
     lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header,
     parse_lfh, write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
-pub use fragment::{
-    FragmentDescriptor, FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments,
-    validate_fragment_group,
-};
 pub use limits::ResourceLimits;
 pub use metadata::{
     EntryCdcMetadata, EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata,
@@ -91,10 +83,7 @@ pub use sar_delta::{
     apply_store_patch, apply_vcdiff, bsdiff::BsdiffLimits, patch_algo_name, validate_patch_algo_id,
     vcdiff::VcdiffLimits,
 };
-pub use sparse::{
-    SparseError, SparseExtent, SparseLimits, apply_sparse_reconstruction, parse_sparse_map,
-    validate_sparse_extents, write_sparse_map,
-};
+pub use sparse::{SparseExtent, parse_sparse_map, write_sparse_map};
 pub use stream::{
     StreamArchiveParser, StreamArchiveSummary, StreamEvent, StreamParseState, StreamStep,
 };

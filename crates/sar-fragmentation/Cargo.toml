@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+sar-loss-tolerant = { path = "../sar-loss-tolerant" }
 
 [lints]
 workspace = true

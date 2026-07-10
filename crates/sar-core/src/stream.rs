@@ -657,7 +657,7 @@ impl StreamArchiveParser {
         let frag_desc_new =
             lfh.fragment_descriptor
                 .as_ref()
-                .map(|fd| crate::fragment::FragmentDescriptor {
+                .map(|fd| sar_fragmentation::FragmentDescriptor {
                     absolute_offset: fd.absolute_offset,
                     fragment_size: fd.fragment_size,
                 });

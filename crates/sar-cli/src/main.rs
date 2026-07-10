@@ -16,18 +16,16 @@ use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
     EncryptionSettings, EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider,
-    KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes,
-    fec::validate_recovery_tlv,
-    fragment::FragmentDescriptor,
-    fragment::FragmentEntry,
-    fragment::reconstruct_fragments,
-    fragment::validate_fragment_group,
-    inspect_recovery_metadata, plan_archive_repair, repair_archive,
-    sparse::{SparseExtent, validate_sparse_extents},
+    KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv,
+    inspect_recovery_metadata, plan_archive_repair, repair_archive, sparse::SparseExtent,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
 };
+use sar_fragmentation::{
+    FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
+};
+use sar_sparse::validate_sparse_extents;
 
 const SAR_SPEC_VERSION: &str = "1.0";
 const SAR_CD_VERSION: &str = "1";

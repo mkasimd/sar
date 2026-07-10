@@ -57,7 +57,7 @@ fn build_sparse_archive_with_crc(
     })
     .expect("header");
 
-    let sparse_map_bytes = write_sparse_map(extents, false);
+    let sparse_map_bytes = write_sparse_map(extents, false).expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), payload.len() as u64);
     lfh.uncompressed_size = uncompressed_size;
     lfh.sparse_map = sparse_map_bytes;
@@ -108,7 +108,7 @@ fn content_hash_preserved_in_entry_metadata() {
         offset: 0,
         length: 3,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 3);
     lfh.uncompressed_size = 3;
     lfh.sparse_map = sparse_map_bytes;

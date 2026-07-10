@@ -619,12 +619,16 @@
         "9b",
         "10a",
         "11a",
-        "11b"
+        "11b",
+        "11c",
+        "11c-cp"
       ],
       "features": [
         "Milestone 10a stateless forward-only stream parser/writer state model.",
         "Milestone 11a LFH Metadata API Completeness: expanded EntryInput, expanded EntryMetadata, FieldPresence<T> presence model, EntryKind, all metadata structs, complete LFH metadata round-trip.",
-        "Milestone 11b Filesystem Metadata Encode/Decode: FieldPresence-typed path_presence/permissions_presence/owner_presence/timestamps_presence in EntryMetadata, symlink_target metadata, symlink payload UTF-8 validation, directory payload validation, IS_SYMLINK->HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests."
+        "Milestone 11b Filesystem Metadata Encode/Decode: FieldPresence-typed path_presence/permissions_presence/owner_presence/timestamps_presence in EntryMetadata, symlink_target metadata, symlink payload UTF-8 validation, directory payload validation, IS_SYMLINK->HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests.",
+        "Milestone 11c: Crate-boundary cleanup \u2014 fragment semantic logic moved to sar-fragmentation, sparse semantic logic moved to sar-sparse, loss-tolerant policy helpers added to sar-loss-tolerant, partition deliberately deferred.",
+        "Milestone 11c-cp (corrective pass): sar_core::fragment module removed (was pure re-exports); semantic sparse re-exports removed from sar_core::sparse (SparseExtent kept as architectural re-export); sar-loss-tolerant integrated into sar-fragmentation; FragmentError::PayloadSizeMismatch and DuplicateIndex added (always fatal); zero-length sparse extents now rejected; write_sparse_map now returns Result<Vec<u8>, SarError> (fail-closed on 32-bit truncation); error conversion bridges updated."
       ],
       "modules": [
         {
@@ -4156,148 +4160,23 @@
             {
               "name": "write_sparse_map",
               "kind": "function",
-              "signature": "pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>",
+              "signature": "pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Encodes sparse extents to the on-wire byte format.",
+              "description": "Serializes sparse extents to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates.",
               "parameters": [],
               "returns": "Vec<u8>",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            },
-            {
-              "name": "validate_sparse_extents",
-              "kind": "function",
-              "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Validates sparse extents for overlap, bounds, and arithmetic overflow.",
-              "parameters": [],
-              "returns": "Result<(), SarError>",
               "errors": [
-                "SarError::LimitExceeded",
-                "SarError::InvalidMap",
-                "SarError::Overflow"
+                "SarError::Overflow if 32-bit mode and offset or length exceeds u32::MAX"
               ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "8",
+              "since_milestone": "11c-cp",
               "related_spec_sections": [],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            },
-            {
-              "name": "apply_sparse_reconstruction",
-              "kind": "function",
-              "signature": "pub fn apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<Vec<u8>, SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Scatter-gather reconstruction of a sparse logical file. Checks logical_size against configured limits before allocating. Sparse expansion-bomb attack shape (tiny payload + huge logical_size + sparse extent near end) returns LimitExceeded, not InvalidMap.",
-              "parameters": [],
-              "returns": "Result<Vec<u8>, SarError>",
-              "errors": [
-                "SarError::LimitExceeded",
-                "SarError::InvalidMap"
-              ],
-              "safety_notes": [
-                "Rejects oversized logical_size before allocation (expansion-bomb protection).",
-                "Error for oversized logical_size is LimitExceeded, not InvalidMap \u2014 the sparse map may be structurally valid."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            }
-          ]
-        },
-        {
-          "name": "fragment",
-          "path": "src/fragment.rs",
-          "items": [
-            {
-              "name": "FragmentDescriptor",
-              "kind": "struct",
-              "signature": "pub struct FragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Named-field struct for fragment placement. No .0/.1 tuple access in SAR-owned protocol/domain code.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [
-                "Named fields only; no .0/.1 tuple access in SAR-owned protocol/domain code."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Flat C struct mapping."
-            },
-            {
-              "name": "FragmentEntry",
-              "kind": "struct",
-              "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub descriptor: FragmentDescriptor, pub payload: Vec<u8> }",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "A single fragment payload and placement metadata.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "complex",
-              "ffi_notes": "Owns a Vec<u8>; needs opaque-buffer handling in FFI."
-            },
-            {
-              "name": "reconstruct_fragments",
-              "kind": "function",
-              "signature": "pub fn reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64, allow_lossy: bool, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Sorts by fragment_index and scatter-gathers by absolute_offset. Returns (data, is_degraded). Fragment group span bounded by max_fragment_group_span before allocation.",
-              "parameters": [],
-              "returns": "Result<(Vec<u8>, bool), SarError>",
-              "errors": [
-                "SarError::LimitExceeded",
-                "SarError::FragmentGap",
-                "SarError::InvalidMap"
-              ],
-              "safety_notes": [
-                "Fragment group span bounded by max_fragment_group_span before allocation.",
-                "Descriptor arithmetic overflow detected before any buffer is allocated.",
-                "Loss-tolerant gap fill bounded by max_loss_tolerant_gap.",
-                "AEAD failures are never suppressed by allow_lossy."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "complex",
               "ffi_notes": ""
             }
           ]
@@ -4629,6 +4508,13 @@
               "ffi_notes": ""
             }
           ]
+        },
+        {
+          "name": "fragment",
+          "path": "REMOVED",
+          "description": "Removed in M11c-cp. Was a pure compatibility re-export of sar-fragmentation types. Import from sar_fragmentation directly.",
+          "items": [],
+          "removed_in": "11c-cp"
         }
       ]
     },
@@ -6780,9 +6666,12 @@
       "purpose": "Fragment semantic validation and reassembly logic (moved from sar-core in M11c).",
       "status": "implemented",
       "milestones": [
-        "M11c"
+        "M11c",
+        "M11c-cp"
       ],
-      "features": [],
+      "features": [
+        "Milestone 11c-cp: Added FragmentError::PayloadSizeMismatch (payload.len() != descriptor.fragment_size, always fatal) and FragmentError::DuplicateIndex (duplicate fragment index, always fatal including with LOSS_TOLERANT). reconstruct_fragments now calls sar_loss_tolerant::gap_degraded_output_permitted() for gap policy. sar-fragmentation now depends on sar-loss-tolerant."
+      ],
       "modules": [
         {
           "name": "lib",
@@ -6794,7 +6683,7 @@
               "signature": "pub enum FragmentError",
               "visibility": "public",
               "stability": "stable",
-              "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow.",
+              "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow. M11c-cp additions: PayloadSizeMismatch (payload length does not match descriptor.fragment_size, always fatal) and DuplicateIndex (duplicate fragment_index in group, always fatal even with LOSS_TOLERANT).",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
@@ -6859,7 +6748,7 @@
               "signature": "pub fn reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Fills gaps for LOSS_TOLERANT entries.",
+              "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Fills gaps for LOSS_TOLERANT entries. M11c-cp: checks payload-size agreement and duplicate indexes before gap/degraded logic; calls sar_loss_tolerant::gap_degraded_output_permitted() for gap policy.",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
@@ -6950,9 +6839,12 @@
       "purpose": "Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core.",
       "status": "implemented",
       "milestones": [
-        "M11c"
+        "M11c",
+        "M11c-cp"
       ],
-      "features": [],
+      "features": [
+        "Milestone 11c-cp: validate_sparse_extents now rejects zero-length extents (returns SparseError::InvalidMap). sar_core::sparse semantic re-exports removed; import SparseError/SparseLimits/validate_sparse_extents/apply_sparse_reconstruction from sar_sparse directly."
+      ],
       "modules": [
         {
           "name": "lib",
@@ -7003,7 +6895,7 @@
               "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Validates sorted order, non-overlap, non-zero length, bounds, and payload sum.",
+              "description": "Validates sorted order, non-overlap, non-zero length, bounds, and payload sum. M11c-cp: zero-length extents now rejected with SparseError::InvalidMap.",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,

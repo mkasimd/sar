@@ -58,3 +58,91 @@ fn warning_status_is_exposed() {
     assert_eq!(SarStatus::WarnIncomplete.code(), 18);
     assert_eq!(SarStatus::WarnIncomplete.name(), "SAR_WARN_INCOMPLETE");
 }
+
+// ---------------------------------------------------------------------------
+// Error conversion bridge tests: FragmentError -> SarError
+// ---------------------------------------------------------------------------
+
+/// FragmentError::Bounds converts to SarError::Bounds (ErrBounds).
+#[test]
+fn fragment_error_bounds_converts_to_sar_bounds() {
+    let fe = sar_fragmentation::FragmentError::Bounds("test");
+    let sar: SarError = fe.into();
+    assert!(matches!(sar, SarError::Bounds(_)));
+}
+
+/// FragmentError::InvalidMap converts to SarError::InvalidMap (ErrInvalidMap).
+#[test]
+fn fragment_error_invalid_map_converts_to_sar_invalid_map() {
+    let fe = sar_fragmentation::FragmentError::InvalidMap("test");
+    let sar: SarError = fe.into();
+    assert!(matches!(sar, SarError::InvalidMap(_)));
+}
+
+/// FragmentError::FragmentGap converts to SarError::FragmentGap (ErrFragmentGap).
+#[test]
+fn fragment_error_gap_converts_to_sar_fragment_gap() {
+    let fe = sar_fragmentation::FragmentError::FragmentGap("test");
+    let sar: SarError = fe.into();
+    assert!(matches!(sar, SarError::FragmentGap(_)));
+}
+
+/// FragmentError::Overflow converts to SarError::Overflow (ErrOverflow).
+#[test]
+fn fragment_error_overflow_converts_to_sar_overflow() {
+    let fe = sar_fragmentation::FragmentError::Overflow("test");
+    let sar: SarError = fe.into();
+    assert!(matches!(sar, SarError::Overflow(_)));
+}
+
+/// FragmentError::LimitExceeded converts to SarError::LimitExceeded (ErrLimitExceeded).
+#[test]
+fn fragment_error_limit_converts_to_sar_limit() {
+    let fe = sar_fragmentation::FragmentError::LimitExceeded("test");
+    let sar: SarError = fe.into();
+    assert!(matches!(sar, SarError::LimitExceeded(_)));
+}
+
+/// FragmentError::PayloadSizeMismatch converts to SarError::Malformed (ErrMalformed).
+/// This is always a fatal structural error — cannot be suppressed by LOSS_TOLERANT.
+#[test]
+fn fragment_error_payload_mismatch_converts_to_sar_malformed() {
+    let fe = sar_fragmentation::FragmentError::PayloadSizeMismatch("test");
+    let sar: SarError = fe.into();
+    assert!(
+        matches!(sar, SarError::Malformed(_)),
+        "PayloadSizeMismatch must map to Malformed (fatal structural error)"
+    );
+}
+
+/// FragmentError::DuplicateIndex converts to SarError::InvalidMap (ErrInvalidMap).
+/// Duplicate indices represent a malformed fragment group.
+#[test]
+fn fragment_error_duplicate_index_converts_to_sar_invalid_map() {
+    let fe = sar_fragmentation::FragmentError::DuplicateIndex("test");
+    let sar: SarError = fe.into();
+    assert!(
+        matches!(sar, SarError::InvalidMap(_)),
+        "DuplicateIndex must map to InvalidMap (structural/malformed error)"
+    );
+}
+
+/// Fatal structural fragment errors must not map to degraded/warning statuses.
+#[test]
+fn fatal_fragment_errors_do_not_become_warnings() {
+    let fatal_cases = vec![
+        SarError::from(sar_fragmentation::FragmentError::PayloadSizeMismatch(
+            "test",
+        )),
+        SarError::from(sar_fragmentation::FragmentError::DuplicateIndex("test")),
+        SarError::from(sar_fragmentation::FragmentError::InvalidMap("test")),
+        SarError::from(sar_fragmentation::FragmentError::Bounds("test")),
+    ];
+    for err in fatal_cases {
+        assert_ne!(
+            err.status(),
+            SarStatus::WarnIncomplete,
+            "fatal fragment error must not map to WarnIncomplete: {err:?}"
+        );
+    }
+}

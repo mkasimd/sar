@@ -1404,6 +1404,8 @@ dependencies = [
  "sar-compression",
  "sar-core",
  "sar-crypto",
+ "sar-fragmentation",
+ "sar-sparse",
  "serde_json",
  "tempfile",
  "walkdir",
@@ -1468,6 +1470,7 @@ version = "0.1.0"
 name = "sar-fragmentation"
 version = "0.1.0"
 dependencies = [
+ "sar-loss-tolerant",
  "serde",
  "thiserror",
 ]

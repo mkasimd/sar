@@ -1,12 +1,9 @@
 //! Tests for LOSS_TOLERANT semantics: degraded reconstruction vs. hard failures.
 
-use sar_core::{
-    FragmentError,
-    error::SarError,
-    fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
-};
+use sar_core::error::SarError;
+use sar_fragmentation::{FragmentDescriptor, FragmentEntry, FragmentError, reconstruct_fragments};
 
-fn frag_unlimited() -> sar_core::FragmentLimits {
+fn frag_unlimited() -> sar_fragmentation::FragmentLimits {
     sar_core::ResourceLimits::unlimited().fragment_limits()
 }
 

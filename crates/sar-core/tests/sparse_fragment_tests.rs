@@ -72,7 +72,7 @@ fn build_two_fragment_sparse_archive(p: TwoFragmentArchiveParams<'_>) -> Vec<u8>
     })
     .expect("header");
 
-    let sparse_map_bytes = write_sparse_map(extents, false);
+    let sparse_map_bytes = write_sparse_map(extents, false).expect("write sparse map ok");
 
     // Fragment 0
     let mut mode0 = 1u16 << 5; // IS_FRAGMENT
@@ -234,7 +234,7 @@ fn sparse_map_on_nonzero_fragment_not_suppressed_by_allow_lossy() {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Only fragment index 1 with a sparse map (no fragment index 0 present)
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
@@ -295,7 +295,7 @@ fn reassembled_three_fragment_payload_scattered_by_sparse_map() {
             length: 2,
         },
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Fragment 0: b"AA" at offset 0
     let mut lfh0 = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 2);
@@ -413,7 +413,7 @@ fn sparse_fragment_missing_without_allow_lossy_fails() {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Only fragment 0, no LAST_FRAGMENT marker (missing fragment 1)
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
@@ -456,7 +456,7 @@ fn sparse_fragment_missing_with_allow_lossy_loss_tolerant_succeeds() {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Only fragment 0, LOSS_TOLERANT, no LAST_FRAGMENT
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
@@ -512,7 +512,7 @@ fn sparse_fragment_degraded_output_is_marked() {
         offset: 0,
         length: 3,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Fragment index 0 with LOSS_TOLERANT; no other fragment present
     let mut lfh = LocalFileHeader::minimal_store(b"sparse.bin".to_vec(), 3);

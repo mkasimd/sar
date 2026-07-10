@@ -40,7 +40,7 @@ fn write_sparse_archive(
     })
     .expect("global header");
 
-    let sparse_map_bytes = write_sparse_map(extents, false);
+    let sparse_map_bytes = write_sparse_map(extents, false).expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), payload.len() as u64);
     lfh.uncompressed_size = uncompressed_size;
     lfh.sparse_map = sparse_map_bytes;
@@ -76,7 +76,7 @@ fn write_two_fragment_sparse_archive(
             length: 2,
         },
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut lfh0 = LocalFileHeader::minimal_store(b"frag.bin".to_vec(), 2);
     lfh0.uncompressed_size = logical_size;

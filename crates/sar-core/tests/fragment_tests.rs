@@ -1,16 +1,19 @@
 //! Tests for fragment-group metadata parsing and reassembly.
 
 use sar_core::{
-    EntryMode, FragmentError, GlobalFlags,
+    EntryMode, GlobalFlags,
     format::{LfhFragmentDescriptor, LocalFileHeader, parse_lfh, write_lfh},
-    fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group},
+};
+use sar_fragmentation::{
+    FragmentDescriptor, FragmentEntry, FragmentError, reconstruct_fragments,
+    validate_fragment_group,
 };
 
 fn unlimited_limits() -> sar_core::ResourceLimits {
     sar_core::ResourceLimits::unlimited()
 }
 
-fn frag_unlimited() -> sar_core::FragmentLimits {
+fn frag_unlimited() -> sar_fragmentation::FragmentLimits {
     sar_core::ResourceLimits::unlimited().fragment_limits()
 }
 

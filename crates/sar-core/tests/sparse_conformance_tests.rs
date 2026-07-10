@@ -55,7 +55,7 @@ fn build_sparse_archive_64bit(
     })
     .expect("global header");
 
-    let sparse_map_bytes = write_sparse_map(extents, is_64bit);
+    let sparse_map_bytes = write_sparse_map(extents, is_64bit).expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), payload.len() as u64);
     lfh.uncompressed_size = uncompressed_size;
     lfh.sparse_map = sparse_map_bytes;
@@ -213,7 +213,7 @@ fn too_short_payload_fails_during_extraction() {
         offset: 0,
         length: 8,
     }];
-    let sparse_map = write_sparse_map(&extents, false);
+    let sparse_map = write_sparse_map(&extents, false).expect("write sparse map ok");
     let payload = b"ABCD"; // only 4 bytes but extent claims 8
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), payload.len() as u64);
@@ -249,7 +249,7 @@ fn excess_payload_fails_during_extraction() {
         offset: 0,
         length: 3,
     }];
-    let sparse_map = write_sparse_map(&extents, false);
+    let sparse_map = write_sparse_map(&extents, false).expect("write sparse map ok");
     let payload = b"ABCDE"; // 5 bytes but only 3 consumed by extents
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), payload.len() as u64);
@@ -291,7 +291,7 @@ fn extent_beyond_logical_size_returns_invalid_map() {
         offset: 8,
         length: 3,
     }]; // end = 11 > uncompressed_size = 10
-    let sparse_map = write_sparse_map(&extents, false);
+    let sparse_map = write_sparse_map(&extents, false).expect("write sparse map ok");
     let payload = b"ABC";
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), payload.len() as u64);
@@ -369,7 +369,7 @@ fn sparse_with_compression_decompresses_then_scatters() {
             length: 2,
         },
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Compress the sparse payload.
     let mut compressed = Vec::new();
@@ -426,7 +426,7 @@ fn sparse_descriptor_lengths_apply_to_decompressed_bytes() {
         offset: 0,
         length: 5,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut compressed = Vec::new();
     encode_stream(
@@ -478,7 +478,7 @@ fn corrupted_compressed_sparse_fails_before_scatter_gather() {
         offset: 0,
         length: 5,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
     let corrupted = b"\xFF\xFF\xFF\xFF\xFF"; // not valid DEFLATE
 
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), corrupted.len() as u64);
@@ -552,7 +552,7 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
             length: 2,
         },
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     // Fragment 0: first 3 bytes b"AAB" at absolute offset 0, fragment_size=3.
     // `uncompressed_size` = 10 = full logical file size including sparse holes.

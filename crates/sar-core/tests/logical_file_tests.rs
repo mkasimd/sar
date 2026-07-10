@@ -307,7 +307,7 @@ fn sparse_extents_reconstruct_with_zero_holes() {
             length: 4,
         },
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
     let payload = b"DATAEXTS"; // 8 bytes of data
 
     // uncompressed_size must be the full logical file size (12), not the
@@ -357,7 +357,7 @@ fn overlapping_sparse_extents_fail() {
             length: 8,
         }, // overlaps
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
     let payload = vec![0u8; 16];
 
     let mut lfh = LocalFileHeader::minimal_store(b"bad.bin".to_vec(), payload.len() as u64);
@@ -395,7 +395,7 @@ fn large_sparse_hole_capped_by_max_size() {
         offset: 1_000_000,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents_huge, false);
+    let sparse_map_bytes = write_sparse_map(&extents_huge, false).expect("write sparse map ok");
     let payload = b"ABCD";
 
     // uncompressed_size must be the full logical file size (1_000_004).
@@ -440,7 +440,7 @@ fn large_sparse_hole_capped_by_max_size() {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_small = write_sparse_map(&extents_small, false);
+    let sparse_map_small = write_sparse_map(&extents_small, false).expect("write sparse map ok");
     let mut lfh2 = LocalFileHeader::minimal_store(b"small.bin".to_vec(), 4);
     lfh2.sparse_map = sparse_map_small;
     archive2.extend_from_slice(&write_lfh(&flags2, &lfh2).expect("lfh2"));

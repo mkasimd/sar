@@ -382,7 +382,8 @@ Final role: fragment model, validation, grouping, and reassembly planning.
 * `archive reader/writer fragment integration` — calls into `sar-fragmentation` via `limits.fragment_limits()`.
 * `From<FragmentError> for SarError` — error propagation bridge.
 * `ResourceLimits::fragment_limits()` — converts `ResourceLimits` to `FragmentLimits`.
-* Re-exports of `FragmentError`, `FragmentLimits`, `FragmentDescriptor`, `FragmentEntry`, `validate_fragment_group`, `reconstruct_fragments` from the `sar_core::fragment` module for callers that import via `sar-core`.
+
+**M11c corrective pass (M11c-cp):** The `sar_core::fragment` module has been **removed**. It was a thin compatibility re-export with no architectural justification. Callers must import fragment types directly from `sar-fragmentation`.
 
 ### Dependency direction
 
@@ -463,11 +464,13 @@ Final role: sparse extent model, sparse map semantic validation, and sparse reco
 ### What remains in `sar-core`
 
 * `parse_sparse_map` / `write_sparse_map` — wire-format binary parse/write of the LFH sparse map blob; remain in `sar-core` because moving them would require `sar-sparse` to depend on `sar-core` (creating a cycle).
+* `SparseExtent` — re-exported from `sar_core::sparse` because `parse_sparse_map` and `write_sparse_map` return/accept it; callers of those wire-format functions must not need a direct `sar-sparse` dependency to name the type.  This re-export is **architectural**, not a compatibility shim.
 * `SPARSE_FILES` flag.
 * `archive reader/writer sparse integration` — calls into `sar-sparse` via `limits.sparse_limits()`.
 * `From<SparseError> for SarError` — error propagation bridge.
 * `ResourceLimits::sparse_limits()` — converts `ResourceLimits` to `SparseLimits`.
-* Re-exports of `SparseError`, `SparseLimits`, `SparseExtent`, `validate_sparse_extents`, `apply_sparse_reconstruction` from the `sar_core::sparse` module for callers that import via `sar-core`.
+
+**M11c corrective pass (M11c-cp):** Semantic sparse re-exports (`SparseError`, `SparseLimits`, `validate_sparse_extents`, `apply_sparse_reconstruction`) have been **removed** from `sar_core::sparse`. `SparseExtent` is kept as documented above. Callers must import semantic sparse types directly from `sar-sparse`.
 
 ### Dependency direction
 
@@ -534,7 +537,7 @@ sar-sparse:
 
 Final role: recoverable-vs-fatal degradation policy.
 
-**M11c status: Implemented.** Policy helpers have been added to this crate. LOSS_TOLERANT logic remains architecturally in `sar-core` (fail-closed behavior, archive reader/writer integration); this crate provides pure policy evaluation helpers.
+**M11c status: Implemented.** Policy helpers have been added to this crate. `sar-fragmentation` now depends on `sar-loss-tolerant` and calls `gap_degraded_output_permitted()` directly for missing-fragment gap decisions; LOSS_TOLERANT policy is no longer duplicated inline in `sar-fragmentation`.
 
 ### What was added (M11c)
 
@@ -554,8 +557,9 @@ Final role: recoverable-vs-fatal degradation policy.
 ### Dependency direction
 
 ```
-sar-loss-tolerant has no dependency on sar-core (pure policy, no cycle possible)
-sar-core does not depend on sar-loss-tolerant
+sar-fragmentation → sar-loss-tolerant  (one-way; sar-fragmentation calls gap_degraded_output_permitted)
+sar-loss-tolerant has no dependency on sar-core or sar-fragmentation
+sar-core does not depend on sar-loss-tolerant directly
 ```
 
 ### Deferred

@@ -464,6 +464,52 @@ crate-boundary implementation cleanup
 * no new protocol features
 * breaking Rust API: `validate_sparse_extents`, `apply_sparse_reconstruction` return `SparseError`; `validate_fragment_group`, `reconstruct_fragments` return `FragmentError`; `From` impls preserve `?` propagation
 
+## M11c-cp: ✅ implemented
+
+crate-boundary corrective pass — finish cleanup gaps found in M11c review
+
+* **sar-core re-exports removed:**
+  * `sar_core::fragment` module deleted entirely (was a pure compatibility re-export of `sar-fragmentation` types with no architectural purpose)
+  * semantic sparse re-exports removed from `sar_core::sparse` (`SparseError`, `SparseLimits`, `validate_sparse_extents`, `apply_sparse_reconstruction`)
+  * `SparseExtent` kept as architectural re-export (required by `parse_sparse_map`/`write_sparse_map` signatures; documented in `CRATE_RESPONSIBILITIES.md`)
+  * all internal callers, CLI, tests updated to import from `sar-fragmentation` and `sar-sparse` directly
+
+* **sar-loss-tolerant integrated:**
+  * `sar-fragmentation` now depends on `sar-loss-tolerant`
+  * `reconstruct_fragments` calls `gap_degraded_output_permitted()` instead of inline `!is_loss_tolerant`
+  * LOSS_TOLERANT policy no longer duplicated in `sar-fragmentation`
+
+* **fragment semantic validation fixes:**
+  * `FragmentError::PayloadSizeMismatch` added — payload `.len()` must equal `fragment_size`; mismatch is always fatal (not suppressible by LOSS_TOLERANT)
+  * `FragmentError::DuplicateIndex` added — duplicate fragment index is always fatal (not suppressible by LOSS_TOLERANT)
+  * `reconstruct_fragments` checks both before any gap/degraded-output logic
+  * tests added: valid complete reassembly, payload shorter than descriptor fails, payload longer than descriptor fails, duplicate index fails, duplicate index with LOSS_TOLERANT fails, missing LAST_FRAGMENT, gap without LOSS_TOLERANT fails, gap with LOSS_TOLERANT produces degraded output
+
+* **sparse semantic validation fixes:**
+  * zero-length sparse extents now rejected in `validate_sparse_extents` (returns `SparseError::InvalidMap`)
+  * tests added: valid extents accepted, zero-length extent rejected, zero-length in list rejected, out-of-order extents rejected, reconstruction zero-fills holes correctly
+
+* **32-bit sparse-map write truncation fixed:**
+  * `write_sparse_map` signature changed to `-> Result<Vec<u8>, SarError>` (API-breaking)
+  * 32-bit mode now fails closed if any extent offset or length exceeds `u32::MAX`
+  * 64-bit mode writes full `u64` values without truncation
+  * tests added: 32-bit accepts fitting values, 32-bit rejects offset > `u32::MAX`, 32-bit rejects length > `u32::MAX`, 64-bit preserves large values
+
+* **error conversion bridges updated:**
+  * `FragmentError::PayloadSizeMismatch` → `SarError::Malformed` (structural)
+  * `FragmentError::DuplicateIndex` → `SarError::InvalidMap` (structural)
+  * representative tests added in `error_registry_tests.rs` for all `FragmentError` variant conversions
+
+* **docs updated:**
+  * `docs/CRATE_RESPONSIBILITIES.md` — removed re-export bullets, updated sar-loss-tolerant integration status, updated dependency graphs
+  * `docs/API.md` — recorded public API changes: `sar_core::fragment` removed, semantic sparse re-exports removed, `write_sparse_map` now returns `Result`, new `FragmentError` variants
+  * `docs/MACHINE_READABLE_API.json` — updated `sar-core` entry to reflect removed module, narrowed exports, new signature
+  * `docs/MILESTONES.md` — M11c-cp entry added
+
+* SAR wire format and archive interoperability preserved unchanged
+* all `cargo test --workspace --all-features` pass
+* `cargo clippy --workspace --all-targets --all-features -- -D warnings` clean
+
 ## M11d:
 
 CLI metadata support

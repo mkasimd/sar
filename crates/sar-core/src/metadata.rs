@@ -22,8 +22,8 @@
 use serde::Serialize;
 
 use crate::fec::FecSummary;
-use crate::fragment::FragmentDescriptor;
-use crate::sparse::SparseExtent;
+use sar_fragmentation::FragmentDescriptor;
+use sar_sparse::SparseExtent;
 
 // ---------------------------------------------------------------------------
 // Field presence model
