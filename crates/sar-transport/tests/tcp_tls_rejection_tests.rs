@@ -1,7 +1,8 @@
 /// M10d TCP TLS-rejection and capability tests.
 ///
 /// Covers:
-/// - TCP rejects non-SAR initial bytes (e.g. TLS ClientHello prefix).
+/// - TCP rejects non-SAR initial bytes (e.g. TLS ClientHello prefix, "GET /").
+/// - TCP rejects "SAR!"+malformed body with a structural SAR error (not InvalidMagic).
 /// - TCP fails closed when KMS Mode `0x04 TLS_EXPORTER` is used over a plaintext TCP stream.
 /// - TCP local capability advertisement does not include `CAP_TLS_EXPORTER_AEAD`.
 /// - Unknown / non-implemented capability bits from a peer are accepted in non-strict mode.
@@ -245,5 +246,104 @@ fn cap_tls_exporter_aead_bit_alone_passes_validate_since_it_is_spec_defined() {
     assert!(
         flags.validate().is_ok(),
         "CAP_TLS_EXPORTER_AEAD must pass validate() as a spec-defined bit"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TCP rejects HTTP-like ("GET /") initial bytes
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn tcp_rejects_get_http_initial_bytes_as_non_sar() {
+    // "GET / HTTP/1.1\r\n" starts with "GET " which does not match "SAR!" magic.
+    // The connection must be rejected / closed without binding a SAR session.
+    let (mut sender, mut receiver) = make_loopback(TcpTransportConfig::default());
+
+    let http_request: &[u8] = b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n";
+
+    let result = send_and_process(&mut sender, &mut receiver, http_request);
+
+    let rejected = match result {
+        Ok(ref actions) => has_close_connection(actions),
+        Err(_) => true,
+    };
+    assert!(
+        rejected,
+        "TCP must reject HTTP GET initial bytes; got {result:?}"
+    );
+    assert!(
+        receiver.is_closed(),
+        "connection must be closed after rejecting HTTP GET bytes"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TCP: "SAR!" magic recognized, malformed body fails as structural SAR error
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Returns bytes that begin with valid SAR magic ("SAR!") but contain an
+/// unsupported version byte, causing the parser to fail with a structural SAR
+/// error rather than `InvalidMagic`.
+///
+/// Wire layout:
+///   [0..4]  Magic "SAR!" (valid)
+///   [4]     Version = 0x99 (invalid, not 1)
+///   [5]     Reserved = 0x00
+///   [6..8]  Flags Length = 4 (u16 LE) — small enough to complete quickly
+///   [8..12] Flags = 0x00000000 (NO_INDEX absent; parser continues to version check)
+fn sar_magic_with_invalid_version_bytes() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(12);
+    bytes.extend_from_slice(b"SAR!"); // magic
+    bytes.push(0x99); // version: 0x99 != 1 → InvalidVersion
+    bytes.push(0x00); // reserved
+    bytes.extend_from_slice(&4u16.to_le_bytes()); // flags_len = 4
+    bytes.extend_from_slice(&0u32.to_le_bytes()); // 4 zero flag bytes
+    bytes
+}
+
+#[test]
+fn tcp_sar_magic_followed_by_invalid_version_fails_as_structural_sar_error() {
+    // "SAR!" is a valid SAR magic prefix. Once the magic is recognized the
+    // parser continues into SAR-level parsing and must fail with a structural
+    // error (e.g. SAR_ERR_INVALID_VERSION), NOT with SAR_ERR_INVALID_MAGIC.
+    // This verifies: magic is recognized → SAR parsing proceeds → structural
+    // failure → connection closed. No panic, no session bind, no payload leak.
+    let (mut sender, mut receiver) = make_loopback(TcpTransportConfig::default());
+
+    let bytes = sar_magic_with_invalid_version_bytes();
+    let result = send_and_process(&mut sender, &mut receiver, &bytes);
+
+    // Connection must be closed.
+    let closed = match result {
+        Ok(ref actions) => has_close_connection(actions),
+        Err(_) => true,
+    };
+    assert!(
+        closed,
+        "TCP must close on SAR-magic-then-malformed-body; got {result:?}"
+    );
+
+    // The actions must NOT carry a RejectSarStream with InvalidMagic.
+    // InvalidMagic would mean the magic was NOT recognized, which contradicts
+    // the test intent (we want to confirm that SAR parsing started).
+    if let Ok(actions) = result {
+        for action in &actions {
+            if let sar_transport::TransportAction::RejectSarStream { error, .. } = action {
+                assert!(
+                    !matches!(error, sar_core::SarError::InvalidMagic),
+                    "error must NOT be InvalidMagic — magic was valid, body was malformed; got {error:?}"
+                );
+            }
+        }
+    }
+
+    assert!(
+        receiver.is_closed(),
+        "receiver must be marked closed after structural SAR parse failure"
+    );
+    // No SAR session must have been bound.
+    assert!(
+        !receiver.is_sar_stream_bound(0),
+        "no SAR session must be bound after structural parse failure"
     );
 }

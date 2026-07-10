@@ -1,6 +1,6 @@
 # Conformance Statement
 
-This document reflects the current repository state after Milestones 10a/10b/10c/10d/10e.
+This document reflects the current repository state after Milestones 10a–10f.
 
 ## Implemented
 
@@ -180,12 +180,24 @@ This document reflects the current repository state after Milestones 10a/10b/10c
   - `export_keying_material` uses the quinn TLS exporter API to derive keying material
   - `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` key usages are correctly separated by TLS endpoint role
   - QUIC endpoints advertising `CAP_TLS_EXPORTER_AEAD` require TLS_EXPORTER KMS mode
+  - QUIC transport-only mode (without SAR-layer TLS_EXPORTER AEAD) is fully supported; `CAP_TLS_EXPORTER_AEAD` is only advertised when `QuicTransportConfig::advertise_tls_exporter_aead` is `true`
+  - When QUIC TLS_EXPORTER SAR-AEAD mode is required or negotiated, `CAP_TLS_EXPORTER_AEAD` and KMS Mode `0x04 TLS_EXPORTER` are used together; QUIC transport-only mode without SAR-layer AEAD remains supported without `CAP_TLS_EXPORTER_AEAD`
   - TCP binding still does not advertise `CAP_TLS_EXPORTER_AEAD`; plaintext TCP still rejects KMS mode `0x04` with `SAR_ERR_UNSUPPORTED`
   - all limits enforced before allocation: max connections, max QUIC streams per connection, max active SAR streams per connection, max control streams per SAR session, max buffered bytes, max read chunk, max outbound buffer
   - malformed QUIC stream does not corrupt or close other active streams unless connection-fatal
   - no `unsafe`, no production `unwrap`/`expect`/`panic`/`todo`/`unimplemented`
   - TCP+TLS is **not** implemented; STARTTLS is **not** implemented; SESSION_RESUME is not extended for M10e
   - TCP tests still pass; default-feature build (no `quic`) still works
+- **Milestone 10f M10 full closeout (this milestone)**
+  - Compile error fixed: `CapabilityFlags` usage in `quic_loopback_tests.rs` gated correctly; default-feature build compiles without errors
+  - TCP initial-byte rejection tests added: non-SAR bytes (`GET /`, TLS ClientHello, random garbage) close the TCP connection
+  - TCP SAR-magic-then-malformed-body test added: bytes starting with `SAR!` but with an invalid version byte close the connection with a structural SAR error (not `InvalidMagic`); no panic, no session bind
+  - TCP idle/no-data inactivity timeout tested via explicit timestamp injection (no background threads)
+  - TCP outbound control-frame sequence wrap (`0xFFFF → 0x0000`) documented and unit-tested
+  - QUIC SAR-magic-then-malformed-body test added: a QUIC stream starting with `SAR!` + invalid version is rejected stream-locally (not connection-fatal); other active streams on the same connection are unaffected
+  - QUIC client-disconnect test added: when a client drops a QUIC connection without opening SAR streams, the server's `accept_sar_stream` returns an error rather than blocking indefinitely
+  - `InsecureSkipVerifyForTestsOnly` is used only in test code and is clearly named; not the default; not for trusted production deployments
+  - All M10 validation commands pass (see Planned → M10f notes)
 
 ## Partial
 
@@ -223,11 +235,10 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - CDC processing and CDC map interpretation
 - delta patch application and reconstruction
 - partition set reconstruction
-- real SAR-over-QUIC sockets/runtime integration (implemented in M10e)
 - TCP+TLS (TLS is not implemented; SAR AEAD and/or external transport security is required for untrusted networks)
 - STARTTLS or any in-band TLS upgrade on the plaintext TCP binding
-- KMS Mode `0x04 TLS_EXPORTER` — fully implemented for QUIC connections; **not** supported on plaintext TCP
-- `CAP_TLS_EXPORTER_AEAD` — advertised and implemented by QUIC bindings; not advertised by TCP bindings
+- KMS Mode `0x04 TLS_EXPORTER` over plaintext TCP — fully implemented for QUIC connections; **rejected** on plaintext TCP with `SAR_ERR_UNSUPPORTED`
+- `CAP_TLS_EXPORTER_AEAD` over TCP — TCP bindings do not advertise `CAP_TLS_EXPORTER_AEAD`; QUIC bindings advertise it only when `advertise_tls_exporter_aead` is `true`
 - stable C ABI / FFI layer
 - archive-level repair for non-block-aligned erasures (spec gap — no normative byte-to-block mapping defined)
 
@@ -237,7 +248,7 @@ This document reflects the current repository state after Milestones 10a/10b/10c
 - broader standard-profile conformance validation
 - richer interoperability/vector testing for signed, fragmented, partitioned, sparse, CDC, delta, and streaming cases
 - **Milestone 10e:** real SAR-over-QUIC binding (completed)
-- **Milestone 10f:** M10 full closeout
+- **Milestone 10f:** M10 full closeout (completed — see M10f entry in Implemented above)
 - **Milestone 12:** stable FFI / C ABI for C, C++, and other language bindings
 
 ## Known Gaps

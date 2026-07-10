@@ -635,6 +635,11 @@ async fn bidirectional_quic_stream_supports_reverse_ack() {
 
 // ── Test 12: Capability flags ─────────────────────────────────────────────────
 
+// NOTE: The equivalent TCP-capability assertion for builds without the `quic`
+// feature lives in tcp_tls_rejection_tests.rs::tcp_does_not_advertise_cap_tls_exporter_aead_in_session_init.
+// Here we gate the test behind `quic` so the import of CapabilityFlags above
+// (which is also quic-gated) remains the sole declaration in this file.
+#[cfg(feature = "quic")]
 #[test]
 fn tcp_does_not_advertise_cap_tls_exporter_aead() {
     let tcp_caps =
@@ -746,6 +751,166 @@ async fn malformed_quic_stream_does_not_corrupt_active_streams() {
         srv.is_sar_stream_bound(20),
         "stream A must be unaffected by stream B error"
     );
+
+    listener.close();
+}
+// ── SAR magic + malformed body fails only the affected QUIC stream ────────────
+
+/// Returns bytes with valid SAR magic ("SAR!") followed by an invalid version
+/// byte (0x99) and a small flags section — enough to complete a parse attempt
+/// that fails with a structural SAR error rather than InvalidMagic.
+#[cfg(feature = "quic")]
+fn sar_magic_with_invalid_version() -> Vec<u8> {
+    let mut b = Vec::with_capacity(12);
+    b.extend_from_slice(b"SAR!"); // valid magic
+    b.push(0x99); // invalid version (≠ 1) → InvalidVersion
+    b.push(0x00); // reserved
+    b.extend_from_slice(&4u16.to_le_bytes()); // flags_len = 4
+    b.extend_from_slice(&0u32.to_le_bytes()); // 4 zero flag bytes
+    b
+}
+
+#[cfg(feature = "quic")]
+#[tokio::test]
+async fn quic_sar_magic_with_malformed_body_fails_only_that_stream() {
+    // A QUIC stream that starts with valid SAR magic but has a malformed body
+    // (e.g. wrong version byte) must be rejected stream-locally.
+    // Other active streams on the same QUIC connection must be unaffected.
+    let server_cfg = make_server_config(QuicTransportConfig::default());
+    let listener = QuicSarListener::bind(loopback_addr(), server_cfg).expect("bind");
+    let server_addr = listener.local_addr().expect("addr");
+
+    let (srv_res, cli_res) = tokio::join!(
+        listener.accept(),
+        connect_quic(
+            server_addr,
+            "localhost",
+            make_client_config(QuicTransportConfig::default()),
+        ),
+    );
+    let mut srv = srv_res.expect("server");
+    let mut cli = cli_res.expect("client");
+
+    // Good stream A: valid SAR session.
+    let mut cs_a = cli.open_sar_stream().await.expect("stream A");
+    cli.write_sar_bytes(&mut cs_a, &session_archive_init_bytes(30, 0, [0x30; 16]))
+        .await
+        .expect("write A");
+
+    let mut ss_a = srv.accept_sar_stream().await.expect("srv A");
+    let r_a = srv
+        .read_stream_bytes(&mut ss_a)
+        .await
+        .expect("read A")
+        .expect("bytes A");
+    let a_a = srv
+        .feed_stream_bytes(&mut ss_a, &r_a, Some(1))
+        .expect("feed A");
+    assert!(
+        has_bind_sar_stream(&a_a, 30),
+        "stream A must bind; got {a_a:?}"
+    );
+
+    // Malformed stream B: SAR magic recognized, but version byte is wrong.
+    // This is distinct from raw garbage — the magic IS parsed, then SAR
+    // structural validation fails.
+    let mut cs_b = cli.open_sar_stream().await.expect("stream B");
+    cli.write_sar_bytes(&mut cs_b, &sar_magic_with_invalid_version())
+        .await
+        .expect("write B");
+
+    let mut ss_b = srv.accept_sar_stream().await.expect("srv B");
+    let r_b = srv
+        .read_stream_bytes(&mut ss_b)
+        .await
+        .expect("read B")
+        .expect("bytes B");
+    let a_b = srv
+        .feed_stream_bytes(&mut ss_b, &r_b, Some(2))
+        .expect("feed B (stream-local error)");
+
+    // Stream B must NOT produce CloseConnection (connection-fatal).
+    let is_connection_fatal = a_b
+        .iter()
+        .any(|a| matches!(a, TransportAction::CloseConnection { .. }));
+    assert!(
+        !is_connection_fatal,
+        "SAR-magic-then-malformed stream B must not close the connection; got {a_b:?}"
+    );
+
+    // Stream B must NOT have a RejectSarStream with InvalidMagic; the magic
+    // WAS recognized, so the error must be a structural SAR parse failure.
+    for action in &a_b {
+        if let TransportAction::RejectSarStream { error, .. } = action {
+            assert!(
+                !matches!(error, sar_core::SarError::InvalidMagic),
+                "error must not be InvalidMagic — magic was valid, body was malformed; got {error:?}"
+            );
+        }
+    }
+
+    // Stream A must remain bound and unaffected.
+    assert!(
+        srv.is_sar_stream_bound(30),
+        "stream A must be unaffected by stream B's structural SAR failure"
+    );
+
+    listener.close();
+}
+
+// ── QUIC: client disconnects without sending streams ─────────────────────────
+
+#[cfg(feature = "quic")]
+#[tokio::test]
+async fn quic_client_drop_without_streams_causes_server_accept_to_fail() {
+    // When a client opens a QUIC connection but then closes it without opening
+    // any SAR streams, the server's accept_sar_stream should eventually return
+    // an error (not hang forever).  This validates that idle/dropped QUIC
+    // connections do not leave the server blocked indefinitely.
+    //
+    // This test uses tokio::time::timeout as a safety guard to keep CI
+    // deterministic; the real close signal comes from dropping the client
+    // endpoint which causes the QUIC stack to send a CONNECTION_CLOSE frame.
+    let server_cfg = make_server_config(QuicTransportConfig::default());
+    let listener = QuicSarListener::bind(loopback_addr(), server_cfg).expect("bind");
+    let server_addr = listener.local_addr().expect("addr");
+
+    let (srv_res, cli_res) = tokio::join!(
+        listener.accept(),
+        connect_quic(
+            server_addr,
+            "localhost",
+            make_client_config(QuicTransportConfig::default()),
+        ),
+    );
+    let mut srv = srv_res.expect("server");
+    let cli = cli_res.expect("client");
+
+    // Drop the client: the QUIC stack sends CONNECTION_CLOSE to the server.
+    drop(cli);
+
+    // The server's accept_sar_stream should return an error once the connection
+    // is closed.  We allow up to 5 s in CI before declaring a hang.
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        srv.accept_sar_stream(),
+    )
+    .await;
+
+    match result {
+        Ok(Err(_)) => {
+            // Expected: accept_sar_stream failed because the connection closed.
+        }
+        Ok(Ok(_)) => {
+            panic!("unexpected new SAR stream after client disconnect")
+        }
+        Err(_elapsed) => {
+            // Timeout: the accept did not complete within 5 s.
+            // This should not happen in practice since QUIC sends
+            // CONNECTION_CLOSE synchronously when the endpoint is dropped.
+            panic!("accept_sar_stream did not complete within 5 s after client disconnect")
+        }
+    }
 
     listener.close();
 }

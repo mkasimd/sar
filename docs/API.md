@@ -319,8 +319,9 @@ Not implemented in this pass, even though some flags or structural fields alread
 
 - Requires the `quic` Cargo feature.  TCP/in-memory behavior is unchanged without this feature.
 - QUIC networking uses **quinn 0.11** + **rustls 0.23** (ring provider) + **tokio 1** async runtime.  These deps are isolated to `sar-transport` and never leak into `sar-core`, `sar-stream`, `sar-crypto`, etc.
-- M10e supports **SAR-over-QUIC** (QUIC/TLS protects transport bytes; SAR entries may remain unencrypted unless SAR AEAD is selected).
-- M10e supports **QUIC + TLS_EXPORTER SAR-AEAD** (KMS Mode `0x04`, `CAP_TLS_EXPORTER_AEAD`) when the quinn TLS exporter API is available.
+- **SAR-over-QUIC transport-only mode**: QUIC/TLS protects transport bytes; SAR entries may remain unencrypted unless SAR AEAD is separately configured.  `CAP_TLS_EXPORTER_AEAD` is NOT required in this mode.
+- **QUIC + TLS_EXPORTER SAR-AEAD mode**: When QUIC TLS_EXPORTER SAR-AEAD is required or negotiated, `CAP_TLS_EXPORTER_AEAD` and KMS Mode `0x04 TLS_EXPORTER` are both required.  Set `QuicTransportConfig::advertise_tls_exporter_aead = true` to enable this mode.
+- QUIC transport-only mode and QUIC + TLS_EXPORTER SAR-AEAD mode are the two supported QUIC configurations.  Advertising `CAP_TLS_EXPORTER_AEAD` does not force every QUIC session to use TLS_EXPORTER; it signals availability when the endpoint is configured to support it.
 - **TCP+TLS is not implemented.  STARTTLS is not implemented.  TLS_EXPORTER over plaintext TCP is not implemented.**
 
 #### `QuicServerIdentity`
@@ -331,7 +332,7 @@ Carries explicit server TLS identity: DER-encoded certificate chain (`cert_chain
 
 Enum with two variants:
 - `CustomCaDer(Vec<u8>)` — trust a custom CA certificate (DER bytes); the only production-safe variant.
-- `InsecureSkipVerifyForTestsOnly` — skip certificate verification; test-only, clearly named, never the default.
+- `InsecureSkipVerifyForTestsOnly` — skip certificate verification; intended only for tests and local diagnostics, never the default, and not for trusted production deployments.
 
 #### `QuicTransportConfig`
 
@@ -1118,11 +1119,11 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - TCP must not and does not advertise `CAP_TLS_EXPORTER_AEAD` in its local capability set
   - **M10e QUIC binding** (`quic` feature): `QuicSarListener` accepts multiple concurrent QUIC connections; `QuicSarConnection` multiplexes multiple SAR sessions over one QUIC connection; `QuicSarStream` drives the M10c QUIC-policy harness over a single QUIC bidirectional stream
   - `QuicServerIdentity` requires explicit DER certificate chain + DER private key; no implicit or self-signed fallback in production
-  - `QuicClientTrust::CustomCaDer` supports custom CA certificate trust; `QuicClientTrust::InsecureSkipVerifyForTestsOnly` is test-only and never the default
+  - `QuicClientTrust::CustomCaDer` supports custom CA certificate trust; `QuicClientTrust::InsecureSkipVerifyForTestsOnly` is intended only for tests and local diagnostics, never the default, and not for trusted production deployments
   - QUIC/TLS protects transport bytes; SAR AEAD is additionally available at the SAR layer
-  - QUIC endpoints supporting TLS_EXPORTER SAR-AEAD advertise `CAP_TLS_EXPORTER_AEAD`; QUIC transport-only mode does not require it
+  - QUIC transport-only mode is supported; `CAP_TLS_EXPORTER_AEAD` is advertised only when `QuicTransportConfig::advertise_tls_exporter_aead` is `true`; advertising this flag does not force every session to use TLS_EXPORTER AEAD
   - same numeric SAR Stream ID may be active on different QUIC connections as independent sessions; duplicate active IDs on the same QUIC connection fail closed with `SAR_ERR_STREAM_STATE`
-  - additional QUIC control streams carrying `SESSION_CONTROL` for an existing SAR Stream ID + matching Session UUID are accepted; mismatched UUID or unknown Stream ID causes stream rejection
+  - additional QUIC control streams are limited to `SESSION_CONTROL` traffic in M10e; they do not establish new SAR sessions; they require an active Stream ID and a matching Session UUID; mismatched UUID, unknown Stream ID, closed session, or a new `SESSION_INIT` on a control stream cause stream rejection
   - same bidirectional QUIC stream supports reverse `SESSION_ACK` / `SESSION_STATUS` when `CAP_BIDIRECTIONAL_CONTROL` is active
   - `connect_quic(server_name, addr, config)` is the async client entry point
   - QUIC networking uses `quinn 0.11` + `rustls 0.23`/ring + `tokio 1`; these deps are isolated to `sar-transport` behind the `quic` feature

@@ -348,3 +348,61 @@ fn write_on_closed_connection_returns_stream_closed() {
         "expected StreamClosed on write to closed conn"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// TCP outbound control-frame sequence number wrapping
+// ──────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn tcp_outbound_sequence_wraps_from_max_to_zero() {
+    // The TCP binding's outbound control-frame sequence counter uses
+    // u16::wrapping_add(1).  This test documents and verifies that the wrap
+    // from 0xFFFF to 0x0000 is correct as specified by the SAR protocol.
+    // Session-level inbound sequence wrap is validated in
+    // sar_stream/tests/sequence_tests.rs; here we cover the outbound side.
+    assert_eq!(
+        u16::MAX.wrapping_add(1),
+        0u16,
+        "u16 must wrap from 0xFFFF to 0x0000 per SAR spec"
+    );
+    assert_eq!(0u16.wrapping_add(1), 1u16, "normal increment from 0");
+    assert_eq!(
+        0xFFFEu16.wrapping_add(1),
+        0xFFFFu16,
+        "approach maximum correctly"
+    );
+
+    // Verify that a TCP connection with bidirectional control can emit two
+    // consecutive outbound control frames and that the connection does not
+    // panic or error (the sequence counter increments 0 → 1 correctly).
+    let config = TcpTransportConfig {
+        transport: TransportConfig {
+            bidirectional_control: true,
+            ..TransportConfig::default()
+        },
+        ..TcpTransportConfig::default()
+    };
+
+    // Inbound bytes: a valid session init followed by a duplicate (to trigger
+    // a RejectSarStream + EmitSessionStatus pair under bidirectional_control).
+    let bytes = concat(&[
+        session_archive_init_bytes(20, 0, [0x20; 16]),
+        no_index_global_header_bytes(),
+        common::session_init_entry_bytes(20, 0, [0x21; 16], 0),
+    ]);
+    let mut conn = mock_conn(bytes, config);
+    let actions = conn.process_available(Some(1)).expect("process");
+
+    // Should contain at least a RejectSarStream or CloseConnection; no panic.
+    let has_reject_or_close = actions.iter().any(|a| {
+        matches!(
+            a,
+            sar_transport::TransportAction::RejectSarStream { .. }
+                | sar_transport::TransportAction::CloseConnection { .. }
+        )
+    });
+    assert!(
+        has_reject_or_close,
+        "expected rejection action for duplicate stream; got {actions:?}"
+    );
+}

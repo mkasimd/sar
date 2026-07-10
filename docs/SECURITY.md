@@ -76,17 +76,17 @@ This document reflects current implemented behavior only.
 - `TcpSarConnection<S>` wraps an existing TCP stream; it does **not** implement TLS or any transport-layer encryption.
 - The M10d TCP binding is **plaintext SAR-over-TCP only**.  TCP+TLS is **not** implemented.  STARTTLS is **not** implemented.  No in-band upgrade path exists.
 - **For connections over untrusted networks, SAR AEAD encryption and/or external transport security (e.g., WireGuard, IPsec, SSH tunneling) is required.**  M10d does not provide confidentiality or integrity of the TCP byte stream itself.
-- TCP clients that send TLS handshake bytes or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is immediately closed; no further data is accepted.
+- TCP clients that send TLS handshake bytes, HTTP requests, random garbage, or any non-SAR bytes before a valid SAR Global Header are rejected and the connection is immediately closed; no further data is accepted.
+- TCP clients that send valid SAR magic (`SAR!`) followed by a malformed SAR body (e.g., wrong version byte, invalid flags length) are rejected with a structural SAR parse error (not `InvalidMagic`); no SAR session is bound, no payload is exposed, no panic occurs.
 - KMS Mode `0x04 TLS_EXPORTER` is spec-defined but **must not** be used over a plaintext TCP stream.  If a plaintext TCP stream encounters this KMS mode, the connection is rejected with `SAR_ERR_UNSUPPORTED`.  There is no TLS session and no TLS exporter material available on this binding.
 - The TCP binding does **not** advertise `CAP_TLS_EXPORTER_AEAD`.  Any local capability set used by the TCP binding must not include this bit.
 - The `process_available` path never exposes raw payload bytes to callers; all payload processing occurs inside `sar-core`/`sar-stream` behind AEAD and session semantics before any filesystem actions are surfaced.
 - Invalid/unskippable byte sequences trigger `CloseConnection` before any further data is accepted; the connection is then permanently closed.
 - `read_buffer_size` caps bytes accepted per `process_available` call; `write_buffer_size` caps bytes per `write_all_sar_bytes` call — both enforced before any allocation from network input.
+- Idle TCP connections are subject to the inactivity watchdog: callers pass explicit `now_ms` timestamps to `process_available`; the watchdog fires and returns `SAR_ERR_TIMEOUT` when the configured `inactivity_timeout_ms` elapses without valid activity.  No background threads or timers are used.
 - `std::net` blocking I/O is used; no async runtime, no `tokio`, no `mio`, no background tasks.
 - `thread::spawn` appears only in tests and is always joined deterministically.
 - No `unsafe` code is present.  All `unwrap` / `expect` calls in production code have been replaced with `?`-based error propagation.
-- QUIC binding, TLS, retransmission, and congestion control are **not** implemented in M10d.
-- QUIC binding remains M10e.
 
 ## M10e SAR-over-QUIC binding security notes
 
@@ -94,14 +94,16 @@ This document reflects current implemented behavior only.
 - QUIC/TLS protects transport bytes end-to-end.  SAR-layer AEAD provides an additional independent authentication and confidentiality layer.
 - **Server identity is explicit**: `QuicServerIdentity` requires a DER-encoded certificate chain and DER-encoded private key.  Private keys are never logged and never transmitted.
 - **Client trust is explicit**: `QuicClientTrust` requires either a custom CA DER or the clearly-named `InsecureSkipVerifyForTestsOnly` variant.  Insecure verification is never the default.
-- `InsecureSkipVerifyForTestsOnly` is a test-only helper.  Production code must never use it.  Its name is its warning.
-- Certificate chain DER and private key DER sizes are bounded by configured limits (`max_cert_chain_bytes`, `max_private_key_bytes`) before any allocation.
+- `InsecureSkipVerifyForTestsOnly` is a test-only helper intended only for tests and local diagnostics.  Production code must never use it.  Its name is its warning.  It must not be the default and must not be used in trusted production deployments.
+- Certificate chain DER and private key DER buffers are validated before being accepted into QUIC server configuration; validation occurs on construction of `QuicServerIdentity`, before any connection is accepted.
 - All connection and stream limits are enforced before allocation: `max_connections`, `max_quic_streams_per_connection`, `max_active_sar_streams_per_connection`, `max_control_streams_per_sar_session`, `max_buffered_bytes`, `max_read_chunk`, `max_outbound_buffer_bytes`.
 - A malformed QUIC stream is rejected stream-locally; it does not close the entire QUIC connection or corrupt other active SAR sessions unless the error is connection-fatal.
+- A QUIC stream that starts with valid SAR magic but has a malformed SAR body (e.g., wrong version, invalid flags) is rejected stream-locally with a structural SAR parse error; it does not affect other streams on the same connection.
 - Rejected SAR Stream IDs remain unbound; no partial session state is retained.
 - `SESSION_CLOSE` unbinds a SAR Stream ID and disassociates all QUIC streams attached to that session; the Stream ID may be reused for a new session on the same QUIC connection afterward.
 - Duplicate `SESSION_INIT` for an already-bound SAR Stream ID on the same QUIC connection fails closed with `SAR_ERR_STREAM_STATE`; the incoming stream is rejected.
-- Additional QUIC control streams are accepted only when the Stream ID is active and the Session UUID matches; mismatched UUID or unknown Stream ID causes stream rejection.
+- Additional QUIC control streams are accepted only when they carry `SESSION_CONTROL` traffic for an active Stream ID with a matching Session UUID.  Additional control streams do not establish new SAR sessions.  Mismatched UUID, unknown Stream ID, closed session, or a new `SESSION_INIT` on a control stream cause stream rejection.
+- Same numeric SAR Stream ID on different QUIC connections are independent sessions; uniqueness is scoped per connection.
 - No plaintext SAR payload is exposed before AEAD authentication succeeds, when AEAD is active.
 - `LOSS_TOLERANT` does not suppress AEAD authentication failures, structural errors, decompression errors, or patch failures in QUIC mode.
 - **TLS_EXPORTER key material is never transmitted in SAR frames, never logged, and never placed in KMS Data.**  The TLS exporter API is called internally to derive keying material used only as SAR AEAD input.
