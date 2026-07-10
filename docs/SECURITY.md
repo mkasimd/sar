@@ -144,7 +144,7 @@ For LFH-direct additional QUIC control streams after TLS_EXPORTER SAR-AEAD bindi
 - **AAD construction**: `global_header_flags_bytes(active_session_global_header) || wire_lfh_bytes`.  The global-flags section is derived from the canonical Global Header of the SAR session identified by the LFH Stream ID (KMS payload excluded from the flags section, consistent with `build_aead_aad`).  The LFH bytes are those physically present on the additional control stream.
 - **Key derivation**: the CEK is resolved from the `KeyProvider` supplied to `InMemoryTransport::with_key_provider` via `resolve_cek`.  For TLS_EXPORTER sessions this is expected to be a pre-derived key supplied by the transport binding.
 - **Algorithm**: determined by `encr_algo_id` in the LFH (set by the sender).
-- **Rejection policy**:
+- **Rejection policy** — all failure modes map to the single `SAR_ERR_AUTH_FAILED` status to prevent error-oracle attacks; callers cannot distinguish the failure sub-type:
   - Plaintext entries (no `EntryMode::ENCRYPTED` bit) → `SAR_ERR_AUTH_FAILED`.
   - `EntryMode::ENCRYPTED` set but tag verification fails (wrong key, wrong AAD, tampered ciphertext, tampered LFH bytes, wrong Global Header bytes, random payload) → `SAR_ERR_AUTH_FAILED`.
   - Missing `encr_algo_id` or `iv_nonce` in a marked-encrypted LFH → `SAR_ERR_AUTH_FAILED`.
