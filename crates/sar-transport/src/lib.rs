@@ -8,9 +8,9 @@
 //! - M10d: SAR-over-TCP binding ([`tcp`] module)
 //! - M10e: SAR-over-QUIC binding ([`quic`] module, feature `quic`)
 
-pub mod tcp;
 #[cfg(feature = "quic")]
 pub mod quic;
+pub mod tcp;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -395,17 +395,17 @@ impl InMemoryTransport {
     /// Returns true if the transport stream is a control attachment (QUIC only).
     #[must_use]
     pub fn is_control_stream(&self, transport_stream_id: TransportStreamId) -> bool {
-        self.control_stream_attachments.contains_key(&transport_stream_id)
+        self.control_stream_attachments
+            .contains_key(&transport_stream_id)
     }
 
     /// Returns the SAR stream ID that the given transport stream is attached to
     /// as a control stream, if applicable.
     #[must_use]
-    pub fn control_sar_stream_id(
-        &self,
-        transport_stream_id: TransportStreamId,
-    ) -> Option<u16> {
-        self.control_stream_attachments.get(&transport_stream_id).copied()
+    pub fn control_sar_stream_id(&self, transport_stream_id: TransportStreamId) -> Option<u16> {
+        self.control_stream_attachments
+            .get(&transport_stream_id)
+            .copied()
     }
 
     /// Returns current state for a transport stream.
@@ -709,9 +709,7 @@ impl InMemoryTransport {
                                 .values()
                                 .filter(|&&sid| sid == stream_id)
                                 .count();
-                            if control_count
-                                >= self.config.max_control_streams_per_sar_session
-                            {
+                            if control_count >= self.config.max_control_streams_per_sar_session {
                                 self.reject_stream_with_policy(
                                     transport_stream_id,
                                     Some(stream_id),
@@ -1004,14 +1002,17 @@ impl SarTransportBinding for InMemoryTransport {
                                     LoopEvent::ParserError(SarError::Unsupported(
                                         "KMS_TLS_EXPORTER is not supported over plaintext TCP",
                                     ))
-                                } else if let Err(err) = context.manager.observe_global_header(&header) {
+                                } else if let Err(err) =
+                                    context.manager.observe_global_header(&header)
+                                {
                                     LoopEvent::ParserError(err)
                                 } else {
                                     context.state = TransportStreamState::AwaitingSessionInit;
                                     context.awaiting_session_init = true;
                                     LoopEvent::Continue
                                 }
-                            } else if let Err(err) = context.manager.observe_global_header(&header) {
+                            } else if let Err(err) = context.manager.observe_global_header(&header)
+                            {
                                 LoopEvent::ParserError(err)
                             } else {
                                 context.state = TransportStreamState::AwaitingSessionInit;
@@ -1091,7 +1092,10 @@ impl SarTransportBinding for InMemoryTransport {
         let detached = context.bound_sar_stream_id;
         if let Some(sar_stream_id) = detached {
             // Only remove primary binding (not control attachments).
-            if !self.control_stream_attachments.contains_key(&transport_stream_id) {
+            if !self
+                .control_stream_attachments
+                .contains_key(&transport_stream_id)
+            {
                 self.active_sar_streams.remove(&sar_stream_id);
                 self.active_session_uuids.remove(&sar_stream_id);
                 // Detach any control streams for this session.
@@ -1125,13 +1129,15 @@ impl SarTransportBinding for InMemoryTransport {
             .get_mut(&transport_stream_id)
             .ok_or(SarError::NotFound("unknown transport stream"))?;
         let detached = context.bound_sar_stream_id;
-        if let Some(sar_stream_id) = detached {
-            if !self.control_stream_attachments.contains_key(&transport_stream_id) {
-                self.active_sar_streams.remove(&sar_stream_id);
-                self.active_session_uuids.remove(&sar_stream_id);
-                self.control_stream_attachments
-                    .retain(|_, &mut sid| sid != sar_stream_id);
-            }
+        if let Some(sar_stream_id) = detached
+            && !self
+                .control_stream_attachments
+                .contains_key(&transport_stream_id)
+        {
+            self.active_sar_streams.remove(&sar_stream_id);
+            self.active_session_uuids.remove(&sar_stream_id);
+            self.control_stream_attachments
+                .retain(|_, &mut sid| sid != sar_stream_id);
         }
         self.control_stream_attachments.remove(&transport_stream_id);
         context.state = TransportStreamState::Reset;

@@ -91,13 +91,19 @@ impl QuicServerConfig {
     /// # Errors
     ///
     /// Returns [`SarError::LimitExceeded`] if `max_connections` is `0`.
-    pub fn new(identity: QuicServerIdentity, transport: QuicTransportConfig) -> Result<Self, SarError> {
+    pub fn new(
+        identity: QuicServerIdentity,
+        transport: QuicTransportConfig,
+    ) -> Result<Self, SarError> {
         if transport.max_connections == 0 {
             return Err(SarError::LimitExceeded(
                 "QuicServerConfig: max_connections must be > 0",
             ));
         }
-        Ok(Self { identity, transport })
+        Ok(Self {
+            identity,
+            transport,
+        })
     }
 }
 

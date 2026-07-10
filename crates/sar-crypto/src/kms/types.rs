@@ -6,9 +6,7 @@ use crate::algorithm::{
     PBKDF2_PRF_HMAC_SHA512,
 };
 use crate::error::SarCryptoError;
-use crate::kms::tls_exporter::{
-    TlsExporterParams, serialize_tls_exporter_kms_payload,
-};
+use crate::kms::tls_exporter::{TlsExporterParams, serialize_tls_exporter_kms_payload};
 
 /// Parsed PBKDF2 KMS payload.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -110,7 +110,9 @@ pub fn parse_tls_exporter_kms_payload(payload: &[u8]) -> Result<TlsExporterParam
     let label_len = usize::from(payload[0]);
     let label_end = 1usize
         .checked_add(label_len)
-        .ok_or(SarCryptoError::Malformed("TLS_EXPORTER label length overflow"))?;
+        .ok_or(SarCryptoError::Malformed(
+            "TLS_EXPORTER label length overflow",
+        ))?;
     if payload.len() < label_end + 7 {
         return Err(SarCryptoError::Malformed(
             "TLS_EXPORTER KMS payload too short: truncated before fixed fields",
@@ -160,9 +162,9 @@ pub fn parse_tls_exporter_kms_payload(payload: &[u8]) -> Result<TlsExporterParam
     }
     let salt_len = usize::from(payload[pos]);
     pos += 1;
-    let salt_end = pos
-        .checked_add(salt_len)
-        .ok_or(SarCryptoError::Malformed("TLS_EXPORTER salt length overflow"))?;
+    let salt_end = pos.checked_add(salt_len).ok_or(SarCryptoError::Malformed(
+        "TLS_EXPORTER salt length overflow",
+    ))?;
     if payload.len() < salt_end + 4 {
         return Err(SarCryptoError::Malformed(
             "TLS_EXPORTER KMS payload too short: truncated in salt / derived key length",
@@ -280,7 +282,19 @@ pub struct TlsExporterContextV1 {
 #[must_use]
 pub fn encode_tls_exporter_context_v1(ctx: &TlsExporterContextV1) -> Vec<u8> {
     let mut out = Vec::with_capacity(
-        1 + 1 + 1 + 1 + 1 + 1 + ctx.global_header_hash.len() + 1 + 1 + 2 + 16 + 1 + 1 + ctx.salt.len(),
+        1 + 1
+            + 1
+            + 1
+            + 1
+            + 1
+            + ctx.global_header_hash.len()
+            + 1
+            + 1
+            + 2
+            + 16
+            + 1
+            + 1
+            + ctx.salt.len(),
     );
     out.push(TLS_EXPORTER_CONTEXT_VERSION_1); // Context Version
     out.push(ctx.transport_profile_id);

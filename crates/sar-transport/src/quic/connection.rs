@@ -123,9 +123,13 @@ pub async fn connect_quic(
     let client_cfg = quinn::ClientConfig::new(Arc::new(quic_client_cfg));
 
     let bind_addr: SocketAddr = if server_addr.is_ipv6() {
-        "[::]:0".parse().map_err(|_| SarError::Internal("bind addr parse"))?
+        "[::]:0"
+            .parse()
+            .map_err(|_| SarError::Internal("bind addr parse"))?
     } else {
-        "0.0.0.0:0".parse().map_err(|_| SarError::Internal("bind addr parse"))?
+        "0.0.0.0:0"
+            .parse()
+            .map_err(|_| SarError::Internal("bind addr parse"))?
     };
 
     let mut endpoint = Endpoint::client(bind_addr)
@@ -465,7 +469,10 @@ impl QuicSarConnection {
         let mut result = Vec::with_capacity(actions.len());
         for action in actions {
             match &action {
-                TransportAction::EmitSessionStatus { sar_stream_id, frame } => {
+                TransportAction::EmitSessionStatus {
+                    sar_stream_id,
+                    frame,
+                } => {
                     if self.config.transport.bidirectional_control {
                         let limits = ResourceLimits::default();
                         if let Ok(payload) = frame.to_bytes(&limits) {
@@ -477,15 +484,18 @@ impl QuicSarConnection {
                         }
                     }
                 }
-                TransportAction::EmitSessionAck { sar_stream_id, frame } => {
-                    if self.config.transport.bidirectional_control {
-                        if let Ok(payload) = frame.to_bytes() {
-                            let _ = self.write_outbound_control_frame_sync(
-                                *sar_stream_id,
-                                SessionOpCode::Ack as u8,
-                                &payload,
-                            );
-                        }
+                TransportAction::EmitSessionAck {
+                    sar_stream_id,
+                    frame,
+                } => {
+                    if self.config.transport.bidirectional_control
+                        && let Ok(payload) = frame.to_bytes()
+                    {
+                        let _ = self.write_outbound_control_frame_sync(
+                            *sar_stream_id,
+                            SessionOpCode::Ack as u8,
+                            &payload,
+                        );
                     }
                 }
                 TransportAction::CloseConnection { .. } => {
@@ -644,9 +654,7 @@ impl QuicSarStream {
 // TLS configuration builders
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn build_rustls_server_config(
-    config: &QuicServerConfig,
-) -> Result<RustlsServerConfig, SarError> {
+fn build_rustls_server_config(config: &QuicServerConfig) -> Result<RustlsServerConfig, SarError> {
     let key = config.identity.private_key.clone_key();
     let cert_chain = config.identity.cert_chain.clone();
 
@@ -655,23 +663,31 @@ fn build_rustls_server_config(
 
     let tls_cfg = rustls::ServerConfig::builder_with_provider(Arc::new(provider))
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .map_err(|e| SarError::Internal(
-            // Use a static message since the error type is not easily inspected.
-            if format!("{e}").is_empty() { "TLS server config: version selection" } else { "TLS server config: unsupported" }
-        ))?
+        .map_err(|e| {
+            SarError::Internal(
+                // Use a static message since the error type is not easily inspected.
+                if format!("{e}").is_empty() {
+                    "TLS server config: version selection"
+                } else {
+                    "TLS server config: unsupported"
+                },
+            )
+        })?
         .with_no_client_auth()
         .with_single_cert(cert_chain, key)
-        .map_err(|e| SarError::Malformed(
-            if format!("{e}").contains("key") { "TLS server config: invalid private key" } else { "TLS server config: cert/key mismatch" }
-        ))?;
+        .map_err(|e| {
+            SarError::Malformed(if format!("{e}").contains("key") {
+                "TLS server config: invalid private key"
+            } else {
+                "TLS server config: cert/key mismatch"
+            })
+        })?;
 
     RustlsServerConfig::try_from(Arc::new(tls_cfg))
         .map_err(|_| SarError::Internal("QUIC server TLS config conversion failed"))
 }
 
-fn build_rustls_client_config(
-    trust: &QuicClientTrust,
-) -> Result<rustls::ClientConfig, SarError> {
+fn build_rustls_client_config(trust: &QuicClientTrust) -> Result<rustls::ClientConfig, SarError> {
     let mut provider = rustls::crypto::ring::default_provider();
     provider.cipher_suites = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
 
@@ -689,12 +705,10 @@ fn build_rustls_client_config(
                 .with_root_certificates(root_store)
                 .with_no_client_auth())
         }
-        QuicClientTrust::InsecureSkipVerifyForTestsOnly => {
-            Ok(base
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(InsecureSkipVerifier))
-                .with_no_client_auth())
-        }
+        QuicClientTrust::InsecureSkipVerifyForTestsOnly => Ok(base
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(InsecureSkipVerifier))
+            .with_no_client_auth()),
     }
 }
 

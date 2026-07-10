@@ -79,12 +79,11 @@ impl QuicServerIdentity {
         }
         let cert_chain = cert_chain_ders
             .into_iter()
-            .map(|der| CertificateDer::from(der))
+            .map(CertificateDer::from)
             .collect();
-        let private_key =
-            PrivateKeyDer::try_from(private_key_der).map_err(|_| {
-                SarError::Malformed("QuicServerIdentity: unrecognised private key DER format")
-            })?;
+        let private_key = PrivateKeyDer::try_from(private_key_der).map_err(|_| {
+            SarError::Malformed("QuicServerIdentity: unrecognised private key DER format")
+        })?;
         Ok(Self {
             cert_chain,
             private_key,
