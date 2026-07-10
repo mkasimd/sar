@@ -2345,6 +2345,11 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.path = path.as_bytes().to_vec();
         }
 
+        // When a Global Flag forces a field to be physically present in the LFH,
+        // the field must be written even if the caller did not provide a value.
+        // Zero is the correct wire-format fill: parsers treat it as "present with default
+        // value", not "absent".  This is distinct from the fail-closed validation above,
+        // which rejects entries that *provide* a non-None value when the flag is unset.
         if self.flags.contains(GlobalFlags::HAS_PERMS) {
             lfh.permissions = entry.permissions.or(Some(0));
         }
