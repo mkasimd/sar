@@ -132,6 +132,17 @@ This document reflects current implemented behavior only.
 - Additional control streams do not establish new SAR sessions and are not permitted to carry `SESSION_INIT`.
 - Additional control-stream errors are stream-local and do not corrupt or close unrelated QUIC streams.
 
+## M10i TLS_EXPORTER post-binding enforcement
+
+- **Post-binding enforcement**: for KMS Mode `0x04 TLS_EXPORTER`, `SESSION_INIT` is the only permitted plaintext bootstrap entry.  After `SESSION_INIT` activates the session, every subsequent SAR entry on the primary stream and on all attached additional QUIC control streams MUST carry `EntryMode::ENCRYPTED`.
+- Any unencrypted SAR entry received after binding is active is rejected with `SAR_ERR_AUTH_FAILED`.  The transport never falls back to plaintext and never silently downgrades from required TLS_EXPORTER SAR-AEAD mode.
+- `LOSS_TOLERANT` does not suppress post-binding plaintext enforcement.  AEAD failures are never treated as acceptable degraded output.
+- AEAD failure on one additional QUIC control stream is stream-local; the QUIC policy resets only the affected stream and does not close the connection or affect other sessions.
+- Plaintext is never exposed on AEAD authentication failure: `aead_decrypt` zeroizes the output buffer before returning `SAR_ERR_AUTH_FAILED`.
+- Receivers must not try multiple key usages after authentication failure.
+- `CTL!` remains removed and rejected with `SAR_ERR_INVALID_MAGIC` regardless of KMS mode.
+- `InMemoryTransport::with_key_provider` allows production and test code to inject a `KeyProvider` that supplies the TLS-exporter-derived CEK for inline `StreamArchiveParser` AEAD decryption; no key material is stored in SAR frames or logs.
+
 ## FEC and AEAD ordering
 
 Current implemented order is:

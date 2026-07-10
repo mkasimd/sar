@@ -1,17 +1,56 @@
 #![allow(dead_code)]
 
 use sar_core::{
-    EntryMode, GlobalFlags, GlobalHeader, KmsData, LocalFileHeader, ResourceLimits, SarStatus,
-    write_global_header, write_lfh,
+    EntryMode, GlobalFlags, GlobalHeader, KmsContext, KmsData, LocalFileHeader, ResourceLimits,
+    SarCryptoError, SarStatus, SecretBytes, global_header_flags_bytes, write_global_header,
+    write_lfh,
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, KMS_TLS_EXPORTER, TLS_EXPORTER_CONTEXT_VERSION_1, TLS_EXPORTER_KDF_DIRECT,
-    TlsExporterParams, serialize_tls_exporter_kms_payload,
+    AEAD_TAG_SIZE, ENCR_AES256_GCM, KMS_TLS_EXPORTER, SecretString, TLS_EXPORTER_CONTEXT_VERSION_1,
+    TLS_EXPORTER_KDF_DIRECT, TlsExporterParams, aad::build_aead_aad, aead::aead_encrypt,
+    serialize_tls_exporter_kms_payload,
 };
 use sar_stream::{
     AckFlags, CapabilityFlags, SessionAckFrame, SessionCapabilitiesFrame, SessionFlags,
     SessionInitFrame, SessionOpCode, SessionStatusFrame,
 };
+use zeroize::Zeroizing;
+
+/// Fixed 32-byte test key for TLS_EXPORTER AEAD tests.
+///
+/// Production sessions derive this from TLS exporter material.  In the
+/// in-memory test harness we use a constant key that is agreed between the
+/// [`MockTlsExporterKeyProvider`] and the encrypt helpers.
+pub const TEST_KEY: [u8; 32] = [0x42u8; 32];
+
+/// A [`sar_core::KeyProvider`] that returns a fixed test key via
+/// `external_key`, bypassing the TLS_EXPORTER derivation path in
+/// `sar-crypto`'s `resolve_cek`.
+///
+/// Use this with [`InMemoryTransport::with_key_provider`] so that
+/// entries built by [`tls_exporter_aead_primary_stream_entry_bytes`]
+/// can be AEAD-decrypted by the `StreamArchiveParser`.
+pub struct MockTlsExporterKeyProvider {
+    pub key: [u8; 32],
+}
+
+impl sar_core::KeyProvider for MockTlsExporterKeyProvider {
+    fn password_for(&self, _ctx: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
+        Ok(None)
+    }
+
+    fn unwrap_key(
+        &self,
+        _ctx: &KmsContext,
+        _wrapped: &[u8],
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
+        Ok(None)
+    }
+
+    fn external_key(&self, _ctx: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
+        Ok(Some(Zeroizing::new(self.key.to_vec())))
+    }
+}
 
 pub fn no_index_global_header_bytes() -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX;
@@ -92,10 +131,7 @@ pub fn tls_exporter_session_init_bytes(
 
 /// Builds the canonical TLS_EXPORTER session bootstrap bytes (global header +
 /// plaintext SESSION_INIT).
-pub fn tls_exporter_session_archive_init_bytes(
-    stream_id: u16,
-    session_uuid: [u8; 16],
-) -> Vec<u8> {
+pub fn tls_exporter_session_archive_init_bytes(stream_id: u16, session_uuid: [u8; 16]) -> Vec<u8> {
     let mut bytes = tls_exporter_global_header_bytes();
     bytes.extend_from_slice(&tls_exporter_session_init_bytes(stream_id, 0, session_uuid));
     bytes
@@ -119,9 +155,7 @@ pub fn tls_exporter_encrypted_control_entry_bytes(
     lfh.sequence_no = sequence_no;
     // Set EntryMode::ENCRYPTED to signal that this entry is AEAD-protected.
     lfh.entry_mode = EntryMode::from_bits(
-        (u16::from(opcode) << 8)
-            | EntryMode::SESSION_CONTROL
-            | EntryMode::ENCRYPTED,
+        (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL | EntryMode::ENCRYPTED,
     );
     lfh.payload_size = inner_payload.len() as u64;
     lfh.uncompressed_size = inner_payload.len() as u64;
@@ -147,15 +181,72 @@ pub fn tls_exporter_plaintext_control_entry_bytes(
     lfh.stream_id = stream_id;
     lfh.sequence_no = sequence_no;
     // No EntryMode::ENCRYPTED bit — this is a plaintext entry.
-    lfh.entry_mode = EntryMode::from_bits(
-        (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL,
-    );
+    lfh.entry_mode = EntryMode::from_bits((u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL);
     lfh.payload_size = inner_payload.len() as u64;
     lfh.uncompressed_size = inner_payload.len() as u64;
     lfh.encr_algo_id = Some(0x00); // 0 = no per-entry AEAD
     lfh.iv_nonce = Some([0u8; 24]);
     let mut bytes = write_lfh(&flags, &lfh).expect("tls_exporter plaintext LFH");
     bytes.extend_from_slice(&inner_payload);
+    bytes
+}
+
+/// Builds a truly AEAD-encrypted SESSION_CONTROL entry for the primary SAR
+/// stream in a TLS_EXPORTER session.
+///
+/// Unlike [`tls_exporter_encrypted_control_entry_bytes`] (which only sets
+/// `EntryMode::ENCRYPTED` for structural checks on additional control streams),
+/// this function performs real AES-256-GCM encryption so that the primary
+/// stream's `StreamArchiveParser` can successfully decrypt the entry.
+///
+/// `test_key` is the 32-byte AES-256 key used for both encryption here and
+/// decryption in the `MockTlsExporterKeyProvider`.
+pub fn tls_exporter_aead_primary_stream_entry_bytes(
+    stream_id: u16,
+    sequence_no: u16,
+    opcode: u8,
+    inner_payload: Vec<u8>,
+    test_key: &[u8; 32],
+) -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
+
+    // Compute the global_flags_section that the StreamArchiveParser will use
+    // as the first half of the AAD.  KMS payload is NOT included.
+    let gfs_header = GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    let global_flags_section = global_header_flags_bytes(&gfs_header);
+
+    // Valid AES-256-GCM nonce: first 12 bytes are the nonce, bytes 12-23
+    // must be zero (SAR convention for AES-GCM in the 24-byte nonce field).
+    let mut nonce = [0u8; 24];
+    nonce[..12].copy_from_slice(&[0x42u8; 12]);
+
+    let ciphertext_size = inner_payload.len() + AEAD_TAG_SIZE;
+
+    let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), ciphertext_size as u64);
+    lfh.stream_id = stream_id;
+    lfh.sequence_no = sequence_no;
+    lfh.entry_mode = EntryMode::from_bits(
+        (u16::from(opcode) << 8) | EntryMode::SESSION_CONTROL | EntryMode::ENCRYPTED,
+    );
+    lfh.payload_size = ciphertext_size as u64;
+    lfh.uncompressed_size = inner_payload.len() as u64;
+    lfh.encr_algo_id = Some(ENCR_AES256_GCM);
+    lfh.iv_nonce = Some(nonce);
+
+    let lfh_bytes = write_lfh(&flags, &lfh).expect("aead primary stream LFH");
+    let aad = build_aead_aad(&global_flags_section, &lfh_bytes);
+    let key = Zeroizing::new(test_key.to_vec());
+    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, &inner_payload)
+        .expect("aead_encrypt in test helper");
+
+    let mut bytes = lfh_bytes;
+    bytes.extend_from_slice(&ciphertext);
     bytes
 }
 
@@ -289,4 +380,3 @@ pub fn additional_control_capabilities_bytes(
 ) -> Vec<u8> {
     session_capabilities_entry_bytes(stream_id, sequence_no, flags)
 }
-

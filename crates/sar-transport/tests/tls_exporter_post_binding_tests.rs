@@ -16,6 +16,8 @@
 /// 5. `CTL!` remains rejected, unaffected by KMS mode.
 mod common;
 
+use std::sync::Arc;
+
 use sar_core::SarStatus;
 use sar_stream::{AckFlags, CapabilityFlags, SessionAckFrame, SessionOpCode, SessionStatusFrame};
 use sar_transport::{
@@ -23,20 +25,19 @@ use sar_transport::{
 };
 
 use common::{
-    additional_control_ack_bytes, tls_exporter_encrypted_control_entry_bytes,
+    MockTlsExporterKeyProvider, TEST_KEY, additional_control_ack_bytes,
+    tls_exporter_aead_primary_stream_entry_bytes, tls_exporter_encrypted_control_entry_bytes,
     tls_exporter_plaintext_control_entry_bytes, tls_exporter_session_archive_init_bytes,
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn setup_tls_exporter_session(
-    stream_id: u16,
-    session_uuid: [u8; 16],
-) -> InMemoryTransport {
+fn setup_tls_exporter_session(stream_id: u16, session_uuid: [u8; 16]) -> InMemoryTransport {
     let mut t = InMemoryTransport::new_quic(TransportConfig {
         bidirectional_control: true,
         ..TransportConfig::default()
-    });
+    })
+    .with_key_provider(Arc::new(MockTlsExporterKeyProvider { key: TEST_KEY }));
     t.open_transport_stream(TransportStreamId(1))
         .expect("open primary stream");
     let actions = t
@@ -90,9 +91,7 @@ fn has_auth_failed(actions: &[TransportAction]) -> bool {
     actions.iter().any(|a| match a {
         TransportAction::RejectSarStream { error, .. }
         | TransportAction::ResetTransportStream { error, .. }
-        | TransportAction::CloseConnection { error } => {
-            error.status() == SarStatus::ErrAuthFailed
-        }
+        | TransportAction::CloseConnection { error } => error.status() == SarStatus::ErrAuthFailed,
         _ => false,
     })
 }
@@ -134,9 +133,13 @@ fn tls_exporter_session_init_is_accepted_as_plaintext() {
         "SESSION_INIT must not be rejected in TLS_EXPORTER session; actions: {actions:?}"
     );
     assert!(
-        actions
-            .iter()
-            .any(|a| matches!(a, TransportAction::BindSarStream { sar_stream_id: 1, .. })),
+        actions.iter().any(|a| matches!(
+            a,
+            TransportAction::BindSarStream {
+                sar_stream_id: 1,
+                ..
+            }
+        )),
         "BindSarStream must be emitted; actions: {actions:?}"
     );
     assert!(
@@ -148,16 +151,22 @@ fn tls_exporter_session_init_is_accepted_as_plaintext() {
 // ── Test 2: Encrypted post-binding entry accepted ─────────────────────────
 
 /// First post-binding SESSION_CAPABILITIES MUST be accepted when
-/// `EntryMode::ENCRYPTED` is set.
+/// `EntryMode::ENCRYPTED` is set and the entry is truly AEAD-encrypted.
+///
+/// The transport must pass the entry through its `StreamArchiveParser`,
+/// which decrypts it using the key provider before processing the session
+/// frame.  This proves that encrypted entries are fully accepted, not just
+/// structurally flagged.
 #[test]
 fn tls_exporter_encrypted_post_binding_capabilities_is_accepted() {
     let mut t = setup_tls_exporter_session(3, [0x03; 16]);
 
-    let entry = tls_exporter_encrypted_control_entry_bytes(
+    let entry = tls_exporter_aead_primary_stream_entry_bytes(
         3,
         1,
         SessionOpCode::Capabilities as u8,
         capabilities_payload(),
+        &TEST_KEY,
     );
     let actions = t
         .feed_bytes(TransportStreamId(1), &entry, Some(2))
@@ -202,12 +211,8 @@ fn tls_exporter_plaintext_post_binding_capabilities_is_rejected() {
 fn tls_exporter_plaintext_post_binding_ack_is_rejected() {
     let mut t = setup_tls_exporter_session(7, [0x07; 16]);
 
-    let entry = tls_exporter_plaintext_control_entry_bytes(
-        7,
-        1,
-        SessionOpCode::Ack as u8,
-        ack_payload(0),
-    );
+    let entry =
+        tls_exporter_plaintext_control_entry_bytes(7, 1, SessionOpCode::Ack as u8, ack_payload(0));
     let actions = t
         .feed_bytes(TransportStreamId(1), &entry, Some(2))
         .expect("feed plaintext ack");
@@ -255,20 +260,20 @@ fn tls_exporter_additional_control_stream_encrypted_entry_is_accepted() {
     // Feed the encrypted entry — this is also the first entry, triggering
     // the control-stream attachment probe.  The LFH has stream_id=11 and
     // EntryMode::ENCRYPTED set.
-    let entry = tls_exporter_encrypted_control_entry_bytes(
-        11,
-        0,
-        SessionOpCode::Ack as u8,
-        ack_payload(0),
-    );
+    let entry =
+        tls_exporter_encrypted_control_entry_bytes(11, 0, SessionOpCode::Ack as u8, ack_payload(0));
     let actions = t
         .feed_bytes(TransportStreamId(2), &entry, Some(2))
         .expect("feed encrypted ack");
 
     assert!(
-        actions
-            .iter()
-            .any(|a| matches!(a, TransportAction::AttachControlStream { sar_stream_id: 11, .. })),
+        actions.iter().any(|a| matches!(
+            a,
+            TransportAction::AttachControlStream {
+                sar_stream_id: 11,
+                ..
+            }
+        )),
         "AttachControlStream must be emitted; actions: {actions:?}"
     );
     assert!(
@@ -289,12 +294,8 @@ fn tls_exporter_additional_control_stream_plaintext_entry_is_rejected() {
         .expect("open control stream");
 
     // The plaintext entry uses stream_id=13, no ENCRYPTED bit.
-    let entry = tls_exporter_plaintext_control_entry_bytes(
-        13,
-        0,
-        SessionOpCode::Ack as u8,
-        ack_payload(0),
-    );
+    let entry =
+        tls_exporter_plaintext_control_entry_bytes(13, 0, SessionOpCode::Ack as u8, ack_payload(0));
     let actions = t
         .feed_bytes(TransportStreamId(2), &entry, Some(2))
         .expect("feed plaintext ack");
@@ -321,12 +322,8 @@ fn tls_exporter_aead_failure_on_control_stream_is_stream_local() {
         .expect("open C");
 
     // Feed a plaintext (auth-failing) entry to stream B.
-    let bad_entry = tls_exporter_plaintext_control_entry_bytes(
-        15,
-        0,
-        SessionOpCode::Ack as u8,
-        ack_payload(0),
-    );
+    let bad_entry =
+        tls_exporter_plaintext_control_entry_bytes(15, 0, SessionOpCode::Ack as u8, ack_payload(0));
     let actions_b = t
         .feed_bytes(TransportStreamId(2), &bad_entry, Some(2))
         .expect("feed bad entry");
@@ -345,10 +342,9 @@ fn tls_exporter_aead_failure_on_control_stream_is_stream_local() {
         "ResetTransportStream must target stream B; actions_b: {actions_b:?}"
     );
     assert!(
-        !actions_b.iter().any(|a| matches!(
-            a,
-            TransportAction::CloseConnection { .. }
-        )),
+        !actions_b
+            .iter()
+            .any(|a| matches!(a, TransportAction::CloseConnection { .. })),
         "CloseConnection must NOT be emitted for QUIC stream-local AEAD failure; \
          actions_b: {actions_b:?}"
     );
@@ -367,12 +363,8 @@ fn tls_exporter_aead_failure_on_control_stream_is_stream_local() {
     );
 
     // Feed an encrypted entry to stream C — must be accepted.
-    let good_entry = tls_exporter_encrypted_control_entry_bytes(
-        15,
-        0,
-        SessionOpCode::Ack as u8,
-        ack_payload(0),
-    );
+    let good_entry =
+        tls_exporter_encrypted_control_entry_bytes(15, 0, SessionOpCode::Ack as u8, ack_payload(0));
     let actions_c = t
         .feed_bytes(TransportStreamId(3), &good_entry, Some(3))
         .expect("feed good entry to C");
@@ -424,9 +416,13 @@ fn non_tls_session_coexists_with_tls_exporter_session() {
         .expect("feed plain session init");
 
     assert!(
-        actions
-            .iter()
-            .any(|a| matches!(a, TransportAction::BindSarStream { sar_stream_id: 20, .. })),
+        actions.iter().any(|a| matches!(
+            a,
+            TransportAction::BindSarStream {
+                sar_stream_id: 20,
+                ..
+            }
+        )),
         "plain session must bind; actions: {actions:?}"
     );
     assert!(

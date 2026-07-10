@@ -14,7 +14,6 @@
 /// - Using wrong associated Global Header bytes for AAD MUST cause AEAD
 ///   authentication failure.
 /// - AEAD failure MUST NOT expose plaintext.
-
 use sar_crypto::{
     ENCR_AES256_GCM, SecretBytes,
     aad::{build_aead_aad, global_header_aad_bytes},
@@ -102,8 +101,8 @@ fn tampering_lfh_in_aad_causes_aead_auth_failure() {
     let gh_section = make_global_header_aad(&[0x01, 0x00, 0x00, 0x00]);
     let aad = build_aead_aad(&gh_section, &lfh_bytes);
 
-    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, plaintext)
-        .expect("encrypt must succeed");
+    let ciphertext =
+        aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, plaintext).expect("encrypt must succeed");
 
     // Tamper with one byte of the LFH (flip tag byte).
     let mut tampered_lfh = lfh_bytes.clone();
@@ -117,7 +116,10 @@ fn tampering_lfh_in_aad_causes_aead_auth_failure() {
     );
     // Verify the error is an auth failure, not some other error.
     assert!(
-        matches!(result.unwrap_err(), sar_crypto::SarCryptoError::AuthFailed(_)),
+        matches!(
+            result.expect_err("expected auth failure"),
+            sar_crypto::SarCryptoError::AuthFailed(_)
+        ),
         "error must be AuthFailed"
     );
 }
@@ -139,8 +141,8 @@ fn correct_lfh_bytes_in_aad_allows_successful_decryption() {
     let gh_section = make_global_header_aad(&[0x01, 0x00, 0x00, 0x00]);
     let aad = build_aead_aad(&gh_section, &lfh_bytes);
 
-    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, plaintext)
-        .expect("encrypt must succeed");
+    let ciphertext =
+        aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, plaintext).expect("encrypt must succeed");
     let decrypted = aead_decrypt(ENCR_AES256_GCM, &key, &nonce, &aad, &ciphertext)
         .expect("decrypt must succeed with correct AAD");
 
@@ -183,7 +185,10 @@ fn wrong_global_header_bytes_for_aad_causes_aead_auth_failure() {
         "wrong Global Header bytes for AAD must cause AEAD auth failure"
     );
     assert!(
-        matches!(result.unwrap_err(), sar_crypto::SarCryptoError::AuthFailed(_)),
+        matches!(
+            result.expect_err("expected auth failure"),
+            sar_crypto::SarCryptoError::AuthFailed(_)
+        ),
         "error must be AuthFailed"
     );
 }
@@ -206,8 +211,7 @@ fn aead_failure_does_not_expose_plaintext() {
     let gh_section = make_global_header_aad(&[0x01, 0x00, 0x00, 0x00]);
     let aad = build_aead_aad(&gh_section, &lfh_bytes);
 
-    let ciphertext =
-        aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, plaintext).expect("encrypt");
+    let ciphertext = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad, plaintext).expect("encrypt");
 
     // Use wrong AAD to force auth failure.
     let wrong_aad = build_aead_aad(b"wrong-gh", &lfh_bytes);
@@ -249,10 +253,8 @@ fn different_lfh_fields_produce_different_authentication_outcomes() {
     let aad_a = build_aead_aad(&gh_section, &lfh_stream_a);
     let aad_b = build_aead_aad(&gh_section, &lfh_stream_b);
 
-    let ct_a = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad_a, plaintext)
-        .expect("encrypt A");
-    let ct_b = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad_b, plaintext)
-        .expect("encrypt B");
+    let ct_a = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad_a, plaintext).expect("encrypt A");
+    let ct_b = aead_encrypt(ENCR_AES256_GCM, &key, &nonce, &aad_b, plaintext).expect("encrypt B");
 
     // Different AAD ⇒ different authentication tags (even with same plaintext/key/nonce).
     assert_ne!(

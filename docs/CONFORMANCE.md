@@ -211,6 +211,31 @@ This document reflects the current repository state after Milestones 10a–10f.
   - Negotiated-group verification is unavailable with the ring provider; this limitation is documented
   - No TLS exporter output, derived SAR AEAD keys, private keys, or TLS secrets are logged or placed in KMS data
 
+- **Milestone 10i TLS_EXPORTER/AAD coverage and crate responsibility guardrails**
+  - **Post-binding enforcement**: for KMS Mode `0x04 TLS_EXPORTER`, after `SESSION_INIT` activates the session, every subsequent SAR entry on the primary stream and on attached additional QUIC control streams MUST carry `EntryMode::ENCRYPTED`; any unencrypted entry received after binding is active is rejected with `SAR_ERR_AUTH_FAILED`
+  - `SESSION_INIT` is the only mandatory plaintext bootstrap entry; it is accepted without AEAD encryption
+  - Post-binding plaintext downgrade is never allowed; `LOSS_TOLERANT` does not suppress AEAD enforcement
+  - `CTL!` remains removed and rejected (`SAR_ERR_INVALID_MAGIC`) regardless of KMS mode
+  - `InMemoryTransport::with_key_provider` added to allow test and production code to inject a CEK provider for inline AEAD decryption by `StreamArchiveParser`
+  - **Tests added (primary stream)**:
+    - `tls_exporter_session_init_is_accepted_as_plaintext`
+    - `tls_exporter_encrypted_post_binding_capabilities_is_accepted` (full AEAD round-trip with test key provider)
+    - `tls_exporter_plaintext_post_binding_capabilities_is_rejected`
+    - `tls_exporter_plaintext_post_binding_ack_is_rejected`
+    - `tls_exporter_plaintext_post_binding_status_is_rejected`
+    - `non_tls_session_coexists_with_tls_exporter_session`
+    - `tls_exporter_ctl_magic_is_still_rejected`
+  - **Tests added (additional control stream AAD)**:
+    - `tls_exporter_additional_control_stream_encrypted_entry_is_accepted`
+    - `tls_exporter_additional_control_stream_plaintext_entry_is_rejected`
+    - `tls_exporter_aead_failure_on_control_stream_is_stream_local`
+    - `build_aead_aad_is_concatenation_of_sections`
+    - `tampered_lfh_bytes_in_aad_cause_aead_failure`
+    - `correct_lfh_bytes_in_aad_allows_successful_decryption`
+    - `wrong_global_header_bytes_in_aad_cause_aead_failure`
+    - `aead_failure_does_not_expose_plaintext`
+    - `different_lfh_bytes_produce_different_aad`
+
 ## Partial
 
 - **Compliance profiles**

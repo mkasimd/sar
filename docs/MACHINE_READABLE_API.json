@@ -6853,14 +6853,15 @@
               "signature": "pub struct InMemoryTransport { ... }",
               "visibility": "public",
               "stability": "experimental",
-              "description": "Deterministic in-memory transport model implementing TCP-like and QUIC-like policy behaviors.",
+              "description": "Deterministic in-memory transport model implementing TCP-like and QUIC-like policy behaviors.  M10i adds with_key_provider() for TLS_EXPORTER post-binding AEAD enforcement.",
               "parameters": [],
               "returns": "",
               "errors": [
                 "Returns stream/limit/state errors via Result and RejectSarStream actions."
               ],
               "safety_notes": [
-                "No sockets, async runtime, TLS, retransmission, or congestion control."
+                "No sockets, async runtime, TLS, retransmission, or congestion control.",
+                "with_key_provider injects a CEK provider; key material is not logged or placed in SAR frames."
               ],
               "examples": [],
               "feature_flags": [],
@@ -6868,7 +6869,8 @@
               "related_spec_sections": [
                 "18.1",
                 "18.3",
-                "18.3.3"
+                "18.3.3",
+                "18"
               ],
               "implemented": true,
               "ffi_candidate": true,

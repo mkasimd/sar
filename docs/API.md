@@ -1119,11 +1119,11 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 ### `sar-transport`
 
 - Purpose: transport abstraction and deterministic in-memory transport harness layered over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature)
-- Status: implemented for Milestone 10c policy/harness scope + Milestone 10d TCP binding + Milestone 10e QUIC binding
+- Status: implemented for Milestone 10c policy/harness scope + Milestone 10d TCP binding + Milestone 10e QUIC binding + Milestone 10i TLS_EXPORTER post-binding enforcement
 - Public APIs:
   - `TransportBindingKind`, `TransportConfig`, `TransportStreamId`, `TransportStreamState`, `TransportAction`
   - `SarTransportBinding`
-  - `InMemoryTransport`
+  - `InMemoryTransport`, `InMemoryTransport::with_key_provider` *(M10i)*
   - `TcpPolicy`, `QuicPolicy`
   - `TransportHarness`
   - `tcp::TcpTransportConfig` *(M10d, experimental)*
@@ -1163,6 +1163,8 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
   - QUIC networking uses `quinn 0.11` + `rustls 0.23`/ring + `tokio 1`; these deps are isolated to `sar-transport` behind the `quic` feature
   - TCP/in-memory behavior is unchanged when the `quic` feature is disabled
   - Additional QUIC control streams do not use `CTL!`, UUID preheaders, private envelopes, or extra association metadata
+  - **M10i TLS_EXPORTER post-binding enforcement**: after `SESSION_INIT` activates a KMS Mode `0x04 TLS_EXPORTER` session, every subsequent SAR entry on the primary stream and on all attached additional QUIC control streams MUST carry `EntryMode::ENCRYPTED`; unencrypted entries are rejected with `SAR_ERR_AUTH_FAILED`; `LOSS_TOLERANT` does not suppress this enforcement
+  - `InMemoryTransport::with_key_provider(Arc<dyn KeyProvider>)` injects a CEK provider for inline `StreamArchiveParser` AEAD decryption; used in production to supply TLS-exporter-derived key material and in tests to inject a fixed-key mock
   - `TlsPqPolicy`: `ClassicalAllowed` (default with ring), `PreferPq`, `RequirePqOrHybrid`, `RequirePqOnly`.  PQ/hybrid policy affects TLS negotiation and fail-closed behavior before exporter use; it does not alter SAR wire encoding
   - No TLS exporter output, derived SAR AEAD keys, private keys, or TLS secrets are logged or placed in KMS data.
 

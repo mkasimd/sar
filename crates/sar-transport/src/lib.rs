@@ -13,12 +13,36 @@ pub mod quic;
 pub mod tcp;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use sar_core::{
-    ArchiveReaderOptions, EntryMode, GlobalHeader, ResourceLimits, SarError, SarStatus,
-    StreamArchiveParser, StreamEvent, StreamStep, parse_lfh,
+    ArchiveReaderOptions, EntryMode, GlobalHeader, KeyProvider, KmsContext, ResourceLimits,
+    SarCryptoError, SarError, SarStatus, SecretBytes, StreamArchiveParser, StreamEvent, StreamStep,
+    parse_lfh,
 };
-use sar_crypto::KMS_TLS_EXPORTER;
+use sar_crypto::{KMS_TLS_EXPORTER, SecretString};
+
+/// Wraps an `Arc<dyn KeyProvider>` so it can be placed in a `Box<dyn KeyProvider>`
+/// owned by `StreamArchiveParser`.  All methods simply delegate to the inner Arc.
+struct ArcKeyProvider(Arc<dyn KeyProvider>);
+
+impl KeyProvider for ArcKeyProvider {
+    fn password_for(&self, context: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
+        self.0.password_for(context)
+    }
+
+    fn unwrap_key(
+        &self,
+        context: &KmsContext,
+        wrapped_key: &[u8],
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
+        self.0.unwrap_key(context, wrapped_key)
+    }
+
+    fn external_key(&self, context: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
+        self.0.external_key(context)
+    }
+}
 use sar_stream::{
     CapabilityFlags, ProcessResult, SessionAckFrame, SessionAction, SessionEntry, SessionEvent,
     SessionManager, SessionManagerConfig, SessionOpCode, SessionStatusFrame,
@@ -273,7 +297,7 @@ struct TransportStreamContext {
 }
 
 impl TransportStreamContext {
-    fn new(config: &TransportConfig) -> Self {
+    fn new(config: &TransportConfig, key_provider: Option<Arc<dyn KeyProvider>>) -> Self {
         let limits = ResourceLimits {
             max_active_streams: config.max_active_sar_streams,
             ..ResourceLimits::default()
@@ -293,6 +317,10 @@ impl TransportStreamContext {
             limits,
             delta_base: None,
         });
+        let parser = match key_provider {
+            Some(kp) => parser.with_key_provider(Box::new(ArcKeyProvider(kp))),
+            None => parser,
+        };
         Self {
             parser,
             manager: SessionManager::new(manager_config),
@@ -331,6 +359,12 @@ pub struct InMemoryTransport {
     /// unencrypted entry received after binding is active is rejected with
     /// [`SarError::AuthFailed`]; the transport never falls back to plaintext.
     tls_exporter_bound: BTreeSet<u16>,
+    /// Optional key provider supplied to new `StreamArchiveParser` instances.
+    ///
+    /// In production this holds the TLS-exporter-derived CEK for the session.
+    /// In tests a fixed-key mock is injected so that AEAD-encrypted entries can
+    /// be processed without real TLS session material.
+    key_provider: Option<Arc<dyn KeyProvider>>,
 }
 
 impl InMemoryTransport {
@@ -348,6 +382,7 @@ impl InMemoryTransport {
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
             tls_exporter_bound: BTreeSet::new(),
+            key_provider: None,
         }
     }
 
@@ -365,7 +400,19 @@ impl InMemoryTransport {
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
             tls_exporter_bound: BTreeSet::new(),
+            key_provider: None,
         }
+    }
+
+    /// Attach a key provider used by all stream parsers opened after this call.
+    ///
+    /// This is intended for testing with a fixed-key mock (so that AEAD-encrypted
+    /// entries can be processed without real TLS session material) and for
+    /// production implementations that supply a TLS-exporter-derived CEK.
+    #[must_use]
+    pub fn with_key_provider(mut self, key_provider: Arc<dyn KeyProvider>) -> Self {
+        self.key_provider = Some(key_provider);
+        self
     }
 
     /// Returns the effective policy mode.
@@ -1280,7 +1327,7 @@ impl SarTransportBinding for InMemoryTransport {
         }
         self.streams.insert(
             transport_stream_id,
-            TransportStreamContext::new(&self.config),
+            TransportStreamContext::new(&self.config, self.key_provider.clone()),
         );
         if let Some(context) = self.streams.get_mut(&transport_stream_id) {
             context.state = TransportStreamState::AwaitingGlobalHeader;
