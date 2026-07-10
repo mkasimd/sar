@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 11b source audit)
+# API Inventory (post–Milestone 11c source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -16,6 +16,7 @@ Current scope:
 - Milestone 10e: SAR-over-QUIC binding (`sar-transport::quic`, `quic` feature flag)
 - Milestone 11a: LFH Metadata API Completeness — expanded `EntryInput`, expanded `EntryMetadata`, `FieldPresence<T>`, all metadata structs, entry kind representation, complete metadata round-trip
 - Milestone 11b: Filesystem Metadata Encode/Decode — `FieldPresence`-typed path/permissions/owner/timestamps in `EntryMetadata`, directory payload validation, IS_SYMLINK→HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests
+- Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
@@ -31,10 +32,10 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 | `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
 | `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented | implemented |
-| `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
-| `sar-partition` | Future partition support placeholder | placeholder |
-| `sar-sparse` | Future sparse-file support placeholder | placeholder |
-| `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
+| `sar-fragmentation` | Fragment semantic validation and reassembly (moved from `sar-core` in M11c) | implemented |
+| `sar-partition` | Partition/multi-volume support (deliberately deferred in M11c) | deferred placeholder |
+| `sar-sparse` | Sparse extent validation and reconstruction (moved from `sar-core` in M11c) | implemented |
+| `sar-loss-tolerant` | Loss-tolerant policy helpers (added in M11c) | implemented |
 | `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
 | `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature) | implemented |
 
@@ -1741,3 +1742,143 @@ CDC chunk boundaries and recipe hashes are treated in this implementation as ope
 - Portable boundary-regeneration verification across writers
 - Streaming CDC chunking APIs
 - `sar create --cdc fastcdc` CLI flag for creating CDC-annotated archives
+
+---
+
+## `sar-fragmentation` (M11c)
+
+### Purpose
+
+Fragment semantic validation and reassembly logic. Moved from `sar-core` in M11c.
+
+This crate has no dependency on `sar-core`. `sar-core` integrates it via `From<FragmentError>` and `ResourceLimits::fragment_limits()`.
+
+### Public API
+
+#### Types
+
+- `FragmentError` — error type for fragment operations:
+  - `FragmentError::InvalidMap(msg)` — structurally invalid fragment group
+  - `FragmentError::Bounds(msg)` — fragment descriptor out of bounds
+  - `FragmentError::FragmentGap(msg)` — missing fragment without LOSS_TOLERANT
+  - `FragmentError::LimitExceeded(msg)` — resource limit exceeded
+  - `FragmentError::Overflow(msg)` — arithmetic overflow in descriptor
+- `FragmentLimits` — resource limits for fragment operations:
+  - `max_fragment_count: u32`
+  - `max_loss_tolerant_gap: u64`
+  - `max_allocation_bytes: u64`
+- `FragmentDescriptor { absolute_offset: u64, fragment_size: u32 }` — per-fragment extent
+- `FragmentEntry { fragment_index: u32, is_last_fragment: bool, is_loss_tolerant: bool, descriptor: FragmentDescriptor, payload: Vec<u8> }` — decoded fragment with payload
+
+#### Functions
+
+- `validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>` — validates ordering, non-overlap, index continuity, LAST_FRAGMENT presence, and bounds
+- `reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>` — reassembles payloads; returns `(data, is_degraded)`
+
+### Re-exported from `sar-core`
+
+All of the above are re-exported from `sar_core::fragment` for callers using `sar-core` directly:
+
+- `sar_core::FragmentError`
+- `sar_core::FragmentLimits`
+- `sar_core::fragment::FragmentDescriptor`
+- `sar_core::fragment::FragmentEntry`
+- `sar_core::fragment::validate_fragment_group`
+- `sar_core::fragment::reconstruct_fragments`
+
+### New `sar-core` methods (M11c)
+
+- `ResourceLimits::fragment_limits() -> FragmentLimits` — converts `ResourceLimits` to `FragmentLimits`
+
+---
+
+## `sar-sparse` (M11c)
+
+### Purpose
+
+Sparse extent validation and reconstruction logic. Moved from `sar-core` in M11c.
+
+This crate has no dependency on `sar-core`. `sar-core` integrates it via `From<SparseError>` and `ResourceLimits::sparse_limits()`.
+
+Wire-format functions (`parse_sparse_map`, `write_sparse_map`) remain in `sar-core` to avoid a circular dependency.
+
+### Public API
+
+#### Types
+
+- `SparseError` — error type for sparse operations:
+  - `SparseError::InvalidMap(msg)` — invalid sparse extent map
+  - `SparseError::Truncated(msg)` — payload too short for declared extents
+  - `SparseError::LimitExceeded(msg)` — resource limit exceeded
+  - `SparseError::Overflow(msg)` — arithmetic overflow in extent
+- `SparseLimits` — resource limits for sparse operations:
+  - `max_sparse_descriptors: u32`
+  - `max_allocation_bytes: u64`
+- `SparseExtent { offset: u64, length: u64 }` — one sparse data region
+
+#### Functions
+
+- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>` — validates sorted order, non-overlap, non-zero length, bounds, and payload sum
+- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>` — scatter/gather reconstruction of logical file
+
+### Re-exported from `sar-core`
+
+All of the above are re-exported from `sar_core::sparse`:
+
+- `sar_core::SparseError`
+- `sar_core::SparseLimits`
+- `sar_core::sparse::SparseExtent`
+- `sar_core::sparse::validate_sparse_extents`
+- `sar_core::sparse::apply_sparse_reconstruction`
+
+### New `sar-core` methods (M11c)
+
+- `ResourceLimits::sparse_limits() -> SparseLimits` — converts `ResourceLimits` to `SparseLimits`
+
+### Breaking changes (M11c)
+
+- `sar_core::sparse::validate_sparse_extents` now returns `Result<(), SparseError>` (previously `Result<(), SarError>`)
+- `sar_core::sparse::apply_sparse_reconstruction` now returns `Result<Vec<u8>, SparseError>` (previously `Result<Vec<u8>, SarError>`)
+- `sar_core::fragment::validate_fragment_group` now returns `Result<(), FragmentError>` (previously `Result<(), SarError>`)
+- `sar_core::fragment::reconstruct_fragments` now returns `Result<(Vec<u8>, bool), FragmentError>` (previously `Result<(Vec<u8>, bool), SarError>`)
+- `SparseError` / `FragmentError` implement `Into<SarError>` via `From`; use `?` at call sites to propagate through `sar-core` APIs
+
+---
+
+## `sar-loss-tolerant` (M11c)
+
+### Purpose
+
+Pure policy helpers for LOSS_TOLERANT degraded reconstruction. Added in M11c.
+
+No dependency on `sar-core`. `sar-core` does not depend on `sar-loss-tolerant`; the archive reader uses its own `is_degraded` flag internally.
+
+### Public API
+
+#### Types
+
+- `RecoveryStatus` — reconstruction outcome:
+  - `RecoveryStatus::Complete` — all data present
+  - `RecoveryStatus::Degraded` — some data missing but output produced under LOSS_TOLERANT
+  - `RecoveryStatus::Failed` — reconstruction failed
+
+#### Functions
+
+- `gap_degraded_output_permitted(is_loss_tolerant: bool) -> bool` — returns `is_loss_tolerant`; codifies that gap tolerance requires the LOSS_TOLERANT flag
+- `classify_recovery(has_gap: bool, failed: bool) -> RecoveryStatus` — maps gap/failure booleans to `RecoveryStatus`
+
+### Invariant (documented in source)
+
+LOSS_TOLERANT never suppresses: AEAD/authentication failures, signature failures, decompression failures, patch failures, malformed structure, invalid sparse maps, invalid fragment metadata, or deterministic reconstruction failures.
+
+---
+
+## `sar-partition` (M11c)
+
+### Purpose
+
+Partition/multi-volume archive support. Deliberately deferred in M11c.
+
+No new API. `PartitionDescriptor` and `PARTITIONED_ARCHIVE` remain in `sar-core`.
+
+See `docs/CRATE_RESPONSIBILITIES.md` for deferral rationale.

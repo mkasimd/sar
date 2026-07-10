@@ -441,28 +441,28 @@ filesystem metadata encode/decode behavior
 * metadata interaction with fragmented/sparse entries — field order preserved; write_sparse_entry limitation documented
 * no unsafe restoration defaults — no chmod/chown/utime/symlink creation/directory creation
 
-## M11c:
+## M11c: ✅ implemented
 
 crate-boundary implementation cleanup
 
 * populate or deliberately defer marker crates:
 
-  * `sar-fragmentation`
-  * `sar-sparse`
-  * `sar-loss-tolerant`
-  * `sar-partition`
-* move or delegate semantic helper logic out of `sar-core` where appropriate
-* keep canonical wire-format structs and archive integration APIs in `sar-core`
-* preserve public high-level behavior
-* preserve archive format and status codes
-* preserve M8 sparse/fragment/loss-tolerant behavior
-* preserve M10 streaming/transport behavior
-* add focused crate-level tests for any moved logic
-* update workspace dependencies
-* update `docs/CRATE_RESPONSIBILITIES.md` only if final ownership changes
-* update `docs/API.md` and `docs/MACHINE_READABLE_API.json` only if public API changes during this milestone
+  * `sar-fragmentation` — implemented: `FragmentError`, `FragmentLimits`, `FragmentDescriptor`, `FragmentEntry`, `validate_fragment_group`, `reconstruct_fragments` moved from `sar-core`; 11 unit tests added
+  * `sar-sparse` — implemented: `SparseError`, `SparseLimits`, `SparseExtent`, `validate_sparse_extents`, `apply_sparse_reconstruction` moved from `sar-core`; 12 unit tests added; `parse_sparse_map`/`write_sparse_map` remain in `sar-core`
+  * `sar-loss-tolerant` — implemented: `RecoveryStatus`, `gap_degraded_output_permitted`, `classify_recovery`; 5 unit tests; LOSS_TOLERANT invariant documented
+  * `sar-partition` — deliberately deferred; `PartitionDescriptor` and `PARTITIONED_ARCHIVE` remain in `sar-core`; deferral documented
+* moved semantic helper logic out of `sar-core` where appropriate
+* kept canonical wire-format structs and archive integration APIs in `sar-core`
+* preserved public high-level behavior via thin re-exports in `sar_core::fragment` and `sar_core::sparse`
+* preserved archive format and status codes
+* preserved M8 sparse/fragment/loss-tolerant behavior
+* preserved M10 streaming/transport behavior
+* added focused crate-level tests in `sar-fragmentation` (11) and `sar-sparse` (12) and `sar-loss-tolerant` (5)
+* updated workspace dependencies (`sar-core` depends on `sar-fragmentation` and `sar-sparse`)
+* updated `docs/CRATE_RESPONSIBILITIES.md` — M11c status sections added for all four crates
+* updated `docs/API.md` and `docs/MACHINE_READABLE_API.json` — new crate entries and breaking change notes
 * no new protocol features
-* no broad public API redesign unless required by M11a/M11b metadata model
+* breaking Rust API: `validate_sparse_extents`, `apply_sparse_reconstruction` return `SparseError`; `validate_fragment_group`, `reconstruct_fragments` return `FragmentError`; `From` impls preserve `?` propagation
 
 ## M11d:
 

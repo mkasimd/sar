@@ -15,6 +15,8 @@ sar-crypto = { path = "../sar-crypto" }
 sar-fec = { path = "../sar-fec" }
 sar-cdc = { path = "../sar-cdc" }
 sar-delta = { path = "../sar-delta" }
+sar-fragmentation = { path = "../sar-fragmentation" }
+sar-sparse = { path = "../sar-sparse" }
 
 [dev-dependencies]
 serde_json.workspace = true

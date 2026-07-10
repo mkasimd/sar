@@ -16,7 +16,10 @@ pub mod fec;
 pub mod flags;
 /// Binary format structures and parser/writer functions.
 pub mod format;
-/// Fragment-group reassembly (Section 19).
+/// Fragment-group reassembly integration (Section 19).
+///
+/// Semantic logic lives in [`sar_fragmentation`]; this module re-exports it and
+/// owns wire-format integration with LFH fields.
 pub mod fragment;
 /// Checked binary parsing/writing primitives.
 pub mod io;
@@ -28,7 +31,10 @@ pub mod metadata;
 pub mod profile;
 /// Archive-level Data Recovery TLV inspection, planning, and repair.
 pub mod recovery;
-/// Sparse-file map parsing, writing, and scatter-gather reconstruction.
+/// Sparse-file map parsing/writing and scatter-gather reconstruction integration.
+///
+/// Wire-format parse/write lives here; semantic validation and reconstruction
+/// are re-exported from [`sar_sparse`].
 pub mod sparse;
 /// Forward-only stateless SAR byte-stream parser state model.
 pub mod stream;
@@ -62,7 +68,8 @@ pub use format::{
     parse_lfh, write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
 pub use fragment::{
-    FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
+    FragmentDescriptor, FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments,
+    validate_fragment_group,
 };
 pub use limits::ResourceLimits;
 pub use metadata::{
@@ -85,8 +92,8 @@ pub use sar_delta::{
     vcdiff::VcdiffLimits,
 };
 pub use sparse::{
-    SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
-    write_sparse_map,
+    SparseError, SparseExtent, SparseLimits, apply_sparse_reconstruction, parse_sparse_map,
+    validate_sparse_extents, write_sparse_map,
 };
 pub use stream::{
     StreamArchiveParser, StreamArchiveSummary, StreamEvent, StreamParseState, StreamStep,

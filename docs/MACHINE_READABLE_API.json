@@ -2122,7 +2122,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "POSIX-style permission mode bits from LFH HAS_PERMS field.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2137,7 +2142,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "UID/GID ownership info decoded from the packed EXT_UID_GID u32 field (low 16 bits = UID, high 16 bits = GID, i.e. uid | (gid << 16)). Use uid() and gid() accessor methods.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2152,7 +2162,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Modification, access, and status-change timestamps (64-bit Unix seconds) from LFH EXT_TIME field.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2167,7 +2182,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Compression algorithm ID from LFH COMPRESSED field.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2182,7 +2202,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Encryption algorithm ID and IV/nonce from LFH ENCRYPTED fields.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2197,7 +2222,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "FEC algorithm ID from LFH SELECTIVE_FEC field.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2212,7 +2242,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "CDC algorithm ID from LFH CDC_SUPPORT field.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2227,7 +2262,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Delta patch algorithm ID and base-file hash from LFH HAS_DELTA fields.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2242,7 +2282,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Fragment descriptor fields from LFH FILE_FRAGMENTATION global flag.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2257,7 +2302,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Sparse file map from LFH SPARSE_FILES global flag.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -2272,7 +2322,12 @@
               "visibility": "public",
               "stability": "stable",
               "description": "Content hash algorithm ID and hash bytes from LFH DEDUPLICATION field.",
-              "parameters": [], "returns": "", "errors": [], "safety_notes": [], "examples": [], "feature_flags": [],
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
               "since_milestone": "11a",
               "related_spec_sections": [],
               "implemented": true,
@@ -6722,9 +6777,11 @@
     {
       "name": "sar-fragmentation",
       "path": "crates/sar-fragmentation",
-      "purpose": "Placeholder crate for future fragmentation support.",
-      "status": "placeholder",
-      "milestones": [],
+      "purpose": "Fragment semantic validation and reassembly logic (moved from sar-core in M11c).",
+      "status": "implemented",
+      "milestones": [
+        "M11c"
+      ],
       "features": [],
       "modules": [
         {
@@ -6732,24 +6789,82 @@
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "FragmentError",
+              "kind": "enum",
+              "signature": "pub enum FragmentError",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented fragmentation functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "stability": "stable",
+              "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow.",
+              "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "FragmentLimits",
+              "kind": "struct",
+              "signature": "pub struct FragmentLimits { pub max_fragment_count: u32, pub max_loss_tolerant_gap: u64, pub max_allocation_bytes: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Resource limits for fragment operations.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "FragmentDescriptor",
+              "kind": "struct",
+              "signature": "pub struct FragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Per-fragment extent descriptor.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "FragmentEntry",
+              "kind": "struct",
+              "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub is_last_fragment: bool, pub is_loss_tolerant: bool, pub descriptor: FragmentDescriptor, pub payload: Vec<u8> }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Decoded fragment with payload and metadata.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "validate_fragment_group",
+              "kind": "function",
+              "signature": "pub fn validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates fragment group ordering, bounds, continuity, and LAST_FRAGMENT presence.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "reconstruct_fragments",
+              "kind": "function",
+              "signature": "pub fn reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Fills gaps for LOSS_TOLERANT entries.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         }
@@ -6758,9 +6873,11 @@
     {
       "name": "sar-loss-tolerant",
       "path": "crates/sar-loss-tolerant",
-      "purpose": "Placeholder crate for future loss-tolerant mode support.",
-      "status": "placeholder",
-      "milestones": [],
+      "purpose": "Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). No dependency on sar-core.",
+      "status": "implemented",
+      "milestones": [
+        "M11c"
+      ],
       "features": [],
       "modules": [
         {
@@ -6768,24 +6885,43 @@
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "RecoveryStatus",
+              "kind": "enum",
+              "signature": "pub enum RecoveryStatus",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented loss-tolerant functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "stability": "stable",
+              "description": "Reconstruction outcome. Variants: Complete, Degraded, Failed.",
+              "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "gap_degraded_output_permitted",
+              "kind": "function",
+              "signature": "pub fn gap_degraded_output_permitted(is_loss_tolerant: bool) -> bool",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Returns whether a missing-fragment gap may produce degraded output. Requires LOSS_TOLERANT flag.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "classify_recovery",
+              "kind": "function",
+              "signature": "pub fn classify_recovery(has_gap: bool, failed: bool) -> RecoveryStatus",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Maps gap/failure booleans to RecoveryStatus.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         }
@@ -6794,45 +6930,28 @@
     {
       "name": "sar-partition",
       "path": "crates/sar-partition",
-      "purpose": "Placeholder crate for future partition support.",
-      "status": "placeholder",
-      "milestones": [],
+      "purpose": "Partition/multi-volume archive support. Deliberately deferred in M11c. PartitionDescriptor and PARTITIONED_ARCHIVE remain in sar-core.",
+      "status": "deferred",
+      "milestones": [
+        "M11c-deferred"
+      ],
       "features": [],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
-          "items": [
-            {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
-              "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented partition functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
-            }
-          ]
+          "items": []
         }
       ]
     },
     {
       "name": "sar-sparse",
       "path": "crates/sar-sparse",
-      "purpose": "Placeholder crate for future sparse-file support.",
-      "status": "placeholder",
-      "milestones": [],
+      "purpose": "Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core.",
+      "status": "implemented",
+      "milestones": [
+        "M11c"
+      ],
       "features": [],
       "modules": [
         {
@@ -6840,24 +6959,69 @@
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "SparseError",
+              "kind": "enum",
+              "signature": "pub enum SparseError",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented sparse-file functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "stability": "stable",
+              "description": "Error type for sparse operations. Variants: InvalidMap, Truncated, LimitExceeded, Overflow.",
+              "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "SparseLimits",
+              "kind": "struct",
+              "signature": "pub struct SparseLimits { pub max_sparse_descriptors: u32, pub max_allocation_bytes: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Resource limits for sparse operations.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "SparseExtent",
+              "kind": "struct",
+              "signature": "pub struct SparseExtent { pub offset: u64, pub length: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "One sparse data region (offset + length).",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "validate_sparse_extents",
+              "kind": "function",
+              "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates sorted order, non-overlap, non-zero length, bounds, and payload sum.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "apply_sparse_reconstruction",
+              "kind": "function",
+              "signature": "pub fn apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Scatter/gather reconstruction of logical file from payload and extent map.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         }
@@ -7503,9 +7667,13 @@
                 "DER sizes are bounded by QuicTransportConfig.max_cert_chain_bytes and max_private_key_bytes."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7526,9 +7694,13 @@
                 "Insecure verification is never the default."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7543,16 +7715,22 @@
               "description": "TLS key agreement policy for SAR-over-QUIC connections (Section 18.6.7). Controls which TLS key agreement algorithm classes are offered and accepted. Default is ClassicalAllowed when the TLS stack does not support PQ or hybrid groups. RequirePqOrHybrid and RequirePqOnly fail closed with SAR_ERR_UNSUPPORTED when PQ/hybrid key agreement is unavailable.",
               "parameters": [],
               "returns": "",
-              "errors": ["SAR_ERR_UNSUPPORTED when RequirePqOrHybrid or RequirePqOnly is set and the TLS provider does not support PQ or hybrid groups"],
+              "errors": [
+                "SAR_ERR_UNSUPPORTED when RequirePqOrHybrid or RequirePqOnly is set and the TLS provider does not support PQ or hybrid groups"
+              ],
               "safety_notes": [
                 "RequirePqOrHybrid and RequirePqOnly fail closed if the TLS provider cannot satisfy the requirement.",
                 "PreferPq permits classical fallback but the connection MUST NOT be described as PQ-safe or HNDL-resistant if classical-only key agreement was negotiated.",
                 "No TLS secrets, exporter outputs, or derived keys are logged or placed in KMS Data."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10g",
-              "related_spec_sections": ["18.6.7"],
+              "related_spec_sections": [
+                "18.6.7"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7574,9 +7752,14 @@
                 "pq_policy RequirePqOrHybrid/RequirePqOnly fail closed with SAR_ERR_UNSUPPORTED if the TLS provider does not support PQ/hybrid groups."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2", "18.6.7"],
+              "related_spec_sections": [
+                "18.5.2",
+                "18.6.7"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7594,9 +7777,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7614,9 +7801,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7637,9 +7828,13 @@
                 "max_connections limit enforced before accepting new connections."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7653,15 +7848,25 @@
               "stability": "experimental",
               "description": "Bind a QUIC listener on an OS-assigned port. Returns a ready-to-accept listener.",
               "parameters": [
-                { "name": "config", "type": "QuicServerConfig", "description": "Server configuration." }
+                {
+                  "name": "config",
+                  "type": "QuicServerConfig",
+                  "description": "Server configuration."
+                }
               ],
               "returns": "Result<QuicSarListener, SarError>",
-              "errors": ["SarError::Io on bind failure"],
+              "errors": [
+                "SarError::Io on bind failure"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7676,12 +7881,18 @@
               "description": "Accept the next incoming QUIC connection.",
               "parameters": [],
               "returns": "Result<QuicSarConnection, SarError>",
-              "errors": ["SarError::StreamClosed if listener is closed"],
+              "errors": [
+                "SarError::StreamClosed if listener is closed"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7702,9 +7913,13 @@
                 "Malformed QUIC stream does not corrupt other active streams unless connection-fatal."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7719,12 +7934,18 @@
               "description": "Accept the next incoming bidirectional QUIC stream on this connection.",
               "parameters": [],
               "returns": "Result<QuicSarStream, SarError>",
-              "errors": ["SarError::StreamClosed if connection is closed"],
+              "errors": [
+                "SarError::StreamClosed if connection is closed"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7739,12 +7960,19 @@
               "description": "Open a new outgoing bidirectional QUIC stream on this connection.",
               "parameters": [],
               "returns": "Result<QuicSarStream, SarError>",
-              "errors": ["SarError::StreamClosed if connection is closed", "SarError::LimitExceeded if max_quic_streams_per_connection is reached"],
+              "errors": [
+                "SarError::StreamClosed if connection is closed",
+                "SarError::LimitExceeded if max_quic_streams_per_connection is reached"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7758,16 +7986,33 @@
               "stability": "experimental",
               "description": "Feed bytes for a specific QUIC stream into the M10c QUIC-policy harness. Returns transport actions. Control-frame bytes are buffered; call flush_pending_control_frames to send.",
               "parameters": [
-                { "name": "stream_id", "type": "TransportStreamId", "description": "The transport stream ID from QuicSarStream::stream_id()." },
-                { "name": "bytes", "type": "&[u8]", "description": "Bytes received from the QUIC stream." }
+                {
+                  "name": "stream_id",
+                  "type": "TransportStreamId",
+                  "description": "The transport stream ID from QuicSarStream::stream_id()."
+                },
+                {
+                  "name": "bytes",
+                  "type": "&[u8]",
+                  "description": "Bytes received from the QUIC stream."
+                }
               ],
               "returns": "Result<Vec<TransportAction>, SarError>",
-              "errors": ["SarError::StreamState on session protocol violation", "SarError::LimitExceeded on buffer/stream limit"],
-              "safety_notes": ["No plaintext is exposed before AEAD authentication succeeds."],
+              "errors": [
+                "SarError::StreamState on session protocol violation",
+                "SarError::LimitExceeded on buffer/stream limit"
+              ],
+              "safety_notes": [
+                "No plaintext is exposed before AEAD authentication succeeds."
+              ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7781,15 +8026,25 @@
               "stability": "experimental",
               "description": "Flush any control-frame bytes buffered by feed_stream_bytes to the QUIC send stream.",
               "parameters": [
-                { "name": "stream", "type": "&mut quinn::SendStream", "description": "The QUIC send stream to write to." }
+                {
+                  "name": "stream",
+                  "type": "&mut quinn::SendStream",
+                  "description": "The QUIC send stream to write to."
+                }
               ],
               "returns": "Result<(), SarError>",
-              "errors": ["SarError::Io on write failure"],
+              "errors": [
+                "SarError::Io on write failure"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7803,20 +8058,39 @@
               "stability": "experimental",
               "description": "Derive TLS exporter material from the active QUIC/TLS session using the given label, context, and output length. Used for TLS_EXPORTER SAR-AEAD key derivation.",
               "parameters": [
-                { "name": "label", "type": "&[u8]", "description": "TLS exporter label (ASCII)." },
-                { "name": "context", "type": "&[u8]", "description": "TLS exporter context (encoded TlsExporterContextV1)." },
-                { "name": "len", "type": "usize", "description": "Output length in bytes (Derived Key Length from KMS data)." }
+                {
+                  "name": "label",
+                  "type": "&[u8]",
+                  "description": "TLS exporter label (ASCII)."
+                },
+                {
+                  "name": "context",
+                  "type": "&[u8]",
+                  "description": "TLS exporter context (encoded TlsExporterContextV1)."
+                },
+                {
+                  "name": "len",
+                  "type": "usize",
+                  "description": "Output length in bytes (Derived Key Length from KMS data)."
+                }
               ],
               "returns": "Result<Vec<u8>, SarError>",
-              "errors": ["SarError::Unsupported if exporter material is unavailable"],
+              "errors": [
+                "SarError::Unsupported if exporter material is unavailable"
+              ],
               "safety_notes": [
                 "Exporter output is never logged, never transmitted, and never placed in KMS Data.",
                 "Used only as SAR AEAD keying material input."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["5.3", "18.6"],
+              "related_spec_sections": [
+                "5.3",
+                "18.6"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7834,9 +8108,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7854,9 +8132,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7870,17 +8152,36 @@
               "stability": "experimental",
               "description": "Async QUIC client entry point. Establishes a QUIC connection to a QuicSarListener. Returns a ready-to-use QuicSarConnection.",
               "parameters": [
-                { "name": "server_name", "type": "&str", "description": "TLS SNI server name." },
-                { "name": "addr", "type": "SocketAddr", "description": "Remote address." },
-                { "name": "config", "type": "QuicClientConfig", "description": "Client configuration." }
+                {
+                  "name": "server_name",
+                  "type": "&str",
+                  "description": "TLS SNI server name."
+                },
+                {
+                  "name": "addr",
+                  "type": "SocketAddr",
+                  "description": "Remote address."
+                },
+                {
+                  "name": "config",
+                  "type": "QuicClientConfig",
+                  "description": "Client configuration."
+                }
               ],
               "returns": "Result<QuicSarConnection, SarError>",
-              "errors": ["SarError::Io on connection failure", "SarError::Unsupported if TLS config is invalid"],
+              "errors": [
+                "SarError::Io on connection failure",
+                "SarError::Unsupported if TLS config is invalid"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",

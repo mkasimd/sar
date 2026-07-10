@@ -1,6 +1,7 @@
 //! Tests for sparse-file map parsing, writing, validation, and reconstruction.
 
 use sar_core::{
+    SparseError,
     error::SarError,
     sparse::{
         SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
@@ -10,6 +11,10 @@ use sar_core::{
 
 fn unlimited_limits() -> sar_core::ResourceLimits {
     sar_core::ResourceLimits::unlimited()
+}
+
+fn sparse_unlimited() -> sar_core::SparseLimits {
+    sar_core::ResourceLimits::unlimited().sparse_limits()
 }
 
 // ---------------------------------------------------------------------------
@@ -78,7 +83,7 @@ fn reconstruct_sparse_holes_as_zeroes() {
             length: 4,
         },
     ];
-    let out = apply_sparse_reconstruction(payload, &extents, 12, &unlimited_limits())
+    let out = apply_sparse_reconstruction(payload, &extents, 12, &sparse_unlimited())
         .expect("reconstruct");
     assert_eq!(out.len(), 12);
     assert_eq!(&out[0..4], b"DATA");
@@ -94,7 +99,7 @@ fn extract_sparse_file_safely() {
         offset: 0,
         length: 12,
     }];
-    let out = apply_sparse_reconstruction(payload, &extents, 12, &unlimited_limits())
+    let out = apply_sparse_reconstruction(payload, &extents, 12, &sparse_unlimited())
         .expect("reconstruct");
     assert_eq!(&out[..], b"hello world!");
 }
@@ -115,7 +120,7 @@ fn reconstruct_trailing_hole_uses_logical_size() {
         offset: 2,
         length: 3,
     }];
-    let out = apply_sparse_reconstruction(payload, &extents, 10, &unlimited_limits())
+    let out = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect("reconstruct");
     assert_eq!(out.len(), 10);
     assert_eq!(&out[0..2], &[0u8; 2]); // leading hole
@@ -144,7 +149,7 @@ fn reconstruct_leading_middle_trailing_holes() {
             length: 2,
         },
     ];
-    let out = apply_sparse_reconstruction(payload, &extents, 12, &unlimited_limits())
+    let out = apply_sparse_reconstruction(payload, &extents, 12, &sparse_unlimited())
         .expect("reconstruct");
     assert_eq!(out.len(), 12);
     assert_eq!(&out[0..2], &[0u8; 2]); // leading hole
@@ -163,10 +168,10 @@ fn reconstruct_rejects_excess_payload() {
         offset: 0,
         length: 3,
     }];
-    let err = apply_sparse_reconstruction(payload, &extents, 10, &unlimited_limits())
+    let err = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect_err("should fail with excess payload");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
+        matches!(err, SparseError::InvalidMap(_)),
         "expected InvalidMap for excess payload, got {err:?}"
     );
 }
@@ -180,10 +185,10 @@ fn reconstruct_rejects_short_payload() {
         offset: 0,
         length: 8,
     }];
-    let err = apply_sparse_reconstruction(payload, &extents, 10, &unlimited_limits())
+    let err = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect_err("should fail with short payload");
     assert!(
-        matches!(err, SarError::Truncated(_)),
+        matches!(err, SparseError::Truncated(_)),
         "expected Truncated, got {err:?}"
     );
 }
@@ -202,10 +207,10 @@ fn reconstruct_rejects_extent_beyond_logical_size_in_apply() {
         offset: 8,
         length: 3,
     }];
-    let err = apply_sparse_reconstruction(payload, &extents, 10, &unlimited_limits())
+    let err = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect_err("should fail with extent beyond logical size");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
+        matches!(err, SparseError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
     );
 }
@@ -225,7 +230,7 @@ fn reconstruct_accepts_zero_length_descriptor() {
             length: 3,
         },
     ];
-    let out = apply_sparse_reconstruction(payload, &extents, 10, &unlimited_limits())
+    let out = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect("reconstruct");
     assert_eq!(out.len(), 10);
     assert_eq!(&out[0..2], &[0u8; 2]);
@@ -249,9 +254,9 @@ fn reject_overlapping_extents() {
             length: 8,
         }, // overlaps
     ];
-    let err = validate_sparse_extents(&extents, 64, &unlimited_limits()).expect_err("should fail");
+    let err = validate_sparse_extents(&extents, 64, &sparse_unlimited()).expect_err("should fail");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
+        matches!(err, SparseError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
     );
 }
@@ -262,23 +267,25 @@ fn reject_extent_beyond_logical_size() {
         offset: 4,
         length: 8,
     }];
-    let err = validate_sparse_extents(&extents, 10, &unlimited_limits()).expect_err("should fail");
+    let err = validate_sparse_extents(&extents, 10, &sparse_unlimited()).expect_err("should fail");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
+        matches!(err, SparseError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
     );
 }
 
 #[test]
 fn sparse_invalid_map_error_code() {
-    // verify the error maps to SAR_ERR_INVALID_MAP
-    use sar_core::error::SarStatus;
+    // verify the error is the InvalidMap variant (maps to SAR_ERR_INVALID_MAP)
     let extents = vec![SparseExtent {
         offset: 0,
         length: 100,
     }];
-    let err = validate_sparse_extents(&extents, 50, &unlimited_limits()).expect_err("should fail");
-    assert_eq!(err.status(), SarStatus::ErrInvalidMap);
+    let err = validate_sparse_extents(&extents, 50, &sparse_unlimited()).expect_err("should fail");
+    assert!(
+        matches!(err, SparseError::InvalidMap(_)),
+        "expected InvalidMap, got {err:?}"
+    );
 }
 
 #[test]
@@ -300,10 +307,10 @@ fn reconstruction_reports_invalid_map_for_out_of_bounds() {
         offset: 0,
         length: 8,
     }];
-    let err = apply_sparse_reconstruction(&payload, &extents, 4, &unlimited_limits())
+    let err = apply_sparse_reconstruction(&payload, &extents, 4, &sparse_unlimited())
         .expect_err("should fail");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
+        matches!(err, SparseError::InvalidMap(_)),
         "expected InvalidMap, got {err:?}"
     );
 }

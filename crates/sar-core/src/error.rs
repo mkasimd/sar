@@ -500,3 +500,26 @@ impl From<sar_crypto::SarCryptoError> for SarError {
         }
     }
 }
+
+impl From<sar_fragmentation::FragmentError> for SarError {
+    fn from(err: sar_fragmentation::FragmentError) -> Self {
+        match err {
+            sar_fragmentation::FragmentError::Bounds(msg) => Self::Bounds(msg),
+            sar_fragmentation::FragmentError::InvalidMap(msg) => Self::InvalidMap(msg),
+            sar_fragmentation::FragmentError::FragmentGap(msg) => Self::FragmentGap(msg),
+            sar_fragmentation::FragmentError::Overflow(msg) => Self::Overflow(msg),
+            sar_fragmentation::FragmentError::LimitExceeded(msg) => Self::LimitExceeded(msg),
+        }
+    }
+}
+
+impl From<sar_sparse::SparseError> for SarError {
+    fn from(err: sar_sparse::SparseError) -> Self {
+        match err {
+            sar_sparse::SparseError::InvalidMap(msg) => Self::InvalidMap(msg),
+            sar_sparse::SparseError::Overflow(msg) => Self::Overflow(msg),
+            sar_sparse::SparseError::Truncated(msg) => Self::Truncated(msg),
+            sar_sparse::SparseError::LimitExceeded(msg) => Self::LimitExceeded(msg),
+        }
+    }
+}

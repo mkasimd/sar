@@ -1,7 +1,8 @@
 use std::io::Cursor;
 
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
+    ArchiveReader, ArchiveReaderOptions, FragmentError, GlobalFlags, ResourceLimits, SarError,
+    SparseError,
     format::{
         CentralDictionary, GlobalHeader, LocalFileHeader, lfh_bytes_for_aad,
         parse_central_dictionary, parse_global_header, parse_lfh, write_central_dictionary,
@@ -342,8 +343,9 @@ fn excessive_fragment_count_fails() {
         ..base_limits()
     };
 
-    let err = reconstruct_fragments(fragments, 2, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)));
+    let err =
+        reconstruct_fragments(fragments, 2, &limits.fragment_limits()).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)));
 }
 
 #[test]
@@ -375,8 +377,9 @@ fn excessive_loss_tolerant_gap_fails() {
         ..base_limits()
     };
 
-    let err = reconstruct_fragments(fragments, 11, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)));
+    let err =
+        reconstruct_fragments(fragments, 11, &limits.fragment_limits()).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)));
 }
 
 #[test]
@@ -402,9 +405,9 @@ fn checked_arithmetic_catches_offset_plus_length_overflow() {
         length: 1,
     }];
 
-    let err =
-        validate_sparse_extents(&extents, u64::MAX, &unlimited_limits()).expect_err("must fail");
-    assert!(matches!(err, SarError::Overflow(_)));
+    let err = validate_sparse_extents(&extents, u64::MAX, &unlimited_limits().sparse_limits())
+        .expect_err("must fail");
+    assert!(matches!(err, SparseError::Overflow(_)));
 }
 
 #[test]
@@ -414,9 +417,14 @@ fn unsafe_u64_to_usize_conversion_fails_safely() {
         length: 1,
     }];
 
-    let err = apply_sparse_reconstruction(&[1], &extents, u64::MAX, &unlimited_limits())
-        .expect_err("must fail");
-    assert!(matches!(err, SarError::Overflow(_)));
+    let err = apply_sparse_reconstruction(
+        &[1],
+        &extents,
+        u64::MAX,
+        &unlimited_limits().sparse_limits(),
+    )
+    .expect_err("must fail");
+    assert!(matches!(err, SparseError::Overflow(_)));
 }
 
 #[test]

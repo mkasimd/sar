@@ -713,6 +713,35 @@ impl ResourceLimits {
         }
         Ok(())
     }
+
+    /// Converts this `ResourceLimits` into a [`sar_fragmentation::FragmentLimits`]
+    /// suitable for fragment group validation and reassembly.
+    #[must_use]
+    pub fn fragment_limits(&self) -> sar_fragmentation::FragmentLimits {
+        sar_fragmentation::FragmentLimits {
+            max_fragment_count: self.max_fragment_count,
+            max_fragment_group_span: self.max_fragment_group_span,
+            max_decoded_entry_size: self.max_decoded_entry_size,
+            max_loss_tolerant_gap: self.max_loss_tolerant_gap,
+            max_allocation_bytes: self
+                .max_in_memory_buffer
+                .min(self.max_total_pipeline_memory),
+        }
+    }
+
+    /// Converts this `ResourceLimits` into a [`sar_sparse::SparseLimits`]
+    /// suitable for sparse extent validation and reconstruction.
+    #[must_use]
+    pub fn sparse_limits(&self) -> sar_sparse::SparseLimits {
+        sar_sparse::SparseLimits {
+            max_sparse_map_bytes: self.max_sparse_map_bytes,
+            max_sparse_descriptors: self.max_sparse_descriptors,
+            max_decoded_entry_size: self.max_decoded_entry_size,
+            max_allocation_bytes: self
+                .max_in_memory_buffer
+                .min(self.max_total_pipeline_memory),
+        }
+    }
 }
 
 #[cfg(test)]

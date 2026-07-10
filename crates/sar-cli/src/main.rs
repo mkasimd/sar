@@ -775,7 +775,7 @@ fn write_sparse_payload_via_temp(
     limits: &ResourceLimits,
 ) -> Result<(), SarError> {
     limits.check_decoded_entry_size(logical_size)?;
-    validate_sparse_extents(extents, logical_size, limits)?;
+    validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -822,7 +822,7 @@ fn compute_sparse_crc32(
     limits: &ResourceLimits,
 ) -> Result<u32, SarError> {
     limits.check_decoded_entry_size(logical_size)?;
-    validate_sparse_extents(extents, logical_size, limits)?;
+    validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
     let mut hasher = crc32fast::Hasher::new();
     let zero_chunk = [0u8; ZERO_CHUNK_LEN];
     let mut payload_pos = 0usize;
@@ -1047,7 +1047,8 @@ fn extract_archive(
             })
             .collect();
 
-        let (raw, is_degraded) = reconstruct_fragments(frag_entries, assembled_size, &limits)?;
+        let (raw, is_degraded) =
+            reconstruct_fragments(frag_entries, assembled_size, &limits.fragment_limits())?;
         if is_degraded && !allow_lossy {
             return Err(SarError::FragmentGap(
                 "fragment group has gaps; use allow_lossy to permit degraded output",
@@ -1162,7 +1163,8 @@ fn verify_archive(
         let mut sparse_errors = 0u32;
         for entry in &entries {
             if entry.sparse_extents.as_ref().is_some_and(|ext| {
-                validate_sparse_extents(ext, entry.uncompressed_size, &limits).is_err()
+                validate_sparse_extents(ext, entry.uncompressed_size, &limits.sparse_limits())
+                    .is_err()
             }) {
                 eprintln!("recovery verify: sparse extent error in '{}'", entry.name);
                 sparse_errors += 1;
@@ -1207,7 +1209,9 @@ fn verify_archive(
                 Ok::<u64, SarError>(max_end.max(end))
             })?;
 
-            if let Err(err) = validate_fragment_group(&frag_entries, max_offset, &limits) {
+            if let Err(err) =
+                validate_fragment_group(&frag_entries, max_offset, &limits.fragment_limits())
+            {
                 eprintln!("recovery verify: fragment group {fid} error: {err}");
                 frag_errors += 1;
             }

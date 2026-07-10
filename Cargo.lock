@@ -1429,6 +1429,8 @@ dependencies = [
  "sar-crypto",
  "sar-delta",
  "sar-fec",
+ "sar-fragmentation",
+ "sar-sparse",
  "serde",
  "serde_json",
  "tempfile",
@@ -1465,6 +1467,10 @@ version = "0.1.0"
 [[package]]
 name = "sar-fragmentation"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
 
 [[package]]
 name = "sar-loss-tolerant"
@@ -1477,6 +1483,10 @@ version = "0.1.0"
 [[package]]
 name = "sar-sparse"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
 
 [[package]]
 name = "sar-stream"

@@ -1656,8 +1656,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 })
                 .collect();
 
-            let (raw, is_degraded) =
-                reconstruct_fragments(frag_entries, assembled_size, &self.options.limits)?;
+            let (raw, is_degraded) = reconstruct_fragments(
+                frag_entries,
+                assembled_size,
+                &self.options.limits.fragment_limits(),
+            )?;
 
             // When the caller does not allow lossy and degraded output was
             // produced by a LOSS_TOLERANT group, surface it as an error.
@@ -1679,13 +1682,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 crate::sparse::validate_sparse_extents(
                     extents,
                     group_sparse_uncompressed_size,
-                    &self.options.limits,
+                    &self.options.limits.sparse_limits(),
                 )?;
                 crate::sparse::apply_sparse_reconstruction(
                     &raw,
                     extents,
                     group_sparse_uncompressed_size,
-                    &self.options.limits,
+                    &self.options.limits.sparse_limits(),
                 )?
             } else {
                 raw
@@ -1741,8 +1744,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // This correctly handles trailing sparse holes that extend beyond the
         // last extent.
         limits.check_decoded_entry_size(uncompressed_size)?;
-        crate::sparse::validate_sparse_extents(extents, uncompressed_size, limits)?;
-        crate::sparse::apply_sparse_reconstruction(&payload, extents, uncompressed_size, limits)
+        crate::sparse::validate_sparse_extents(
+            extents,
+            uncompressed_size,
+            &limits.sparse_limits(),
+        )?;
+        Ok(crate::sparse::apply_sparse_reconstruction(
+            &payload,
+            extents,
+            uncompressed_size,
+            &limits.sparse_limits(),
+        )?)
     }
 }
 
@@ -2447,7 +2459,7 @@ impl<W: Write> ArchiveWriter<W> {
         crate::sparse::validate_sparse_extents(
             &sparse.extents,
             sparse.logical_size,
-            &ResourceLimits::unlimited(),
+            &ResourceLimits::unlimited().sparse_limits(),
         )?;
 
         // Validate payload length equals sum of extent lengths.
