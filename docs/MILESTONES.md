@@ -393,7 +393,7 @@ LFH metadata API completeness
 * avoid filesystem restoration behavior in this milestone
 * no CLI extraction policy changes yet
 
-M11a.1:
+## M11a.1:
 64BIT_SIZE LFH layout audit, correction, and implementation default policy
 
 * audit Global Flag `64BIT_SIZE` support
