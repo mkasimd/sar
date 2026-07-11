@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use sar_core::{
-    EntryReader, GlobalFlags, GlobalHeader, LocalFileHeader, ResourceLimits, SarError, SarStatus,
+    GlobalFlags, GlobalHeader, LocalFileHeader, ResourceLimits, SarError, SarStatus,
     validate_entry_mode_against_global, validate_global_flags,
 };
 
@@ -91,13 +91,13 @@ pub struct SessionEntry {
 }
 
 impl SessionEntry {
-    /// Creates a session entry from a decoded `sar-core` entry.
+    /// Creates a session entry directly from decoded fields.
     #[must_use]
-    pub fn from_entry_reader(entry: EntryReader) -> Self {
+    pub fn new(header: LocalFileHeader, payload: Vec<u8>, degraded: bool) -> Self {
         Self {
-            header: entry.header,
-            payload: entry.payload,
-            degraded: false,
+            header,
+            payload,
+            degraded,
         }
     }
 }

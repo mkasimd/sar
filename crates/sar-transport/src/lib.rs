@@ -15,14 +15,15 @@ pub mod tcp;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use sar_archive::{ArchiveReaderOptions, StreamArchiveParser, StreamEvent, StreamStep};
 use sar_core::{
-    ArchiveReaderOptions, EntryMode, GlobalHeader, KeyProvider, KmsContext, KmsData, KmsParams,
-    LocalFileHeader, ResourceLimits, SarCryptoError, SarError, SarStatus, SecretBytes,
-    StreamArchiveParser, StreamEvent, StreamStep, global_header_flags_bytes, parse_lfh,
+    EntryMode, GlobalHeader, KmsData, LocalFileHeader, ResourceLimits, SarError, SarStatus,
+    global_header_flags_bytes, parse_lfh,
 };
 use sar_crypto::{
-    KMS_TLS_EXPORTER, SecretString, aad::build_aead_aad, aead::aead_decrypt,
-    parse_tls_exporter_kms_payload, resolve_cek,
+    KMS_TLS_EXPORTER, KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes,
+    SecretString, aad::build_aead_aad, aead::aead_decrypt, parse_tls_exporter_kms_payload,
+    resolve_cek,
 };
 
 /// Wraps an `Arc<dyn KeyProvider>` so it can be placed in a `Box<dyn KeyProvider>`
@@ -1315,18 +1316,24 @@ impl InMemoryTransport {
                                      unencrypted SAR entry rejected post-binding",
                                 ))
                             } else {
+                                let sar_archive::EntryReader {
+                                    header, payload, ..
+                                } = *entry;
                                 let result = context
                                     .manager
-                                    .process_entry(&SessionEntry::from_entry_reader(*entry));
+                                    .process_entry(&SessionEntry::new(header, payload, false));
                                 LoopEvent::SessionResult {
                                     sequence_no,
                                     result,
                                 }
                             }
                         } else {
+                            let sar_archive::EntryReader {
+                                header, payload, ..
+                            } = *entry;
                             let result = context
                                 .manager
-                                .process_entry(&SessionEntry::from_entry_reader(*entry));
+                                .process_entry(&SessionEntry::new(header, payload, false));
                             LoopEvent::SessionResult {
                                 sequence_no,
                                 result,

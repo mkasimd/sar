@@ -14,7 +14,7 @@ When implementation logic appears in a crate different from the ownership descri
 
 Final role: canonical SAR archive format crate.
 
-`sar-core` should own the wire format, archive structure, shared status model, and high-level archive reader/writer integration. It should remain the crate that other SAR crates integrate through, but it should not own every domain-specific algorithm.
+`sar-core` owns canonical wire format, shared status/error model, limits, checked parsing/writing primitives, and low-level structural helpers. High-level archive reader/writer integration is owned by `sar-archive` as of M11d.
 
 Should contain:
 
@@ -41,35 +41,21 @@ Should contain:
   * delta LFH metadata;
   * encryption metadata;
   * stream ID / sequence number fields.
-* archive reader/writer APIs.
-* indexed archive validation.
-* `NO_INDEX` archive processing.
-* transform pipeline orchestration.
-* integration with:
+* low-level validation needed for safe SAR parsing.
+* low-level sparse-map wire helpers (`parse_sparse_map`, `write_sparse_map`).
+* narrow structural adapters/conversions for:
 
-  * `sar-compression`;
-  * `sar-crypto`;
-  * `sar-fec`;
-  * `sar-cdc`;
-  * `sar-delta`;
-  * `sar-fragmentation`;
-  * `sar-sparse`;
-  * `sar-loss-tolerant`.
-* profile/conformance reporting hooks.
-* high-level convenience APIs such as `ArchiveReader` and `ArchiveWriter`.
+  * `sar-crypto`: `From<SarCryptoError>` error bridge in `SarError`.
+  * `sar-fec`: FEC TLV classification and validation helpers.
+  * `sar-cdc`: CDC LFH metadata parsing.
+  * `sar-fragmentation`: fragment descriptor metadata typing.
+  * `sar-sparse`: sparse-map wire helper signatures.
+Should keep as core APIs:
 
-Should keep, at least as integration APIs:
-
-* `ArchiveReader`.
-* `ArchiveWriter`.
-* `EntryInput`.
-* `EntryMetadata`.
-* `EntryReader`.
-* `LogicalFile`.
-* `ArchiveReaderOptions`.
-* `ArchiveWriterOptions`.
+* wire-format structs and parse/write helpers.
 * `ResourceLimits`.
-* `VerificationReport`.
+* `SarError` / `SarStatus`.
+* flag/type validation helpers.
 
 Should eventually move out or delegate:
 
@@ -88,14 +74,39 @@ Should not contain:
 * real TCP/QUIC transport implementation;
 * CLI behavior;
 * language bindings.
+* public convenience re-exports of `sar-crypto` APIs (`KeyProvider`, `KmsContext`, `KmsParams`, `SarCryptoError`, `SecretBytes`).
 
 Expected final shape:
 
 ```text
 sar-core:
-  owns canonical archive format and integration APIs.
-  delegates specialized behavior to specialized crates.
+  owns canonical archive format and low-level helpers.
+  does not own high-level archive integration APIs.
 ```
+
+---
+
+## `sar-archive`
+
+Final role: high-level archive integration crate (implemented in M11d).
+
+Should contain:
+
+* `ArchiveReader` / `ArchiveWriter`.
+* `ArchiveReaderOptions` / `ArchiveWriterOptions`.
+* `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`, `LogicalFile`.
+* `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`.
+* archive verification/listing helpers.
+* indexed and `NO_INDEX` high-level archive flows.
+* transform orchestration (`encode_payload`, `decode_payload`, `encode_payload_v2`, `decode_payload_v2`, `EncodingPlan`, `DecodingPlan`, `EncodingPlanV2`, `DecodingPlanV2`, `EntryCryptoContext`).
+* integration with compression/crypto/FEC/CDC/delta/sparse/fragmentation/loss-tolerant crates.
+* stream parser orchestration APIs used by transport/session layers (`StreamArchiveParser`, `StreamEvent`, `StreamStep`, `StreamParseState`, `StreamArchiveSummary`).
+* profile validation (if public: `validate_archive_profile`, `ComplianceProfile`).
+* archive-level recovery/repair orchestration (`EntryErasure`, `ErasureInput`, `ErasureRange`, `ProtectedRange`, `RecoveryMetadata`, `RecoveryPlan`, `RepairReport`, `inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`).
+
+Should not contain:
+
+* wire-format ownership for GH/LFH/CD/Footer/TLV structs and parse/write primitives (owned by `sar-core`).
 
 ---
 
@@ -177,6 +188,7 @@ Should contain:
   * unsupported assigned algorithms.
 * KMS mode registry.
 * KMS payload parsing/serialization.
+* owning public KMS/key-provider/secret buffer APIs (`KmsContext`, `KmsParams`, `KeyProvider`, `SecretBytes`, `SarCryptoError`).
 * KMS validation:
 
   * no raw content-encryption keys in archive metadata;
@@ -693,7 +705,7 @@ sar-partition:
 
 Final role: SAR Stateful Streaming Mode session semantics.
 
-Current state appears mostly correct after M10b.
+Current state appears mostly correct after M10b. As of M11d corrective pass, `sar-stream` no longer depends on `sar-archive`; `SessionEntry` is constructible directly from `LocalFileHeader`, payload bytes, and a degraded flag.
 
 Should contain:
 
@@ -781,7 +793,7 @@ Expected final shape:
 ```text
 sar-transport:
   concrete transport bindings.
-  delegates session semantics to `sar-stream`, archive parsing to `sar-core`, crypto to `sar-crypto`.
+  delegates session semantics to `sar-stream`, archive stream parsing to `sar-archive`, crypto to `sar-crypto`.
 ```
 
 ---
@@ -854,15 +866,18 @@ sar-cli:
 
 * wire format;
 * canonical parsing/writing;
-* archive integration;
 * shared errors/status;
 * raw LFH/GH/CD/Footer/TLV models;
-* high-level reader/writer APIs;
-* conformance hooks;
-* transform orchestration.
+* resource limits;
+* narrow structural adapters for sar-crypto error bridge and FEC/CDC/delta/fragment/sparse metadata typing.
 
 ## Move or delegate out of `sar-core`
 
+* high-level reader/writer APIs → `sar-archive`;
+* transform orchestration → `sar-archive`;
+* archive-level recovery/repair orchestration → `sar-archive`;
+* profile/conformance validation → `sar-archive`;
+* stream parser orchestration → `sar-archive`;
 * fragment reassembly → `sar-fragmentation`;
 * sparse semantic validation/reconstruction → `sar-sparse`;
 * loss-tolerant degradation policy → `sar-loss-tolerant`;

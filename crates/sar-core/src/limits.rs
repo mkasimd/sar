@@ -42,17 +42,15 @@ use crate::error::SarError;
 ///
 /// # Usage
 ///
-/// Pass a `ResourceLimits` value inside [`crate::archive::ArchiveReaderOptions`]:
+/// Pass a `ResourceLimits` value into high-level reader/writer option structs
+/// (for example `sar_archive::ArchiveReaderOptions`):
 ///
 /// ```rust
-/// use sar_core::{ArchiveReaderOptions, limits::ResourceLimits};
+/// use sar_core::limits::ResourceLimits;
 ///
-/// let opts = ArchiveReaderOptions {
-///     limits: ResourceLimits {
-///         max_in_memory_buffer: 64 * 1024 * 1024,
-///         ..ResourceLimits::default()
-///     },
-///     delta_base: None,
+/// let limits = ResourceLimits {
+///     max_in_memory_buffer: 64 * 1024 * 1024,
+///     ..ResourceLimits::default()
 /// };
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

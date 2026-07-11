@@ -1,10 +1,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Core parser/writer and archive APIs for SAR Protocol v1.0 (Milestones 1–9b).
-
-/// Archive reader/writer APIs.
-pub mod archive;
+//! Core canonical wire-format, status/error, and low-level helper APIs for SAR Protocol v1.0.
 /// CDC (Content-Defined Chunking) support: algorithm IDs, map parsing/writing,
 /// recipe validation (Milestone 9a).
 pub mod cdc;
@@ -22,29 +19,15 @@ pub mod io;
 pub mod limits;
 /// Expanded LFH metadata types (M11a).
 pub mod metadata;
-/// Compliance profile checks.
-pub mod profile;
-/// Archive-level Data Recovery TLV inspection, planning, and repair.
-pub mod recovery;
 /// Sparse-file map parsing/writing.
 ///
 /// Wire-format parse/write lives here (`parse_sparse_map`, `write_sparse_map`).
 /// Semantic validation and reconstruction are owned by [`sar_sparse`]; import
 /// them directly from that crate.
 pub mod sparse;
-/// Forward-only stateless SAR byte-stream parser state model.
-pub mod stream;
 /// Metadata TLV parser/writer.
 pub mod tlv;
-/// Transform pipeline primitives.
-pub mod transform;
 
-pub use archive::{
-    ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
-    ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, FecSettings, LfhSizeFieldPolicy, LogicalFile, SparseWriteOptions,
-    StreamWriteState, VerificationReport,
-};
 pub use cdc::{
     CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
     CdcAlgoId, CdcChunk, CdcExtProviderMetadata, CdcMapRecord, CdcMetadata, TLV_CDC_CUSTOM,
@@ -69,26 +52,6 @@ pub use metadata::{
     EntryFecMetadata, EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
     EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FieldPresence,
 };
-pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
-pub use recovery::{
-    EntryErasure, ErasureInput, ErasureRange, ProtectedRange, RecoveryMetadata, RecoveryPlan,
-    RepairReport, inspect_recovery_metadata, plan_archive_repair, repair_archive,
-};
 pub use sar_cdc::CDC_MAP_RECORD_LEN;
 pub use sar_cdc::CdcMap;
-pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
-pub use sar_delta::{
-    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MAX, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH,
-    PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, apply_bsdiff,
-    apply_store_patch, apply_vcdiff, bsdiff::BsdiffLimits, patch_algo_name, validate_patch_algo_id,
-    vcdiff::VcdiffLimits,
-};
 pub use sparse::{SparseExtent, parse_sparse_map, write_sparse_map};
-pub use stream::{
-    StreamArchiveParser, StreamArchiveSummary, StreamEvent, StreamParseState, StreamStep,
-};
-pub use transform::{
-    CompressionDecoderTransform, CompressionEncoderTransform, DecoderTransform, DecodingPlan,
-    DecodingPlanV2, EncoderTransform, EncodingPlan, EncodingPlanV2, EntryCryptoContext,
-    decode_payload, decode_payload_v2, encode_payload, encode_payload_v2,
-};

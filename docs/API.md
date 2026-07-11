@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 11c source audit)
+# API Inventory (post–Milestone 11d source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -18,112 +18,84 @@ Current scope:
 - Milestone 11b: Filesystem Metadata Encode/Decode — `FieldPresence`-typed path/permissions/owner/timestamps in `EntryMetadata`, directory payload validation, IS_SYMLINK→HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests
 - Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
 - Milestone 11c-cp: Crate-boundary corrective pass — `sar_core::fragment` module removed, semantic sparse re-exports removed, `sar-loss-tolerant` integrated into `sar-fragmentation`, fragment payload/duplicate validation added, zero-length sparse extent rejection added, `write_sparse_map` fail-closed truncation fix, error conversion bridges updated
-- Milestone 12: future FFI / C ABI only; not implemented yet
+- Milestone 11d: archive API architecture split — high-level archive integration moved from `sar-core` to new `sar-archive`
+- Milestone 12: conformance vectors, fuzzing/malicious corpus, and docs/security posture hardening
+- Milestone 13: security audit and remediation
+- Milestone 14: C ABI security profile, stable C ABI, C ABI examples/tests, and Python module
+- Milestone 15: monorepo packaging and release artifact automation
+- Milestone 16: Swift/iOS and Kotlin/Java Android packages
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
+
+## M11d split summary (current import model)
+
+After M11d:
+
+- High-level archive APIs moved to `sar-archive`:
+  - `ArchiveReader`, `ArchiveWriter`
+  - `ArchiveReaderOptions`, `ArchiveWriterOptions`
+  - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
+  - `LogicalFile`
+  - `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
+  - `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`, `SparseWriteOptions`
+  - `StreamArchiveParser`, `StreamEvent`, `StreamStep`, `StreamParseState`, `StreamArchiveSummary`, `StreamWriteState`
+- Crypto/KMS/key-provider APIs are imported from `sar-crypto`:
+  - `KeyProvider`, `KmsContext`, `KmsParams`, `SarCryptoError`, `SecretBytes`
+- `sar-core` now owns canonical wire/status/limits and low-level parse/write helpers (GH/LFH/CD/Footer/TLV, flags, status/error, resource limits, checked parsing/writing primitives, low-level sparse-map wire helpers).
+- SAR v1.0 wire format and interoperability are unchanged by this split.
+- No C ABI, Python bindings, or mobile bindings were started in M11d.
 
 ## Workspace summary
 
 | Crate | Purpose | Status |
 | --- | --- | --- |
-| `sar-core` | Archive format, reader/writer, validation, transform integration | implemented with partial roadmap surface |
+| `sar-core` | Canonical wire format, status/error, limits, low-level parse/write helpers | implemented |
+| `sar-archive` | High-level archive reader/writer/verify/list/transform orchestration/recovery/repair APIs | implemented |
 | `sar-compression` | Compression registry and bounded encode/decode helpers | implemented |
 | `sar-crypto` | Hashing, AEAD, KMS types/parsing, key-provider abstraction | implemented with some planned algorithms |
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
-| `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
-| `sar-cdc` | Future CDC support placeholder | placeholder |
+| `sar-cli` | Human-facing CLI over `sar-archive` + `sar-core` low-level APIs | implemented with some command-surface gaps |
+| `sar-cdc` | Content-defined chunking metadata, CDC map parsing/writing, FASTCDC chunking, and validation helpers | implemented with future recipe/CAS/provider gaps |
 | `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented | implemented |
 | `sar-fragmentation` | Fragment semantic validation and reassembly (moved from `sar-core` in M11c) | implemented |
 | `sar-partition` | Partition/multi-volume support (deliberately deferred in M11c) | deferred placeholder |
 | `sar-sparse` | Sparse extent validation and reconstruction (moved from `sar-core` in M11c) | implemented |
 | `sar-loss-tolerant` | Loss-tolerant policy helpers (added in M11c) | implemented |
-| `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
+| `sar-stream` | Stateful Streaming Mode session layer; no `sar-archive` dependency as of M11d | implemented |
 | `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature) | implemented |
 
 ## `sar-core`
 
 ### Purpose
 
-`sar-core` is the main Rust API surface for reading, writing, verifying, and structurally validating SAR archives. It owns the on-wire format structs, status/error mapping, global/LFH flag rules, TLV handling, archive reader/writer flows, and transform integration with compression, crypto, and FEC crates.
+`sar-core` is the canonical wire-format, status/error, limits, and low-level parse/write helper crate. It owns the on-wire format structs, status/error mapping, global/LFH flag rules, TLV handling, and low-level structural helpers. High-level archive reader/writer integration, transform orchestration, archive stream parsing, profile validation, and recovery/repair orchestration are all owned by `sar-archive` as of M11d.
 
 ### Implemented milestone coverage
 
-- Milestones 1–3: global header, LFH, central dictionary, footer, TLV parsing/writing, archive read/write
-- Milestone 4: compression-aware transform plans and archive integration
-- Milestone 5: AEAD + KMS integration, AAD construction hooks, key-provider integration
-- Milestones 6–7: Selective FEC metadata validation and writer integration
-- Milestone 8: sparse file map module, fragment reassembly module, archive-level recovery module
+- Milestones 1–3: global header, LFH, central dictionary, footer, TLV parsing/writing
+- Milestones 6–7: Selective FEC metadata field parsing and validation
+- Milestone 8: sparse file map wire helpers, FEC TLV validation helpers
 
 ### Public modules
 
-- `archive`
+- `cdc`
 - `error`
 - `fec`
 - `flags`
 - `format`
-- `fragment`  *(new in M8)*
 - `io`
+- `limits`
 - `metadata`  *(new in M11a)*
-- `profile`
-- `recovery`  *(new in M8)*
-- `sparse`    *(new in M8)*
-- `stream`    *(new in M10a)*
+- `sparse`    *(wire helpers only)*
 - `tlv`
-- `transform`
+
+*Moved out in M11d:* `archive`, `stream`, `profile`, `recovery`, `transform` — these modules now live in `sar-archive`. `fragment` was removed in M11c-cp.
 
 ### Main public APIs
 
-#### High-level archive APIs
+#### `ResourceLimits`
 
-- `ArchiveReader<R>`
-  - `new(reader)`
-  - `with_options(reader, ArchiveReaderOptions)`
-  - `with_key_provider(Box<dyn KeyProvider>)`
-  - `read_global_header()`
-  - `next_entry()`
-  - `verify()`
-  - `metadata()`
-- `ArchiveWriter<W>`
-  - `new(writer, ArchiveWriterOptions)`
-  - `new_with_cd_metadata(writer, ArchiveWriterOptions, Vec<Tlv>)`
-  - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
-  - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
-  - `add_entry(EntryInput)`
-  - `write_sparse_entry(name, gathered_payload, SparseWriteOptions)` *(new in M8 final pass)*
-  - `finish()`
-- `StreamArchiveParser`
-  - `new()`
-  - `with_options(ArchiveReaderOptions)`
-  - `with_key_provider(Box<dyn KeyProvider>)`
-  - `push_bytes(&[u8])`
-  - `finalize_input()`
-  - `step() -> Result<StreamStep<StreamEvent>, SarError>`
-- `StreamParseState`, `StreamStep<T>`, `StreamEvent`, `StreamArchiveSummary`
-- `StreamWriteState` + `ArchiveWriter::stream_state()`
-
-#### Important public types
-
-- `ArchiveWriterOptions`
-  - `no_index: bool`
-  - `sparse: bool` *(new in M8 final pass)* — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
-  - `encryption: Option<EncryptionSettings>`
-  - `fec: Option<FecSettings>`
-  - `lfh_size_field_policy: LfhSizeFieldPolicy` *(new in M11a.1)* — LFH size-field encoding policy (`Auto`, `Force32`, `Force64`)
-  - `with_path: bool` *(new in M11a)* — sets `HAS_PATH` global flag; allows `EntryInput::path`
-  - `with_permissions: bool` *(new in M11a)* — sets `HAS_PERMS` global flag; allows `EntryInput::permissions`
-  - `with_uid_gid: bool` *(new in M11a)* — sets `EXT_UID_GID` global flag; allows `EntryInput::uid_gid`
-  - `with_timestamps: bool` *(new in M11a)* — sets `EXT_TIME` global flag; allows `EntryInput::timestamps`
-  - `with_per_file_crc: bool` *(new in M11a)* — sets `PER_FILE_CRC` global flag; allows `EntryInput::file_crc32`
-  - `with_content_hash: bool` *(new in M11a)* — sets `DEDUPLICATION` global flag; allows `EntryInput::content_hash`
-  - `with_symlinks: bool` *(new in M11a)* — sets `HAS_SYMLINKS` global flag; allows `EntryInput::kind = Symlink`
-- `SparseWriteOptions` *(new in M8 final pass)*
-  - `logical_size: u64` — full apparent file size including holes; written to LFH `Uncompressed Size`
-  - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
-- `ArchiveReaderOptions`
-  - `limits: ResourceLimits`
-  - `delta_base: Option<Vec<u8>>` — explicit base bytes for BSDIFF/VCDIFF patch application; no automatic discovery
-- `ResourceLimits`
-  - `max_archive_size`
+- `max_archive_size`
   - `max_entry_count`
   - `max_lfh_header_bytes`
   - `max_path_bytes`
@@ -152,24 +124,6 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `max_vcdiff_instruction_count` — maximum number of VCDIFF instructions per window (default: 10 000 000)
   - `max_vcdiff_output_size` — maximum total VCDIFF reconstructed output size; 0 = defer to `max_decoded_entry_size` (default: 0)
   - CLI defaults currently rely on `ResourceLimits::default()` unless the caller or CLI flags override them; the most relevant Stage 4 defaults are `max_archive_size = 16 GiB`, `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, and `max_repair_working_set = 2 GiB`
-- `CompressionSettings`
-  - `store()` helper
-- `EncryptionSettings`
-  - `algo_id`
-  - `kms_params: KmsParams`
-- `FecSettings`
-  - `default_xor()`
-  - `default_rs()`
-- `LfhSizeFieldPolicy` *(new in M11a.1)*
-  - `Auto` *(default)* — writer uses 32-bit LFH size fields when values fit `u32`; promotes to 64-bit before header emission when required
-  - `Force32` — writer emits 32-bit LFH size fields and fails closed if any required size exceeds `u32::MAX`
-  - `Force64` — writer emits 64-bit LFH size fields and sets global `SIZE_64BIT`
-- `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
-  - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
-  - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
-  - `EntryMetadata` fields *(new in M11a/M11b)*: `kind: EntryKind`, `path: Option<String>`, `symlink_target: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
-  - *(new in M11b)* `EntryMetadata` adds `path_presence: FieldPresence<String>`, `permissions_presence: FieldPresence<EntryPermissionMetadata>`, `owner_presence: FieldPresence<EntryOwnerMetadata>`, `timestamps_presence: FieldPresence<EntryTimestampMetadata>` — these expose the three-state presence model for filesystem metadata fields
-- `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
 #### Format and parser APIs
 
@@ -213,19 +167,6 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `SarStatus::code()`, `SarStatus::name()`
 - `SarError::status()`
 
-#### Transform pipeline APIs
-
-- Traits: `EncoderTransform`, `DecoderTransform`
-- Concrete compression transforms:
-  - `CompressionEncoderTransform`
-  - `CompressionDecoderTransform`
-- Plans and helpers:
-  - `EncodingPlan`, `DecodingPlan`
-  - `EncodingPlanV2`, `DecodingPlanV2`
-  - `EntryCryptoContext`
-  - `encode_payload`, `decode_payload`
-  - `encode_payload_v2`, `decode_payload_v2`
-
 #### FEC-facing public APIs in `sar-core`
 
 - `FecSummary`
@@ -240,8 +181,6 @@ These items are public today, but they are better treated as integration helpers
 
 - `io::ParseCursor<'a>`
 - `io::BinaryWriter`
-- `profile::validate_archive_profile()` and `ComplianceProfile`
-- direct transform plan structs used by `ArchiveReader` / `ArchiveWriter`
 
 ### Error behavior
 
@@ -251,12 +190,24 @@ These items are public today, but they are better treated as integration helpers
 - Encrypted archives require a `KeyProvider`; missing credentials return `SAR_ERR_KEY_MISSING`.
 - Wrong passwords or invalid tags fail before plaintext is released and surface as `SAR_ERR_AUTH_FAILED` / `SAR_ERR_DECRYPT_FAILED` depending on path.
 
-### Example — low-level iteration
+### Example — low-level LFH parse
+
+```rust
+use sar_core::{format::{parse_global_header, parse_lfh}, ResourceLimits};
+
+let limits = ResourceLimits::default();
+let (gh, rest) = parse_global_header(&bytes, &limits)?;
+let (lfh, _rest) = parse_lfh(&rest, gh.flags, &limits)?;
+println!("entry: {}", lfh.name);
+# Ok::<(), sar_core::SarError>(())
+```
+
+### Example — high-level archive write and read (using `sar-archive`)
 
 ```rust
 use std::fs::File;
 use std::io::BufReader;
-use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 
 let file = File::create("archive.sar")?;
 let mut writer = ArchiveWriter::new(file, ArchiveWriterOptions::default())?;
@@ -276,7 +227,7 @@ while let Some(entry) = reader.next_entry()? {
 ```rust
 use std::fs::File;
 use std::io::BufReader;
-use sar_core::ArchiveReader;
+use sar_archive::ArchiveReader;
 
 let mut reader = ArchiveReader::new(BufReader::new(File::open("archive.sar")?))?;
 // read_all_logical_files: assembles fragment groups, applies sparse zero-fill.
@@ -288,16 +239,18 @@ for file in files {
 # Ok::<(), sar_core::SarError>(())
 ```
 
-### Unsupported or planned in `sar-core`
+### Unsupported or planned outside `sar-core`
 
-Not implemented in this pass, even though some flags or structural fields already exist:
+Not implemented in `sar-core`, even though some flags or structural fields already exist:
 
 - signature cryptography and signature verification
-- CDC map processing
+- CDC recipe/CAS/provider behavior beyond current metadata/TLV handling
 - delta application for `ZSTD_PATCH` and custom patch algorithms
 - partition reassembly logic
-- transport-layer Stateful Streaming bindings and real network I/O
-- stable FFI / C ABI (Milestone 12)
+- transport-layer network I/O
+- stable C ABI, Python bindings, and mobile bindings
+
+As of M11d, high-level archive integration, transform orchestration, archive stream parsing, profile validation, and archive-level recovery/repair orchestration live in `sar-archive`, not `sar-core`.
 
 ### M11a metadata API notes
 
@@ -436,7 +389,7 @@ Fragment descriptors and sparse map fields coexist with filesystem metadata fiel
 - No CLI metadata flags.
 - No new wire-format fields, magic bytes, or end markers.
 - No path canonicalization for extraction.
-- Extraction safety (path traversal prevention, symlink extraction policy) belongs to M11d.
+- Extraction safety (path traversal prevention, symlink extraction policy, metadata restoration policy) belongs to explicit CLI/application extraction behavior, not side-effect-free metadata parsing.
 
 ### M10a stream model notes
 
@@ -595,9 +548,11 @@ Establishes a QUIC connection to a `QuicSarListener`.
 
 ---
 
-## M8 APIs in `sar-core`
+## M8 APIs — moved to `sar-archive` in M11d
 
-### `sar_core::archive` — high-level extraction types
+### `sar_archive::archive` — high-level extraction types
+
+**Moved from `sar_core::archive` to `sar_archive` in M11d.** Import these types from `sar_archive`, not `sar_core`.
 
 #### `LogicalFile`
 
@@ -664,7 +619,7 @@ The Sparse Map describes the layout of the **fully reconstructed logical payload
 
 When both `SPARSE_FILES` and `FILE_FRAGMENTATION` are enabled, the Sparse Map MUST appear only in the entry with `Fragment Index == 0`. Presence on any other fragment index returns `SarError::InvalidMap` immediately and is **never** suppressed by `allow_lossy`.
 
-#### `ArchiveWriter::write_sparse_entry` *(new in M8 final pass)*
+#### `ArchiveWriter::write_sparse_entry` *(moved to `sar-archive` in M11d)*
 
 ```rust
 pub fn write_sparse_entry(
@@ -707,6 +662,18 @@ Applies compression/encryption/FEC inherited from the writer options identically
 
 ### `sar_core::recovery`
 
+**Moved to `sar_archive::recovery` in M11d.** Import recovery types and functions from `sar_archive::recovery`, not `sar_core`.
+
+**Breaking change (M11d):** `sar_core::recovery::*` is no longer available. Update imports to `sar_archive::recovery::*`.
+
+### `sar_core::transform`
+
+**Moved to `sar_archive::transform` in M11d.** Import transform types and functions from `sar_archive::transform`, not `sar_core`.
+
+**Breaking change (M11d):** `sar_core::transform::*` is no longer available. Update imports to `sar_archive::transform::*`.
+
+### `sar_archive::recovery` — archive-level recovery/repair (M11d)
+
 Archive-level Data Recovery TLV inspection, planning, and repair.
 
 #### Public types
@@ -738,18 +705,104 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 - LOSS_TOLERANT does not bypass AEAD authentication
 - FEC repair is applied to ciphertext bytes before AEAD authentication
 
-### FFI / C ABI notes for `sar-core`
+### FFI / C ABI notes
 
-- Good future FFI candidates:
-  - archive open/read/close wrappers built around `ArchiveReader`
-  - archive create/add_entry/finish wrappers built around `ArchiveWriter`
-  - archive verify / inspect summary wrappers
-  - `SarStatus`-based status mapping
-- Not FFI-ready as-is:
-  - `ArchiveReader<R>` / `ArchiveWriter<W>` generics
-  - `Box<dyn KeyProvider>` callbacks
-  - `EncoderTransform` / `DecoderTransform` trait objects
-  - helper structs exposing owned Rust collections directly
+- No C ABI has been started. M11d corrective pass does not add C ABI, Python bindings, or mobile bindings.
+- `SarStatus`-based status mapping remains a good future FFI candidate.
+
+---
+
+## `sar-archive`
+
+### Purpose
+
+`sar-archive` is the high-level archive reader/writer, verification, stream parser, transform orchestration, profile validation, and archive-level recovery/repair crate. As of M11d, all high-level archive APIs live here.
+
+Import high-level archive APIs from `sar_archive`, not `sar_core`.
+
+### Implemented milestone coverage
+
+- Milestones 1–3: high-level archive read/write, indexed and `NO_INDEX` flows
+- Milestone 4: compression-aware transform pipeline
+- Milestone 5: AEAD + KMS integration, key-provider integration
+- Milestones 6–7: Selective FEC writer integration
+- Milestone 8: archive-level recovery/repair orchestration, `read_all_logical_files`
+- Milestone 10a: stream archive parser orchestration
+- Milestone 11a/11b: expanded `EntryInput`, `EntryMetadata`, filesystem metadata round-trip
+- Milestone 11d: crate split — moved from `sar-core`
+
+### Public modules
+
+- `archive` (re-exported at crate root)
+- `recovery` — archive-level recovery/repair
+- `transform` — encode/decode pipeline
+
+### Main public APIs
+
+#### High-level archive APIs
+
+- `ArchiveReader<R>`
+  - `new(reader)`
+  - `with_options(reader, ArchiveReaderOptions)`
+  - `with_key_provider(Box<dyn KeyProvider>)`
+  - `read_global_header()`
+  - `next_entry()`
+  - `verify()`
+  - `metadata()`
+  - `read_all_logical_files(allow_lossy: bool)`
+- `ArchiveWriter<W>`
+  - `new(writer, ArchiveWriterOptions)`
+  - `new_with_cd_metadata(writer, ArchiveWriterOptions, Vec<Tlv>)`
+  - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
+  - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
+  - `add_entry(EntryInput)`
+  - `write_sparse_entry(name, gathered_payload, SparseWriteOptions)`
+  - `finish()`
+- `StreamArchiveParser`
+  - `new()`
+  - `with_options(ArchiveReaderOptions)`
+  - `with_key_provider(Box<dyn KeyProvider>)`
+  - `push_bytes(&[u8])`
+  - `finalize_input()`
+  - `step() -> Result<StreamStep<StreamEvent>, SarError>`
+- `StreamParseState`, `StreamStep<T>`, `StreamEvent`, `StreamArchiveSummary`
+- `StreamWriteState` + `ArchiveWriter::stream_state()`
+
+#### Important public types
+
+- `ArchiveWriterOptions`
+  - `no_index: bool`
+  - `sparse: bool` — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
+  - `encryption: Option<EncryptionSettings>`
+  - `fec: Option<FecSettings>`
+  - `lfh_size_field_policy: LfhSizeFieldPolicy`
+  - `with_path: bool`, `with_permissions: bool`, `with_uid_gid: bool`, `with_timestamps: bool`, `with_per_file_crc: bool`, `with_content_hash: bool`, `with_symlinks: bool`
+- `ArchiveReaderOptions`
+  - `limits: ResourceLimits`
+  - `delta_base: Option<Vec<u8>>`
+- `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`
+- `SparseWriteOptions { logical_size: u64, extents: Vec<SparseExtent> }`
+- `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`, `LogicalFile`
+- `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
+
+#### Profile validation APIs
+
+- `validate_archive_profile(archive_bytes: &[u8], profile: ComplianceProfile, limits: &ResourceLimits) -> Result<(), SarError>`
+- `ComplianceProfile`
+
+#### Recovery/repair APIs — `sar_archive::recovery`
+
+See `sar_archive::recovery` section above in "M8 APIs".
+
+#### Transform pipeline APIs — `sar_archive::transform`
+
+- Traits: `EncoderTransform`, `DecoderTransform`
+- Concrete transforms: `CompressionEncoderTransform`, `CompressionDecoderTransform`
+- Plans: `EncodingPlan`, `DecodingPlan`, `EncodingPlanV2`, `DecodingPlanV2`
+- Context: `EntryCryptoContext`
+- Functions: `encode_payload`, `decode_payload`, `encode_payload_v2`, `decode_payload_v2`
+
+---
 
 ## `sar-compression`
 
@@ -797,7 +850,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 
 ### Purpose
 
-`sar-crypto` contains hash functions, AEAD helpers, KMS parameter types/parsers, and the `KeyProvider` abstraction used by `sar-core` and `sar-cli`.
+`sar-crypto` contains hash functions, AEAD helpers, KMS parameter types/parsers, and the `KeyProvider` abstraction consumed directly by archive/CLI/transport crates.
 
 ### Implemented milestone coverage
 
@@ -877,7 +930,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 ### Unsupported or planned
 
 - SHA3-256 is declared but not implemented.
-- Only AES-256-GCM and XChaCha20-Poly1305 are integrated into `sar-core` archive flows.
+- Only AES-256-GCM and XChaCha20-Poly1305 are integrated into current high-level archive flows through `sar-archive`.
 - `ASYMMETRIC_WRAP` is a structural/public KMS mode with callback-based unwrapping, not a built-in RSA/ECIES implementation.
 - `KMS_TLS_EXPORTER` (`0x04`) is a spec-defined KMS mode identifier that is recognized and exported as a constant. It is **not** implemented in this release; `parse_kms_payload(KMS_TLS_EXPORTER, …)` and `validate_kms_mode_id(KMS_TLS_EXPORTER)` return `SAR_ERR_UNSUPPORTED`. Plaintext TCP streams that advertise this KMS mode are rejected with `SAR_ERR_UNSUPPORTED`.
 
@@ -953,7 +1006,6 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 
 ### Unsupported or planned
 
-- No automatic archive repair command or archive-wide repair orchestration yet.
 - No support for assigned-but-unimplemented FEC IDs such as `0x12`, `0x13`, `0x15`, `0x16`.
 
 ### FFI / C ABI notes
@@ -966,7 +1018,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 
 ### Purpose
 
-`sar-cli` is the current command-line front end over `sar-core`.
+`sar-cli` is the current command-line front end over `sar-archive`, with direct use of `sar-core` low-level status/limit types and specialized feature crates such as `sar-crypto` and `sar-delta` where needed.
 
 ### Implemented milestone coverage
 
@@ -1174,90 +1226,53 @@ sar create <input> <output.sar> -Z -9
 - good future FFI equivalents: create, extract, list, verify, inspect
 - not FFI-ready as-is: terminal prompting, environment-variable password fallback, Rust-specific `CliKeyProvider`
 
-## Placeholder crates
+## Specialized and deferred crates
 
-Each placeholder crate currently exposes exactly one public marker type, `NotImplemented`, and no usable protocol API.
+The following crates are not high-level archive API owners. They either provide specialized algorithm/semantic helpers consumed by `sar-archive`, or deliberately deferred marker APIs.
 
 ### `sar-cdc`
 
-- Purpose: reserved for future content-defined chunking support
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: content-defined chunking metadata, CDC map parsing/writing, FASTCDC chunking, and CDC validation helpers
+- Status: implemented for M9a metadata/map behavior; higher-level recipe/CAS/provider behavior remains future work
+- High-level archive integration: consumed by `sar-archive`
+- FFI readiness: future work
 
 ### `sar-delta`
 
-- Purpose: patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented.
-- Status: complete (M9b — registry, metadata, `STORE_PATCH`, `BSDIFF`, and `VCDIFF` implemented; `ZSTD_PATCH`/custom blocked)
-- Public API (M9b):
-  - `PatchAlgoId` — enum of assigned and custom patch algorithm identifiers: `StorePatch (0x00)`, `Vcdiff (0x01)`, `Bsdiff (0x02)`, `ZstdPatch (0x03)`, `Custom(u8)` (`0xF0–0xFF`)
-  - `PatchError` — local error enum: `Unsupported`, `ReservedValue`, `PatchFailed`, `BaseMissing`, `LimitExceeded`
-  - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>` — validates a raw byte against the SAR patch algorithm registry; returns `ReservedValue` for `0x04–0xEF`, `Unsupported` for `0xF0–0xFF`, and the corresponding `PatchAlgoId` for all assigned IDs
-  - `patch_algo_name(u8) -> &'static str` — returns a display name for any raw algorithm byte
-  - `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` — applies `STORE_PATCH` (identity): returns the patch payload if its length equals `expected_len`, otherwise returns `PatchFailed`
-  - `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a SAR BSDIFF v1 (`SARBSD01`) patch; caller supplies base bytes explicitly
-  - `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — applies a VCDIFF (RFC 3284) patch; caller supplies base bytes explicitly
-  - `bsdiff::BsdiffLimits` — resource limits for BSDIFF patch application (`max_patch_size`, `max_control_bytes`, `max_diff_bytes`, `max_extra_bytes`, `max_control_triples`, `max_target_size`)
-  - `vcdiff::VcdiffLimits` — resource limits for VCDIFF patch application (`max_patch_size`, `max_window_count`, `max_instruction_count`, `max_output_size`)
-  - `decode_bsdiff_int(bytes: &[u8]) -> Result<i64, PatchError>` — decodes a classic bsdiff sign-magnitude 8-byte integer
-  - Constants: `PATCH_ALGO_STORE_PATCH (0x00u8)`, `PATCH_ALGO_VCDIFF (0x01u8)`, `PATCH_ALGO_BSDIFF (0x02u8)`, `PATCH_ALGO_ZSTD_PATCH (0x03u8)`, `PATCH_ALGO_CUSTOM_MIN (0xF0u8)`, `PATCH_ALGO_CUSTOM_MAX (0xFFu8)`
-- All of the above are re-exported from `sar-core` for consumer convenience.
-- FFI readiness: `not_applicable` (no C ABI in this milestone)
-
-**Implemented in STORE_PATCH pass:**
-
-- `STORE_PATCH` (`0x00`) application: decoded patch payload is the complete reconstructed target; no base reads; no instruction stream; output length must equal LFH `Uncompressed Size` or `SAR_ERR_PATCH_FAILED` is returned
-- All-zero `Delta Base Hash` accepted for `STORE_PATCH` (treated as "no base required"); nonzero hash preserved verbatim in metadata
-- `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
-- `STORE_PATCH` + compression, encryption, sparse, and fragmentation all handled correctly through the existing transformation pipeline
-
-**Implemented in M9b Delta pass (BSDIFF + VCDIFF):**
-
-- `BSDIFF` (`0x02`) SAR BSDIFF v1 profile: magic `SARBSD01`, sign-magnitude header fields, uncompressed Control/Diff/Extra blocks, control triples `(diff_len, extra_len, seek_adjust)`. Base reads beyond end use `0x00`. Base seek before 0 → `SAR_ERR_PATCH_FAILED`. Explicit base bytes required.
-- `VCDIFF` (`0x01`) RFC 3284: standard header/window/instruction decoding, VCD_SOURCE and VCD_TARGET windows, ADD/COPY/RUN instructions, default code table (s_near=4, s_same=3). Explicit base bytes required.
-- VCDIFF streams that require secondary compressors return `SAR_ERR_UNSUPPORTED`.
-- `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery, no network access, no CAS access.
-- All-zero `Delta Base Hash` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
-- Missing `delta_base` for BSDIFF/VCDIFF → `SAR_ERR_BASE_MISSING`.
-- `ResourceLimits` enforced for BSDIFF (control/diff/extra block sizes, triple count) and VCDIFF (window count, instruction count, output size).
-- `BSDIFF`/`VCDIFF` + compression and encryption handled correctly through the existing transformation pipeline.
-- Legacy classic `BSDIFF40` decode support is not implemented; payloads with `BSDIFF40` magic return `SAR_ERR_PATCH_FAILED`.
-- `ZSTD_PATCH` (`0x03`) → `SAR_ERR_UNSUPPORTED` (dictionary protocol not specified).
-
-**Not implemented:**
-
-- `ZSTD_PATCH` application (dictionary/protocol not specified by spec)
-- Custom patch algorithms
-- Delta Base Hash verification (hash algorithm not specified by spec; field is opaque)
-- Automatic base object resolution (location model not specified by spec)
+- Purpose: patch algorithm registry, delta algorithm helpers, and patch application for implemented algorithms
+- Status: complete for M9b registry, metadata support, `STORE_PATCH`, SAR BSDIFF v1, and VCDIFF; `ZSTD_PATCH` and custom patch algorithms remain unsupported
+- High-level archive integration: consumed by `sar-archive`
+- CLI usage: `sar-cli` imports delta display/registry helpers directly from `sar-delta`
+- FFI readiness: future work
 
 ### `sar-fragmentation`
 
-- Purpose: reserved for future fragmentation support
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: fragment semantic validation and reassembly
+- Status: implemented in M11c/M11c.1
+- High-level archive integration: consumed by `sar-archive`
+- FFI readiness: future work
 
 ### `sar-partition`
 
-- Purpose: reserved for future partition support
-- Status: placeholder
+- Purpose: reserved for future partition/multi-volume support
+- Status: deliberately deferred placeholder
 - Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- FFI readiness: not applicable until partition behavior is specified
 
 ### `sar-sparse`
 
-- Purpose: reserved for future sparse-file support
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: sparse extent semantic validation and sparse reconstruction
+- Status: implemented in M11c
+- High-level archive integration: consumed by `sar-archive`
+- Low-level sparse-map wire parsing/writing remains in `sar-core`
+- FFI readiness: future work
 
 ### `sar-loss-tolerant`
 
-- Purpose: reserved for future loss-tolerant modes
-- Status: placeholder
-- Public API: `NotImplemented`
-- FFI readiness: `not_applicable`
+- Purpose: policy helpers for degraded/loss-tolerant reconstruction
+- Status: implemented in M11c
+- High-level archive integration: consumed through `sar-fragmentation` and `sar-archive`
+- FFI readiness: future work
 
 ### `sar-stream`
 
@@ -1334,24 +1349,18 @@ Each placeholder crate currently exposes exactly one public marker type, `NotImp
 
 No foreign-language interfaces are implemented yet.
 
-Planned interface milestones:
+Current roadmap placement:
 
-Milestone 12: General developer interfaces
+- M14a: C ABI security profile and split-library design
+- M14b: stable C ABI
+- M14c: C ABI examples/tests
+- M14d: Python module
+- M16a: Swift/iOS package
+- M16b: Kotlin/Java Android package
 
-- 12a: Stable C ABI.
-- 12b: Python module.
+C++ consumers are expected to use the future stable C ABI directly. A dedicated C++ wrapper is not a baseline requirement.
 
-Milestone 13: Mobile platform interfaces
-
-- 13a: Swift package, iOS-compatible.
-- 13b: Kotlin/Java package, Android-compatible.
-
-C++ support:
-
-- C++ consumers are expected to use the stable C ABI directly.
-- A dedicated C++ wrapper is not a baseline requirement.
-
-Candidate high-level operations:
+Candidate high-level operations for future bindings:
 
 - create archive
 - extract archive
@@ -1363,23 +1372,24 @@ Candidate high-level operations:
 - FEC verification/repair
 - error/status mapping
 - streaming archive read/write APIs
-- SAR-over-QUIC transport for streaming and remote archive access
+- SAR-over-QUIC transport for streaming and remote archive access where profile-enabled
 
 ### C ABI readiness
 
-- The future C ABI should be representable with opaque handles such as archive-reader, archive-writer, verification-report, and streaming-session handles rather than exposing Rust generic types directly.
-- Ownership and lifetime rules are not documented strongly enough yet for a stable ABI; Milestone 12a should define handle lifetime, entry/result lifetime, and whether buffers remain valid until the next call, until explicit free, or until handle teardown.
+- The future C ABI should be represented with opaque handles such as archive-reader, archive-writer, verification-report, metadata, entry, and streaming-session handles rather than exposing Rust generic types directly.
+- Ownership and lifetime rules must be defined before ABI freeze, including handle lifetime, entry/result lifetime, buffer validity, and explicit destructor/free rules.
 - High-level operations are good candidates for explicit create/free style entry points, including reader/writer open-close, result-free, and SAR-owned string/buffer release helpers.
-- Buffer strategy is still an open design choice: some operations fit caller-provided buffers, while inspect/list/error text may need SAR-owned allocations with explicit free functions.
-- `SarStatus` already provides a strong foundation for stable error/status return codes, but the exported code set and error-to-string contract are not frozen yet.
-- Version negotiation is still required for any future stable ABI, including ABI version constants, feature discovery, and reject-on-mismatch behavior.
-- Thread-safety expectations are not yet defined clearly enough for foreign callers; Milestone 12a should document whether handles are thread-confined, thread-safe, or safe only under external synchronization.
+- Buffer strategy remains an open design choice: some operations may use caller-provided buffers, while inspect/list/error text may need SAR-owned allocations with explicit free functions.
+- `SarStatus` provides a foundation for stable error/status return codes, but the exported code set and error-to-string contract are not frozen yet.
+- Version negotiation is required for any future stable ABI, including ABI version constants, feature discovery, and reject-on-mismatch behavior.
+- Thread-safety expectations must be explicit for foreign callers: handles must be documented as thread-confined, thread-safe, or safe only under external synchronization.
 - KMS and key-provider callbacks need a callback-safe C ABI contract covering invocation context, reentrancy, cancellation, error propagation, and how secret inputs/outputs are passed.
 - Secret handling across FFI needs explicit zeroization and allocator-boundary rules so keys, passwords, and decrypted material do not leak across create/free or callback boundaries.
-- Rust APIs that are unsuitable for direct C ABI exposure include `ArchiveReader<R>`, `ArchiveWriter<W>`, `Box<dyn KeyProvider>`, `EncoderTransform`, `DecoderTransform`, `FecCodec`, terminal-prompt behavior, environment-variable password fallback, and other generic-, trait-, or lifetime-heavy surfaces.
+- Rust APIs that are unsuitable for direct C ABI exposure include generic reader/writer types, Rust trait objects, lifetime-bearing references, borrowed slices, and terminal-prompt behavior.
 
 ### Python readiness
 
+- Python bindings are planned for M14d, not implemented in M11d.
 - The archive lifecycle and summary operations can plausibly be represented as high-level Python functions and reader/writer classes.
 - Python should not be committed yet to either a C-ABI wrapper or a direct PyO3/maturin module; the C ABI offers broader reuse, while direct Rust bindings may reach a usable Python surface earlier.
 - Path-like object handling looks practical because high-level archive APIs are path-oriented, but future bindings still need clear normalization rules for `str`, `bytes`, and `os.PathLike`.
@@ -1389,12 +1399,13 @@ Candidate high-level operations:
 - Long-running operations such as create, extract, verify, FEC work, and future transport/streaming flows should likely release the GIL while native work is in progress.
 - Password and KMS callback support is not binding-ready yet because callback threading, blocking behavior, and exception/error translation must be designed first.
 - Secret material may end up in Python-managed memory if passwords, keys, or decrypted bytes are exposed as ordinary Python objects; that risk needs explicit documentation and minimization.
-- Wheel and packaging work is intentionally deferred, but future milestones will need platform wheel decisions, bundled native library policy, and build backend choices.
+- Wheel and packaging work is intentionally deferred to later milestones.
 - First Python exposures should focus on create, extract, list, inspect, verify, compression/encryption/FEC option objects, and status/error mapping before lower-level transform internals.
 
 ### Swift/iOS readiness
 
-- Swift can likely consume a future stable interface through an imported C header, but that depends on Milestone 12a first defining a clean C ABI.
+- Swift/iOS bindings are planned for M16a, not implemented in M11d.
+- Swift can likely consume a future stable interface through an imported C header, but that depends on M14 first defining a clean C ABI.
 - Opaque handles are a suitable model for Swift ownership wrappers as long as create/free and invalidation rules are explicit.
 - `SarStatus`-style results appear capable of mapping cleanly into Swift `Error`, but the conversion contract and human-readable error text policy are not yet fixed.
 - Any SAR-owned strings or buffers exposed to Swift must have explicit free functions and allocator-boundary rules.
@@ -1405,10 +1416,10 @@ Candidate high-level operations:
 - Long-running operations should likely support cancellation hooks that Swift can integrate with task or operation cancellation.
 - Thread-safety guarantees are still too informal for Swift consumers and need to be made explicit before mobile bindings.
 - Future packaging will need XCFramework and Swift Package decisions after the native ABI surface is stable.
-- Intended Apple targets are likely iOS device, iOS simulator, macOS, Mac Catalyst, and possibly visionOS, but target support should remain a later Milestone 13 decision.
 
 ### Kotlin/Java/Android readiness
 
+- Kotlin/Java Android bindings are planned for M16b, not implemented in M11d.
 - A Kotlin/Java interface could be built either through JNI over the stable C ABI or through a dedicated native Android wrapper, but that decision should wait until the C ABI is settled.
 - Opaque handles are a plausible representation for long-lived native resources if Java/Kotlin ownership, finalization, and explicit close semantics are defined carefully.
 - `SarStatus` values can likely map into Java/Kotlin exceptions, but the exception taxonomy and checked-vs-unchecked policy are still open.
@@ -1416,12 +1427,12 @@ Candidate high-level operations:
 - Long-running operations such as create, extract, verify, FEC, and future transport flows likely need cancellation and progress callbacks.
 - KMS and password callbacks are not ready for Kotlin/Java yet because JNI callback safety, thread attachment, exception propagation, and blocking behavior are unresolved.
 - Secret material may cross into JVM-managed memory if passwords, keys, or plaintext are carried in `String`, `byte[]`, or buffer objects; that risk should be minimized and documented explicitly.
-- Likely Android ABI targets include `arm64-v8a`, `armeabi-v7a`, and `x86_64`, but final support policy is a Milestone 13 packaging decision.
+- Likely Android ABI targets include `arm64-v8a`, `armeabi-v7a`, and `x86_64`, but final support policy is deferred to M16b.
 - Future packaging will need AAR distribution decisions, native library loading policy, and JVM/Android compatibility guidance.
 
 ### Open design questions
 
-- Should Milestone 12 prefer a small C ABI first and have Python, Swift, Kotlin/Java, and C++ build on top of it wherever practical?
+- Should the C ABI become the common substrate for Python, Swift, Kotlin/Java, and C++ where practical, or should some bindings use direct Rust integration?
 - Which high-level operations should be considered baseline-stable first: create/extract/list/inspect/verify only, or also streaming, FEC repair, and SAR-over-QUIC?
 - Which result types should be handle-based versus copied into caller-provided buffers?
 - How should callback-based KMS and password resolution propagate errors, cancellation, and secret zeroization requirements across language boundaries?
@@ -1443,7 +1454,7 @@ Delta encoding (VCDIFF, BSDIFF, patch application, base archive resolution) is *
 
 Milestone 9b adds:
 
-- `PatchAlgoId` enum in `sar-delta` (and re-exported from `sar-core`): `StorePatch`, `Vcdiff`, `Bsdiff`, `ZstdPatch`, `Custom(u8)`
+- `PatchAlgoId` enum in `sar-delta`: `StorePatch`, `Vcdiff`, `Bsdiff`, `ZstdPatch`, `Custom(u8)`
 - `validate_patch_algo_id(u8) -> Result<PatchAlgoId, PatchError>`: validates a raw algorithm byte against the SAR patch algorithm registry; returns `SarError::ReservedValue` for `0x04–0xEF`, `SarError::Unsupported` for `0xF0–0xFF`, and the `PatchAlgoId` for all assigned IDs
 - `EntryMetadata.patch_algo_id: Option<u8>` — present when `HAS_DELTA` is set; raw byte preserved; validated against registry during `next_entry()`
 - `EntryMetadata.delta_base_hash: Option<[u8; 32]>` — present when `HAS_DELTA` is set; treated as opaque 32 bytes; serialized as lowercase hex string in JSON output
@@ -1451,7 +1462,7 @@ Milestone 9b adds:
 
 **STORE_PATCH application (added in STORE_PATCH pass):**
 
-- `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` in `sar-delta` (re-exported from `sar-core`)
+- `apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>` in `sar-delta`
 - `STORE_PATCH` (`0x00`) wired into `next_entry()`: decoded patch payload becomes the complete reconstructed target; length must equal LFH `Uncompressed Size`; returns `SAR_ERR_PATCH_FAILED` on mismatch
 - All-zero `Delta Base Hash` treated as "no base required" for `STORE_PATCH`; nonzero hash preserved verbatim; base lookup not performed for any algorithm
 - `ResourceLimits` enforced before allocation; `SAR_ERR_LIMIT_EXCEEDED` returned if `Uncompressed Size` exceeds `max_decoded_entry_size`
@@ -1461,7 +1472,7 @@ Milestone 9b adds:
 
 - `apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — SAR BSDIFF v1 (`SARBSD01`) patcher; explicit base required
 - `apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — RFC 3284 VCDIFF patcher; explicit base required
-- `bsdiff::BsdiffLimits` / `vcdiff::VcdiffLimits` — per-algorithm resource limits (re-exported from `sar-core`)
+- `bsdiff::BsdiffLimits` / `vcdiff::VcdiffLimits` — per-algorithm resource limits
 - `ArchiveReaderOptions.delta_base: Option<Vec<u8>>` — caller supplies base bytes; no automatic discovery
 - `BSDIFF` (`0x02`) and `VCDIFF` (`0x01`) wired into `next_entry()`: all-zero `Delta Base Hash` → `SAR_ERR_BASE_MISSING`; missing `delta_base` → `SAR_ERR_BASE_MISSING`
 - New `ResourceLimits` fields: `max_bsdiff_control_bytes`, `max_bsdiff_diff_bytes`, `max_bsdiff_extra_bytes`, `max_bsdiff_control_triples`, `max_vcdiff_window_count`, `max_vcdiff_instruction_count`, `max_vcdiff_output_size`
@@ -1857,25 +1868,32 @@ Wire-format functions (`parse_sparse_map`, `write_sparse_map`) remain in `sar-co
 
 Pure policy helpers for LOSS_TOLERANT degraded reconstruction. Added in M11c.
 
-No dependency on `sar-core`. `sar-core` does not depend on `sar-loss-tolerant`; the archive reader uses its own `is_degraded` flag internally.
+`sar-loss-tolerant` owns policy helpers for degraded reconstruction. `sar-fragmentation` integrates those helpers for fragment reconstruction policy. `sar-archive` consumes fragmentation/sparse/loss-tolerant outcomes and exposes degraded logical output metadata where applicable. `sar-core` does not own loss-tolerant reconstruction policy.
 
 ### Public API
 
 #### Types
 
 - `RecoveryStatus` — reconstruction outcome:
-  - `RecoveryStatus::Complete` — all data present
-  - `RecoveryStatus::Degraded` — some data missing but output produced under LOSS_TOLERANT
-  - `RecoveryStatus::Failed` — reconstruction failed
+  - `Complete`
+  - `Degraded { missing_bytes: u64 }`
+  - `Failed`
 
 #### Functions
 
-- `gap_degraded_output_permitted(is_loss_tolerant: bool) -> bool` — returns `is_loss_tolerant`; codifies that gap tolerance requires the LOSS_TOLERANT flag
-- `classify_recovery(has_gap: bool, failed: bool) -> RecoveryStatus` — maps gap/failure booleans to `RecoveryStatus`
+- `gap_degraded_output_permitted(loss_tolerant: bool, missing_bytes: u64, max_loss_tolerant_gap: u64) -> bool`
+  - returns true only when LOSS_TOLERANT is active and the missing-byte gap is within the configured limit
+- `classify_recovery(missing_bytes: u64, loss_tolerant: bool, max_loss_tolerant_gap: u64) -> RecoveryStatus`
+  - returns `Complete` for no missing bytes
+  - returns `Degraded` for permitted bounded missing data
+  - returns `Failed` otherwise
 
-### Invariant (documented in source)
+### Behavior
 
-LOSS_TOLERANT never suppresses: AEAD/authentication failures, signature failures, decompression failures, patch failures, malformed structure, invalid sparse maps, invalid fragment metadata, or deterministic reconstruction failures.
+- LOSS_TOLERANT must be explicit.
+- Degraded output is bounded by `max_loss_tolerant_gap`.
+- Authentication, decompression, patch, sparse, fragment structural, bounds, overflow, and validation failures are not converted into successful degraded output.
+- AEAD/authentication failure is never loss-tolerant.
 
 ---
 

@@ -495,10 +495,6 @@ If this milestone document appears to describe library/profile layout differentl
 * full workspace validation
 * CodeQL/security scan where available
 
----
-
-# Current and future milestones
-
 ## M11d: archive API architecture split
 
 * separate canonical SAR wire-format ownership from high-level archive integration
@@ -584,6 +580,9 @@ If this milestone document appears to describe library/profile layout differentl
 * full workspace validation
 * CodeQL/security scan where available
 
+---
+
+# Current and future milestones
 
 ## M11e: CLI metadata support
 

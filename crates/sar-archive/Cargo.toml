@@ -1,30 +1,25 @@
 [package]
-name = "sar-cli"
+name = "sar-archive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-clap.workspace = true
-serde_json.workspace = true
-walkdir.workspace = true
-rpassword.workspace = true
-getrandom.workspace = true
+serde.workspace = true
 crc32fast.workspace = true
 sar-core = { path = "../sar-core" }
-sar-archive = { path = "../sar-archive" }
 sar-compression = { path = "../sar-compression" }
 sar-crypto = { path = "../sar-crypto" }
+sar-fec = { path = "../sar-fec" }
 sar-cdc = { path = "../sar-cdc" }
 sar-delta = { path = "../sar-delta" }
 sar-fragmentation = { path = "../sar-fragmentation" }
 sar-sparse = { path = "../sar-sparse" }
 
+[dev-dependencies]
+serde_json.workspace = true
+tempfile = "3.13"
+zeroize.workspace = true
+
 [lints]
 workspace = true
-
-[dev-dependencies]
-assert_cmd = "2.0"
-predicates = "3.1"
-tempfile = "3.13"
-serde_json.workspace = true

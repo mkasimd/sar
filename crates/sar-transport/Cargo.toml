@@ -16,6 +16,7 @@ quic = [
 
 [dependencies]
 sar-core = { path = "../sar-core" }
+sar-archive = { path = "../sar-archive" }
 sar-stream = { path = "../sar-stream" }
 sar-crypto = { path = "../sar-crypto" }
 quinn = { version = "0.11", optional = true }

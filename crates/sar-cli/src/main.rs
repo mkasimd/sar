@@ -12,16 +12,20 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use serde_json::json;
 use walkdir::WalkDir;
 
+use sar_archive::{
+    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
+    EncryptionSettings, EntryInput, FecSettings,
+    recovery::{ErasureInput, inspect_recovery_metadata, plan_archive_repair, repair_archive},
+};
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
-    EncryptionSettings, EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider,
-    KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv,
-    inspect_recovery_metadata, plan_archive_repair, repair_archive, sparse::SparseExtent,
+    GlobalFlags, ResourceLimits, SarError, fec::validate_recovery_tlv, sparse::SparseExtent,
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KeyProvider, KmsContext, KmsParams,
+    PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SarCryptoError, SecretBytes, SecretString,
 };
+use sar_delta::{PATCH_ALGO_STORE_PATCH, patch_algo_name};
 use sar_fragmentation::{
     FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
 };
@@ -158,10 +162,7 @@ impl CliKeyProvider {
 }
 
 impl KeyProvider for CliKeyProvider {
-    fn password_for(
-        &self,
-        _context: &KmsContext,
-    ) -> Result<Option<SecretString>, sar_core::SarCryptoError> {
+    fn password_for(&self, _context: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(self.password.clone())
     }
 
@@ -169,14 +170,11 @@ impl KeyProvider for CliKeyProvider {
         &self,
         _context: &KmsContext,
         _wrapped_key: &[u8],
-    ) -> Result<Option<SecretBytes>, sar_core::SarCryptoError> {
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 
-    fn external_key(
-        &self,
-        _context: &KmsContext,
-    ) -> Result<Option<SecretBytes>, sar_core::SarCryptoError> {
+    fn external_key(&self, _context: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 }
@@ -919,7 +917,7 @@ fn extract_archive(
     #[derive(Debug)]
     struct FragGroup {
         name: String,
-        entries: Vec<sar_core::archive::EntryReader>,
+        entries: Vec<sar_archive::EntryReader>,
         sparse_extents: Option<Vec<SparseExtent>>,
         sparse_uncompressed_size: u64,
         file_crc32: Option<u32>,
@@ -1170,7 +1168,7 @@ fn verify_archive(
         }
 
         // Group entries by fragment_id and validate fragment groups
-        let mut frag_groups: std::collections::HashMap<u32, Vec<&sar_core::EntryMetadata>> =
+        let mut frag_groups: std::collections::HashMap<u32, Vec<&sar_archive::EntryMetadata>> =
             std::collections::HashMap::new();
         for entry in &entries {
             if let (true, Some(fid)) = (entry.is_fragment, entry.fragment_id) {
@@ -1391,7 +1389,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                     if let Some(algo_id) = entry.patch_algo_id {
                         obj.insert(
                             "patch_algorithm".to_string(),
-                            json!(sar_core::patch_algo_name(algo_id)),
+                            json!(patch_algo_name(algo_id)),
                         );
                     }
                 }
@@ -1509,8 +1507,8 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 );
             }
             if let Some(algo_id) = entry.patch_algo_id {
-                let name = sar_core::patch_algo_name(algo_id);
-                let status = if algo_id == sar_core::PATCH_ALGO_STORE_PATCH {
+                let name = patch_algo_name(algo_id);
+                let status = if algo_id == PATCH_ALGO_STORE_PATCH {
                     "applied"
                 } else {
                     "not_implemented"
