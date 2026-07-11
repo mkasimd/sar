@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 11d source audit)
+# API Inventory (post–Milestone 11e source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -19,6 +19,7 @@ Current scope:
 - Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
 - Milestone 11c-cp: Crate-boundary corrective pass — `sar_core::fragment` module removed, semantic sparse re-exports removed, `sar-loss-tolerant` integrated into `sar-fragmentation`, fragment payload/duplicate validation added, zero-length sparse extent rejection added, `write_sparse_map` fail-closed truncation fix, error conversion bridges updated
 - Milestone 11d: archive API architecture split — high-level archive integration moved from `sar-core` to new `sar-archive`
+- Milestone 11e: CLI metadata support — create/extract metadata preservation controls, symlink handling controls, metadata listing, and metadata-rich inspect JSON output
 - Milestone 12: conformance vectors, fuzzing/malicious corpus, and docs/security posture hardening
 - Milestone 13: security audit and remediation
 - Milestone 14: C ABI security profile, stable C ABI, C ABI examples/tests, and Python module
@@ -1038,16 +1039,24 @@ sar create <input> <output.sar> [--indexed|--no-index]
     [--compression-level 0..9 | -0..-9]
     [--encrypt aes256-gcm|xchacha20-poly] [--password PASSWORD]
     [--fec xor|rs]
+    [--preserve-permissions] [--preserve-owner] [--preserve-times]
+    [--symlinks skip|follow|archive]
 ```
 
 Behavior:
 
 - archives either one file or a directory tree
+- creates explicit directory entries for traversed directories below the input root; directory payloads are zero bytes
 - defaults to STORE compression
 - rejects `--indexed` together with `--no-index`
 - rejects `--password` unless `--encrypt` is also set
 - encryption currently uses PBKDF2-HMAC-SHA256 with a random 32-byte salt
 - Selective FEC is per-entry only
+- `--preserve-permissions`: records filesystem mode metadata for regular files, directories, and archived symlinks on Unix-like platforms
+- `--preserve-owner`: disabled by default; records packed UID/GID metadata on Unix-like platforms
+- `--preserve-times`: disabled by default; records Unix `mtime`/`atime`/`ctime` seconds on Unix-like platforms
+- `--symlinks skip|follow|archive`: defaults to `skip`; `follow` refuses to archive a target that resolves outside the requested input root and rejects recursive directory-symlink cycles; `archive` stores the symlink target as strict UTF-8 payload using the existing SAR symlink entry model
+- create-time metadata preservation is currently Unix-oriented; unsupported platforms fail clearly instead of silently fabricating owner or timestamp semantics
 
 #### `extract`
 
@@ -1057,6 +1066,8 @@ Usage:
 
 ```text
 sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
+    [--preserve-permissions] [--preserve-times] [--preserve-owner]
+    [--allow-symlinks]
     [--max-archive-size BYTES]
     [--max-decoded-entry-size BYTES]
     [--max-in-memory-buffer BYTES]
@@ -1071,12 +1082,19 @@ sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy]
 Behavior:
 
 - creates parent directories as needed
-- rejects absolute paths and `..` traversal during extraction
+- rejects absolute paths, `..`, empty/current-directory components, Windows drive prefixes, and UNC/verbatim-style paths during extraction
 - loads password from `--password`, then `SAR_PASSWORD`, then an interactive prompt if the archive is encrypted
 - `--allow-lossy`: permits extraction of archives containing LOSS_TOLERANT entries; prints a warning if any such entries are present; does not currently perform automatic degraded fragment reassembly
 - sparse extraction validates the final apparent size against `ResourceLimits.max_decoded_entry_size`, creates a temp file, sets the target file length, seeks to sparse extents, writes only gathered payload bytes, and renames to the final output only after success
 - fragmented sparse extraction reuses the same `ResourceLimits` model for fragment span/count checks and sparse output checks
 - resource-limit failures are printed as `resource-limit error (SAR_ERR_LIMIT_EXCEEDED)` and do not leave finalized output files behind
+- parent directory creation rejects traversal through existing symlink components and stages newly-created directories with restrictive permissions before later metadata application
+- `--preserve-permissions`: disabled by default; applies regular-file and directory permissions only when requested and strips setuid/setgid/sticky bits rather than restoring them
+- `--preserve-times`: disabled by default; restores atime/mtime when requested; archive `ctime` is reported by inspect output but is not directly restorable with the current stable host APIs
+- `--preserve-owner`: disabled by default; restores UID/GID only on Unix-like platforms and may fail without sufficient privileges
+- `--allow-symlinks`: disabled by default; without it, symlink entries are rejected during extraction
+- when symlink extraction is enabled, the target must be a relative non-traversing UTF-8 path; absolute and parent-traversing targets are rejected
+- hardlinks, device nodes, FIFOs, and sockets are not created by the CLI extraction path
 
 #### `list`
 
@@ -1085,12 +1103,13 @@ Status: partial
 Usage:
 
 ```text
-sar list <archive.sar>
+sar list <archive.sar> [--metadata]
 ```
 
 Behavior:
 
-- prints one line per entry: name, compression name, encoded size, uncompressed size
+- prints one line per entry with name, semantic kind, compression name, encoded size, and uncompressed size
+- `--metadata`: adds permissions, UID/GID, timestamps, hidden status, and symlink target (when present)
 - works for unencrypted archives and current FEC archives
 - does not currently accept `--password`, so encrypted archives cannot be listed successfully once entry decoding requires credentials
 
@@ -1134,7 +1153,7 @@ sar inspect <archive.sar> [--json]
 Behavior:
 
 - plaintext mode prints global version, flags, selective-FEC status, entry count, per-entry FEC summary lines, and recovery-TLV count
-- JSON mode prints archive summary including `global_ec`, `fragmentation`, `sparse_files`, `repair_possible`, `recovery_tlvs` (archive-level TLV summaries), and per-entry `fec` (file-level selective FEC), `is_fragment`, `fragment_id`, `fragment_index`, `is_last_fragment`, `is_loss_tolerant`, `sparse_extent_count`
+- JSON mode prints archive summary including `global_ec`, `fragmentation`, `sparse_files`, `repair_possible`, `recovery_tlvs` (archive-level TLV summaries), and per-entry metadata including semantic `kind`, path/name fields, permissions, packed owner metadata plus `uid`/`gid`, timestamps, hidden attribute, symlink target, `fec` (file-level selective FEC), `is_fragment`, `fragment_id`, `fragment_index`, `is_last_fragment`, `is_loss_tolerant`, and `sparse_extent_count`
 - current implementation can inspect unencrypted archives and FEC/fragment/sparse/recovery metadata
 - it does not accept `--password`, so encrypted archives are not fully inspectable through the CLI today
 

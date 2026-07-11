@@ -580,10 +580,6 @@ If this milestone document appears to describe library/profile layout differentl
 * full workspace validation
 * CodeQL/security scan where available
 
----
-
-# Current and future milestones
-
 ## M11e: CLI metadata support
 
 * create archives preserving permissions where supported
@@ -637,42 +633,19 @@ If this milestone document appears to describe library/profile layout differentl
 
 ## M11f: API inventory, conformance profile, and security-doc refresh
 
-* `docs/API.md` update
-* `docs/MACHINE_READABLE_API.json` update
-* `docs/CONFORMANCE.md` update
-* `docs/SECURITY.md` metadata behavior update
-* `docs/CRATE_RESPONSIBILITIES.md` consistency check
-* `docs/LIBRARY_LAYOUT.md` consistency check
-* `docs/SPEC_QUESTIONS.md` cleanup
-* profile conformance checker refreshed for M1-M11
-* metadata conformance profile added
-* crate-boundary audit result documented
-* archive API split result documented
-* CLI metadata behavior documented
-* side-channel and secret-handling boundaries documented:
+* `docs/API.md` reconciled with post-M11e API/CLI ownership and command flags
+* `docs/MACHINE_READABLE_API.json` reconciled with current ownership and CLI metadata surface
+* `docs/CONFORMANCE.md` refreshed as implemented-profile coverage with known gaps
+* `docs/SECURITY.md` refreshed for M11e extraction defaults and current confinement limitations
+* `docs/CRATE_RESPONSIBILITIES.md` reconciled with M11d/M11e crate boundaries
+* `docs/LIBRARY_LAYOUT.md` reconciled with current monorepo layout and future milestone scope
+* `docs/SPEC_QUESTIONS.md` cleaned so resolved M11 items are not listed as open
+* stale milestone wording corrected (C ABI/Python in M14; mobile packages in M16)
+* no implementation behavior/wire-format changes in this documentation closeout pass
 
-  * constant-time comparison is required for secret/authentication material where comparison is unavoidable
-  * public SAR metadata parsing is not treated as secret
-  * AEAD/tag verification is the authenticity oracle
-  * TLS_EXPORTER-derived key material must not be exposed or compared with ordinary equality
-  * authentication failures must not reveal which AAD/context component failed
-  * zeroization expectations for key/exporter-derived material documented where practical
-* transform DoS controls documented:
+---
 
-  * transform initialization is resource-accounted
-  * algorithm switching is controlled by profile/resource limits, not treated as a core wire-format violation
-  * decompression, patching, sparse, fragment, FEC, CDC, and delta stages remain bounded
-  * profile-specific strict modes may reject excessive transform switching
-* cold-storage/tape structural-anchor risk documented without changing SAR v1.0 core wire format:
-
-  * ordinary SAR v1.0 archives must not gain duplicate Global Headers or duplicate Footer/CD blocks unless a future compatible profile/spec extension defines them
-  * recovery sidecars, external container parity, tape block parity, or profile-defined redundant manifests may be evaluated for cold-storage profiles
-  * any future redundancy mechanism must preserve interoperability with specification-compliant SAR readers or be explicitly profile-gated
-* no false Standard Compliance claims
-* binding-readiness notes updated for C/Python future work
-* document monorepo repository layout for C ABI, Python, future mobile bindings, profiles, vectors, fuzzing, and packaging paths
-* full workspace validation
-* CodeQL/security scan if available
+# Current and future milestones
 
 ## M12a: conformance profile validator and official vectors
 
