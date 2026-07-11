@@ -544,7 +544,10 @@ fn main() {
 
     {
         let base = make_payload(64);
-        let target = make_payload(64);
+        let target: Vec<u8> = make_payload(64)
+            .into_iter()
+            .map(|b| b.wrapping_add(1))
+            .collect();
 
         // Delta base hash: non-zero opaque identity (SHA-256 of the base bytes
         // used by the reader to locate the base object; treated as opaque here).
@@ -581,7 +584,10 @@ fn main() {
 
     {
         let base = make_payload(64);
-        let target = make_payload(64);
+        let target: Vec<u8> = make_payload(64)
+            .into_iter()
+            .map(|b| b.wrapping_add(1))
+            .collect();
 
         let mut base_hash = [0u8; 32];
         base_hash[..8].copy_from_slice(&0x_bdaa_cafe_dead_beef_u64.to_le_bytes());

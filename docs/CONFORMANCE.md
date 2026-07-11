@@ -23,7 +23,7 @@ test-vectors/
     fragmentation/             — deferred/reference-only fragment manifests
     sparse/                    — sparse map fixture plus deferred sparse+delta reference
     cdc/                       — CDC literal mode fixture plus deferred FASTCDC reference
-    delta/                     — STORE_PATCH fixture plus deferred VCDIFF/BSDIFF references
+    delta/                     — real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
     stream-session/            — (deferred: structure requires network context)
     filesystem-metadata/       — permissions, owner, timestamps, symlink, directory,
                                   combined, field-presence-inactive
@@ -115,7 +115,6 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 - Fragmentation reassembly and LOSS_TOLERANT fragment-gap fixtures remain deferred/reference-only until real fragment binaries exist.
 - Sparse+delta combined fixture remains deferred/reference-only.
 - FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
-- Generated VCDIFF and SAR BSDIFF v1 fixtures remain deferred/reference-only until `M12a-M9b-cp`.
 - Archive-level Recovery TLV coverage is not claimed by the committed FEC metadata fixture.
 - Many invalid vectors deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
@@ -177,9 +176,9 @@ Recovery TLV fixture coverage beyond those binaries.
 - CDC metadata/TLV structures and current CDC map handling.
 - Delta metadata parsing and patch application for implemented algorithms (`STORE_PATCH`, `VCDIFF`, SAR BSDIFF v1).
 
-Writer-side generated VCDIFF/SAR BSDIFF v1 fixtures are deferred to
-`M12a-M9b-cp: Delta patch generation corrective pass`; the current official fixtures only
-claim real binary coverage for `STORE_PATCH`.
+Writer-side generated VCDIFF/SAR BSDIFF v1 fixtures are now present after
+`M12a-M9b-cp: Delta patch generation corrective pass`, alongside the original
+`STORE_PATCH` fixture coverage.
 
 ### Streaming/session and transport
 - Streaming parser/state model and session semantics (`sar-stream`).

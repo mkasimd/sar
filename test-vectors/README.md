@@ -35,7 +35,7 @@ test-vectors/
     fragmentation/           — deferred/reference-only fragment fixtures until real fragment binaries exist
     sparse/                  — real sparse reconstruction fixtures plus deferred sparse+delta reference
     cdc/                     — real CDC literal-mode fixture plus deferred FASTCDC CDC_MAP reference
-    delta/                   — real STORE_PATCH fixture plus deferred VCDIFF/BSDIFF references
+    delta/                   — real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
     stream-session/          — SESSION_INIT / SESSION_CLOSE stream vectors
     filesystem-metadata/     — permissions, owner, timestamps, symlink, directory vectors
   invalid/
@@ -249,15 +249,10 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - LOSS_TOLERANT fragment-gap coverage
 - sparse+delta combined ordering
 - FASTCDC `CDC_MAP`
-- generated VCDIFF
-- generated SAR BSDIFF v1
 - archive-level Recovery TLV coverage
 
 The FEC metadata manifest is intentionally backed by the real XOR selective-FEC archive and
 does **not** claim archive-level Recovery TLV coverage.
-
-Real generated VCDIFF/BSDIFF fixtures will be restored after
-`M12a-M9b-cp: Delta patch generation corrective pass`.
 
 TODO: add top-level fixture digests/provenance fields in a later M12a hardening pass.
 

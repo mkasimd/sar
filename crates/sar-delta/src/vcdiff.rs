@@ -424,7 +424,26 @@ pub fn generate_vcdiff_patch(
     // Empty target: a valid VCDIFF stream with no windows reconstructs the
     // empty byte sequence.  The header alone is sufficient.
     if target.is_empty() {
-        return Ok(b"\xD6\xC3\xC4\x00\x00".to_vec());
+        let patch = b"\xD6\xC3\xC4\x00\x00";
+        let patch_len = u64::try_from(patch.len())
+            .map_err(|_| PatchError::LimitExceeded("VCDIFF generate: patch length exceeds u64"))?;
+        if patch_len > limits.max_patch_size {
+            return Err(PatchError::LimitExceeded(
+                "VCDIFF generate: total patch size exceeds max_patch_size limit",
+            ));
+        }
+        return Ok(patch.to_vec());
+    }
+
+    if 1 > limits.max_window_count {
+        return Err(PatchError::LimitExceeded(
+            "VCDIFF generate: window count exceeds max_window_count limit",
+        ));
+    }
+    if 1 > limits.max_instruction_count {
+        return Err(PatchError::LimitExceeded(
+            "VCDIFF generate: instruction count exceeds max_instruction_count limit",
+        ));
     }
 
     // ADD instruction: code 1 = ADD(size=0), varint-size follows.
@@ -468,6 +487,13 @@ pub fn generate_vcdiff_patch(
         .ok_or(PatchError::LimitExceeded(
             "VCDIFF generate: total patch size overflow",
         ))?;
+    let patch_size_u64 = u64::try_from(patch_size)
+        .map_err(|_| PatchError::LimitExceeded("VCDIFF generate: total patch size exceeds u64"))?;
+    if patch_size_u64 > limits.max_patch_size {
+        return Err(PatchError::LimitExceeded(
+            "VCDIFF generate: total patch size exceeds max_patch_size limit",
+        ));
+    }
 
     let mut patch = Vec::with_capacity(patch_size);
 

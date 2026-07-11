@@ -464,6 +464,11 @@ pub fn generate_bsdiff_patch(
             "BSDIFF generate: control triple count exceeds max_control_triples limit",
         ));
     }
+    if 24 > limits.max_control_bytes {
+        return Err(PatchError::LimitExceeded(
+            "BSDIFF generate: control block exceeds max_control_bytes limit",
+        ));
+    }
 
     // Total patch size: header(32) + ctrl(24) + diff_step + extra_step.
     let patch_size: usize = 32usize

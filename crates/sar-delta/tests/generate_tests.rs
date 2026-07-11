@@ -106,6 +106,69 @@ fn generate_vcdiff_limit_exceeded_max_output_size() {
 }
 
 #[test]
+fn generate_vcdiff_limit_exceeded_max_patch_size() {
+    let target = b"hello, world!";
+    let patch = generate_vcdiff_patch(b"", target, &VcdiffLimits::default()).expect("generate");
+    let limits = VcdiffLimits {
+        max_patch_size: u64::try_from(patch.len() - 1).expect("patch length fits u64"),
+        ..VcdiffLimits::default()
+    };
+
+    let result = generate_vcdiff_patch(b"", target, &limits);
+    assert!(
+        matches!(result, Err(PatchError::LimitExceeded(_))),
+        "expected LimitExceeded for oversized patch, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn generate_vcdiff_limit_exceeded_zero_window_count() {
+    let limits = VcdiffLimits {
+        max_window_count: 0,
+        ..VcdiffLimits::default()
+    };
+
+    let result = generate_vcdiff_patch(b"", b"x", &limits);
+    assert!(
+        matches!(result, Err(PatchError::LimitExceeded(_))),
+        "expected LimitExceeded when max_window_count=0, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn generate_vcdiff_limit_exceeded_zero_instruction_count() {
+    let limits = VcdiffLimits {
+        max_instruction_count: 0,
+        ..VcdiffLimits::default()
+    };
+
+    let result = generate_vcdiff_patch(b"", b"x", &limits);
+    assert!(
+        matches!(result, Err(PatchError::LimitExceeded(_))),
+        "expected LimitExceeded when max_instruction_count=0, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn generate_vcdiff_empty_target_respects_max_patch_size() {
+    let patch = generate_vcdiff_patch(b"", b"", &VcdiffLimits::default()).expect("generate");
+    let limits = VcdiffLimits {
+        max_patch_size: u64::try_from(patch.len() - 1).expect("patch length fits u64"),
+        ..VcdiffLimits::default()
+    };
+
+    let result = generate_vcdiff_patch(b"", b"", &limits);
+    assert!(
+        matches!(result, Err(PatchError::LimitExceeded(_))),
+        "expected LimitExceeded for empty-target patch size, got {:?}",
+        result
+    );
+}
+
+#[test]
 fn generate_vcdiff_does_not_panic_on_large_input() {
     // Not actually large enough to OOM, just exercises the limit path.
     let target: Vec<u8> = vec![0xABu8; 4096];
@@ -260,6 +323,21 @@ fn generate_bsdiff_limit_exceeded_max_control_triples() {
     assert!(
         matches!(result, Err(PatchError::LimitExceeded(_))),
         "expected LimitExceeded when max_control_triples=0, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn generate_bsdiff_limit_exceeded_max_control_bytes() {
+    let limits = BsdiffLimits {
+        max_control_bytes: 23,
+        ..BsdiffLimits::default()
+    };
+
+    let result = generate_bsdiff_patch(b"", b"x", &limits);
+    assert!(
+        matches!(result, Err(PatchError::LimitExceeded(_))),
+        "expected LimitExceeded when max_control_bytes<24, got {:?}",
         result
     );
 }
