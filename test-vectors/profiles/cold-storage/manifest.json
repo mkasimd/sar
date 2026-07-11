@@ -21,5 +21,7 @@
     "General FEC vectors cover the data-recovery aspect of cold storage.",
     "When a cold-storage profile spec is agreed, add vectors here and update profiles/README.md."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

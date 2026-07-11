@@ -22,5 +22,7 @@
   "notes": [
     "DEFERRED: requires sar-stream session integration for binary generation."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

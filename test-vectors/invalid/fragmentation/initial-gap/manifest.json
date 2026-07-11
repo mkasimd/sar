@@ -21,5 +21,7 @@
     "DEFERRED: requires precise fragment descriptor construction.",
     "Required invariant: initial descriptor gap without LOSS_TOLERANT is always fatal."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

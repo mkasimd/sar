@@ -21,5 +21,7 @@
     "DEFERRED: requires ArchiveWriter path validation bypass or hand-crafted LFH.",
     "Absolute paths must be rejected regardless of profile."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

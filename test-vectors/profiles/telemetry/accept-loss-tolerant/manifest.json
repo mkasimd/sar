@@ -31,5 +31,7 @@
     "DEFERRED: binary shared with valid/fragmentation/loss-tolerant-gap/ when available.",
     "Even in telemetry profile, AEAD/structural failures remain fatal."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

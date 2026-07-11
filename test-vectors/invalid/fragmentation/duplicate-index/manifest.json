@@ -20,5 +20,7 @@
   "notes": [
     "DEFERRED: duplicate index must always fail closed."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

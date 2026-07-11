@@ -20,5 +20,7 @@
   "notes": [
     "DEFERRED: requires CDC_MAP TLV with truncated record."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

@@ -20,5 +20,7 @@
   "notes": [
     "DEFERRED: LOSS_TOLERANT must not suppress overlap errors."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

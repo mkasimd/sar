@@ -57,7 +57,9 @@ test-vectors/
 
 Each vector or vector group has a `manifest.json` file following `manifest.schema.json`.
 
-Minimum required fields:
+### Required fields
+
+All manifests must include:
 
 ```json
 {
@@ -69,6 +71,8 @@ Minimum required fields:
   "file": "relative/path/to/vector.sar",
   "profiles": ["static-archive"],
   "features": ["indexed", "compression:zstd"],
+  "compression": false,
+  "crypto": false,
   "expected": {
     "valid": true,
     "status": "SAR_OK",
@@ -80,6 +84,176 @@ Minimum required fields:
 }
 ```
 
+### `compression` field
+
+Every manifest must declare its compression posture:
+
+```json
+"compression": false
+```
+
+or, when the vector specifically exercises a compression algorithm:
+
+```json
+"compression": {
+  "algorithm": "deflate",
+  "id": "0x01"
+}
+```
+
+Allowed algorithm values: `store`, `deflate`, `zstd`, `unsupported`, `reserved`.
+
+### `crypto` field
+
+Every manifest must declare its crypto posture:
+
+```json
+"crypto": false
+```
+
+or, when the vector exercises encryption/authentication:
+
+```json
+"crypto": {
+  "algorithm": "aes-256-gcm",
+  "id": "0x01",
+  "password": "test-password",
+  "kms": {
+    "mode": "password",
+    "salt_hex": "...",
+    "kdf": "pbkdf2-hmac-sha256",
+    "iterations": 100000
+  }
+}
+```
+
+See the **Test-secret policy** section below.
+
+### `entries` field
+
+Valid non-deferred vectors should include an `entries` array describing the logical
+content after all transforms (decrypt → decompress → patch → sparse reconstruction).
+This allows auditors to verify vector intent without reverse-engineering binary
+fixtures:
+
+```json
+"entries": [
+  {
+    "name": "hello.txt",
+    "kind": "file",
+    "payload_utf8": "hello world",
+    "payload_sha256": "...",
+    "size": 11,
+    "logical_size": 11,
+    "extents": []
+  }
+]
+```
+
+Supported `kind` values: `file`, `directory`, `symlink`.
+
+**Directory entries** require only `name` and `kind`:
+```json
+{"name": "docs/", "kind": "directory"}
+```
+
+**Symlink entries** require `symlink_target`:
+```json
+{"name": "link", "kind": "symlink", "symlink_target": "target.txt"}
+```
+
+**Sparse entries** include `extents`:
+```json
+{
+  "name": "sparse.bin",
+  "kind": "file",
+  "logical_size": 128,
+  "payload_sha256": "...",
+  "extents": [
+    {"offset": 0, "length": 32},
+    {"offset": 64, "length": 32}
+  ]
+}
+```
+
+**Invalid/deferred vectors** may omit `entries` or leave it empty — no logical
+archive content exists or can be described for archives that are expected to fail.
+
+### Large/generated payload exception
+
+For file entries where `size > 60` or `logical_size > 60`, omit `payload_utf8` and
+`payload_hex`. Instead, include `payload_sha256` and `payload_generation`:
+
+```json
+{
+  "name": "data.bin",
+  "kind": "file",
+  "payload_utf8": null,
+  "payload_hex": null,
+  "payload_sha256": "...",
+  "size": 512,
+  "logical_size": 512,
+  "payload_generation": {
+    "kind": "repeated_pattern",
+    "pattern_hex": "0001020304...",
+    "length": 512
+  }
+}
+```
+
+Allowed `payload_generation.kind` values:
+- `repeated_byte` — single byte repeated N times
+- `repeated_pattern` — byte pattern repeated
+- `zeroes` — all zero bytes
+- `external_fixture` — load from an external fixture file
+- `sparse_logical` — sparse logical layout
+
+Do **not** commit large binary payloads. For >4 GiB behavior, use deterministic
+generation or sparse logical descriptions.
+
+### `base_files` field
+
+Delta vectors include `base_files` describing input files required for patching:
+
+```json
+"base_files": [
+  {
+    "path": "base_file.bin",
+    "sha256": "...",
+    "size": 64,
+    "payload_generation": { "kind": "repeated_pattern", ... }
+  }
+]
+```
+
+### Feature consistency rules
+
+The `features` array and the `compression` / `crypto` fields must agree:
+
+1. If `compression` is an object, `features` must contain `compression:<algorithm>`.
+2. If `compression` is `false`, `features` must not contain any `compression:*` entry.
+3. If `crypto` is an object, `features` must contain `crypto:<algorithm>`.
+4. If `crypto` is `false`, `features` must not contain any `crypto:*` entry.
+
+The conformance tests enforce this automatically.
+
+## Test-secret policy
+
+Crypto vectors may intentionally include test-only passwords, salts, and KMS
+parameters in their `crypto` field. This is **by design** for public conformance
+testing:
+
+- Use obvious test-only values (e.g. `"sar-test-password-aes"`).
+- Never use real secrets.
+- Archive payloads must be non-secret test content.
+- Add a note where useful: `"This vector intentionally includes unsafe test-only crypto material for public conformance testing."`
+
+The passwords in crypto vector manifests are the same as those used by
+`crates/sar-archive/examples/generate_vectors.rs` and
+`crates/sar-archive/tests/conformance_tests.rs`.
+
+## Invalid vectors
+
 For invalid vectors the `expected` block uses the relevant SAR error status:
 
 ```json
@@ -90,6 +264,9 @@ For invalid vectors the `expected` block uses the relevant SAR error status:
   "warnings": []
 }
 ```
+
+Invalid vectors may omit `entries` — there is no valid logical archive to describe.
+Deferred invalid vectors may set `file` to `null`.
 
 Stable SAR status identifiers (from `SarStatus` in `sar-core`):
 
@@ -113,6 +290,15 @@ Stable SAR status identifiers (from `SarStatus` in `sar-core`):
 Do **not** over-specify exact human-readable error message strings — only stable
 status/error identifiers are durable across implementation revisions.
 
+## Deferred vectors
+
+Deferred vectors have `"deferred": true` and may set `"file": null`. They document
+intended behavior for features not yet implemented. Deferred vectors:
+
+- Must not have an existing binary file on disk.
+- May omit or empty `entries`.
+- Must still include `compression` and `crypto` fields.
+
 ## Profile expectations
 
 Where a vector has profile-specific acceptance or rejection:
@@ -131,15 +317,34 @@ address that profile.
 
 See `profiles/README.md` for profile descriptions.
 
+Profile manifest `file` paths use relative references. A profile manifest at
+`test-vectors/profiles/<profile>/<case>/manifest.json` that references a shared
+vector at `test-vectors/valid/...` uses:
+
+```
+../../../valid/...
+```
+
+(three levels up to reach the `test-vectors/` root).
+
+## How to inspect vector intent
+
+1. Read `manifest.json`: check `compression`, `crypto`, `entries`, and `base_files`.
+2. Cross-check `features` is consistent with `compression`/`crypto` objects.
+3. For encrypted vectors, use the `crypto.password` and `crypto.kms` details to
+   decrypt the binary manually.
+4. For delta vectors, use the `base_files` entries as inputs to the patch operation.
+5. For sparse vectors, reconstruct the logical file from `entries[].extents`.
+6. The `entries` field describes the fully-decoded logical content after all
+   transforms — this is what a correct implementation must produce.
+
 ## How to validate a vector
 
 ### Using the Rust conformance validator
 
-The `sar-archive` crate provides a conformance module at
-`sar_archive::conformance`. To run all vectors:
-
 ```bash
 cargo test -p sar-archive --test conformance_tests
+cargo test -p sar-archive --test conformance_manifest_tests
 ```
 
 To regenerate binary fixture files:
@@ -167,18 +372,23 @@ cargo run --example generate_vectors -p sar-archive
    - A standalone Rust snippet using `ArchiveWriter`
    - A hand-crafted byte sequence (for truncated/malformed cases)
 3. Create `manifest.json` in the same directory following `manifest.schema.json`.
+   - Include `compression` and `crypto` fields.
+   - For valid vectors, include `entries` with expected logical content.
+   - For large payloads (> 60 bytes), use `payload_generation` instead of inline hex.
 4. Validate the manifest JSON: `python3 -m json.tool manifest.json > /dev/null`
-5. Add the new vector to the relevant test in
-   `crates/sar-archive/tests/conformance_tests.rs`.
+5. Run: `cargo test -p sar-archive --test conformance_manifest_tests`
 
 Keep vector files **small and reviewable** (< 4 KiB for most vectors).
 
 ## Valid vs invalid vs profile-specific vectors
 
-- **Valid**: Archives that any conformant implementation must accept.
-- **Invalid**: Archives that any conformant implementation must reject.
+- **Valid**: Archives that any conformant implementation must accept. Should have
+  non-empty `entries`.
+- **Invalid**: Archives that any conformant implementation must reject. `entries` may
+  be omitted or empty — no valid logical archive exists.
 - **Profile**: Vectors whose acceptance depends on the chosen conformance profile.
   Profile vectors may be acceptable under one profile and rejected under another.
+  Non-deferred profile vectors pointing to valid archives should have `entries`.
 
 ## Stable expected-status policy
 

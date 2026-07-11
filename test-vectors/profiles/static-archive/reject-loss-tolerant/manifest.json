@@ -4,7 +4,7 @@
   "title": "Profile (static-archive): reject LOSS_TOLERANT entries",
   "description": "Any archive with LOSS_TOLERANT entry mode must be rejected by the static-archive profile. Static archives require complete, authenticated data.",
   "kind": "profile",
-  "file": "../../valid/fragmentation/loss-tolerant-gap/fragmented_loss_tolerant_gap.sar",
+  "file": "../../../valid/fragmentation/loss-tolerant-gap/fragmented_loss_tolerant_gap.sar",
   "profiles": [
     "static-archive"
   ],
@@ -28,5 +28,7 @@
     "Binary shared with valid/fragmentation/loss-tolerant-gap/.",
     "Profile rejection is enforced by the profile validator, not the base parser."
   ],
-  "generated_by": "rust-generator"
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false
 }

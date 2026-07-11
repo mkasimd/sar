@@ -8,7 +8,8 @@
   "profiles": [],
   "features": [
     "indexed",
-    "crypto:aes256-gcm"
+    "crypto:aes256-gcm",
+    "crypto:aes-256-gcm"
   ],
   "expected": {
     "valid": false,
@@ -20,5 +21,10 @@
   "notes": [
     "DEFERRED: combine with bad-aead-tag vector generation."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": {
+    "algorithm": "aes-256-gcm",
+    "id": "0x01"
+  }
 }

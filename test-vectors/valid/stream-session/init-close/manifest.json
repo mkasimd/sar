@@ -31,5 +31,7 @@
     "Manifest documents intended session lifecycle behavior for future test generation.",
     "See docs/CONFORMANCE.md known gaps."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

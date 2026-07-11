@@ -6,7 +6,9 @@
   "kind": "invalid",
   "file": null,
   "profiles": [],
-  "features": [],
+  "features": [
+    "compression:reserved"
+  ],
   "expected": {
     "valid": false,
     "status": "SAR_ERR_RESERVED_VALUE",
@@ -17,5 +19,10 @@
   "notes": [
     "DEFERRED: distinguish reserved vs unsupported ID rejection behavior."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": {
+    "algorithm": "reserved",
+    "id": "0x7f"
+  },
+  "crypto": false
 }

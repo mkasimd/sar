@@ -65,6 +65,16 @@ pub struct ConformanceManifest {
     /// SAR feature tags this vector exercises.
     #[serde(default)]
     pub features: Vec<String>,
+    /// Compression posture for this vector.
+    /// `false` when not compressed; an object when the vector exercises
+    /// a compression algorithm. Must be consistent with `features`.
+    #[serde(default)]
+    pub compression: TransformExpectation,
+    /// Crypto posture for this vector.
+    /// `false` when not encrypted; an object when the vector exercises
+    /// encryption/authentication. Must be consistent with `features`.
+    #[serde(default)]
+    pub crypto: TransformExpectation,
     /// Expected parse/validation outcome.
     pub expected: ExpectedOutcome,
     /// Per-profile acceptance or rejection expectations.
@@ -86,9 +96,198 @@ pub struct ConformanceManifest {
     /// than report a false failure.
     #[serde(default)]
     pub requires_key_provider: bool,
+    /// Expected logical entries in the archive after all transforms.
+    /// Allows auditors to verify vector intent without reverse-engineering
+    /// binary fixtures. Absent or empty for invalid/deferred vectors.
+    #[serde(default)]
+    pub entries: Vec<ExpectedEntry>,
+    /// Base files required for delta vector reconstruction.
+    #[serde(default)]
+    pub base_files: Vec<ExpectedBaseFile>,
     /// How the binary file was generated.
     #[serde(default)]
     pub generated_by: Option<String>,
+}
+
+/// Describes the compression or crypto posture of a vector.
+///
+/// Either `false` (disabled) or an object describing the specific
+/// algorithm. The boolean value `true` is not valid and will fail
+/// manifest schema validation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum TransformExpectation {
+    /// The transform is not used by this vector.
+    Disabled(bool),
+    /// The vector specifically exercises this transform.
+    Enabled(Box<TransformInfo>),
+}
+
+impl Default for TransformExpectation {
+    fn default() -> Self {
+        Self::Disabled(false)
+    }
+}
+
+/// Algorithm details for a compression or crypto transform.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TransformInfo {
+    /// Algorithm name (e.g. `"aes-256-gcm"`, `"deflate"`, `"unsupported"`).
+    pub algorithm: String,
+    /// Algorithm ID as hex string (e.g. `"0x01"`).
+    pub id: String,
+    /// Test-only password for crypto vectors.
+    /// Intentionally included for public conformance testing.
+    #[serde(default)]
+    pub password: Option<String>,
+    /// KMS parameters for crypto vectors.
+    #[serde(default)]
+    pub kms: Option<TransformKmsInfo>,
+}
+
+/// KMS parameters embedded in a crypto vector manifest.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TransformKmsInfo {
+    /// KMS mode (e.g. `"password"`).
+    pub mode: String,
+    /// Salt as lowercase hex string.
+    #[serde(default)]
+    pub salt_hex: Option<String>,
+    /// KDF algorithm name (e.g. `"pbkdf2-hmac-sha256"`).
+    #[serde(default)]
+    pub kdf: Option<String>,
+    /// KDF iteration count.
+    #[serde(default)]
+    pub iterations: Option<u64>,
+}
+
+/// Expected logical entry in a valid archive after all transforms.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExpectedEntry {
+    /// Entry name/path as stored in the archive.
+    pub name: String,
+    /// Entry kind: file, directory, or symlink.
+    pub kind: ExpectedEntryKind,
+    /// Logical payload as UTF-8 string (short textual payloads, size ≤ 60).
+    #[serde(default)]
+    pub payload_utf8: Option<String>,
+    /// Logical payload as lowercase hex string (binary payloads, size ≤ 60).
+    #[serde(default)]
+    pub payload_hex: Option<String>,
+    /// SHA-256 hex digest of the logical payload.
+    #[serde(default)]
+    pub payload_sha256: Option<String>,
+    /// Stored/compressed size in bytes.
+    #[serde(default)]
+    pub size: Option<u64>,
+    /// Logical (uncompressed/reconstructed) size in bytes.
+    #[serde(default)]
+    pub logical_size: Option<u64>,
+    /// Deterministic generation descriptor for large payloads (size > 60).
+    #[serde(default)]
+    pub payload_generation: Option<PayloadGeneration>,
+    /// Symlink target path (required for symlink entries).
+    #[serde(default)]
+    pub symlink_target: Option<String>,
+    /// Unix permissions bits.
+    #[serde(default)]
+    pub permissions: Option<u32>,
+    /// Unix UID.
+    #[serde(default)]
+    pub uid: Option<u32>,
+    /// Unix GID.
+    #[serde(default)]
+    pub gid: Option<u32>,
+    /// Modification time (Unix timestamp).
+    #[serde(default)]
+    pub mtime: Option<i64>,
+    /// Access time (Unix timestamp).
+    #[serde(default)]
+    pub atime: Option<i64>,
+    /// Change time (Unix timestamp).
+    #[serde(default)]
+    pub ctime: Option<i64>,
+    /// Sparse extents for sparse file entries.
+    #[serde(default)]
+    pub extents: Vec<SparseExtentExpectation>,
+}
+
+/// Kind of a logical entry in an expected archive.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExpectedEntryKind {
+    /// Regular file.
+    File,
+    /// Directory.
+    Directory,
+    /// Symbolic link.
+    Symlink,
+}
+
+/// A single sparse extent in an expected entry.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SparseExtentExpectation {
+    /// Byte offset of the extent within the logical file.
+    pub offset: u64,
+    /// Length of the extent in bytes.
+    pub length: u64,
+}
+
+/// Deterministic payload generation descriptor for large/generated payloads.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PayloadGeneration {
+    /// Generation strategy.
+    pub kind: PayloadGenerationKind,
+    /// Single repeated byte as hex (for `repeated_byte`).
+    #[serde(default)]
+    pub byte_hex: Option<String>,
+    /// Repeated pattern as hex (for `repeated_pattern`).
+    #[serde(default)]
+    pub pattern_hex: Option<String>,
+    /// Total length to generate.
+    #[serde(default)]
+    pub length: Option<u64>,
+    /// Path to external fixture file (for `external_fixture`).
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Strategy for deterministically generating a large payload.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PayloadGenerationKind {
+    /// Repeat a single byte N times.
+    RepeatedByte,
+    /// Repeat a pattern of bytes.
+    RepeatedPattern,
+    /// All zero bytes.
+    Zeroes,
+    /// Load from an external fixture file.
+    ExternalFixture,
+    /// Sparse logical layout (holes and data extents).
+    SparseLogical,
+}
+
+/// Expected base file for a delta vector.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ExpectedBaseFile {
+    /// Relative path to the base file from the manifest location.
+    pub path: String,
+    /// Base file content as UTF-8 (short textual content).
+    #[serde(default)]
+    pub payload_utf8: Option<String>,
+    /// Base file content as hex (small binary content).
+    #[serde(default)]
+    pub payload_hex: Option<String>,
+    /// SHA-256 hex digest of the base file content.
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// Base file size in bytes.
+    #[serde(default)]
+    pub size: Option<u64>,
+    /// Generation descriptor for large base files.
+    #[serde(default)]
+    pub payload_generation: Option<PayloadGeneration>,
 }
 
 /// Vector kind: valid, invalid, or profile-specific.
@@ -223,10 +422,169 @@ pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchem
         );
     }
 
+    // Validate compression field: boolean true is not allowed.
+    if let TransformExpectation::Disabled(true) = &manifest.compression {
+        errors.push(
+            "compression must be false or an object, not true".to_string(),
+        );
+    }
+
+    // Validate crypto field: boolean true is not allowed.
+    if let TransformExpectation::Disabled(true) = &manifest.crypto {
+        errors.push(
+            "crypto must be false or an object, not true".to_string(),
+        );
+    }
+
+    // Feature consistency: compression object ↔ compression:* feature tag.
+    validate_compression_feature_consistency(manifest, &mut errors);
+
+    // Feature consistency: crypto object ↔ crypto:* feature tag.
+    validate_crypto_feature_consistency(manifest, &mut errors);
+
+    // Entry-level rules.
+    validate_entries(manifest, &mut errors);
+
     ManifestSchemaResult {
         manifest_id: manifest.id.clone(),
         valid: errors.is_empty(),
         errors,
+    }
+}
+
+/// Checks that the `compression` field and `compression:*` feature tags agree.
+fn validate_compression_feature_consistency(
+    manifest: &ConformanceManifest,
+    errors: &mut Vec<String>,
+) {
+    let has_compression_feature = manifest
+        .features
+        .iter()
+        .any(|f| f.starts_with("compression:"));
+
+    match &manifest.compression {
+        TransformExpectation::Enabled(info) => {
+            let expected_tag = format!("compression:{}", info.algorithm);
+            if !manifest.features.iter().any(|f| f == &expected_tag) {
+                errors.push(format!(
+                    "compression is {{algorithm: {}}} but features does not contain '{}'; \
+                     add '{}' to features or set compression to false",
+                    info.algorithm, expected_tag, expected_tag
+                ));
+            }
+        }
+        TransformExpectation::Disabled(false) => {
+            if has_compression_feature {
+                let tags: Vec<_> = manifest
+                    .features
+                    .iter()
+                    .filter(|f| f.starts_with("compression:"))
+                    .collect();
+                errors.push(format!(
+                    "compression is false but features contains compression:* tags: {:?}; \
+                     set compression to an object or remove the compression:* feature tags",
+                    tags
+                ));
+            }
+        }
+        TransformExpectation::Disabled(_) => {} // true already caught above
+    }
+}
+
+/// Checks that the `crypto` field and `crypto:*` feature tags agree.
+fn validate_crypto_feature_consistency(
+    manifest: &ConformanceManifest,
+    errors: &mut Vec<String>,
+) {
+    let has_crypto_feature = manifest
+        .features
+        .iter()
+        .any(|f| f.starts_with("crypto:"));
+
+    match &manifest.crypto {
+        TransformExpectation::Enabled(info) => {
+            let expected_tag = format!("crypto:{}", info.algorithm);
+            if !manifest.features.iter().any(|f| f == &expected_tag) {
+                errors.push(format!(
+                    "crypto is {{algorithm: {}}} but features does not contain '{}'; \
+                     add '{}' to features or set crypto to false",
+                    info.algorithm, expected_tag, expected_tag
+                ));
+            }
+        }
+        TransformExpectation::Disabled(false) => {
+            if has_crypto_feature {
+                let tags: Vec<_> = manifest
+                    .features
+                    .iter()
+                    .filter(|f| f.starts_with("crypto:"))
+                    .collect();
+                errors.push(format!(
+                    "crypto is false but features contains crypto:* tags: {:?}; \
+                     set crypto to an object or remove the crypto:* feature tags",
+                    tags
+                ));
+            }
+        }
+        TransformExpectation::Disabled(_) => {} // true already caught above
+    }
+}
+
+/// Validates expected entries for correctness.
+fn validate_entries(manifest: &ConformanceManifest, errors: &mut Vec<String>) {
+    for (i, entry) in manifest.entries.iter().enumerate() {
+        let label = format!("entries[{}] (name='{}')", i, entry.name);
+
+        // Symlink entries must have symlink_target.
+        if entry.kind == ExpectedEntryKind::Symlink && entry.symlink_target.is_none() {
+            errors.push(format!("{}: symlink entry must include symlink_target", label));
+        }
+
+        // File entries: payload rules.
+        if entry.kind == ExpectedEntryKind::File {
+            let size = entry.size.unwrap_or(0);
+            let logical_size = entry.logical_size.unwrap_or(0);
+            let effective_size = size.max(logical_size);
+
+            let has_utf8 = entry.payload_utf8.is_some();
+            let has_hex = entry.payload_hex.is_some();
+            let has_sha256 = entry.payload_sha256.is_some();
+            let has_generation = entry.payload_generation.is_some();
+
+            if effective_size > 60 {
+                // Large payloads: must have sha256 and generation; utf8/hex may be null.
+                if !has_sha256 {
+                    errors.push(format!(
+                        "{}: file entry with size/logical_size > 60 must include payload_sha256",
+                        label
+                    ));
+                }
+                if !has_generation {
+                    errors.push(format!(
+                        "{}: file entry with size/logical_size > 60 must include payload_generation",
+                        label
+                    ));
+                }
+            } else if effective_size > 0 {
+                // Small payloads: must have at least one of payload_utf8, payload_hex, or payload_sha256.
+                if !has_utf8 && !has_hex && !has_sha256 {
+                    errors.push(format!(
+                        "{}: file entry with size/logical_size <= 60 must include at least one of \
+                         payload_utf8, payload_hex, or payload_sha256",
+                        label
+                    ));
+                }
+            }
+
+            // payload_generation.kind must use valid enum values (handled by serde).
+            // Large generated entries must also have size or logical_size.
+            if has_generation && !has_sha256 {
+                errors.push(format!(
+                    "{}: entry with payload_generation must include payload_sha256",
+                    label
+                ));
+            }
+        }
     }
 }
 

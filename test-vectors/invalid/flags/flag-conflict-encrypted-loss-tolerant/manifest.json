@@ -6,7 +6,9 @@
   "kind": "invalid",
   "file": null,
   "profiles": [],
-  "features": [],
+  "features": [
+    "crypto:aes-256-gcm"
+  ],
   "expected": {
     "valid": false,
     "status": "SAR_ERR_FLAG_CONFLICT",
@@ -18,5 +20,10 @@
     "DEFERRED: generating this vector requires careful LFH construction.",
     "The validator must reject LOSS_TOLERANT when it would suppress AEAD failure."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": {
+    "algorithm": "aes-256-gcm",
+    "id": "0x01"
+  }
 }

@@ -28,5 +28,7 @@
     "DEFERRED: session binary vector generation requires sar-stream session state integration.",
     "See docs/CONFORMANCE.md known gaps."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

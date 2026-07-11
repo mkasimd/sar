@@ -17,5 +17,7 @@
   "notes": [
     "Hand-crafted: reserved Global Flag bits set to 0xFFFF in the upper 16 bits."
   ],
-  "generated_by": "hand-crafted"
+  "generated_by": "hand-crafted",
+  "compression": false,
+  "crypto": false
 }

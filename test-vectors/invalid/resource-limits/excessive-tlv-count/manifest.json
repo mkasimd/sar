@@ -21,5 +21,7 @@
   "notes": [
     "DEFERRED: requires LFH construction with many TLV entries."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

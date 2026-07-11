@@ -17,5 +17,7 @@
   "notes": [
     "Hand-crafted: first 4 bytes replaced with 0x00 0x00 0x00 0x00."
   ],
-  "generated_by": "hand-crafted"
+  "generated_by": "hand-crafted",
+  "compression": false,
+  "crypto": false
 }

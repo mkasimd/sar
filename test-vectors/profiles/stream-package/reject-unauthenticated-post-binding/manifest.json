@@ -26,5 +26,10 @@
   "notes": [
     "DEFERRED: requires sar-transport TLS_EXPORTER integration for binary generation."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": {
+    "algorithm": "tls-exporter",
+    "id": "0x03"
+  }
 }

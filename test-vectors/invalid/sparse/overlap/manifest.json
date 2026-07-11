@@ -20,5 +20,7 @@
   "notes": [
     "DEFERRED: requires precise sparse map construction with overlapping extents."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

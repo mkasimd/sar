@@ -19,5 +19,7 @@
   "notes": [
     "DEFERRED: requires LFH with reserved CDC algo ID."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

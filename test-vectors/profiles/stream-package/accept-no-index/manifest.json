@@ -4,7 +4,7 @@
   "title": "Profile (stream-package): accept NO_INDEX archive",
   "description": "Stream-package profile must accept NO_INDEX archives. Forward-only sequential delivery does not require a central dictionary.",
   "kind": "profile",
-  "file": "../../valid/no-index/two-entries/no_index_two_entries.sar",
+  "file": "../../../valid/no-index/two-entries/no_index_two_entries.sar",
   "profiles": [
     "stream-package"
   ],
@@ -25,5 +25,7 @@
   "notes": [
     "Binary shared with valid/no-index/two-entries/."
   ],
-  "generated_by": "rust-generator"
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false
 }

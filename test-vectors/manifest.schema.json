@@ -10,7 +10,9 @@
     "title",
     "description",
     "kind",
-    "expected"
+    "expected",
+    "compression",
+    "crypto"
   ],
   "properties": {
     "schema_version": {
@@ -40,8 +42,8 @@
       "description": "Vector kind: valid (must parse successfully), invalid (must be rejected), profile (profile-specific acceptance/rejection)."
     },
     "file": {
-      "type": "string",
-      "description": "Relative path to the binary .sar vector file from the manifest location. May be null or absent for deferred/placeholder vectors."
+      "type": ["string", "null"],
+      "description": "Relative path to the binary vector file from the manifest location. May be null for deferred/placeholder vectors."
     },
     "profiles": {
       "type": "array",
@@ -52,7 +54,237 @@
     "features": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "SAR feature tags this vector exercises (e.g. 'indexed', 'no-index', 'compression:zstd', 'crypto:aes256-gcm', 'fec:xor').",
+      "description": "SAR feature tags this vector exercises (e.g. 'indexed', 'no-index', 'compression:zstd', 'crypto:aes-256-gcm', 'fec:xor'). Must be consistent with compression and crypto fields.",
+      "default": []
+    },
+    "compression": {
+      "description": "Compression posture for this vector. Use false when the vector does not exercise compression. Use an object when it specifically exercises a compression algorithm.",
+      "oneOf": [
+        {
+          "type": "boolean",
+          "enum": [false],
+          "description": "Not compressed, or compression is not the subject of this vector."
+        },
+        {
+          "type": "object",
+          "required": ["algorithm", "id"],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "description": "Compression algorithm name: store, deflate, zstd, unsupported, reserved, or the actual algorithm."
+            },
+            "id": {
+              "type": "string",
+              "description": "Compression algorithm ID as hex string, e.g. '0x00'."
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "crypto": {
+      "description": "Crypto posture for this vector. Use false when not encrypted. Use an object when the vector exercises encryption/authentication.",
+      "oneOf": [
+        {
+          "type": "boolean",
+          "enum": [false],
+          "description": "Not encrypted or authenticated."
+        },
+        {
+          "type": "object",
+          "required": ["algorithm", "id"],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "description": "Encryption algorithm name: aes-256-gcm, xchacha20-poly1305, unsupported, reserved, tls-exporter, or the actual algorithm."
+            },
+            "id": {
+              "type": "string",
+              "description": "Encryption algorithm ID as hex string, e.g. '0x01'."
+            },
+            "password": {
+              "type": ["string", "null"],
+              "description": "Test-only password for decryption. Intentionally included for public conformance testing. Never use real secrets here."
+            },
+            "kms": {
+              "type": ["object", "null"],
+              "description": "KMS parameters for decryption. Intentionally included for public conformance testing.",
+              "properties": {
+                "mode": { "type": "string" },
+                "salt_hex": { "type": "string" },
+                "kdf": { "type": "string" },
+                "iterations": { "type": "integer" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "requires_key_provider": {
+      "type": "boolean",
+      "description": "When true, full validation requires explicit test key/password material from the manifest or validator context.",
+      "default": false
+    },
+    "entries": {
+      "type": "array",
+      "description": "Expected logical entries in the archive after all transforms (decrypt, decompress, patch, sparse reconstruction). Allows auditors to verify vector intent without reverse-engineering binary fixtures.",
+      "items": {
+        "type": "object",
+        "required": ["name", "kind"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Entry name/path as stored in the archive."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["file", "directory", "symlink"],
+            "description": "Entry kind."
+          },
+          "payload_utf8": {
+            "type": ["string", "null"],
+            "description": "Logical payload as a UTF-8 string. Use for short textual payloads (size <= 60). Null for binary or large payloads."
+          },
+          "payload_hex": {
+            "type": ["string", "null"],
+            "description": "Logical payload as a lowercase hex string. Use for binary payloads (size <= 60). Null for large or text payloads."
+          },
+          "payload_sha256": {
+            "type": ["string", "null"],
+            "description": "SHA-256 hex digest of the logical payload. Required for all file entries."
+          },
+          "size": {
+            "type": ["integer", "null"],
+            "description": "Stored/compressed size in bytes."
+          },
+          "logical_size": {
+            "type": ["integer", "null"],
+            "description": "Logical (uncompressed/reconstructed) size in bytes."
+          },
+          "payload_generation": {
+            "type": ["object", "null"],
+            "description": "Deterministic payload generation descriptor for large/generated payloads (size > 60 or logical_size > 60).",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["repeated_byte", "repeated_pattern", "zeroes", "external_fixture", "sparse_logical"],
+                "description": "Generation strategy."
+              },
+              "byte_hex": {
+                "type": ["string", "null"],
+                "description": "Single byte as hex for repeated_byte strategy."
+              },
+              "pattern_hex": {
+                "type": ["string", "null"],
+                "description": "Pattern bytes as hex for repeated_pattern strategy."
+              },
+              "length": {
+                "type": ["integer", "null"],
+                "description": "Total length to generate."
+              },
+              "path": {
+                "type": ["string", "null"],
+                "description": "Relative path to fixture file for external_fixture strategy."
+              }
+            },
+            "additionalProperties": false
+          },
+          "symlink_target": {
+            "type": ["string", "null"],
+            "description": "Symlink target path. Required for symlink entries."
+          },
+          "permissions": {
+            "type": ["integer", "null"],
+            "description": "Unix permissions bits (octal), if present."
+          },
+          "uid": {
+            "type": ["integer", "null"],
+            "description": "Unix UID, if present."
+          },
+          "gid": {
+            "type": ["integer", "null"],
+            "description": "Unix GID, if present."
+          },
+          "mtime": {
+            "type": ["integer", "null"],
+            "description": "Modification time as Unix timestamp."
+          },
+          "atime": {
+            "type": ["integer", "null"],
+            "description": "Access time as Unix timestamp."
+          },
+          "ctime": {
+            "type": ["integer", "null"],
+            "description": "Change time as Unix timestamp."
+          },
+          "extents": {
+            "type": "array",
+            "description": "Sparse extents for sparse file entries.",
+            "items": {
+              "type": "object",
+              "required": ["offset", "length"],
+              "properties": {
+                "offset": { "type": "integer" },
+                "length": { "type": "integer" }
+              },
+              "additionalProperties": false
+            },
+            "default": []
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "base_files": {
+      "type": "array",
+      "description": "Base files required for delta vector reconstruction. Includes the original content before patching.",
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative path to the base file from the manifest location."
+          },
+          "payload_utf8": {
+            "type": ["string", "null"],
+            "description": "Base file content as UTF-8 string (for small textual content)."
+          },
+          "payload_hex": {
+            "type": ["string", "null"],
+            "description": "Base file content as hex string (for small binary content)."
+          },
+          "sha256": {
+            "type": ["string", "null"],
+            "description": "SHA-256 hex digest of the base file content."
+          },
+          "size": {
+            "type": ["integer", "null"],
+            "description": "Base file size in bytes."
+          },
+          "payload_generation": {
+            "type": ["object", "null"],
+            "description": "Deterministic payload generation descriptor for large base files.",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["repeated_byte", "repeated_pattern", "zeroes", "external_fixture", "sparse_logical"]
+              },
+              "byte_hex": { "type": ["string", "null"] },
+              "pattern_hex": { "type": ["string", "null"] },
+              "length": { "type": ["integer", "null"] },
+              "path": { "type": ["string", "null"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
       "default": []
     },
     "expected": {
@@ -111,7 +343,7 @@
     "notes": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Human-readable notes about this vector: known gaps, deferral reasons, generation notes.",
+      "description": "Human-readable notes about this vector: known gaps, deferral reasons, generation notes, crypto test-secret declarations.",
       "default": []
     },
     "deferred": {

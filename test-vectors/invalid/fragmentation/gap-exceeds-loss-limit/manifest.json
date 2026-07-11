@@ -23,5 +23,7 @@
   "notes": [
     "DEFERRED: gap value must exceed max_loss_tolerant_gap (1024 bytes in this vector)."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

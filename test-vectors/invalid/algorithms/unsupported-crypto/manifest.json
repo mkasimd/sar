@@ -6,7 +6,9 @@
   "kind": "invalid",
   "file": "unsupported_crypto.sar",
   "profiles": [],
-  "features": [],
+  "features": [
+    "crypto:unsupported"
+  ],
   "expected": {
     "valid": false,
     "status": "SAR_ERR_UNSUPPORTED",
@@ -17,5 +19,10 @@
   "notes": [
     "Hand-crafted: encryption algo ID set to a reserved value."
   ],
-  "generated_by": "hand-crafted"
+  "generated_by": "hand-crafted",
+  "compression": false,
+  "crypto": {
+    "algorithm": "unsupported",
+    "id": "0x7f"
+  }
 }

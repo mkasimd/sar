@@ -19,5 +19,7 @@
   "notes": [
     "DEFERRED: Central Dictionary truncation test requires indexed archive with partial CD."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

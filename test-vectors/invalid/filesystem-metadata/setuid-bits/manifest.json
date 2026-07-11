@@ -30,5 +30,7 @@
     "DEFERRED: setuid/setgid bit policy validation depends on profile extraction enforcement.",
     "Default policy: setuid/setgid/sticky bits are stripped/rejected unless explicitly allowed."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

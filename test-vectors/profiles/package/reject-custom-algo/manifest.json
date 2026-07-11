@@ -8,7 +8,9 @@
   "profiles": [
     "package"
   ],
-  "features": [],
+  "features": [
+    "compression:unsupported"
+  ],
   "expected": {
     "valid": false,
     "status": "SAR_ERR_UNSUPPORTED",
@@ -23,5 +25,10 @@
   "notes": [
     "DEFERRED: binary shared with invalid/algorithms/unsupported-compression/ when available."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": {
+    "algorithm": "unsupported",
+    "id": "0xfe"
+  },
+  "crypto": false
 }

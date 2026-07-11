@@ -20,5 +20,7 @@
   "notes": [
     "DEFERRED: requires fragment descriptor with tail gap construction."
   ],
-  "deferred": true
+  "deferred": true,
+  "compression": false,
+  "crypto": false
 }

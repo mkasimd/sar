@@ -17,5 +17,7 @@
   "notes": [
     "Hand-crafted minimal truncation case."
   ],
-  "generated_by": "hand-crafted"
+  "generated_by": "hand-crafted",
+  "compression": false,
+  "crypto": false
 }
