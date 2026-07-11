@@ -507,6 +507,47 @@ crate-boundary implementation cleanup
 * full workspace validation
 * CodeQL/security scan where available
 
+## M11c.1:
+
+final fragment completeness and API/docs consistency correction
+
+* finish the final M11c review corrections before starting M11d
+* do not create `sar-archive`
+* do not start the archive API architecture split
+* do not change SAR wire format
+* do not add protocol features
+* preserve archive interoperability
+* fix fragment descriptor byte-range gap handling:
+
+  * descriptor byte-range gaps are missing data
+  * initial descriptor gaps are missing data
+  * tail descriptor gaps are missing data when `logical_size` exceeds the final descriptor end
+  * descriptor gaps without `LOSS_TOLERANT` fail closed
+  * descriptor gaps with `LOSS_TOLERANT` are bounded by `max_loss_tolerant_gap`
+  * descriptor gaps with `LOSS_TOLERANT` return degraded output
+  * descriptor gaps must never suppress payload-size mismatch, duplicate index, overlap, bounds, overflow, or limit errors
+* add tests for:
+
+  * descriptor gap without `LOSS_TOLERANT`
+  * descriptor gap with `LOSS_TOLERANT`
+  * initial descriptor gap without `LOSS_TOLERANT`
+  * tail descriptor gap without `LOSS_TOLERANT`
+  * descriptor gap exceeding `max_loss_tolerant_gap`
+  * valid complete contiguous fragment reconstruction
+* fix `docs/API.md` so fragment and sparse helper descriptions match actual ownership and behavior
+* fix `docs/CRATE_RESPONSIBILITIES.md` so `validate_fragment_group`, `reconstruct_fragments`, `validate_sparse_extents`, and `apply_sparse_reconstruction` are described accurately
+* fix `docs/MACHINE_READABLE_API.json` so moved/removed APIs and current signatures are accurate
+* document removed APIs as removed, not as changed return types:
+
+  * `sar_core::fragment::*`
+  * `sar_core::sparse::validate_sparse_extents`
+  * `sar_core::sparse::apply_sparse_reconstruction`
+* keep `sar_core::sparse::parse_sparse_map` and `sar_core::sparse::write_sparse_map` as physical LFH sparse-map helpers
+* keep `sar_core::sparse::SparseExtent` only if still required by those wire-format helper signatures
+* remove duplicate Cargo dev-dependencies if present and unnecessary
+* full workspace validation
+* CodeQL/security scan where available
+
 ## M11d:
 
 archive API architecture split
