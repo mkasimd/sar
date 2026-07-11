@@ -546,6 +546,9 @@ const DATA_PAYLOAD: &[u8] = b"test-data";
 /// Heartbeat payload used in the heartbeat-with-payload invalid fixture.
 const HEARTBEAT_BAD_PAYLOAD: &[u8] = b"bad";
 
+/// Entry mode bits for a DATA_WRITE filesystem entry: OP_CODE=0x0, no SESSION_CONTROL bit.
+const ENTRY_MODE_DATA_WRITE: u16 = 0x0000;
+
 /// Builds a SAR Global Header with NO_INDEX set (required for stream transcripts).
 fn make_stream_global_header() -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX;
@@ -602,8 +605,7 @@ fn make_fs_data_write_lfh_and_payload(
     payload: &[u8],
 ) -> Vec<u8> {
     let global_flags = GlobalFlags::NO_INDEX;
-    // OP_CODE=0x0 (DATA_WRITE), no SESSION_CONTROL bit
-    let entry_mode_bits: u16 = 0x0000;
+    let entry_mode_bits: u16 = ENTRY_MODE_DATA_WRITE;
     let payload_len = payload.len() as u64;
     let mut lfh = LocalFileHeader::minimal_store(b"data".to_vec(), payload_len);
     lfh.stream_id = stream_id;

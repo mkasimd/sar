@@ -1020,7 +1020,7 @@ fn attempt_stream_transcript_parse(
 
         let payload_size = lfh.payload_size;
         let payload_len = usize::try_from(payload_size)
-            .map_err(|_| sar_core::error::SarError::Overflow("stream transcript payload size"))?;
+            .map_err(|_| sar_core::error::SarError::Overflow("stream transcript payload size exceeds usize limits"))?;
         limits.check_allocation_bytes(payload_size)?;
 
         if pos + payload_len > bytes.len() {

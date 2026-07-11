@@ -1573,7 +1573,7 @@ fn minimum_required_invalid_stream_transcript_vectors_present() {
         })
         .collect();
 
-    // We need at least 8 non-deferred invalid stream transcript vectors per the problem spec.
+    // We need at least 8 non-deferred invalid stream transcript vectors per M12a-stream-cp milestone requirements.
     if invalid_stream_non_deferred.len() < 8 {
         panic!(
             "expected at least 8 non-deferred invalid stream transcript vectors, found {}:\n{}",
