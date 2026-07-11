@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 11d source audit)
+# API Inventory (post–Milestone 11e source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -19,6 +19,7 @@ Current scope:
 - Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
 - Milestone 11c-cp: Crate-boundary corrective pass — `sar_core::fragment` module removed, semantic sparse re-exports removed, `sar-loss-tolerant` integrated into `sar-fragmentation`, fragment payload/duplicate validation added, zero-length sparse extent rejection added, `write_sparse_map` fail-closed truncation fix, error conversion bridges updated
 - Milestone 11d: archive API architecture split — high-level archive integration moved from `sar-core` to new `sar-archive`
+- Milestone 11e: CLI metadata support — create/extract metadata preservation controls, symlink handling controls, metadata listing, and metadata-rich inspect JSON output
 - Milestone 12: conformance vectors, fuzzing/malicious corpus, and docs/security posture hardening
 - Milestone 13: security audit and remediation
 - Milestone 14: C ABI security profile, stable C ABI, C ABI examples/tests, and Python module

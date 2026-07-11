@@ -8,7 +8,7 @@
     "swift_ios": "unstable",
     "kotlin_java_android": "unstable",
     "cpp_via_c_abi": "candidate",
-    "notes": "No foreign-language interfaces are implemented yet. Milestone 12 targets a stable C ABI and Python module for high-level archive operations, configuration, error mapping, FEC, streaming, and transport-oriented wrappers. Milestone 13 targets Swift/iOS and Kotlin/Java/Android after ownership, callback, cancellation, secret-handling, and packaging contracts stabilize."
+    "notes": "No foreign-language interfaces are implemented yet. Milestone 14 targets a stable C ABI and Python module for high-level archive operations, configuration, error mapping, and language-binding wrappers. Milestone 15 targets packaging/release automation. Milestone 16 targets Swift/iOS and Kotlin/Java/Android packages after ownership, callback, cancellation, and secret-handling contracts stabilize."
   },
   "crates": [
     {
