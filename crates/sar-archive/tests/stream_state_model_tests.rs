@@ -13,8 +13,7 @@ use sar_core::{
     },
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes,
-    SecretString,
+    ENCR_AES256_GCM, KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes, SecretString,
     kms::types::Pbkdf2Params,
 };
 use sar_delta::PATCH_ALGO_STORE_PATCH;
@@ -351,8 +350,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
     let payload_start = header_len + usize::try_from(lfh.header_size).expect("usize");
     archive[payload_start] ^= 0x01; // tamper ciphertext
 
-    let reader_key_provider: Box<dyn KeyProvider> =
-        Box::new(TestKeyProvider { password });
+    let reader_key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider { password });
     let mut parser = sar_archive::StreamArchiveParser::new().with_key_provider(reader_key_provider);
     parser.push_bytes(&archive).expect("push");
     let _ = next_ready(&mut parser);

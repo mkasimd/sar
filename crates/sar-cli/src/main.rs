@@ -22,7 +22,7 @@ use sar_core::{
     GlobalFlags, ResourceLimits, SarError, fec::validate_recovery_tlv, sparse::SparseExtent,
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsContext, KmsParams, KeyProvider,
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KeyProvider, KmsContext, KmsParams,
     PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SarCryptoError, SecretBytes, SecretString,
 };
 use sar_delta::{PATCH_ALGO_STORE_PATCH, patch_algo_name};
@@ -162,10 +162,7 @@ impl CliKeyProvider {
 }
 
 impl KeyProvider for CliKeyProvider {
-    fn password_for(
-        &self,
-        _context: &KmsContext,
-    ) -> Result<Option<SecretString>, SarCryptoError> {
+    fn password_for(&self, _context: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(self.password.clone())
     }
 
@@ -177,10 +174,7 @@ impl KeyProvider for CliKeyProvider {
         Ok(None)
     }
 
-    fn external_key(
-        &self,
-        _context: &KmsContext,
-    ) -> Result<Option<SecretBytes>, SarCryptoError> {
+    fn external_key(&self, _context: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 }

@@ -198,10 +198,7 @@ impl KeyProvider for TestKeyProvider {
         Ok(None)
     }
 
-    fn external_key(
-        &self,
-        _ctx: &KmsContext,
-    ) -> Result<Option<SecretBytes>, SarCryptoError> {
+    fn external_key(&self, _ctx: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 }
