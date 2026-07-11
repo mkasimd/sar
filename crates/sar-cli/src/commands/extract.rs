@@ -12,9 +12,14 @@ use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
 use crate::{
     extraction::{
         metadata::{PendingDirectoryMetadata, apply_file_metadata, finalize_directory_metadata},
-        paths::{SafeRelativePath, ensure_safe_directory_path, prepare_output_file_path, validate_relative_archive_path},
+        paths::{
+            SafeRelativePath, ensure_safe_directory_path, prepare_output_file_path,
+            validate_relative_archive_path,
+        },
         policy::{ExtractMetadataOptions, validate_extract_metadata_support},
-        staging::{compute_sparse_crc32, verify_crc32, write_bytes_via_temp, write_sparse_payload_via_temp},
+        staging::{
+            compute_sparse_crc32, verify_crc32, write_bytes_via_temp, write_sparse_payload_via_temp,
+        },
     },
     password::{CliKeyProvider, load_password},
 };
@@ -193,7 +198,13 @@ pub(crate) fn extract_archive(
                     "file CRC32 mismatch on reconstructed fragment-group logical file",
                 )?;
             }
-            write_sparse_payload_via_temp(&out_path, &raw, extents, sparse_uncompressed_size, &limits)?;
+            write_sparse_payload_via_temp(
+                &out_path,
+                &raw,
+                extents,
+                sparse_uncompressed_size,
+                &limits,
+            )?;
         } else {
             if header.flags.contains(GlobalFlags::PER_FILE_CRC) {
                 verify_crc32(

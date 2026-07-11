@@ -264,11 +264,18 @@ pub(crate) fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), Sar
                 );
             }
             if let Some(extents) = &entry.sparse_extents {
-                println!("  entry={} sparse_extent_count={}", entry.name, extents.len());
+                println!(
+                    "  entry={} sparse_extent_count={}",
+                    entry.name,
+                    extents.len()
+                );
             }
             if let Some(algo_id) = entry.cdc_algo_id {
                 let name = sar_cdc::algo_name(algo_id);
-                println!("  entry={} cdc_algo_id=0x{algo_id:02X} ({name})", entry.name);
+                println!(
+                    "  entry={} cdc_algo_id=0x{algo_id:02X} ({name})",
+                    entry.name
+                );
             }
             if let Some(algo_id) = entry.patch_algo_id {
                 let name = patch_algo_name(algo_id);

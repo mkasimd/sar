@@ -10,7 +10,9 @@ use sar_archive::{
     FecSettings,
 };
 use sar_core::{EntryKind, SarError};
-use sar_crypto::{ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsParams, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params};
+use sar_crypto::{
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsParams, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params,
+};
 
 use crate::{
     args::{
@@ -141,7 +143,9 @@ pub(crate) fn create_archive(
     Ok(())
 }
 
-pub(crate) fn validate_create_metadata_support(metadata: CreateMetadataOptions) -> Result<(), SarError> {
+pub(crate) fn validate_create_metadata_support(
+    metadata: CreateMetadataOptions,
+) -> Result<(), SarError> {
     #[cfg(not(unix))]
     {
         if metadata.preserve_permissions {
@@ -441,11 +445,11 @@ fn entry_timestamps(fs_metadata: &fs::Metadata) -> Result<[u64; 3], SarError> {
 
     Ok([
         u64::try_from(fs_metadata.mtime())
-            .map_err(|_| SarError::Unsupported("negative mtime is not supported"))?,
+            .map_err(|_| SarError::Unsupported("mtime is out of supported range"))?,
         u64::try_from(fs_metadata.atime())
-            .map_err(|_| SarError::Unsupported("negative atime is not supported"))?,
+            .map_err(|_| SarError::Unsupported("atime is out of supported range"))?,
         u64::try_from(fs_metadata.ctime())
-            .map_err(|_| SarError::Unsupported("negative ctime is not supported"))?,
+            .map_err(|_| SarError::Unsupported("ctime is out of supported range"))?,
     ])
 }
 

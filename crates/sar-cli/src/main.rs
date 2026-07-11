@@ -83,8 +83,13 @@ fn dispatch_command(command: Command) -> Result<(), SarError> {
                     "--indexed and --no-index cannot be used together",
                 ));
             }
-            let compression =
-                args::resolve_create_compression(compression, zstd, deflate, store, compression_level)?;
+            let compression = args::resolve_create_compression(
+                compression,
+                zstd,
+                deflate,
+                store,
+                compression_level,
+            )?;
             commands::create::create_archive(
                 input,
                 output,
@@ -133,7 +138,13 @@ fn dispatch_command(command: Command) -> Result<(), SarError> {
             recovery,
             cdc,
             limits,
-        } => commands::verify::verify_archive(archive, password, recovery, cdc, limits.resource_limits()),
+        } => commands::verify::verify_archive(
+            archive,
+            password,
+            recovery,
+            cdc,
+            limits.resource_limits(),
+        ),
         Command::Inspect { archive, json } => commands::inspect::inspect_archive(archive, json),
         Command::Repair {
             archive,

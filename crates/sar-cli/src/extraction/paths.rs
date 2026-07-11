@@ -37,10 +37,6 @@ impl SafeRelativePath {
         &self.components
     }
 
-    pub(crate) fn to_path_buf(&self) -> PathBuf {
-        self.components.iter().collect()
-    }
-
     pub(crate) fn depth(&self) -> usize {
         self.components.len()
     }

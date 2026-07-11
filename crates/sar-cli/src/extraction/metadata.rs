@@ -96,7 +96,11 @@ fn apply_permissions(
     }
 }
 
-fn apply_owner(path: &Path, owner: Option<u32>, metadata: ExtractMetadataOptions) -> Result<(), SarError> {
+fn apply_owner(
+    path: &Path,
+    owner: Option<u32>,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
     if !metadata.preserve_owner {
         return Ok(());
     }
@@ -135,10 +139,10 @@ fn apply_timestamps(
         return Ok(());
     };
 
-    let atime_i64 =
-        i64::try_from(atime).map_err(|_| SarError::Overflow("atime does not fit host timestamp range"))?;
-    let mtime_i64 =
-        i64::try_from(mtime).map_err(|_| SarError::Overflow("mtime does not fit host timestamp range"))?;
+    let atime_i64 = i64::try_from(atime)
+        .map_err(|_| SarError::Overflow("atime does not fit host timestamp range"))?;
+    let mtime_i64 = i64::try_from(mtime)
+        .map_err(|_| SarError::Overflow("mtime does not fit host timestamp range"))?;
     set_file_times(
         path,
         FileTime::from_unix_time(atime_i64, 0),
@@ -149,8 +153,8 @@ fn apply_timestamps(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use std::{collections::HashMap, fs};
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::{collections::HashMap, fs};
 
     use tempfile::tempdir;
 
@@ -178,7 +182,10 @@ mod tests {
         )
         .expect("metadata application should skip symlink");
 
-        let mode = fs::metadata(&target).expect("target metadata").permissions().mode();
+        let mode = fs::metadata(&target)
+            .expect("target metadata")
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o777);
     }
 

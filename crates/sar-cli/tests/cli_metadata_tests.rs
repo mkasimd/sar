@@ -430,3 +430,29 @@ fn extraction_rejects_existing_symlink_parent_component() {
         .failure()
         .stderr(contains("existing symlink"));
 }
+
+#[cfg(unix)]
+#[test]
+fn create_follow_symlink_rejects_recursive_directory_cycle() {
+    let td = tempdir().expect("tmp");
+    let input_dir = td.path().join("in");
+    let nested = input_dir.join("nested");
+    fs::create_dir_all(&nested).expect("mkdir");
+    fs::write(input_dir.join("file.txt"), b"data").expect("write");
+    symlink("..", nested.join("loop")).expect("symlink loop");
+
+    let archive = td.path().join("cycle.sar");
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args([
+            "create",
+            input_dir.to_str().expect("str"),
+            archive.to_str().expect("str"),
+            "--no-index",
+            "--symlinks",
+            "follow",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("recursive symlink directory cycle"));
+}

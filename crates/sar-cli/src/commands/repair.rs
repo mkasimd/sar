@@ -1,6 +1,8 @@
 use std::{fs, fs::File, io::BufReader, path::PathBuf};
 
-use sar_archive::{ArchiveReader, ErasureInput, inspect_recovery_metadata, plan_archive_repair, repair_archive};
+use sar_archive::{
+    ArchiveReader, ErasureInput, inspect_recovery_metadata, plan_archive_repair, repair_archive,
+};
 use sar_core::{ResourceLimits, SarError};
 
 use crate::commands::read_file_with_archive_limit;

@@ -41,7 +41,8 @@ pub(crate) fn write_sparse_payload_via_temp(
         let mut payload_pos = 0usize;
         for extent in extents {
             let dst_offset = extent.offset;
-            let len = usize::try_from(extent.length).map_err(|_| SarError::Overflow("extent length"))?;
+            let len =
+                usize::try_from(extent.length).map_err(|_| SarError::Overflow("extent length"))?;
             let src_end = payload_pos
                 .checked_add(len)
                 .ok_or(SarError::Overflow("payload position"))?;
@@ -87,7 +88,8 @@ pub(crate) fn compute_sparse_crc32(
             .checked_sub(cursor)
             .ok_or(SarError::Overflow("sparse hole length"))?;
         hash_zero_bytes(&mut hasher, gap, &zero_chunk);
-        let len = usize::try_from(extent.length).map_err(|_| SarError::Overflow("extent length"))?;
+        let len =
+            usize::try_from(extent.length).map_err(|_| SarError::Overflow("extent length"))?;
         let src_end = payload_pos
             .checked_add(len)
             .ok_or(SarError::Overflow("payload position"))?;
@@ -168,11 +170,15 @@ fn finalize_temp_file(tmp_path: &Path, final_path: &Path) -> Result<(), SarError
     }
 }
 
-fn hash_zero_bytes(hasher: &mut crc32fast::Hasher, mut len: u64, zero_chunk: &[u8; ZERO_CHUNK_LEN]) {
+fn hash_zero_bytes(
+    hasher: &mut crc32fast::Hasher,
+    mut len: u64,
+    zero_chunk: &[u8; ZERO_CHUNK_LEN],
+) {
     while len > 0 {
-        let chunk_len = usize::try_from(len.min(ZERO_CHUNK_LEN as u64)).unwrap_or(ZERO_CHUNK_LEN);
+        let chunk_len = len.min(ZERO_CHUNK_LEN as u64) as usize;
         hasher.update(&zero_chunk[..chunk_len]);
-        len -= u64::try_from(chunk_len).unwrap_or(0);
+        len -= chunk_len as u64;
     }
 }
 

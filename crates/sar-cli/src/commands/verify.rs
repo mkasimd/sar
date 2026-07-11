@@ -1,10 +1,14 @@
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use sar_archive::{ArchiveReader, ArchiveReaderOptions, inspect_recovery_metadata};
-use sar_core::{ResourceLimits, SarError, fec::validate_recovery_tlv, sparse::validate_sparse_extents};
+use sar_core::{ResourceLimits, SarError};
 use sar_fragmentation::{FragmentDescriptor, FragmentEntry, validate_fragment_group};
+use sar_sparse::validate_sparse_extents;
 
-use crate::{commands::read_file_with_archive_limit, password::{CliKeyProvider, load_password}};
+use crate::{
+    commands::read_file_with_archive_limit,
+    password::{CliKeyProvider, load_password},
+};
 
 pub(crate) fn verify_archive(
     archive: PathBuf,
@@ -114,7 +118,9 @@ pub(crate) fn verify_archive(
                 Ok::<u64, SarError>(max_end.max(end))
             })?;
 
-            if let Err(err) = validate_fragment_group(&frag_entries, max_offset, &limits.fragment_limits()) {
+            if let Err(err) =
+                validate_fragment_group(&frag_entries, max_offset, &limits.fragment_limits())
+            {
                 eprintln!("recovery verify: fragment group {fid} error: {err}");
                 frag_errors += 1;
             }
@@ -140,10 +146,6 @@ pub(crate) fn verify_archive(
             return Err(SarError::Malformed(
                 "recovery metadata validation found errors",
             ));
-        }
-
-        for tlv in rec_meta.recovery_tlvs {
-            let _ = validate_recovery_tlv(tlv.type_id, &tlv.value, &limits)?;
         }
     }
 
