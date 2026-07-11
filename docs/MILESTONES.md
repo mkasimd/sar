@@ -691,6 +691,28 @@ If this milestone document appears to describe library/profile layout differentl
 * `inspect_recovery_metadata` now fails closed when RECOVERY TLVs are malformed (no `repair_possible=true` on malformed metadata)
 * this corrective pass updates M8 recovery behavior discovered during M12a without starting `M12b`, `M12c`, `M13`, `M14`, `M15`, or `M16`
 
+## M12a-negative-cp: deterministic invalid conformance-vector expansion (complete)
+
+* added deterministic invalid archive-level recovery fixtures under `test-vectors/invalid/recovery/` for:
+  * `HAS_GLOBAL_EC` without `OPT_PRESENT`
+  * `NO_INDEX` with `HAS_GLOBAL_EC`
+  * RECOVERY TLV present while `HAS_GLOBAL_EC` is unset
+  * truncated RECOVERY TLV
+  * reserved and unsupported RECOVERY TLV algorithm IDs
+  * malformed XOR/RS recovery metadata
+  * corruption-beyond-parity repair failure (`SAR_ERR_EC_FAILED`)
+* added deterministic invalid delta fixtures under `test-vectors/invalid/delta/` for:
+  * reserved patch algorithm ID
+  * unsupported custom patch algorithm ID
+  * all-zero Delta Base Hash for VCDIFF and BSDIFF
+  * truncated VCDIFF and SAR BSDIFF v1 patch payloads
+  * VCDIFF output limit and BSDIFF control-block limit failures
+* `run_conformance_check()` expanded to recognize additional stable SAR statuses, honor delta limit keys (`max_vcdiff_output_size`, `max_bsdiff_control_bytes`, etc.), and run deterministic recovery repair checks for `recovery:repair-beyond-parity`
+* global/CD validation hardened to fail closed for invalid recovery-flag and recovery-metadata combinations
+* `conformance_manifest_tests` now audits invalid recovery/delta taxonomy, real fixture references, and non-placeholder language for non-deferred invalid vectors
+* `docs/CONFORMANCE.md` and `test-vectors/README.md` updated to describe deterministic invalid-vector expansion explicitly (not fuzzing)
+* this pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`
+
 ## M12b: fuzzing and malicious corpus
 
 * global header fuzzing

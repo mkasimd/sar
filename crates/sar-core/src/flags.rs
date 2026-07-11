@@ -170,6 +170,12 @@ impl EntryMode {
 
 /// Validates global flag consistency.
 pub fn validate_global_flags(flags: GlobalFlags) -> Result<(), SarError> {
+    if flags.contains(GlobalFlags::HAS_GLOBAL_EC) && !flags.contains(GlobalFlags::OPT_PRESENT) {
+        return Err(SarError::FlagConflict(
+            "HAS_GLOBAL_EC requires OPT_PRESENT and RECOVERY TLV metadata",
+        ));
+    }
+
     if flags.contains(GlobalFlags::SIGNED) && !flags.contains(GlobalFlags::OPT_PRESENT) {
         return Err(SarError::FlagConflict(
             "SIGNED requires OPT_PRESENT and DATA_HASH metadata",
