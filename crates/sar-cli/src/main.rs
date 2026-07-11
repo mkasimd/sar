@@ -160,6 +160,16 @@ struct CreateCompression {
     level: Option<u8>,
 }
 
+#[derive(Debug, Clone)]
+struct CreateCommandOptions {
+    no_index: bool,
+    compression: CreateCompression,
+    encrypt: Option<EncryptionChoice>,
+    password: Option<String>,
+    fec: Option<FecChoice>,
+    metadata: CreateMetadataOptions,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CreateMetadataOptions {
     preserve_permissions: bool,
@@ -404,16 +414,18 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
                 (Ok(input), Ok(output), Ok(compression)) => create_archive(
                     input,
                     output,
-                    false,
-                    compression,
-                    None,
-                    None,
-                    None,
-                    CreateMetadataOptions {
-                        preserve_permissions: false,
-                        preserve_owner: false,
-                        preserve_times: false,
-                        symlink_policy: SymlinkCreatePolicy::Skip,
+                    CreateCommandOptions {
+                        no_index: false,
+                        compression,
+                        encrypt: None,
+                        password: None,
+                        fec: None,
+                        metadata: CreateMetadataOptions {
+                            preserve_permissions: false,
+                            preserve_owner: false,
+                            preserve_times: false,
+                            symlink_policy: SymlinkCreatePolicy::Skip,
+                        },
                     },
                 ),
                 (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
@@ -554,16 +566,18 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             create_archive(
                 input,
                 output,
-                no_index && !indexed,
-                compression,
-                encrypt,
-                password,
-                fec,
-                CreateMetadataOptions {
-                    preserve_permissions,
-                    preserve_owner,
-                    preserve_times,
-                    symlink_policy: symlinks,
+                CreateCommandOptions {
+                    no_index: no_index && !indexed,
+                    compression,
+                    encrypt,
+                    password,
+                    fec,
+                    metadata: CreateMetadataOptions {
+                        preserve_permissions,
+                        preserve_owner,
+                        preserve_times,
+                        symlink_policy: symlinks,
+                    },
                 },
             )
         }
@@ -733,13 +747,17 @@ fn entry_kind_label(kind: EntryKind) -> &'static str {
 fn create_archive(
     input: PathBuf,
     output: PathBuf,
-    no_index: bool,
-    compression: CreateCompression,
-    encrypt: Option<EncryptionChoice>,
-    password: Option<String>,
-    fec: Option<FecChoice>,
-    metadata: CreateMetadataOptions,
+    options: CreateCommandOptions,
 ) -> Result<(), SarError> {
+    let CreateCommandOptions {
+        no_index,
+        compression,
+        encrypt,
+        password,
+        fec,
+        metadata,
+    } = options;
+
     validate_create_metadata_support(metadata)?;
 
     if encrypt.is_none() && (password.is_some() || env::var_os(PASSWORD_ENV).is_some()) {
@@ -912,11 +930,7 @@ fn traverse_input_path(
         }
 
         let mut entries: Vec<_> = fs::read_dir(source_path)?.collect::<Result<Vec<_>, _>>()?;
-        entries.sort_by(|left, right| {
-            left.file_name()
-                .to_string_lossy()
-                .cmp(&right.file_name().to_string_lossy())
-        });
+        entries.sort_by_key(|entry| entry.file_name().to_string_lossy().into_owned());
 
         for child in entries {
             let child_path = child.path();
@@ -933,10 +947,8 @@ fn traverse_input_path(
                 active_follow_dirs,
             )?;
         }
-        return Ok(());
-    }
-
-    if file_type.is_file() {
+        Ok(())
+    } else if file_type.is_file() {
         let archive_rel =
             archive_rel.ok_or(SarError::Malformed("archive entry name is missing"))?;
         let name = archive_name_from_path(archive_rel)?;
@@ -948,12 +960,12 @@ fn traverse_input_path(
             &fs_metadata,
             metadata,
         )?)?;
-        return Ok(());
+        Ok(())
+    } else {
+        Err(SarError::Unsupported(
+            "only regular files, directories, and symlinks are supported",
+        ))
     }
-
-    Err(SarError::Unsupported(
-        "only regular files, directories, and symlinks are supported",
-    ))
 }
 
 fn add_symlink_entry(
@@ -1013,10 +1025,8 @@ fn add_followed_symlink(
             &target_metadata,
         );
         active_follow_dirs.remove(&resolved);
-        return result;
-    }
-
-    if target_metadata.file_type().is_file() {
+        result
+    } else if target_metadata.file_type().is_file() {
         let archive_rel =
             archive_rel.ok_or(SarError::Malformed("archive entry name is missing"))?;
         let name = archive_name_from_path(archive_rel)?;
@@ -1028,12 +1038,12 @@ fn add_followed_symlink(
             &target_metadata,
             metadata,
         )?)?;
-        return Ok(());
+        Ok(())
+    } else {
+        Err(SarError::Unsupported(
+            "followed symlink target is not a regular file or directory",
+        ))
     }
-
-    Err(SarError::Unsupported(
-        "followed symlink target is not a regular file or directory",
-    ))
 }
 
 fn traverse_followed_directory(
@@ -1057,11 +1067,7 @@ fn traverse_followed_directory(
     }
 
     let mut entries: Vec<_> = fs::read_dir(resolved_dir)?.collect::<Result<Vec<_>, _>>()?;
-    entries.sort_by(|left, right| {
-        left.file_name()
-            .to_string_lossy()
-            .cmp(&right.file_name().to_string_lossy())
-    });
+    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().into_owned());
 
     for child in entries {
         let child_rel = match archive_rel {
@@ -1793,7 +1799,7 @@ fn extract_symlink_entry(
             fs::remove_file(&out_path)?;
         }
         symlink(target, &out_path)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]
@@ -1886,7 +1892,7 @@ fn finalize_directory_metadata(
     metadata: ExtractMetadataOptions,
 ) -> Result<(), SarError> {
     let mut pending: Vec<_> = pending_directories.into_values().collect();
-    pending.sort_by(|left, right| right.relative_path.depth().cmp(&left.relative_path.depth()));
+    pending.sort_by_key(|entry| std::cmp::Reverse(entry.relative_path.depth()));
     for entry in pending {
         let path = output_dir.join(entry.relative_path.to_path_buf());
         apply_owner(&path, entry.owner, metadata)?;
@@ -1913,7 +1919,7 @@ fn apply_permissions(
         use std::os::unix::fs::PermissionsExt;
 
         fs::set_permissions(path, fs::Permissions::from_mode(u32::from(mode & 0o0777)))?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]
@@ -1944,7 +1950,7 @@ fn apply_owner(
         rustix::fs::chown(path, Some(uid), Some(gid))
             .map_err(std::io::Error::from)
             .map_err(SarError::Io)?;
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]
