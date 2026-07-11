@@ -11,6 +11,7 @@ members = [
   "crates/sar-partition",
   "crates/sar-sparse",
   "crates/sar-loss-tolerant",
+  "crates/sar-archive",
   "crates/sar-stream",
   "crates/sar-transport",
   "crates/sar-cli",

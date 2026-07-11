@@ -1,11 +1,12 @@
-//! Tests for `ArchiveReader::read_all_logical_files` — fragment reassembly,
+//! Tests for `sar_archive::ArchiveReader::read_all_logical_files` — fragment reassembly,
 //! sparse reconstruction, and loss-tolerant integration through the high-level
 //! read path.
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, GlobalFlags, SarError,
+ GlobalFlags, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
@@ -19,9 +20,9 @@ use sar_core::{
 /// Build a minimal indexed SAR archive with a single non-fragmented entry.
 fn build_simple_archive(name: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
@@ -31,7 +32,7 @@ fn build_simple_archive(name: &str, payload: &[u8]) -> Vec<u8> {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file(name.to_string(), payload.to_vec()))
+        .add_entry(sar_archive::EntryInput::file(name.to_string(), payload.to_vec()))
         .expect("add entry");
     writer.finish().expect("finish");
     out
@@ -91,7 +92,7 @@ fn build_two_fragment_archive() -> Vec<u8> {
 #[test]
 fn read_all_logical_files_simple_roundtrip() {
     let archive = build_simple_archive("hello.txt", b"world");
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("header");
 
     let files = reader
@@ -108,9 +109,9 @@ fn read_all_logical_files_simple_roundtrip() {
 #[test]
 fn read_all_logical_files_multiple_entries() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
@@ -120,14 +121,14 @@ fn read_all_logical_files_multiple_entries() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("a.txt", b"AAAA".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("a.txt", b"AAAA".to_vec()))
         .expect("a");
     writer
-        .add_entry(EntryInput::file("b.txt", b"BBBB".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("b.txt", b"BBBB".to_vec()))
         .expect("b");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(files.len(), 2);
@@ -144,7 +145,7 @@ fn read_all_logical_files_multiple_entries() {
 #[test]
 fn fragment_group_reconstructs_through_reader() {
     let archive = build_two_fragment_archive();
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
 
     let files = reader
         .read_all_logical_files(false)
@@ -186,7 +187,7 @@ fn missing_fragment_fails_without_allow_lossy() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -221,7 +222,7 @@ fn missing_fragment_succeeds_with_allow_lossy_and_loss_tolerant() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     // Without allow_lossy: should fail
     let err = reader
         .read_all_logical_files(false)
@@ -268,7 +269,7 @@ fn overlapping_fragment_descriptors_fail() {
         archive.extend_from_slice(&[0u8; 8]);
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -319,7 +320,7 @@ fn sparse_extents_reconstruct_with_zero_holes() {
     archive.extend_from_slice(&lfh_bytes);
     archive.extend_from_slice(payload);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(files.len(), 1);
@@ -365,7 +366,7 @@ fn overlapping_sparse_extents_fail() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&payload);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -377,7 +378,7 @@ fn overlapping_sparse_extents_fail() {
 
 #[test]
 fn large_sparse_hole_capped_by_max_size() {
-    use sar_core::ArchiveReaderOptions;
+    use sar_archive::ArchiveReaderOptions;
     use sar_core::sparse::{SparseExtent, write_sparse_map};
 
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
@@ -406,9 +407,9 @@ fn large_sparse_hole_capped_by_max_size() {
     archive.extend_from_slice(payload);
 
     // Use a reader with a very small max_decoded_entry_size
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: sar_core::limits::ResourceLimits {
                 max_decoded_entry_size: 512, // cap at 512 bytes
                 ..sar_core::limits::ResourceLimits::default()
@@ -446,9 +447,9 @@ fn large_sparse_hole_capped_by_max_size() {
     archive2.extend_from_slice(&write_lfh(&flags2, &lfh2).expect("lfh2"));
     archive2.extend_from_slice(b"ABCD");
 
-    let mut reader2 = ArchiveReader::with_options(
+    let mut reader2 = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive2),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: sar_core::limits::ResourceLimits {
                 max_decoded_entry_size: 512,
                 ..sar_core::limits::ResourceLimits::default()
@@ -469,7 +470,7 @@ fn large_sparse_hole_capped_by_max_size() {
 #[test]
 fn read_all_logical_files_resets_cursor() {
     let archive = build_simple_archive("x.txt", b"payload");
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("header");
 
     // First call via next_entry

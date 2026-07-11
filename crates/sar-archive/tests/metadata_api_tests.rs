@@ -1,16 +1,17 @@
 //! M11a metadata API completeness tests.
 //!
-//! Tests the expanded `EntryInput`, `EntryMetadata`, `FieldPresence`, and all
+//! Tests the expanded `sar_archive::EntryInput`, `sar_archive::EntryMetadata`, `FieldPresence`, and all
 //! related metadata structs introduced in Milestone 11a.
 
 use std::io::Cursor;
 
 use sar_core::format::{GlobalHeader, write_global_header};
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput, FecSettings};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryCdcMetadata,
+ EntryCdcMetadata,
     EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata, EntryFecMetadata,
-    EntryFragmentMetadata, EntryHashMetadata, EntryInput, EntryKind, EntryOwnerMetadata,
-    EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FecSettings,
+    EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
+    EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata,
     FieldPresence, GlobalFlags, SarError, SparseExtent,
 };
 
@@ -19,15 +20,15 @@ use sar_core::{
 // ---------------------------------------------------------------------------
 
 fn write_read_entry(
-    opts: ArchiveWriterOptions,
-    entry: EntryInput,
-) -> Result<sar_core::EntryReader, SarError> {
+    opts: sar_archive::ArchiveWriterOptions,
+    entry: sar_archive::EntryInput,
+) -> Result<sar_archive::EntryReader, SarError> {
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, opts)?;
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, opts)?;
     writer.add_entry(entry)?;
     writer.finish()?;
 
-    let mut reader = ArchiveReader::new(Cursor::new(buf))?;
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf))?;
     reader.read_global_header()?;
     reader.next_entry()?.ok_or(SarError::Malformed("no entry"))
 }
@@ -39,8 +40,8 @@ fn write_read_entry(
 #[test]
 fn entry_input_file_constructor_writes_regular_file_entry() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("hello.txt", b"world".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("hello.txt", b"world".to_vec()),
     )
     .expect("roundtrip");
     assert_eq!(entry.metadata.name, "hello.txt");
@@ -55,8 +56,8 @@ fn entry_input_file_constructor_writes_regular_file_entry() {
 #[test]
 fn reader_exposes_name_and_payload() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("data.bin", b"ABCDEF".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("data.bin", b"ABCDEF".to_vec()),
     )
     .expect("roundtrip");
     assert_eq!(entry.metadata.name, "data.bin");
@@ -70,8 +71,8 @@ fn reader_exposes_name_and_payload() {
 #[test]
 fn reader_exposes_raw_entry_mode() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.txt", b"x".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.txt", b"x".to_vec()),
     )
     .expect("roundtrip");
     // raw entry mode should be a u16 (just verify the field is accessible)
@@ -84,11 +85,11 @@ fn reader_exposes_raw_entry_mode() {
 
 #[test]
 fn reader_exposes_stream_id_and_sequence_no() {
-    let mut entry_in = EntryInput::file("f.txt", b"data".to_vec());
+    let mut entry_in = sar_archive::EntryInput::file("f.txt", b"data".to_vec());
     entry_in.stream_id = Some(7);
     entry_in.sequence_no = Some(42);
 
-    let entry = write_read_entry(ArchiveWriterOptions::default(), entry_in).expect("roundtrip");
+    let entry = write_read_entry(sar_archive::ArchiveWriterOptions::default(), entry_in).expect("roundtrip");
     assert_eq!(entry.metadata.stream_id, 7);
     assert_eq!(entry.metadata.sequence_no, 42);
 }
@@ -100,8 +101,8 @@ fn reader_exposes_stream_id_and_sequence_no() {
 #[test]
 fn reader_exposes_compression_metadata_absent_when_no_global_flag() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.txt", b"data".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.txt", b"data".to_vec()),
     )
     .expect("roundtrip");
     // COMPRESSED global flag not set → compression field is absent
@@ -114,32 +115,32 @@ fn reader_exposes_compression_metadata_absent_when_no_global_flag() {
 #[test]
 fn reader_exposes_compression_metadata_active_when_compressed() {
     let _entry = write_read_entry(
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             ..Default::default()
         },
-        EntryInput::file("f.txt", b"data".to_vec().repeat(100)),
+        sar_archive::EntryInput::file("f.txt", b"data".to_vec().repeat(100)),
     );
     // default opts don't have COMPRESSED - use compression writer
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new_with_compression(
+    let mut writer = sar_archive::ArchiveWriter::new_with_compression(
         &mut buf,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             ..Default::default()
         },
-        CompressionSettings {
+        sar_archive::CompressionSettings {
             algo_id: 0x02,
             level: None,
         }, // ZSTD
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("f.txt", b"data".to_vec().repeat(100)))
+        .add_entry(sar_archive::EntryInput::file("f.txt", b"data".to_vec().repeat(100)))
         .expect("add");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("ok").expect("entry");
 
@@ -161,8 +162,8 @@ fn reader_exposes_compression_metadata_active_when_compressed() {
 #[test]
 fn reader_exposes_encryption_metadata_absent_when_no_global_flag() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.txt", b"data".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.txt", b"data".to_vec()),
     )
     .expect("roundtrip");
     assert!(matches!(
@@ -215,7 +216,7 @@ fn reader_exposes_encryption_metadata_present_inactive_without_is_encrypted() {
     bytes.push(b'x'); // name
     bytes.push(b'a'); // payload
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("ok").expect("entry");
 
@@ -247,9 +248,9 @@ fn reader_exposes_cdc_metadata_when_cdc_support_enabled() {
     let cd_tlv = make_cdc_map_tlv(&cdc_map, &limits).expect("cdc map tlv");
 
     let mut buf = Vec::new();
-    let mut writer = sar_core::ArchiveWriter::new_with_cd_metadata(
+    let mut writer = sar_archive::ArchiveWriter::new_with_cd_metadata(
         &mut buf,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             ..Default::default()
         },
@@ -257,11 +258,11 @@ fn reader_exposes_cdc_metadata_when_cdc_support_enabled() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("f.bin", b"abc".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("f.bin", b"abc".to_vec()))
         .expect("add");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("ok").expect("entry");
 
@@ -278,8 +279,8 @@ fn reader_exposes_cdc_metadata_when_cdc_support_enabled() {
 #[test]
 fn reader_exposes_fec_metadata_absent_when_no_selective_fec() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.bin", b"data".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.bin", b"data".to_vec()),
     )
     .expect("roundtrip");
     assert!(matches!(entry.metadata.fec_presence, FieldPresence::Absent));
@@ -288,12 +289,12 @@ fn reader_exposes_fec_metadata_absent_when_no_selective_fec() {
 #[test]
 fn reader_exposes_fec_metadata_active_when_selective_fec_enabled() {
     let entry = write_read_entry(
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
-            fec: Some(FecSettings::default_xor()),
+            fec: Some(sar_archive::FecSettings::default_xor()),
             ..Default::default()
         },
-        EntryInput::file("f.bin", b"data for fec encoding".to_vec()),
+        sar_archive::EntryInput::file("f.bin", b"data for fec encoding".to_vec()),
     )
     .expect("roundtrip");
     assert!(matches!(
@@ -313,8 +314,8 @@ fn reader_exposes_fec_metadata_active_when_selective_fec_enabled() {
 #[test]
 fn reader_exposes_delta_metadata_absent_when_no_has_delta() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.bin", b"data".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.bin", b"data".to_vec()),
     )
     .expect("roundtrip");
     assert!(entry.metadata.patch_algo_id.is_none());
@@ -328,8 +329,8 @@ fn reader_exposes_delta_metadata_absent_when_no_has_delta() {
 #[test]
 fn reader_exposes_fragment_metadata_absent_when_no_file_fragmentation() {
     let entry = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.bin", b"data".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.bin", b"data".to_vec()),
     )
     .expect("roundtrip");
     assert!(matches!(
@@ -344,24 +345,24 @@ fn reader_exposes_fragment_metadata_absent_when_no_file_fragmentation() {
 
 #[test]
 fn reader_exposes_sparse_metadata_when_sparse_enabled() {
-    use sar_core::SparseWriteOptions;
+    use sar_archive::SparseWriteOptions;
 
     let extents = vec![SparseExtent {
         offset: 0,
         length: 4,
     }];
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         sparse: true,
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, opts).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, opts).expect("writer");
     writer
         .write_sparse_entry(
             "sparse.bin",
             b"data",
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 4,
                 extents: extents.clone(),
             },
@@ -369,7 +370,7 @@ fn reader_exposes_sparse_metadata_when_sparse_enabled() {
         .expect("sparse write");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("ok").expect("entry");
 
@@ -389,13 +390,13 @@ fn reader_exposes_crc32_metadata_when_per_file_crc_enabled() {
     let payload = b"test-payload";
     let crc = crc32fast::hash(payload);
 
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "f.bin".into(),
         payload: payload.to_vec(),
         file_crc32: Some(crc),
         ..Default::default()
     };
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_per_file_crc: true,
         ..Default::default()
@@ -415,13 +416,13 @@ fn reader_exposes_crc32_metadata_when_per_file_crc_enabled() {
 #[test]
 fn reader_exposes_content_hash_metadata_when_deduplication_enabled() {
     let hash_bytes = [0x42u8; 32];
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "f.bin".into(),
         payload: b"some data".to_vec(),
         content_hash: Some(hash_bytes),
         ..Default::default()
     };
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_content_hash: true,
         ..Default::default()
@@ -441,8 +442,8 @@ fn reader_exposes_content_hash_metadata_when_deduplication_enabled() {
 fn field_presence_absent_present_inactive_present_active_distinguishable() {
     // Build a plain archive without COMPRESSED flag → Absent
     let entry_plain = write_read_entry(
-        ArchiveWriterOptions::default(),
-        EntryInput::file("f.txt", b"data".to_vec()),
+        sar_archive::ArchiveWriterOptions::default(),
+        sar_archive::EntryInput::file("f.txt", b"data".to_vec()),
     )
     .expect("plain");
     assert!(entry_plain.metadata.compression_presence.is_absent());
@@ -451,23 +452,23 @@ fn field_presence_absent_present_inactive_present_active_distinguishable() {
 
     // Build a compressed archive → PresentActive
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new_with_compression(
+    let mut writer = sar_archive::ArchiveWriter::new_with_compression(
         &mut buf,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             ..Default::default()
         },
-        CompressionSettings {
+        sar_archive::CompressionSettings {
             algo_id: 0x02,
             level: None,
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("f.txt", b"data".to_vec().repeat(50)))
+        .add_entry(sar_archive::EntryInput::file("f.txt", b"data".to_vec().repeat(50)))
         .expect("add");
     writer.finish().expect("finish");
-    let mut reader = ArchiveReader::new(Cursor::new(buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf)).expect("reader");
     reader.read_global_header().expect("header");
     let entry_compressed = reader.next_entry().expect("ok").expect("entry");
 
@@ -501,7 +502,7 @@ fn field_presence_absent_present_inactive_present_active_distinguishable() {
     bytes.push(b'x'); // name
     bytes.push(b'a'); // payload
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry_inactive = reader.next_entry().expect("ok").expect("entry");
 
@@ -524,14 +525,14 @@ fn field_presence_absent_present_inactive_present_active_distinguishable() {
 
 #[test]
 fn writer_rejects_path_without_has_path_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         path: Some("some/dir".into()),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(
         matches!(err, SarError::FlagConflict(_)),
@@ -541,28 +542,28 @@ fn writer_rejects_path_without_has_path_flag() {
 
 #[test]
 fn writer_rejects_permissions_without_has_perms_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         permissions: Some(0o644),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
 
 #[test]
 fn writer_rejects_symlink_without_has_symlinks_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "link".into(),
         payload: b"/target/path".to_vec(),
         kind: Some(EntryKind::Symlink),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -573,11 +574,11 @@ fn writer_rejects_symlink_without_has_symlinks_flag() {
 
 #[test]
 fn directory_entry_can_be_represented() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         ..Default::default()
     };
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "mydir".into(),
         payload: vec![], // directory payload MUST be empty
         kind: Some(EntryKind::Directory),
@@ -599,12 +600,12 @@ fn directory_entry_can_be_represented() {
 
 #[test]
 fn symlink_entry_can_be_represented() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_symlinks: true,
         ..Default::default()
     };
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "mylink".into(),
         payload: b"/some/target".to_vec(),
         kind: Some(EntryKind::Symlink),
@@ -628,11 +629,11 @@ fn symlink_entry_can_be_represented() {
 
 #[test]
 fn hidden_attribute_can_be_represented() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         ..Default::default()
     };
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: ".hidden".into(),
         payload: b"secret".to_vec(),
         is_hidden: true,
@@ -699,12 +700,12 @@ fn metadata_structs_use_named_fields() {
 
 #[test]
 fn permissions_round_trip() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_permissions: true,
         ..Default::default()
     };
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "script.sh".into(),
         payload: b"#!/bin/sh".to_vec(),
         permissions: Some(0o755),
@@ -724,12 +725,12 @@ fn uid_gid_round_trip() {
     let uid: u32 = 1000;
     let gid: u32 = 1000;
     let uid_gid = uid | (gid << 16);
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_uid_gid: true,
         ..Default::default()
     };
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         uid_gid: Some(uid_gid),
@@ -748,13 +749,13 @@ fn uid_gid_round_trip() {
 
 #[test]
 fn timestamps_round_trip() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_timestamps: true,
         ..Default::default()
     };
     let ts = [1_700_000_000u64, 1_700_001_000, 1_700_002_000];
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         timestamps: Some(ts),
@@ -773,12 +774,12 @@ fn timestamps_round_trip() {
 
 #[test]
 fn path_round_trip() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         with_path: true,
         ..Default::default()
     };
-    let entry_in = EntryInput {
+    let entry_in = sar_archive::EntryInput {
         name: "file.txt".into(),
         payload: b"contents".to_vec(),
         path: Some("subdir/nested".into()),
@@ -815,7 +816,7 @@ fn empty_area_entry_kind_derived_correctly() {
     bytes.extend_from_slice(&0u32.to_le_bytes()); // payload_size
     bytes.extend_from_slice(&0u16.to_le_bytes()); // name_len = 0
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry_opt = reader.next_entry().expect("ok");
     // Empty areas are skipped by read_all_logical_files but returned by next_entry
@@ -894,14 +895,14 @@ fn entry_owner_metadata_uid_gid_accessors() {
 
 #[test]
 fn writer_rejects_uid_gid_without_ext_uid_gid_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         uid_gid: Some(1000),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -912,14 +913,14 @@ fn writer_rejects_uid_gid_without_ext_uid_gid_flag() {
 
 #[test]
 fn writer_rejects_timestamps_without_ext_time_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         timestamps: Some([0, 0, 0]),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -930,14 +931,14 @@ fn writer_rejects_timestamps_without_ext_time_flag() {
 
 #[test]
 fn writer_rejects_content_hash_without_deduplication_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         content_hash: Some([0u8; 32]),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -948,14 +949,14 @@ fn writer_rejects_content_hash_without_deduplication_flag() {
 
 #[test]
 fn writer_rejects_crc32_without_per_file_crc_flag() {
-    let entry = EntryInput {
+    let entry = sar_archive::EntryInput {
         name: "f.txt".into(),
         payload: b"data".to_vec(),
         file_crc32: Some(0xDEAD_BEEF),
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }

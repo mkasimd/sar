@@ -1,16 +1,16 @@
-//! End-to-end tests for the `ArchiveWriter` with `SELECTIVE_FEC` (Milestones 6–7).
+//! End-to-end tests for the `sar_archive::ArchiveWriter` with `SELECTIVE_FEC` (Milestones 6–7).
 //!
 //! Each test round-trips an archive through the writer and reader, verifying that:
 //! * The global `SELECTIVE_FEC` flag is set.
-//! * The `EntryMetadata.fec` field is populated with the correct algorithm summary.
+//! * The `sar_archive::EntryMetadata.fec` field is populated with the correct algorithm summary.
 //! * The decoded payload matches the original.
 //! * `verify()` succeeds.
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, FecSettings};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
-    EntryInput, FecSettings, GlobalFlags, SarError, fec::FecSummary,
+ GlobalFlags, SarError, fec::FecSummary,
 };
 use sar_crypto::{ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params};
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
@@ -26,19 +26,19 @@ fn make_payload(size: usize) -> Vec<u8> {
 type FecRoundtripResults = Vec<(String, Vec<u8>, Option<FecSummary>)>;
 
 fn write_and_read(
-    opts: ArchiveWriterOptions,
+    opts: sar_archive::ArchiveWriterOptions,
     payloads: &[(&str, Vec<u8>)],
 ) -> Result<FecRoundtripResults, SarError> {
     let mut buf = Vec::new();
     {
-        let mut writer = ArchiveWriter::new(Cursor::new(&mut buf), opts)?;
+        let mut writer = sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts)?;
         for (name, payload) in payloads {
-            writer.add_entry(EntryInput::file(name.to_string(), payload.clone()))?;
+            writer.add_entry(sar_archive::EntryInput::file(name.to_string(), payload.clone()))?;
         }
         writer.finish()?;
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(&buf))?;
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf))?;
     let _ = reader.read_global_header()?;
     let mut results = Vec::new();
     while let Some(entry) = reader.next_entry()? {
@@ -58,10 +58,10 @@ fn write_and_read(
 #[test]
 fn xor_fec_roundtrip_no_index() {
     let payload = make_payload(1024);
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         encryption: None,
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
@@ -84,10 +84,10 @@ fn xor_fec_roundtrip_no_index() {
 #[test]
 fn xor_fec_roundtrip_indexed() {
     let payload = make_payload(512);
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: false,
         encryption: None,
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
@@ -104,10 +104,10 @@ fn xor_fec_roundtrip_indexed() {
 #[test]
 fn rs_fec_roundtrip_no_index() {
     let payload = make_payload(2048);
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         encryption: None,
-        fec: Some(FecSettings::default_rs()),
+        fec: Some(sar_archive::FecSettings::default_rs()),
         sparse: false,
         ..Default::default()
     };
@@ -129,31 +129,31 @@ fn rs_fec_roundtrip_no_index() {
 #[test]
 fn xor_fec_with_compression_roundtrip() {
     let payload = make_payload(4096);
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         encryption: None,
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
     let mut buf = Vec::new();
     {
-        let mut writer = ArchiveWriter::new_with_compression(
+        let mut writer = sar_archive::ArchiveWriter::new_with_compression(
             Cursor::new(&mut buf),
             opts,
-            CompressionSettings {
+            sar_archive::CompressionSettings {
                 algo_id: sar_compression::COMP_ALGO_ZSTD,
                 level: None,
             },
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file("file.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file("file.bin".to_string(), payload.clone()))
             .expect("add");
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(&buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf)).expect("reader");
     let hdr = reader.read_global_header().expect("header");
     assert!(hdr.flags.contains(GlobalFlags::SELECTIVE_FEC));
     assert!(hdr.flags.contains(GlobalFlags::COMPRESSED));
@@ -205,13 +205,13 @@ fn xor_fec_with_aead_encryption_roundtrip() {
         iterations: 100_000,
         derived_key_length: 32,
     });
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
-        encryption: Some(EncryptionSettings {
+        encryption: Some(sar_archive::EncryptionSettings {
             algo_id: ENCR_AES256_GCM,
             kms_params,
         }),
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
@@ -223,20 +223,20 @@ fn xor_fec_with_aead_encryption_roundtrip() {
 
     let mut buf = Vec::new();
     {
-        let mut writer = ArchiveWriter::new_with_compression_and_key_provider(
+        let mut writer = sar_archive::ArchiveWriter::new_with_compression_and_key_provider(
             Cursor::new(&mut buf),
             opts,
-            CompressionSettings::store(),
+            sar_archive::CompressionSettings::store(),
             Some(key_provider),
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file("secret.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file("secret.bin".to_string(), payload.clone()))
             .expect("add");
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(&buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf)).expect("reader");
     let hdr = reader.read_global_header().expect("header");
     assert!(hdr.flags.contains(GlobalFlags::SELECTIVE_FEC));
     assert!(hdr.flags.contains(GlobalFlags::ENCRYPTED));
@@ -265,13 +265,13 @@ fn rs_fec_with_aead_encryption_roundtrip() {
         iterations: 100_000,
         derived_key_length: 32,
     });
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
-        encryption: Some(EncryptionSettings {
+        encryption: Some(sar_archive::EncryptionSettings {
             algo_id: ENCR_AES256_GCM,
             kms_params,
         }),
-        fec: Some(FecSettings::default_rs()),
+        fec: Some(sar_archive::FecSettings::default_rs()),
         sparse: false,
         ..Default::default()
     };
@@ -283,20 +283,20 @@ fn rs_fec_with_aead_encryption_roundtrip() {
 
     let mut buf = Vec::new();
     {
-        let mut writer = ArchiveWriter::new_with_compression_and_key_provider(
+        let mut writer = sar_archive::ArchiveWriter::new_with_compression_and_key_provider(
             Cursor::new(&mut buf),
             opts,
-            CompressionSettings::store(),
+            sar_archive::CompressionSettings::store(),
             Some(key_provider),
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file("file.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file("file.bin".to_string(), payload.clone()))
             .expect("add");
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(&buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf)).expect("reader");
     let _ = reader.read_global_header().expect("header");
     let key_provider2: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
         password: password.clone(),
@@ -313,10 +313,10 @@ fn rs_fec_with_aead_encryption_roundtrip() {
 
 #[test]
 fn verify_fec_archive_succeeds() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: false,
         encryption: None,
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
@@ -324,16 +324,16 @@ fn verify_fec_archive_succeeds() {
         &[("a.bin", make_payload(256)), ("b.bin", make_payload(512))];
     let mut buf = Vec::new();
     {
-        let mut writer = ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
+        let mut writer = sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
         for (name, payload) in payloads {
             writer
-                .add_entry(EntryInput::file(name.to_string(), payload.clone()))
+                .add_entry(sar_archive::EntryInput::file(name.to_string(), payload.clone()))
                 .expect("add");
         }
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(&buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf)).expect("reader");
     let report = reader.verify().expect("verify");
     assert!(report.valid);
     assert_eq!(report.entry_count, 2);
@@ -346,23 +346,23 @@ fn verify_fec_archive_succeeds() {
 
 #[test]
 fn selective_fec_flag_is_set_in_global_header() {
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         encryption: None,
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
     let mut buf = Vec::new();
     {
-        let mut writer = ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
+        let mut writer = sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
         writer
-            .add_entry(EntryInput::file("x".to_string(), vec![1u8, 2, 3]))
+            .add_entry(sar_archive::EntryInput::file("x".to_string(), vec![1u8, 2, 3]))
             .expect("add");
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(&buf)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf)).expect("reader");
     let hdr = reader.read_global_header().expect("header");
     assert!(
         hdr.flags.contains(GlobalFlags::SELECTIVE_FEC),
@@ -381,10 +381,10 @@ fn all_entries_receive_fec_metadata() {
         ("b.bin", make_payload(500)),
         ("c.bin", make_payload(1000)),
     ];
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         encryption: None,
-        fec: Some(FecSettings::default_rs()),
+        fec: Some(sar_archive::FecSettings::default_rs()),
         sparse: false,
         ..Default::default()
     };
@@ -403,7 +403,7 @@ fn all_entries_receive_fec_metadata() {
 #[test]
 fn no_fec_when_option_is_none() {
     let payload = make_payload(256);
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
         encryption: None,
         fec: None,

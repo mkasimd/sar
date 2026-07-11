@@ -12,8 +12,9 @@
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader};
 use sar_core::{
-    ArchiveReader, GlobalFlags, SarError,
+ GlobalFlags, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
@@ -170,7 +171,7 @@ fn sparse_map_from_fragment_index_0_applies_to_full_group() {
         frag0_has_sparse_map: true,
         frag1_has_sparse_map: false,
     });
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     let data = &files[0].data;
@@ -206,7 +207,7 @@ fn sparse_map_on_nonzero_fragment_index_returns_invalid_map() {
         frag0_has_sparse_map: false,
         frag1_has_sparse_map: true,
     });
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail with sparse map on non-zero fragment");
@@ -250,7 +251,7 @@ fn sparse_map_on_nonzero_fragment_not_suppressed_by_allow_lossy() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     // allow_lossy=true must not suppress the invalid-map error
     let err = reader
         .read_all_logical_files(true)
@@ -337,7 +338,7 @@ fn reassembled_three_fragment_payload_scattered_by_sparse_map() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh2).expect("lfh2"));
     archive.extend_from_slice(b"CC");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     let data = &files[0].data;
@@ -383,7 +384,7 @@ fn sparse_fragment_trailing_hole_preserved() {
         frag0_has_sparse_map: true,
         frag1_has_sparse_map: false,
     });
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     let data = &files[0].data;
     assert_eq!(data.len(), 10, "logical size must be 10");
@@ -429,7 +430,7 @@ fn sparse_fragment_missing_without_allow_lossy_fails() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("must fail without allow_lossy");
@@ -473,7 +474,7 @@ fn sparse_fragment_missing_with_allow_lossy_loss_tolerant_succeeds() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader
         .read_all_logical_files(true)
         .expect("degraded output is allowed");
@@ -528,11 +529,11 @@ fn sparse_fragment_degraded_output_is_marked() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABC");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(true).expect("read");
     assert_eq!(files.len(), 1);
     assert!(
         files[0].is_degraded,
-        "LogicalFile::is_degraded must be true for degraded sparse+fragment output"
+        "sar_archive::LogicalFile::is_degraded must be true for degraded sparse+fragment output"
     );
 }

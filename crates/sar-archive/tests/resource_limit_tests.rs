@@ -1,7 +1,8 @@
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveReaderOptions};
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
+ GlobalFlags, ResourceLimits, SarError,
     format::{
         CentralDictionary, GlobalHeader, LocalFileHeader, lfh_bytes_for_aad,
         parse_central_dictionary, parse_global_header, parse_lfh, write_central_dictionary,
@@ -126,9 +127,9 @@ fn excessive_payload_size_fails_before_allocation() {
     archive.extend_from_slice(&write_lfh(&GlobalFlags::NO_INDEX, &lfh).expect("lfh"));
     archive.extend_from_slice(&[0; 8]);
 
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: ResourceLimits {
                 max_in_memory_buffer: 4,
                 ..base_limits()
@@ -220,9 +221,9 @@ fn excessive_cd_size_fails() {
 fn archive_reader_rejects_excessive_cd_region() {
     let mut archive = Vec::new();
     {
-        let mut writer = sar_core::ArchiveWriter::new(
+        let mut writer = sar_archive::ArchiveWriter::new(
             &mut archive,
-            sar_core::ArchiveWriterOptions {
+            sar_archive::ArchiveWriterOptions {
                 no_index: false,
                 encryption: None,
                 fec: None,
@@ -232,14 +233,14 @@ fn archive_reader_rejects_excessive_cd_region() {
         )
         .expect("writer");
         writer
-            .add_entry(sar_core::EntryInput::file("a.txt", b"abc".to_vec()))
+            .add_entry(sar_archive::EntryInput::file("a.txt", b"abc".to_vec()))
             .expect("entry");
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: ResourceLimits {
                 max_cd_bytes: 8,
                 ..base_limits()

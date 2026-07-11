@@ -1,13 +1,13 @@
 //! Sparse-file conformance tests: scatter-gather, trailing holes, ordering,
 //! compression/encryption integration, and fragmentation ordering.
 //!
-//! All tests work through [`ArchiveReader::read_all_logical_files`] to
+//! All tests work through [`sar_archive::ArchiveReader::read_all_logical_files`] to
 //! exercise the full end-to-end reconstruction pipeline.
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput,
     GlobalFlags, SarError,
     flags::EntryMode,
     format::{
@@ -78,7 +78,7 @@ fn scatter_gather_single_extent_at_zero() {
         length: 12,
     }];
     let archive = build_sparse_archive("f.bin", payload, &extents, 12);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files[0].data, b"hello world!");
 }
@@ -99,7 +99,7 @@ fn scatter_gather_trailing_hole_spec_vector() {
         length: 3,
     }];
     let archive = build_sparse_archive("f.bin", payload, &extents, 10);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(files.len(), 1);
@@ -132,7 +132,7 @@ fn scatter_gather_leading_middle_trailing_holes_spec_vector() {
         },
     ];
     let archive = build_sparse_archive("f.bin", payload, &extents, 12);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(files.len(), 1);
@@ -155,7 +155,7 @@ fn final_size_equals_uncompressed_size() {
         length: 4,
     }];
     let archive = build_sparse_archive("f.bin", payload, &extents, 20);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files[0].data.len(), 20);
     assert_eq!(&files[0].data[0..4], b"DATA");
@@ -183,7 +183,7 @@ fn multiple_extents_consume_payload_sequentially() {
         }, // "CC" at [10,12)
     ];
     let archive = build_sparse_archive("f.bin", payload, &extents, 12);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     let data = &files[0].data;
     assert_eq!(data.len(), 12);
@@ -222,7 +222,7 @@ fn too_short_payload_fails_during_extraction() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -258,7 +258,7 @@ fn excess_payload_fails_during_extraction() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -300,7 +300,7 @@ fn extent_beyond_logical_size_returns_invalid_map() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -319,9 +319,9 @@ fn sparse_allocation_bounded_by_max_size() {
     }];
     // uncompressed_size = 2_000_000 far exceeds cap of 512
     let archive = build_sparse_archive("f.bin", b"ABCD", &extents, 2_000_000);
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: sar_core::limits::ResourceLimits {
                 max_decoded_entry_size: 512,
                 ..sar_core::limits::ResourceLimits::default()
@@ -345,7 +345,7 @@ fn sparse_allocation_bounded_by_max_size() {
 
 /// Compressed sparse entry: decompression happens before scatter-gather.
 ///
-/// Uses ArchiveWriter with deflate compression and manually sets the sparse
+/// Uses sar_archive::ArchiveWriter with deflate compression and manually sets the sparse
 /// map on the resulting archive by rebuilding the LFH.
 ///
 /// Simpler approach: write a known compressed payload and build the archive
@@ -399,7 +399,7 @@ fn sparse_with_compression_decompresses_then_scatters() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&compressed);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(files.len(), 1);
@@ -455,7 +455,7 @@ fn sparse_descriptor_lengths_apply_to_decompressed_bytes() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&compressed);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files[0].data, b"HELLO");
 }
@@ -489,7 +489,7 @@ fn corrupted_compressed_sparse_fails_before_scatter_gather() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(corrupted);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -585,7 +585,7 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh1).expect("lfh1"));
     archive.extend_from_slice(b"BCC");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].name, "f.bin");
@@ -624,7 +624,7 @@ fn malformed_sparse_map_alignment_caught_during_read() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -663,7 +663,7 @@ fn sparse_missing_fragment_without_allow_lossy_fails() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("should fail");
@@ -699,7 +699,7 @@ fn sparse_missing_fragment_with_allow_lossy_and_loss_tolerant_succeeds() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(true).expect("read");
     assert_eq!(files.len(), 1);
     assert!(
@@ -730,7 +730,7 @@ fn loss_tolerant_does_not_suppress_malformed_sparse_map() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"HELLO");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     // Even with allow_lossy=true, a malformed sparse map must fail.
     let err = reader
         .read_all_logical_files(true)
@@ -759,7 +759,7 @@ fn sparse_32bit_descriptor_parse_via_archive() {
         },
     ];
     let archive = build_sparse_archive("f.bin", b"DATAEXTS", &extents, 12);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let entry = reader
         .read_global_header()
         .and_then(|_| reader.next_entry())
@@ -781,7 +781,7 @@ fn sparse_64bit_descriptor_parse_via_archive() {
         length: 4,
     }];
     let archive = build_sparse_archive_64bit("f.bin", b"DATA", &extents, 4, true);
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let entry = reader
         .read_global_header()
         .and_then(|_| reader.next_entry())
@@ -793,13 +793,13 @@ fn sparse_64bit_descriptor_parse_via_archive() {
     assert_eq!(sparse[0].length, 4);
 }
 
-/// Writer (ArchiveWriterOptions default) roundtrip for non-sparse entry still works.
+/// Writer (sar_archive::ArchiveWriterOptions default) roundtrip for non-sparse entry still works.
 #[test]
 fn non_sparse_writer_roundtrip_unaffected() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
@@ -809,11 +809,11 @@ fn non_sparse_writer_roundtrip_unaffected() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("x.txt", b"hello".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("x.txt", b"hello".to_vec()))
         .expect("add");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files[0].data, b"hello");
 }

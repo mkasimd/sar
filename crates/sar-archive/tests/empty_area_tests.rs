@@ -5,8 +5,9 @@
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader};
 use sar_core::{
-    ArchiveReader, GlobalFlags, SarError,
+ GlobalFlags, SarError,
     flags::EntryMode,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
@@ -49,7 +50,7 @@ fn build_archive_with_empty_area() -> Vec<u8> {
 #[test]
 fn empty_area_excluded_from_logical_file_output() {
     let archive = build_archive_with_empty_area();
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(
@@ -66,7 +67,7 @@ fn empty_area_excluded_from_logical_file_output() {
 #[test]
 fn next_entry_returns_empty_area_as_raw_entry() {
     let archive = build_archive_with_empty_area();
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("header");
 
     let e1 = reader.next_entry().expect("first").expect("some");
@@ -114,7 +115,7 @@ fn empty_area_not_included_when_sparse_flag_active() {
     let lfh_empty = LocalFileHeader::minimal_store(b"".to_vec(), 0);
     archive.extend_from_slice(&write_lfh(&flags, &lfh_empty).expect("lfh_empty"));
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1, "empty area must be filtered");
     assert_eq!(files[0].name, "file.bin");
@@ -163,7 +164,7 @@ fn empty_area_does_not_participate_in_fragment_grouping() {
         archive.extend_from_slice(data);
     }
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     // Only the real two-fragment group must appear.
     assert_eq!(files.len(), 1, "empty area must not appear");
@@ -193,7 +194,7 @@ fn multiple_empty_areas_all_filtered() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh_real).expect("lfh_real"));
     archive.extend_from_slice(b"X");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].data, b"X");
@@ -216,7 +217,7 @@ fn archive_with_only_empty_areas_produces_no_logical_files() {
     let lfh_empty = LocalFileHeader::minimal_store(b"".to_vec(), 0);
     archive.extend_from_slice(&write_lfh(&flags, &lfh_empty).expect("lfh"));
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader
         .read_all_logical_files(false)
         .expect("should succeed");
@@ -245,7 +246,7 @@ fn empty_area_with_is_fragment_set_is_treated_as_fragment_not_silently_dropped()
     // fragment_id defaults to 0 when written with FILE_FRAGMENTATION flag.
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     // IS_FRAGMENT takes precedence: the entry is routed to fragment-group
     // processing, not silently dropped as an empty area.
     let err = reader

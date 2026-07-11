@@ -1,8 +1,9 @@
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, FecSettings};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, DecodingPlanV2,
-    EncodingPlanV2, EncryptionSettings, EntryCryptoContext, EntryInput, FecSettings, GlobalFlags,
+ DecodingPlanV2,
+    EncodingPlanV2, EntryCryptoContext, GlobalFlags,
     KmsContext, KmsParams, LocalFileHeader, SarCryptoError, SarError, decode_payload_v2,
     encode_payload_v2, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
     parse_global_header, parse_lfh, write_lfh,
@@ -153,9 +154,9 @@ impl sar_core::KeyProvider for TestKeyProvider {
 fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
     let payload = b"archive-entry-payload".repeat(32);
     let password = SecretString::new("test-password".to_string());
-    let opts = ArchiveWriterOptions {
+    let opts = sar_archive::ArchiveWriterOptions {
         no_index: true,
-        encryption: Some(EncryptionSettings {
+        encryption: Some(sar_archive::EncryptionSettings {
             algo_id: ENCR_AES256_GCM,
             kms_params: KmsParams::Pbkdf2(Pbkdf2Params {
                 prf_algo_id: PBKDF2_PRF_HMAC_SHA256,
@@ -164,7 +165,7 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
                 derived_key_length: 32,
             }),
         }),
-        fec: Some(FecSettings::default_xor()),
+        fec: Some(sar_archive::FecSettings::default_xor()),
         sparse: false,
         ..Default::default()
     };
@@ -174,15 +175,15 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
         password: password.clone(),
     });
     {
-        let mut writer = ArchiveWriter::new_with_compression_and_key_provider(
+        let mut writer = sar_archive::ArchiveWriter::new_with_compression_and_key_provider(
             Cursor::new(&mut archive),
             opts,
-            CompressionSettings::store(),
+            sar_archive::CompressionSettings::store(),
             Some(key_provider),
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file("entry.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file("entry.bin".to_string(), payload.clone()))
             .expect("add entry");
         writer.finish().expect("finish");
     }
@@ -230,7 +231,7 @@ fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
     assert_eq!(writer_aad, reader_aad);
 
     let key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider { password });
-    let mut reader = ArchiveReader::new(Cursor::new(&archive))
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&archive))
         .expect("reader")
         .with_key_provider(key_provider);
     let _ = reader.read_global_header().expect("read global header");
@@ -243,19 +244,19 @@ fn payload_data_starts_at_lfh_start_plus_header_size() {
     let payload = b"payload-offset".repeat(8);
     let mut archive = Vec::new();
     {
-        let mut writer = ArchiveWriter::new(
+        let mut writer = sar_archive::ArchiveWriter::new(
             Cursor::new(&mut archive),
-            ArchiveWriterOptions {
+            sar_archive::ArchiveWriterOptions {
                 no_index: true,
                 encryption: None,
-                fec: Some(FecSettings::default_xor()),
+                fec: Some(sar_archive::FecSettings::default_xor()),
                 sparse: false,
                 ..Default::default()
             },
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file("offset.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file("offset.bin".to_string(), payload.clone()))
             .expect("add entry");
         writer.finish().expect("finish");
     }

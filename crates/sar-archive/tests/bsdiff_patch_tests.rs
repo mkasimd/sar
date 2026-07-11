@@ -3,8 +3,9 @@
 use std::io::Cursor;
 
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions, encode_stream};
+use sar_archive::{ArchiveReader, ArchiveReaderOptions};
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
+ GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
@@ -97,22 +98,22 @@ fn build_bsdiff_archive(
 
 fn read_entry_with_opts(
     archive: Vec<u8>,
-    opts: ArchiveReaderOptions,
-) -> Result<sar_core::EntryReader, SarError> {
-    let mut reader = ArchiveReader::with_options(Cursor::new(archive), opts)?;
+    opts: sar_archive::ArchiveReaderOptions,
+) -> Result<sar_archive::EntryReader, SarError> {
+    let mut reader = sar_archive::ArchiveReader::with_options(Cursor::new(archive), opts)?;
     reader.read_global_header()?;
     reader.next_entry()?.ok_or(SarError::NotFound("no entry"))
 }
 
-fn opts_with_base(base: Vec<u8>) -> ArchiveReaderOptions {
-    ArchiveReaderOptions {
+fn opts_with_base(base: Vec<u8>) -> sar_archive::ArchiveReaderOptions {
+    sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits::unlimited(),
         delta_base: Some(base),
     }
 }
 
-fn opts_no_base() -> ArchiveReaderOptions {
-    ArchiveReaderOptions {
+fn opts_no_base() -> sar_archive::ArchiveReaderOptions {
+    sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits::unlimited(),
         delta_base: None,
     }
@@ -224,7 +225,7 @@ fn bsdiff_target_above_resource_limit_returns_limit_exceeded() {
         target.len() as i64,
     );
     let archive = build_bsdiff_archive(&patch, target.len() as u64, NON_ZERO_HASH, None);
-    let opts = ArchiveReaderOptions {
+    let opts = sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits {
             max_decoded_entry_size: (target.len() as u64) - 1,
             ..ResourceLimits::unlimited()
@@ -268,11 +269,11 @@ fn bsdiff_loss_tolerant_does_not_suppress_patch_failed() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(corrupt_patch);
 
-    let opts = ArchiveReaderOptions {
+    let opts = sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits::unlimited(),
         delta_base: Some(b"base".to_vec()),
     };
-    let mut reader = ArchiveReader::with_options(Cursor::new(archive), opts).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::with_options(Cursor::new(archive), opts).expect("reader");
     reader.read_global_header().expect("global header");
     let err = reader
         .read_all_logical_files(false)

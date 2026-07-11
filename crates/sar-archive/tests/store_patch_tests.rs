@@ -20,8 +20,9 @@
 use std::io::Cursor;
 
 use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
+use sar_archive::{ArchiveReader, ArchiveReaderOptions};
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, GlobalFlags, ResourceLimits, SarError,
+ GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
@@ -64,17 +65,17 @@ fn build_store_patch_archive(
     archive
 }
 
-fn read_entry(archive: Vec<u8>) -> Result<sar_core::EntryReader, SarError> {
-    let mut reader = ArchiveReader::new(Cursor::new(archive))?;
+fn read_entry(archive: Vec<u8>) -> Result<sar_archive::EntryReader, SarError> {
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive))?;
     reader.read_global_header()?;
     reader.next_entry()?.ok_or(SarError::NotFound("no entry"))
 }
 
 fn read_entry_with_opts(
     archive: Vec<u8>,
-    opts: ArchiveReaderOptions,
-) -> Result<sar_core::EntryReader, SarError> {
-    let mut reader = ArchiveReader::with_options(Cursor::new(archive), opts)?;
+    opts: sar_archive::ArchiveReaderOptions,
+) -> Result<sar_archive::EntryReader, SarError> {
+    let mut reader = sar_archive::ArchiveReader::with_options(Cursor::new(archive), opts)?;
     reader.read_global_header()?;
     reader.next_entry()?.ok_or(SarError::NotFound("no entry"))
 }
@@ -328,7 +329,7 @@ fn store_patch_with_sparse_applies_patch_before_sparse_reconstruction() {
 
     // `next_entry` applies STORE_PATCH (returns gathered payload as-is for sparse).
     // `read_all_logical_files` then applies sparse reconstruction.
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("global header");
     let files = reader
         .read_all_logical_files(false)
@@ -407,7 +408,7 @@ fn store_patch_with_fragmentation_applies_after_fragment_reassembly() {
     archive.extend_from_slice(&lfh1_bytes);
     archive.extend_from_slice(frag1_data);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("global header");
     let files = reader
         .read_all_logical_files(false)
@@ -426,7 +427,7 @@ fn store_patch_output_above_resource_limits_returns_limit_exceeded() {
     let target = b"some payload content";
     // Set a limit that is smaller than the target payload.
     let archive = build_store_patch_archive(target, target.len() as u64, [0u8; 32]);
-    let opts = ArchiveReaderOptions {
+    let opts = sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits {
             max_decoded_entry_size: (target.len() as u64) - 1,
             ..ResourceLimits::unlimited()

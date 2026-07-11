@@ -1,7 +1,8 @@
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, GlobalFlags, ResourceLimits,
+ GlobalFlags, ResourceLimits,
     SarError, TLV_CDC_CUSTOM, TLV_CDC_EXT_PROVIDER, TLV_DATA_HASH_BLAKE3,
     format::write_lfh,
     make_cdc_ext_provider_tlv, make_cdc_map_tlv, parse_cdc_ext_provider_tlv, parse_entry_cdc_map,
@@ -107,9 +108,9 @@ fn archive_writer_auto_sets_cdc_support_for_cdc_metadata() {
     };
     let cd_metadata = vec![make_cdc_map_tlv(&cdc_map, &unlimited_limits()).expect("cdc map tlv")];
 
-    let mut writer = ArchiveWriter::new_with_cd_metadata(
+    let mut writer = sar_archive::ArchiveWriter::new_with_cd_metadata(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
@@ -120,11 +121,11 @@ fn archive_writer_auto_sets_cdc_support_for_cdc_metadata() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("one.bin", b"abc".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("one.bin", b"abc".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     let header = reader.read_global_header().expect("header");
     assert!(header.flags.contains(GlobalFlags::CDC_SUPPORT));
     assert!(header.flags.contains(GlobalFlags::OPT_PRESENT));
@@ -143,9 +144,9 @@ fn archive_writer_rejects_cd_metadata_for_no_index_archives() {
         make_cdc_ext_provider_tlv("sarp+https://chunks.example/v1", &unlimited_limits())
             .expect("provider tlv"),
     ];
-    let err = ArchiveWriter::new_with_cd_metadata(
+    let err = sar_archive::ArchiveWriter::new_with_cd_metadata(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
@@ -197,7 +198,7 @@ fn verify_rejects_cdc_metadata_without_cdc_support_flag() {
     bytes.extend_from_slice(&write_central_dictionary(&cd, flags).expect("cd"));
     bytes.extend_from_slice(&write_footer(Footer { cd_offset }));
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let err = reader.verify().expect_err("verify must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));

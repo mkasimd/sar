@@ -1,4 +1,4 @@
-//! Tests for the ArchiveWriter sparse entry write path.
+//! Tests for the sar_archive::ArchiveWriter sparse entry write path.
 //!
 //! Covers:
 //! * Writer creates sparse entry with leading/middle/trailing holes.
@@ -6,12 +6,13 @@
 //! * Writer rejects extent beyond logical size.
 //! * Writer rejects payload length mismatch.
 //! * Writer sparse entry round-trips through reader.
-//! * `write_sparse_entry` requires `ArchiveWriterOptions::sparse = true`.
+//! * `write_sparse_entry` requires `sar_archive::ArchiveWriterOptions::sparse = true`.
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, SparseWriteOptions};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, SarError, SparseWriteOptions,
+ SarError,
     sparse::SparseExtent,
 };
 
@@ -19,7 +20,7 @@ use sar_core::{
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a sparse archive using `ArchiveWriter`, return the raw bytes.
+/// Build a sparse archive using `sar_archive::ArchiveWriter`, return the raw bytes.
 fn build_sparse_archive_via_writer(
     name: &str,
     gathered_payload: &[u8],
@@ -27,12 +28,12 @@ fn build_sparse_archive_via_writer(
     logical_size: u64,
 ) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: true,
-            ..ArchiveWriterOptions::default()
+            ..sar_archive::ArchiveWriterOptions::default()
         },
     )
     .expect("writer");
@@ -40,7 +41,7 @@ fn build_sparse_archive_via_writer(
         .write_sparse_entry(
             name,
             gathered_payload,
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size,
                 extents,
             },
@@ -67,7 +68,7 @@ fn sparse_writer_round_trip_holes() {
     ];
     let archive = build_sparse_archive_via_writer("f.bin", b"AABB", extents, 10);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1, "must have one logical file");
     assert_eq!(files[0].name, "f.bin");
@@ -88,7 +89,7 @@ fn sparse_writer_trailing_hole_roundtrip() {
     }];
     let archive = build_sparse_archive_via_writer("x.bin", b"ABC", extents, 10);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     let data = &files[0].data;
     assert_eq!(data.len(), 10);
@@ -117,7 +118,7 @@ fn sparse_writer_three_extents_roundtrip() {
     ];
     let archive = build_sparse_archive_via_writer("data.bin", b"AABBCC", extents, 10);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     let data = &files[0].data;
     assert_eq!(data.len(), 10);
@@ -147,9 +148,9 @@ fn sparse_writer_rejects_overlapping_extents() {
         }, // overlaps [0,8)
     ];
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: true,
             ..Default::default()
@@ -160,7 +161,7 @@ fn sparse_writer_rejects_overlapping_extents() {
         .write_sparse_entry(
             "f.bin",
             &[0u8; 12],
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 20,
                 extents,
             },
@@ -180,9 +181,9 @@ fn sparse_writer_rejects_extent_beyond_logical_size() {
         length: 5,
     }]; // end=13 > logical_size=10
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: true,
             ..Default::default()
@@ -193,7 +194,7 @@ fn sparse_writer_rejects_extent_beyond_logical_size() {
         .write_sparse_entry(
             "f.bin",
             b"XXXXX",
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 10,
                 extents,
             },
@@ -213,9 +214,9 @@ fn sparse_writer_rejects_short_payload() {
         length: 8,
     }];
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: true,
             ..Default::default()
@@ -226,7 +227,7 @@ fn sparse_writer_rejects_short_payload() {
         .write_sparse_entry(
             "f.bin",
             b"ABCD", // only 4 bytes but extents claim 8
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 10,
                 extents,
             },
@@ -246,9 +247,9 @@ fn sparse_writer_rejects_excess_payload() {
         length: 3,
     }];
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: true,
             ..Default::default()
@@ -259,7 +260,7 @@ fn sparse_writer_rejects_excess_payload() {
         .write_sparse_entry(
             "f.bin",
             b"ABCDE", // 5 bytes but extents claim only 3
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 10,
                 extents,
             },
@@ -280,9 +281,9 @@ fn sparse_writer_requires_sparse_flag() {
     }];
     let mut out = Vec::new();
     // sparse: false (default)
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: false,
             ..Default::default()
@@ -293,7 +294,7 @@ fn sparse_writer_requires_sparse_flag() {
         .write_sparse_entry(
             "f.bin",
             b"ABCD",
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 8,
                 extents,
             },
@@ -318,7 +319,7 @@ fn sparse_writer_single_full_extent_roundtrip() {
     }];
     let archive = build_sparse_archive_via_writer("full.bin", b"HELLO", extents, 5);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files[0].data, b"HELLO");
 }
@@ -330,7 +331,7 @@ fn sparse_writer_empty_extents_all_holes() {
     let extents: Vec<SparseExtent> = vec![];
     let archive = build_sparse_archive_via_writer("hole.bin", b"", extents, 0);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(
         files[0].data.len(),
@@ -347,9 +348,9 @@ fn sparse_writer_empty_extents_all_holes() {
 #[test]
 fn sparse_writer_indexed_archive_roundtrip() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false, // indexed
             sparse: true,
             ..Default::default()
@@ -371,7 +372,7 @@ fn sparse_writer_indexed_archive_roundtrip() {
         .write_sparse_entry(
             "indexed.bin",
             b"ABCXYZ",
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 12,
                 extents,
             },
@@ -379,7 +380,7 @@ fn sparse_writer_indexed_archive_roundtrip() {
         .expect("write");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     let data = &files[0].data;
@@ -398,9 +399,9 @@ fn sparse_writer_indexed_archive_roundtrip() {
 #[test]
 fn non_sparse_writer_unaffected() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             sparse: false,
             ..Default::default()
@@ -416,7 +417,7 @@ fn non_sparse_writer_unaffected() {
         .write_sparse_entry(
             "f.bin",
             b"HELLO",
-            SparseWriteOptions {
+            sar_archive::SparseWriteOptions {
                 logical_size: 5,
                 extents,
             },

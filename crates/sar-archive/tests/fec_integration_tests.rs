@@ -2,7 +2,7 @@
 //! - LFH Selective FEC parsing and validation.
 //! - Data Recovery TLV parsing and validation.
 //! - `verify()` FEC TLV validation.
-//! - `EntryMetadata.fec` field in `inspect` output.
+//! - `sar_archive::EntryMetadata.fec` field in `inspect` output.
 
 use sar_core::{
     GlobalFlags, SarError,

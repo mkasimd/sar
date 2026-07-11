@@ -1,7 +1,8 @@
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, GlobalFlags, SarError,
+ GlobalFlags, SarError,
     format::{
         CentralDictionary, Footer, parse_central_dictionary, parse_footer,
         write_central_dictionary, write_footer,
@@ -16,9 +17,9 @@ fn unlimited_limits() -> sar_core::ResourceLimits {
 #[test]
 fn valid_indexed_archive_roundtrip_offsets_verify() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
@@ -28,11 +29,11 @@ fn valid_indexed_archive_roundtrip_offsets_verify() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("one.txt", b"one".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("one.txt", b"one".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     reader.read_global_header().expect("header");
     let report = reader.verify().expect("verify");
     assert!(report.valid);
@@ -42,9 +43,9 @@ fn valid_indexed_archive_roundtrip_offsets_verify() {
 #[test]
 fn valid_no_index_archive_roundtrip_verify() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
@@ -54,11 +55,11 @@ fn valid_no_index_archive_roundtrip_verify() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("one.txt", b"one".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("one.txt", b"one".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     reader.read_global_header().expect("header");
     let report = reader.verify().expect("verify");
     assert!(report.valid);
@@ -69,7 +70,7 @@ fn valid_no_index_archive_roundtrip_verify() {
 fn footer_missing_when_no_index_unset_fails() {
     let mut broken = b"SAR!\x01\x00\x04\x00".to_vec();
     broken.extend_from_slice(&0u32.to_le_bytes());
-    let err = ArchiveReader::new(Cursor::new(broken))
+    let err = sar_archive::ArchiveReader::new(Cursor::new(broken))
         .expect("reader")
         .read_global_header()
         .expect_err("must fail");
@@ -81,7 +82,7 @@ fn cd_offset_out_of_bounds_fails() {
     let mut bytes = b"SAR!\x01\x00\x04\x00".to_vec();
     bytes.extend_from_slice(&0u32.to_le_bytes());
     bytes.extend_from_slice(&write_footer(Footer { cd_offset: 9_999 }));
-    let err = ArchiveReader::new(Cursor::new(bytes))
+    let err = sar_archive::ArchiveReader::new(Cursor::new(bytes))
         .expect("reader")
         .read_global_header()
         .expect_err("must fail");
@@ -99,7 +100,7 @@ fn cd_overlap_footer_fails() {
     bytes.extend_from_slice(&write_footer(Footer {
         cd_offset: (bytes.len() as u64) - 4,
     }));
-    let err = ArchiveReader::new(Cursor::new(bytes))
+    let err = sar_archive::ArchiveReader::new(Cursor::new(bytes))
         .expect("reader")
         .read_global_header()
         .expect_err("must fail");
@@ -127,7 +128,7 @@ fn invalid_cd_padding_fails() {
     bytes.push(1);
     bytes.extend_from_slice(&write_footer(Footer { cd_offset }));
 
-    let err = ArchiveReader::new(Cursor::new(bytes))
+    let err = sar_archive::ArchiveReader::new(Cursor::new(bytes))
         .expect("reader")
         .read_global_header()
         .expect_err("must fail");

@@ -18,19 +18,37 @@ Current scope:
 - Milestone 11b: Filesystem Metadata Encode/Decode — `FieldPresence`-typed path/permissions/owner/timestamps in `EntryMetadata`, directory payload validation, IS_SYMLINK→HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests
 - Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
 - Milestone 11c-cp: Crate-boundary corrective pass — `sar_core::fragment` module removed, semantic sparse re-exports removed, `sar-loss-tolerant` integrated into `sar-fragmentation`, fragment payload/duplicate validation added, zero-length sparse extent rejection added, `write_sparse_map` fail-closed truncation fix, error conversion bridges updated
+- Milestone 11d: archive API architecture split — high-level archive integration moved from `sar-core` to new `sar-archive`
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
+
+## M11d split summary (current import model)
+
+After M11d:
+
+- High-level archive APIs moved to `sar-archive`:
+  - `ArchiveReader`, `ArchiveWriter`
+  - `ArchiveReaderOptions`, `ArchiveWriterOptions`
+  - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
+  - `LogicalFile`
+  - `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
+  - `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`, `SparseWriteOptions`
+  - `StreamArchiveParser`, `StreamEvent`, `StreamStep`, `StreamParseState`, `StreamArchiveSummary`, `StreamWriteState`
+- `sar-core` now owns canonical wire/status/limits and low-level parse/write helpers (GH/LFH/CD/Footer/TLV, flags, status/error, resource limits, checked parsing/writing primitives, low-level sparse-map wire helpers).
+- SAR v1.0 wire format and interoperability are unchanged by this split.
+- No C ABI, Python bindings, or mobile bindings were started in M11d.
 
 ## Workspace summary
 
 | Crate | Purpose | Status |
 | --- | --- | --- |
-| `sar-core` | Archive format, reader/writer, validation, transform integration | implemented with partial roadmap surface |
+| `sar-core` | Canonical wire format, status/error, limits, low-level parse/write helpers | implemented |
+| `sar-archive` | High-level archive reader/writer/verify/list/integration APIs | implemented |
 | `sar-compression` | Compression registry and bounded encode/decode helpers | implemented |
 | `sar-crypto` | Hashing, AEAD, KMS types/parsing, key-provider abstraction | implemented with some planned algorithms |
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
-| `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
+| `sar-cli` | Human-facing CLI over `sar-archive` + `sar-core` low-level APIs | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
 | `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented | implemented |
 | `sar-fragmentation` | Fragment semantic validation and reassembly (moved from `sar-core` in M11c) | implemented |

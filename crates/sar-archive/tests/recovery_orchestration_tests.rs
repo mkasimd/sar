@@ -1,7 +1,8 @@
 //! Tests for archive-level recovery orchestration (inspect, plan, repair).
 
+use sar_archive::{ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveWriter, ArchiveWriterOptions, EntryInput, GlobalFlags, SarError,
+ GlobalFlags, SarError,
     error::SarStatus,
     format::{
         CentralDictionary, Footer, GlobalHeader, write_central_dictionary, write_footer,
@@ -42,9 +43,9 @@ fn build_xor_tlv_value(protected_len: u64) -> Vec<u8> {
 /// Builds a minimal indexed SAR archive without any RECOVERY TLV.
 fn build_archive_no_ec() -> Vec<u8> {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
@@ -54,7 +55,7 @@ fn build_archive_no_ec() -> Vec<u8> {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("a.txt", b"hello".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("a.txt", b"hello".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
     out
@@ -179,9 +180,9 @@ fn plan_repair_unavailable_without_ec() {
 fn plan_repair_unavailable_for_no_index_archive() {
     // NO_INDEX archives have no CD → no RECOVERY TLV → unavailable.
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
@@ -191,7 +192,7 @@ fn plan_repair_unavailable_for_no_index_archive() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("x", b"x".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("x", b"x".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 

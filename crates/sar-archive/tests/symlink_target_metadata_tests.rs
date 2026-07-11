@@ -3,21 +3,22 @@ use std::io::Cursor;
 use tempfile::tempdir;
 
 use sar_core::format::{GlobalHeader, write_global_header};
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, EntryKind, EntryMode,
+ EntryKind, EntryMode,
     GlobalFlags, SarError,
 };
 
 fn write_read_entry(
-    opts: ArchiveWriterOptions,
-    entry: EntryInput,
-) -> Result<sar_core::EntryReader, SarError> {
+    opts: sar_archive::ArchiveWriterOptions,
+    entry: sar_archive::EntryInput,
+) -> Result<sar_archive::EntryReader, SarError> {
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(&mut buf, opts)?;
+    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, opts)?;
     writer.add_entry(entry)?;
     writer.finish()?;
 
-    let mut reader = ArchiveReader::new(Cursor::new(buf))?;
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf))?;
     reader.read_global_header()?;
     reader.next_entry()?.ok_or(SarError::Malformed("no entry"))
 }
@@ -26,12 +27,12 @@ fn write_read_entry(
 fn symlink_utf8_target_round_trips_in_metadata_and_payload() {
     let target = "target/✅";
     let entry = write_read_entry(
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             with_symlinks: true,
             ..Default::default()
         },
-        EntryInput {
+        sar_archive::EntryInput {
             name: "link".into(),
             payload: target.as_bytes().to_vec(),
             kind: Some(EntryKind::Symlink),
@@ -47,11 +48,11 @@ fn symlink_utf8_target_round_trips_in_metadata_and_payload() {
 #[test]
 fn non_symlink_entry_has_no_symlink_target_metadata() {
     let entry = write_read_entry(
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             ..Default::default()
         },
-        EntryInput::file("file.txt", b"payload".to_vec()),
+        sar_archive::EntryInput::file("file.txt", b"payload".to_vec()),
     )
     .expect("roundtrip");
 
@@ -61,9 +62,9 @@ fn non_symlink_entry_has_no_symlink_target_metadata() {
 #[test]
 fn writer_rejects_symlink_payload_with_invalid_utf8() {
     let mut buf = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut buf,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             with_symlinks: true,
             ..Default::default()
         },
@@ -71,7 +72,7 @@ fn writer_rejects_symlink_payload_with_invalid_utf8() {
     .expect("writer");
 
     let err = writer
-        .add_entry(EntryInput {
+        .add_entry(sar_archive::EntryInput {
             name: "link".into(),
             payload: vec![0xFF, 0xFE],
             kind: Some(EntryKind::Symlink),
@@ -104,7 +105,7 @@ fn reader_rejects_raw_symlink_lfh_with_invalid_utf8_payload() {
     bytes.extend_from_slice(b"lnk");
     bytes.extend_from_slice(&[0xFF, 0xFE]); // invalid UTF-8 symlink target payload
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("global header");
     let err = reader
         .next_entry()
@@ -134,7 +135,7 @@ fn is_symlink_without_has_symlinks_remains_rejected() {
     bytes.extend_from_slice(b"lnk");
     bytes.extend_from_slice(b"abc");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("global header");
     let err = reader
         .next_entry()
@@ -149,12 +150,12 @@ fn reading_symlink_entry_does_not_create_filesystem_symlink() {
     assert!(!link_path.exists());
 
     let _ = write_read_entry(
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             with_symlinks: true,
             ..Default::default()
         },
-        EntryInput {
+        sar_archive::EntryInput {
             name: "virtual_link".into(),
             payload: b"/virtual/target".to_vec(),
             kind: Some(EntryKind::Symlink),

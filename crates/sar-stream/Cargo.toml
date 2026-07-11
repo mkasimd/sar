@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 sar-core = { path = "../sar-core" }
+sar-archive = { path = "../sar-archive" }
 
 [lints]
 workspace = true

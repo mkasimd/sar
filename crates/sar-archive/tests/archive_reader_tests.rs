@@ -1,7 +1,8 @@
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput, GlobalFlags, SarError,
+ GlobalFlags, SarError,
     format::{GlobalHeader, KmsData, write_global_header},
 };
 
@@ -27,7 +28,7 @@ fn payload_out_of_bounds_is_rejected() {
     bytes.extend_from_slice(b"x");
     bytes.extend_from_slice(b"abc");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header parse");
     let err = reader.next_entry().expect_err("must fail");
     assert!(matches!(err, SarError::Truncated(_)));
@@ -67,7 +68,7 @@ fn global_encrypted_with_plaintext_entry_passes_through() {
     bytes.extend_from_slice(b"x");
     bytes.extend_from_slice(b"a");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     let _ = reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("next").expect("entry");
     assert_eq!(entry.payload, b"a");
@@ -76,9 +77,9 @@ fn global_encrypted_with_plaintext_entry_passes_through() {
 #[test]
 fn writer_reader_store_no_index_roundtrip() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
@@ -88,11 +89,11 @@ fn writer_reader_store_no_index_roundtrip() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("a.txt", b"abc".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("a.txt", b"abc".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
-    let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(out)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("next").expect("entry");
     assert_eq!(entry.metadata.name, "a.txt");

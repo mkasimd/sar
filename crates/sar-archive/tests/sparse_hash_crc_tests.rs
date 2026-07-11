@@ -14,7 +14,7 @@
 //!
 //! # Tests
 //!
-//! 1. `EntryMetadata` preserves `file_crc32` and `content_hash` from the LFH.
+//! 1. `sar_archive::EntryMetadata` preserves `file_crc32` and `content_hash` from the LFH.
 //! 2. The reconstructed sparse output (which includes holes) is different from
 //!    the stored payload bytes, so any CRC/hash computed only over payload
 //!    bytes would produce the wrong value.
@@ -25,8 +25,9 @@
 
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader};
 use sar_core::{
-    ArchiveReader, GlobalFlags,
+ GlobalFlags,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
     sparse::{SparseExtent, write_sparse_map},
 };
@@ -71,7 +72,7 @@ fn build_sparse_archive_with_crc(
 // Tests
 // ---------------------------------------------------------------------------
 
-/// `file_crc32` stored in the LFH is preserved in `EntryMetadata`.
+/// `file_crc32` stored in the LFH is preserved in `sar_archive::EntryMetadata`.
 #[test]
 fn file_crc32_preserved_in_entry_metadata() {
     let extents = [SparseExtent {
@@ -80,18 +81,18 @@ fn file_crc32_preserved_in_entry_metadata() {
     }];
     let archive = build_sparse_archive_with_crc(b"ABC", &extents, 10, Some(0xDEADBEEF));
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
 
     assert_eq!(
         entry.metadata.file_crc32,
         Some(0xDEADBEEF),
-        "file_crc32 must be surfaced in EntryMetadata"
+        "file_crc32 must be surfaced in sar_archive::EntryMetadata"
     );
 }
 
-/// `content_hash` stored in the LFH is preserved in `EntryMetadata`.
+/// `content_hash` stored in the LFH is preserved in `sar_archive::EntryMetadata`.
 #[test]
 fn content_hash_preserved_in_entry_metadata() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::DEDUPLICATION | GlobalFlags::NO_INDEX;
@@ -117,14 +118,14 @@ fn content_hash_preserved_in_entry_metadata() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABC");
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
 
     assert_eq!(
         entry.metadata.content_hash,
         Some(expected_hash),
-        "content_hash must be surfaced in EntryMetadata"
+        "content_hash must be surfaced in sar_archive::EntryMetadata"
     );
 }
 
@@ -140,7 +141,7 @@ fn reconstructed_sparse_output_differs_from_payload_bytes() {
     }];
     let archive = build_sparse_archive_with_crc(b"ABC", &extents, 10, None);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
 
     assert_eq!(
@@ -178,11 +179,11 @@ fn different_sparse_offsets_produce_different_reconstructed_files() {
     }];
     let archive_b = build_sparse_archive_with_crc(payload, &extents_b, 5, None);
 
-    let files_a = ArchiveReader::new(Cursor::new(archive_a))
+    let files_a = sar_archive::ArchiveReader::new(Cursor::new(archive_a))
         .expect("r_a")
         .read_all_logical_files(false)
         .expect("read_a");
-    let files_b = ArchiveReader::new(Cursor::new(archive_b))
+    let files_b = sar_archive::ArchiveReader::new(Cursor::new(archive_b))
         .expect("r_b")
         .read_all_logical_files(false)
         .expect("read_b");
@@ -211,7 +212,7 @@ fn crc_over_payload_only_differs_from_crc_over_reconstructed() {
     // No CRC provided — just verify that reconstruction includes holes.
     let archive = build_sparse_archive_with_crc(payload, &extents, 10, None);
 
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let files = reader.read_all_logical_files(false).expect("read");
     let reconstructed = &files[0].data;
 
@@ -250,7 +251,7 @@ fn crc_over_reconstructed_bytes_passes_verification() {
     let correct_crc = crc32fast::hash(&reconstructed);
 
     let archive = build_sparse_archive_with_crc(payload, &extents, 5, Some(correct_crc));
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     // CRC over reconstructed bytes matches → verification passes.
     let files = reader
         .read_all_logical_files(false)
@@ -273,7 +274,7 @@ fn crc_over_payload_only_fails_verification() {
     let wrong_crc = crc32fast::hash(payload);
 
     let archive = build_sparse_archive_with_crc(payload, &extents, 5, Some(wrong_crc));
-    let mut reader = ArchiveReader::new(Cursor::new(archive)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(archive)).expect("reader");
     let err = reader
         .read_all_logical_files(false)
         .expect_err("wrong CRC must fail");

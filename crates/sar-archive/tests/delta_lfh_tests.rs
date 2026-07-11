@@ -213,10 +213,10 @@ fn lfh_no_delta_fields_when_flag_not_set() {
 /// must produce `SAR_ERR_RESERVED_VALUE` when the entry is read.
 #[test]
 fn archive_reader_reserved_patch_algo_id_returns_reserved_value_error() {
-    use sar_core::{
-        ArchiveReader, ArchiveReaderOptions,
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_core::{
         format::{GlobalHeader, write_global_header},
-    };
+};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -239,8 +239,8 @@ fn archive_reader_reserved_patch_algo_id_returns_reserved_value_error() {
     archive_bytes.extend_from_slice(&lfh_bytes);
 
     let cursor = Cursor::new(archive_bytes);
-    let opts = ArchiveReaderOptions::default();
-    let mut reader = ArchiveReader::with_options(cursor, opts).expect("open reader");
+    let opts = sar_archive::ArchiveReaderOptions::default();
+    let mut reader = sar_archive::ArchiveReader::with_options(cursor, opts).expect("open reader");
     let _ = reader.read_global_header().expect("read global header");
     let err = reader
         .next_entry()
@@ -255,10 +255,10 @@ fn archive_reader_reserved_patch_algo_id_returns_reserved_value_error() {
 /// must produce `SAR_ERR_UNSUPPORTED` when the entry is read.
 #[test]
 fn archive_reader_custom_patch_algo_id_returns_unsupported_error() {
-    use sar_core::{
-        ArchiveReader, ArchiveReaderOptions,
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_core::{
         format::{GlobalHeader, write_global_header},
-    };
+};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -280,8 +280,8 @@ fn archive_reader_custom_patch_algo_id_returns_unsupported_error() {
     archive_bytes.extend_from_slice(&lfh_bytes);
 
     let cursor = Cursor::new(archive_bytes);
-    let opts = ArchiveReaderOptions::default();
-    let mut reader = ArchiveReader::with_options(cursor, opts).expect("open reader");
+    let opts = sar_archive::ArchiveReaderOptions::default();
+    let mut reader = sar_archive::ArchiveReader::with_options(cursor, opts).expect("open reader");
     let _ = reader.read_global_header().expect("read global header");
     let err = reader.next_entry().expect_err("must fail with custom algo");
     assert!(
@@ -295,10 +295,10 @@ fn archive_reader_custom_patch_algo_id_returns_unsupported_error() {
 /// No patch application is attempted.
 #[test]
 fn archive_reader_assigned_patch_algo_id_passes_registry_check() {
-    use sar_core::{
-        ArchiveReader, ArchiveReaderOptions,
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_core::{
         format::{GlobalHeader, write_global_header},
-    };
+};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -320,8 +320,8 @@ fn archive_reader_assigned_patch_algo_id_passes_registry_check() {
     archive_bytes.extend_from_slice(&lfh_bytes);
 
     let cursor = Cursor::new(archive_bytes);
-    let opts = ArchiveReaderOptions::default();
-    let mut reader = ArchiveReader::with_options(cursor, opts).expect("open reader");
+    let opts = sar_archive::ArchiveReaderOptions::default();
+    let mut reader = sar_archive::ArchiveReader::with_options(cursor, opts).expect("open reader");
     let _ = reader.read_global_header().expect("read global header");
     let entry = reader
         .next_entry()
@@ -332,17 +332,17 @@ fn archive_reader_assigned_patch_algo_id_passes_registry_check() {
 }
 
 // ---------------------------------------------------------------------------
-// EntryMetadata delta field exposure
+// sar_archive::EntryMetadata delta field exposure
 // ---------------------------------------------------------------------------
 
-/// Confirms that `EntryMetadata` exposes `patch_algo_id` and `delta_base_hash`
+/// Confirms that `sar_archive::EntryMetadata` exposes `patch_algo_id` and `delta_base_hash`
 /// when the archive has `HAS_DELTA` set.
 #[test]
 fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
-    use sar_core::{
-        ArchiveReader, ArchiveReaderOptions,
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_core::{
         format::{GlobalHeader, write_global_header},
-    };
+};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -371,8 +371,8 @@ fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
     archive_bytes.extend_from_slice(&lfh_bytes);
 
     let cursor = Cursor::new(archive_bytes);
-    let opts = ArchiveReaderOptions::default();
-    let mut reader = ArchiveReader::with_options(cursor, opts).expect("open reader");
+    let opts = sar_archive::ArchiveReaderOptions::default();
+    let mut reader = sar_archive::ArchiveReader::with_options(cursor, opts).expect("open reader");
     let _ = reader.read_global_header().expect("read global header");
     let entry = reader
         .next_entry()
@@ -383,14 +383,14 @@ fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
     assert_eq!(entry.metadata.delta_base_hash, Some(expected_hash));
 }
 
-/// Confirms that `EntryMetadata.patch_algo_id` and `delta_base_hash` are
+/// Confirms that `sar_archive::EntryMetadata.patch_algo_id` and `delta_base_hash` are
 /// `None` when the archive does not have `HAS_DELTA` set.
 #[test]
 fn entry_metadata_delta_fields_none_when_has_delta_not_set() {
-    use sar_core::{
-        ArchiveReader, ArchiveReaderOptions,
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_core::{
         format::{GlobalHeader, write_global_header},
-    };
+};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX;
@@ -409,8 +409,8 @@ fn entry_metadata_delta_fields_none_when_has_delta_not_set() {
     archive_bytes.extend_from_slice(&lfh_bytes);
 
     let cursor = Cursor::new(archive_bytes);
-    let opts = ArchiveReaderOptions::default();
-    let mut reader = ArchiveReader::with_options(cursor, opts).expect("open reader");
+    let opts = sar_archive::ArchiveReaderOptions::default();
+    let mut reader = sar_archive::ArchiveReader::with_options(cursor, opts).expect("open reader");
     let _ = reader.read_global_header().expect("read global header");
     let entry = reader
         .next_entry()
@@ -430,10 +430,10 @@ fn entry_metadata_delta_fields_none_when_has_delta_not_set() {
 /// reconstructed target when its length equals LFH Uncompressed Size.
 #[test]
 fn archive_reader_applies_store_patch_when_payload_length_matches() {
-    use sar_core::{
-        ArchiveReader, ArchiveReaderOptions,
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_core::{
         format::{GlobalHeader, write_global_header},
-    };
+};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -457,8 +457,8 @@ fn archive_reader_applies_store_patch_when_payload_length_matches() {
     archive_bytes.extend_from_slice(&lfh_bytes);
 
     let cursor = Cursor::new(archive_bytes);
-    let opts = ArchiveReaderOptions::default();
-    let mut reader = ArchiveReader::with_options(cursor, opts).expect("open reader");
+    let opts = sar_archive::ArchiveReaderOptions::default();
+    let mut reader = sar_archive::ArchiveReader::with_options(cursor, opts).expect("open reader");
     let _ = reader.read_global_header().expect("read global header");
     let entry = reader
         .next_entry()

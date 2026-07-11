@@ -11,6 +11,8 @@ use crate::{
         build_kms_context, compression_algorithm_name, map_patch_error,
         vcdiff_limits_from_resource_limits,
     },
+};
+use sar_core::{
     error::SarError,
     flags::GlobalFlags,
     format::{
@@ -561,17 +563,17 @@ impl StreamArchiveParser {
 
         let fec = if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
             let algo_id = lfh.fec_algo_id.unwrap_or(0);
-            crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
+            sar_core::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
         } else {
             None
         };
 
-        let sparse_extents: Option<Vec<crate::sparse::SparseExtent>> =
+        let sparse_extents: Option<Vec<sar_core::sparse::SparseExtent>> =
             if archive.header.flags.contains(GlobalFlags::SPARSE_FILES)
                 && !lfh.sparse_map.is_empty()
             {
                 let is_64bit = archive.header.flags.contains(GlobalFlags::SIZE_64BIT);
-                Some(crate::sparse::parse_sparse_map(
+                Some(sar_core::sparse::parse_sparse_map(
                     &lfh.sparse_map,
                     is_64bit,
                     &self.options.limits,
@@ -583,7 +585,7 @@ impl StreamArchiveParser {
         let cdc_algo_id_opt: Option<u8> = if archive.header.flags.contains(GlobalFlags::CDC_SUPPORT)
         {
             let algo_id = lfh.cdc_algo_id.unwrap_or(0);
-            crate::cdc::validate_cdc_algo_id(algo_id)?;
+            sar_core::cdc::validate_cdc_algo_id(algo_id)?;
             Some(algo_id)
         } else {
             None
@@ -600,8 +602,8 @@ impl StreamArchiveParser {
         }
 
         let entry_kind =
-            crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
-        let symlink_target = if matches!(entry_kind, crate::metadata::EntryKind::Symlink) {
+            sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
+        let symlink_target = if matches!(entry_kind, sar_core::metadata::EntryKind::Symlink) {
             Some(
                 std::str::from_utf8(&decoded)
                     .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
@@ -613,45 +615,45 @@ impl StreamArchiveParser {
 
         let compression_presence = if archive.header.flags.contains(GlobalFlags::COMPRESSED) {
             let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
-            let cm = crate::metadata::EntryCompressionMetadata {
+            let cm = sar_core::metadata::EntryCompressionMetadata {
                 algo_id: raw_algo_id,
                 algorithm_name: compression_algorithm_name(raw_algo_id),
             };
             if is_effectively_compressed {
-                crate::metadata::FieldPresence::PresentActive(cm)
+                sar_core::metadata::FieldPresence::PresentActive(cm)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(cm)
+                sar_core::metadata::FieldPresence::PresentInactive(cm)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
         let encryption_presence = if archive.header.flags.contains(GlobalFlags::ENCRYPTED) {
             let algo_id = lfh.encr_algo_id.unwrap_or(0);
             let iv_nonce = lfh.iv_nonce.unwrap_or([0u8; 24]);
-            let em = crate::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
+            let em = sar_core::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
             if is_encrypted {
-                crate::metadata::FieldPresence::PresentActive(em)
+                sar_core::metadata::FieldPresence::PresentActive(em)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(em)
+                sar_core::metadata::FieldPresence::PresentInactive(em)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
         let fec_presence = if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
             let algo_id = lfh.fec_algo_id.unwrap_or(0);
-            let fm = crate::metadata::EntryFecMetadata {
+            let fm = sar_core::metadata::EntryFecMetadata {
                 algo_id,
                 summary: fec.clone(),
             };
             if algo_id != 0 {
-                crate::metadata::FieldPresence::PresentActive(fm)
+                sar_core::metadata::FieldPresence::PresentActive(fm)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(fm)
+                sar_core::metadata::FieldPresence::PresentInactive(fm)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
         let frag_desc_new =
@@ -669,7 +671,7 @@ impl StreamArchiveParser {
         {
             let frag_id = lfh.fragment_id.unwrap_or(0);
             let frag_idx = lfh.fragment_index.unwrap_or(0);
-            let fm = crate::metadata::EntryFragmentMetadata {
+            let fm = sar_core::metadata::EntryFragmentMetadata {
                 fragment_id: frag_id,
                 fragment_index: frag_idx,
                 descriptor: frag_desc_new.clone(),
@@ -677,19 +679,19 @@ impl StreamArchiveParser {
                 is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
             };
             if lfh.entry_mode.is_fragment() {
-                crate::metadata::FieldPresence::PresentActive(fm)
+                sar_core::metadata::FieldPresence::PresentActive(fm)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(fm)
+                sar_core::metadata::FieldPresence::PresentInactive(fm)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
-        let cdc: Option<crate::metadata::EntryCdcMetadata> =
-            cdc_algo_id_opt.map(|algo_id| crate::metadata::EntryCdcMetadata { algo_id });
+        let cdc: Option<sar_core::metadata::EntryCdcMetadata> =
+            cdc_algo_id_opt.map(|algo_id| sar_core::metadata::EntryCdcMetadata { algo_id });
 
-        let delta: Option<crate::metadata::EntryDeltaMetadata> = if is_has_delta {
-            Some(crate::metadata::EntryDeltaMetadata {
+        let delta: Option<sar_core::metadata::EntryDeltaMetadata> = if is_has_delta {
+            Some(sar_core::metadata::EntryDeltaMetadata {
                 patch_algo_id: patch_raw_id,
                 base_hash: lfh.delta_base_hash.unwrap_or([0u8; 32]),
             })
@@ -697,17 +699,17 @@ impl StreamArchiveParser {
             None
         };
 
-        let sparse: Option<crate::metadata::EntrySparseMetadata> =
+        let sparse: Option<sar_core::metadata::EntrySparseMetadata> =
             sparse_extents
                 .as_ref()
-                .map(|extents| crate::metadata::EntrySparseMetadata {
+                .map(|extents| sar_core::metadata::EntrySparseMetadata {
                     extents: extents.clone(),
                 });
 
         let has_crc = archive.header.flags.contains(GlobalFlags::PER_FILE_CRC);
         let has_hash = archive.header.flags.contains(GlobalFlags::DEDUPLICATION);
-        let hash: Option<crate::metadata::EntryHashMetadata> = if has_crc || has_hash {
-            Some(crate::metadata::EntryHashMetadata {
+        let hash: Option<sar_core::metadata::EntryHashMetadata> = if has_crc || has_hash {
+            Some(sar_core::metadata::EntryHashMetadata {
                 crc32: if has_crc { lfh.file_crc32 } else { None },
                 content_hash: if has_hash { lfh.content_hash } else { None },
             })
@@ -762,13 +764,13 @@ impl StreamArchiveParser {
             is_hidden: lfh.entry_mode.is_hidden_attr(),
             permissions: lfh
                 .permissions
-                .map(|mode| crate::metadata::EntryPermissionMetadata { mode }),
+                .map(|mode| sar_core::metadata::EntryPermissionMetadata { mode }),
             owner: lfh
                 .uid_gid
-                .map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
+                .map(|uid_gid| sar_core::metadata::EntryOwnerMetadata { uid_gid }),
             timestamps: lfh
                 .timestamps
-                .map(|ts| crate::metadata::EntryTimestampMetadata {
+                .map(|ts| sar_core::metadata::EntryTimestampMetadata {
                     mtime: ts[0],
                     atime: ts[1],
                     ctime: ts[2],
@@ -776,42 +778,42 @@ impl StreamArchiveParser {
             // M11b filesystem metadata presence model.
             path_presence: if archive.header.flags.contains(GlobalFlags::HAS_PATH) {
                 if lfh.path.is_empty() {
-                    crate::metadata::FieldPresence::PresentInactive(String::new())
+                    sar_core::metadata::FieldPresence::PresentInactive(String::new())
                 } else {
                     let p = String::from_utf8(lfh.path.clone())
                         .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
-                    crate::metadata::FieldPresence::PresentActive(p)
+                    sar_core::metadata::FieldPresence::PresentActive(p)
                 }
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             permissions_presence: if archive.header.flags.contains(GlobalFlags::HAS_PERMS) {
-                crate::metadata::FieldPresence::PresentActive(
-                    crate::metadata::EntryPermissionMetadata {
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryPermissionMetadata {
                         mode: lfh.permissions.unwrap_or(0),
                     },
                 )
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             owner_presence: if archive.header.flags.contains(GlobalFlags::EXT_UID_GID) {
-                crate::metadata::FieldPresence::PresentActive(crate::metadata::EntryOwnerMetadata {
+                sar_core::metadata::FieldPresence::PresentActive(sar_core::metadata::EntryOwnerMetadata {
                     uid_gid: lfh.uid_gid.unwrap_or(0),
                 })
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             timestamps_presence: if archive.header.flags.contains(GlobalFlags::EXT_TIME) {
                 let ts = lfh.timestamps.unwrap_or([0u64; 3]);
-                crate::metadata::FieldPresence::PresentActive(
-                    crate::metadata::EntryTimestampMetadata {
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryTimestampMetadata {
                         mtime: ts[0],
                         atime: ts[1],
                         ctime: ts[2],
                     },
                 )
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             compression_presence,
             encryption_presence,

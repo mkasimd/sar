@@ -2,8 +2,9 @@
 /// fragmented entries.  Also verifies that resource limits are enforced for CDC.
 use std::io::Cursor;
 
+use sar_archive::{ArchiveReader};
 use sar_core::{
-    ArchiveReader, GlobalFlags, ResourceLimits, SarError,
+ GlobalFlags, ResourceLimits, SarError,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
     tlv::Tlv,
 };
@@ -40,7 +41,7 @@ fn build_cdc_archive(cdc_algo_id: u8, payload: &[u8]) -> Vec<u8> {
 #[test]
 fn cdc_literal_mode_entry_parses() {
     let bytes = build_cdc_archive(0x00, b"hello world");
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
     assert_eq!(entry.metadata.cdc_algo_id, Some(0x00));
@@ -55,7 +56,7 @@ fn cdc_literal_mode_entry_parses() {
 fn cdc_fastcdc_entry_parses() {
     let payload: Vec<u8> = (0..256).map(|i| i as u8).collect();
     let bytes = build_cdc_archive(0x02, &payload);
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
     assert_eq!(entry.metadata.cdc_algo_id, Some(0x02));
@@ -70,7 +71,7 @@ fn cdc_fastcdc_entry_parses() {
 fn cdc_reserved_algo_id_fails_closed() {
     // 0x04–0xEF are reserved
     let bytes = build_cdc_archive(0x10, b"data");
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let err = reader.next_entry().expect_err("must fail");
     assert!(
@@ -86,7 +87,7 @@ fn cdc_reserved_algo_id_fails_closed() {
 #[test]
 fn cdc_rabin_algo_id_reports_unsupported() {
     let bytes = build_cdc_archive(0x01, b"data");
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let err = reader
         .next_entry()
@@ -104,7 +105,7 @@ fn cdc_rabin_algo_id_reports_unsupported() {
 #[test]
 fn cdc_custom_algo_id_fails_closed() {
     let bytes = build_cdc_archive(0xF5, b"data");
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let err = reader.next_entry().expect_err("must fail");
     assert!(
@@ -134,20 +135,20 @@ fn entry_without_cdc_support_flag_has_no_cdc_algo_id() {
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(b"hello");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
     assert_eq!(entry.metadata.cdc_algo_id, None);
 }
 
 // ---------------------------------------------------------------------------
-// Verify: CDC support flag tracked in VerificationReport
+// Verify: CDC support flag tracked in sar_archive::VerificationReport
 // ---------------------------------------------------------------------------
 
 #[test]
 fn verification_report_tracks_cdc_support() {
     let bytes = build_cdc_archive(0x00, b"hello");
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     let report = reader.verify().expect("verify");
     assert!(report.cdc_support, "cdc_support should be true");
     assert_eq!(report.cdc_entry_count, 1, "one CDC entry expected");
@@ -169,7 +170,7 @@ fn verification_report_no_cdc_when_flag_absent() {
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(b"abc");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     let report = reader.verify().expect("verify");
     assert!(
         !report.cdc_support,
@@ -309,7 +310,7 @@ fn cdc_with_compressed_entry_decompresses_correctly() {
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(&compressed);
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
     assert_eq!(entry.metadata.cdc_algo_id, Some(0x00));
@@ -348,7 +349,7 @@ fn cdc_support_with_sparse_entry_works() {
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(b"AAAA");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("entry").expect("some");
     assert_eq!(entry.metadata.cdc_algo_id, Some(0x00));

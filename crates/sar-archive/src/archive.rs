@@ -22,7 +22,7 @@ use sar_fragmentation::FragmentDescriptor;
 use sar_sparse::{SparseExtent, apply_sparse_reconstruction, validate_sparse_extents};
 use serde::Serialize;
 
-use crate::{
+use sar_core::{
     error::SarError,
     flags::{EntryMode, GlobalFlags, validate_global_flags},
     format::{
@@ -76,7 +76,7 @@ pub struct EntryMetadata {
     /// FEC metadata summary (omits parity blob).  `None` when Selective FEC
     /// is disabled or this entry has `FEC Algo ID == 0x00`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fec: Option<crate::fec::FecSummary>,
+    pub fec: Option<sar_core::fec::FecSummary>,
     /// Fragment ID shared by all fragments of one logical file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fragment_id: Option<u32>,
@@ -140,7 +140,7 @@ pub struct EntryMetadata {
     // M11a expanded metadata
     // -----------------------------------------------------------------------
     /// Semantic entry kind derived from Entry Mode bits 0/1 and name state.
-    pub entry_kind: crate::metadata::EntryKind,
+    pub entry_kind: sar_core::metadata::EntryKind,
     /// Raw Entry Mode bits from the LFH.
     pub entry_mode_raw: u16,
     /// Stream ID from the LFH.
@@ -151,14 +151,14 @@ pub struct EntryMetadata {
     pub is_hidden: bool,
     /// POSIX permissions.  `None` when the `HAS_PERMS` global flag is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub permissions: Option<crate::metadata::EntryPermissionMetadata>,
+    pub permissions: Option<sar_core::metadata::EntryPermissionMetadata>,
     /// UID/GID.  `None` when the `EXT_UID_GID` global flag is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner: Option<crate::metadata::EntryOwnerMetadata>,
+    pub owner: Option<sar_core::metadata::EntryOwnerMetadata>,
     /// Timestamps (mtime/atime/ctime).  `None` when the `EXT_TIME` global flag
     /// is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub timestamps: Option<crate::metadata::EntryTimestampMetadata>,
+    pub timestamps: Option<sar_core::metadata::EntryTimestampMetadata>,
 
     // -----------------------------------------------------------------------
     // M11b filesystem metadata presence model
@@ -173,7 +173,7 @@ pub struct EntryMetadata {
     /// Do not collapse `PresentInactive` into `None`; zero-length path is not
     /// the same as an absent path field.
     #[serde(skip)]
-    pub path_presence: crate::metadata::FieldPresence<String>,
+    pub path_presence: sar_core::metadata::FieldPresence<String>,
     /// Permissions field presence model (M11b).
     ///
     /// `Absent` when global `HAS_PERMS` is not set.
@@ -181,20 +181,20 @@ pub struct EntryMetadata {
     /// is zero/default — a zero mode is not the same as an absent field).
     #[serde(skip)]
     pub permissions_presence:
-        crate::metadata::FieldPresence<crate::metadata::EntryPermissionMetadata>,
+        sar_core::metadata::FieldPresence<sar_core::metadata::EntryPermissionMetadata>,
     /// UID/GID field presence model (M11b).
     ///
     /// `Absent` when global `EXT_UID_GID` is not set.
     /// `PresentActive(value)` when `EXT_UID_GID` is set (including zero).
     #[serde(skip)]
-    pub owner_presence: crate::metadata::FieldPresence<crate::metadata::EntryOwnerMetadata>,
+    pub owner_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryOwnerMetadata>,
     /// Timestamps field presence model (M11b).
     ///
     /// `Absent` when global `EXT_TIME` is not set.
     /// `PresentActive(value)` when `EXT_TIME` is set (including all-zero timestamps).
     #[serde(skip)]
     pub timestamps_presence:
-        crate::metadata::FieldPresence<crate::metadata::EntryTimestampMetadata>,
+        sar_core::metadata::FieldPresence<sar_core::metadata::EntryTimestampMetadata>,
 
     /// Compression field presence model.
     ///
@@ -205,7 +205,7 @@ pub struct EntryMetadata {
     /// algorithm is STORE.
     #[serde(skip)]
     pub compression_presence:
-        crate::metadata::FieldPresence<crate::metadata::EntryCompressionMetadata>,
+        sar_core::metadata::FieldPresence<sar_core::metadata::EntryCompressionMetadata>,
     /// Encryption field presence model.
     ///
     /// Distinguishes between the encryption fields being absent (global
@@ -213,14 +213,14 @@ pub struct EntryMetadata {
     /// entry-mode bit unset), and present and active.
     #[serde(skip)]
     pub encryption_presence:
-        crate::metadata::FieldPresence<crate::metadata::EntryEncryptionMetadata>,
+        sar_core::metadata::FieldPresence<sar_core::metadata::EntryEncryptionMetadata>,
     /// FEC field presence model.
     ///
     /// `Absent` when global `SELECTIVE_FEC` is not set.
     /// `PresentInactive` when `SELECTIVE_FEC` is set but `fec_algo_id == 0`.
     /// `PresentActive` when `SELECTIVE_FEC` is set and `fec_algo_id != 0`.
     #[serde(skip)]
-    pub fec_presence: crate::metadata::FieldPresence<crate::metadata::EntryFecMetadata>,
+    pub fec_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryFecMetadata>,
     /// Fragment field presence model.
     ///
     /// `Absent` when global `FILE_FRAGMENTATION` is not set.
@@ -228,21 +228,21 @@ pub struct EntryMetadata {
     /// entry mode is not set.
     /// `PresentActive` when `FILE_FRAGMENTATION` is set and `IS_FRAGMENT` is set.
     #[serde(skip)]
-    pub fragment_presence: crate::metadata::FieldPresence<crate::metadata::EntryFragmentMetadata>,
+    pub fragment_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryFragmentMetadata>,
     /// CDC metadata.  `None` when `CDC_SUPPORT` global flag is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub cdc: Option<crate::metadata::EntryCdcMetadata>,
+    pub cdc: Option<sar_core::metadata::EntryCdcMetadata>,
     /// Delta metadata.  `None` when `HAS_DELTA` global flag is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub delta: Option<crate::metadata::EntryDeltaMetadata>,
+    pub delta: Option<sar_core::metadata::EntryDeltaMetadata>,
     /// Sparse metadata.  `None` when `SPARSE_FILES` global flag is not set or
     /// the sparse map is empty.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sparse: Option<crate::metadata::EntrySparseMetadata>,
+    pub sparse: Option<sar_core::metadata::EntrySparseMetadata>,
     /// Combined CRC32 and content-hash metadata.  `None` when neither
     /// `PER_FILE_CRC` nor `DEDUPLICATION` global flags are set.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub hash: Option<crate::metadata::EntryHashMetadata>,
+    pub hash: Option<sar_core::metadata::EntryHashMetadata>,
 }
 
 /// Serializes an `Option<[u8; 32]>` as an optional lowercase hex string.
@@ -308,7 +308,7 @@ pub struct EntryInput {
     pub payload: Vec<u8>,
     /// Explicit entry kind.  `None` resolves to `RegularFile` (or
     /// `EmptyArea` when `name` is empty and `is_fragment` is not set).
-    pub kind: Option<crate::metadata::EntryKind>,
+    pub kind: Option<sar_core::metadata::EntryKind>,
     /// Optional directory path.  Written to the LFH when the writer's
     /// `with_path` option is enabled (`HAS_PATH` global flag).
     pub path: Option<String>,
@@ -1009,7 +1009,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
             let algo_id = lfh.fec_algo_id.unwrap_or(0);
-            crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
+            sar_core::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
         } else {
             None
         };
@@ -1018,7 +1018,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let sparse_extents: Option<Vec<SparseExtent>> =
             if header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
                 let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
-                Some(crate::sparse::parse_sparse_map(
+                Some(sar_core::sparse::parse_sparse_map(
                     &lfh.sparse_map,
                     is_64bit,
                     &self.options.limits,
@@ -1030,7 +1030,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // Compute effective CDC algo ID (for legacy field).
         let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
             let algo_id = lfh.cdc_algo_id.unwrap_or(0);
-            crate::cdc::validate_cdc_algo_id(algo_id)?;
+            sar_core::cdc::validate_cdc_algo_id(algo_id)?;
             Some(algo_id)
         } else {
             None
@@ -1051,8 +1051,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         let entry_kind =
-            crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
-        let symlink_target = if matches!(entry_kind, crate::metadata::EntryKind::Symlink) {
+            sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
+        let symlink_target = if matches!(entry_kind, sar_core::metadata::EntryKind::Symlink) {
             Some(
                 std::str::from_utf8(&decoded)
                     .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
@@ -1063,54 +1063,54 @@ impl<R: Read + Seek> ArchiveReader<R> {
         };
 
         // Compression presence model.
-        let compression_presence: crate::metadata::FieldPresence<
-            crate::metadata::EntryCompressionMetadata,
+        let compression_presence: sar_core::metadata::FieldPresence<
+            sar_core::metadata::EntryCompressionMetadata,
         > = if header.flags.contains(GlobalFlags::COMPRESSED) {
             let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
-            let cm = crate::metadata::EntryCompressionMetadata {
+            let cm = sar_core::metadata::EntryCompressionMetadata {
                 algo_id: raw_algo_id,
                 algorithm_name: compression_algorithm_name(raw_algo_id),
             };
             if is_effectively_compressed {
-                crate::metadata::FieldPresence::PresentActive(cm)
+                sar_core::metadata::FieldPresence::PresentActive(cm)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(cm)
+                sar_core::metadata::FieldPresence::PresentInactive(cm)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
         // Encryption presence model.
-        let encryption_presence: crate::metadata::FieldPresence<
-            crate::metadata::EntryEncryptionMetadata,
+        let encryption_presence: sar_core::metadata::FieldPresence<
+            sar_core::metadata::EntryEncryptionMetadata,
         > = if header.flags.contains(GlobalFlags::ENCRYPTED) {
             let algo_id = lfh.encr_algo_id.unwrap_or(0);
             let iv_nonce = lfh.iv_nonce.unwrap_or([0u8; 24]);
-            let em = crate::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
+            let em = sar_core::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
             if is_encrypted {
-                crate::metadata::FieldPresence::PresentActive(em)
+                sar_core::metadata::FieldPresence::PresentActive(em)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(em)
+                sar_core::metadata::FieldPresence::PresentInactive(em)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
         // FEC presence model.
-        let fec_presence: crate::metadata::FieldPresence<crate::metadata::EntryFecMetadata> =
+        let fec_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryFecMetadata> =
             if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
                 let algo_id = lfh.fec_algo_id.unwrap_or(0);
-                let fm = crate::metadata::EntryFecMetadata {
+                let fm = sar_core::metadata::EntryFecMetadata {
                     algo_id,
                     summary: fec.clone(),
                 };
                 if algo_id != 0 {
-                    crate::metadata::FieldPresence::PresentActive(fm)
+                    sar_core::metadata::FieldPresence::PresentActive(fm)
                 } else {
-                    crate::metadata::FieldPresence::PresentInactive(fm)
+                    sar_core::metadata::FieldPresence::PresentInactive(fm)
                 }
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             };
 
         // Fragment descriptor for new metadata.
@@ -1123,12 +1123,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
             });
 
         // Fragment presence model.
-        let fragment_presence: crate::metadata::FieldPresence<
-            crate::metadata::EntryFragmentMetadata,
+        let fragment_presence: sar_core::metadata::FieldPresence<
+            sar_core::metadata::EntryFragmentMetadata,
         > = if header.flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
             let frag_id = lfh.fragment_id.unwrap_or(0);
             let frag_idx = lfh.fragment_index.unwrap_or(0);
-            let fm = crate::metadata::EntryFragmentMetadata {
+            let fm = sar_core::metadata::EntryFragmentMetadata {
                 fragment_id: frag_id,
                 fragment_index: frag_idx,
                 descriptor: frag_desc_new.clone(),
@@ -1136,21 +1136,21 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
             };
             if lfh.entry_mode.is_fragment() {
-                crate::metadata::FieldPresence::PresentActive(fm)
+                sar_core::metadata::FieldPresence::PresentActive(fm)
             } else {
-                crate::metadata::FieldPresence::PresentInactive(fm)
+                sar_core::metadata::FieldPresence::PresentInactive(fm)
             }
         } else {
-            crate::metadata::FieldPresence::Absent
+            sar_core::metadata::FieldPresence::Absent
         };
 
         // CDC metadata (no active/inactive distinction — just present/absent).
-        let cdc: Option<crate::metadata::EntryCdcMetadata> =
-            cdc_algo_id_opt.map(|algo_id| crate::metadata::EntryCdcMetadata { algo_id });
+        let cdc: Option<sar_core::metadata::EntryCdcMetadata> =
+            cdc_algo_id_opt.map(|algo_id| sar_core::metadata::EntryCdcMetadata { algo_id });
 
         // Delta metadata.
-        let delta: Option<crate::metadata::EntryDeltaMetadata> = if is_has_delta {
-            Some(crate::metadata::EntryDeltaMetadata {
+        let delta: Option<sar_core::metadata::EntryDeltaMetadata> = if is_has_delta {
+            Some(sar_core::metadata::EntryDeltaMetadata {
                 patch_algo_id: patch_raw_id,
                 base_hash: lfh.delta_base_hash.unwrap_or([0u8; 32]),
             })
@@ -1159,18 +1159,18 @@ impl<R: Read + Seek> ArchiveReader<R> {
         };
 
         // Sparse metadata.
-        let sparse: Option<crate::metadata::EntrySparseMetadata> =
+        let sparse: Option<sar_core::metadata::EntrySparseMetadata> =
             sparse_extents
                 .as_ref()
-                .map(|extents| crate::metadata::EntrySparseMetadata {
+                .map(|extents| sar_core::metadata::EntrySparseMetadata {
                     extents: extents.clone(),
                 });
 
         // Hash metadata.
         let has_crc = header.flags.contains(GlobalFlags::PER_FILE_CRC);
         let has_hash = header.flags.contains(GlobalFlags::DEDUPLICATION);
-        let hash: Option<crate::metadata::EntryHashMetadata> = if has_crc || has_hash {
-            Some(crate::metadata::EntryHashMetadata {
+        let hash: Option<sar_core::metadata::EntryHashMetadata> = if has_crc || has_hash {
+            Some(sar_core::metadata::EntryHashMetadata {
                 crc32: if has_crc { lfh.file_crc32 } else { None },
                 content_hash: if has_hash { lfh.content_hash } else { None },
             })
@@ -1229,13 +1229,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
             is_hidden: lfh.entry_mode.is_hidden_attr(),
             permissions: lfh
                 .permissions
-                .map(|mode| crate::metadata::EntryPermissionMetadata { mode }),
+                .map(|mode| sar_core::metadata::EntryPermissionMetadata { mode }),
             owner: lfh
                 .uid_gid
-                .map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
+                .map(|uid_gid| sar_core::metadata::EntryOwnerMetadata { uid_gid }),
             timestamps: lfh
                 .timestamps
-                .map(|ts| crate::metadata::EntryTimestampMetadata {
+                .map(|ts| sar_core::metadata::EntryTimestampMetadata {
                     mtime: ts[0],
                     atime: ts[1],
                     ctime: ts[2],
@@ -1243,42 +1243,42 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // M11b filesystem metadata presence model.
             path_presence: if header.flags.contains(GlobalFlags::HAS_PATH) {
                 if lfh.path.is_empty() {
-                    crate::metadata::FieldPresence::PresentInactive(String::new())
+                    sar_core::metadata::FieldPresence::PresentInactive(String::new())
                 } else {
                     let p = String::from_utf8(lfh.path.clone())
                         .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
-                    crate::metadata::FieldPresence::PresentActive(p)
+                    sar_core::metadata::FieldPresence::PresentActive(p)
                 }
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             permissions_presence: if header.flags.contains(GlobalFlags::HAS_PERMS) {
-                crate::metadata::FieldPresence::PresentActive(
-                    crate::metadata::EntryPermissionMetadata {
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryPermissionMetadata {
                         mode: lfh.permissions.unwrap_or(0),
                     },
                 )
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             owner_presence: if header.flags.contains(GlobalFlags::EXT_UID_GID) {
-                crate::metadata::FieldPresence::PresentActive(crate::metadata::EntryOwnerMetadata {
+                sar_core::metadata::FieldPresence::PresentActive(sar_core::metadata::EntryOwnerMetadata {
                     uid_gid: lfh.uid_gid.unwrap_or(0),
                 })
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             timestamps_presence: if header.flags.contains(GlobalFlags::EXT_TIME) {
                 let ts = lfh.timestamps.unwrap_or([0u64; 3]);
-                crate::metadata::FieldPresence::PresentActive(
-                    crate::metadata::EntryTimestampMetadata {
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryTimestampMetadata {
                         mtime: ts[0],
                         atime: ts[1],
                         ctime: ts[2],
                     },
                 )
             } else {
-                crate::metadata::FieldPresence::Absent
+                sar_core::metadata::FieldPresence::Absent
             },
             compression_presence,
             encryption_presence,
@@ -1329,7 +1329,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let has_cdc_metadata = cd
                 .metadata
                 .iter()
-                .any(|tlv| crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id));
+                .any(|tlv| sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id));
             if has_cdc_metadata && !cdc_support {
                 return Err(SarError::FlagConflict(
                     "CDC metadata requires the CDC_SUPPORT global flag",
@@ -1364,7 +1364,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             if global.flags.contains(GlobalFlags::HAS_GLOBAL_EC) {
                 for tlv in &cd.metadata {
                     if (0x10..=0x1F).contains(&tlv.type_id) {
-                        crate::fec::validate_recovery_tlv(
+                        sar_core::fec::validate_recovery_tlv(
                             tlv.type_id,
                             &tlv.value,
                             &self.options.limits,
@@ -1377,8 +1377,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // CDC_SUPPORT is active.
             if cdc_support {
                 for tlv in &cd.metadata {
-                    if crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
-                        crate::cdc::validate_cdc_metadata_tlv(tlv, &self.options.limits)?;
+                    if sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
+                        sar_core::cdc::validate_cdc_metadata_tlv(tlv, &self.options.limits)?;
                     }
                 }
             }
@@ -1892,7 +1892,7 @@ impl<W: Write> ArchiveWriter<W> {
         }
         if cd_metadata
             .iter()
-            .any(|tlv| crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id))
+            .any(|tlv| sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id))
         {
             flags |= GlobalFlags::CDC_SUPPORT;
         }
@@ -1960,8 +1960,8 @@ impl<W: Write> ArchiveWriter<W> {
 
         let limits = ResourceLimits::default();
         for tlv in &cd_metadata {
-            if crate::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
-                crate::cdc::validate_cdc_metadata_tlv(tlv, &limits)?;
+            if sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
+                sar_core::cdc::validate_cdc_metadata_tlv(tlv, &limits)?;
             }
         }
 
@@ -2098,7 +2098,7 @@ impl<W: Write> ArchiveWriter<W> {
         self.apply_entry_input_to_lfh(&entry, &mut lfh)?;
 
         if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
-            lfh.cdc_algo_id = Some(crate::cdc::CDC_ALGO_LITERAL);
+            lfh.cdc_algo_id = Some(sar_core::cdc::CDC_ALGO_LITERAL);
         }
         if self.flags.contains(GlobalFlags::COMPRESSED) {
             lfh.comp_algo_id = Some(self.compression.algo_id);
@@ -2251,7 +2251,7 @@ impl<W: Write> ArchiveWriter<W> {
     /// writer's currently enabled global flags.  Returns `Err` for any
     /// metadata field that is requested but the corresponding flag is not set.
     fn validate_entry_input_metadata(&self, entry: &EntryInput) -> Result<(), SarError> {
-        use crate::metadata::EntryKind;
+        use sar_core::metadata::EntryKind;
 
         // Symlink entries require HAS_SYMLINKS.
         if matches!(entry.kind, Some(EntryKind::Symlink))
@@ -2344,7 +2344,7 @@ impl<W: Write> ArchiveWriter<W> {
         entry: &EntryInput,
         lfh: &mut LocalFileHeader,
     ) -> Result<(), SarError> {
-        use crate::metadata::EntryKind;
+        use sar_core::metadata::EntryKind;
 
         // Stream ID and sequence number.
         lfh.stream_id = entry.stream_id.unwrap_or(0);
@@ -2502,12 +2502,12 @@ impl<W: Write> ArchiveWriter<W> {
 
         // Build LFH: uncompressed_size = logical_size (full sparse extent including holes).
         let is_64bit = self.flags.contains(GlobalFlags::SIZE_64BIT);
-        let sparse_map_bytes = crate::sparse::write_sparse_map(&sparse.extents, is_64bit)?;
+        let sparse_map_bytes = sar_core::sparse::write_sparse_map(&sparse.extents, is_64bit)?;
 
         let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), encoded_len);
         lfh.uncompressed_size = sparse.logical_size;
         if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
-            lfh.cdc_algo_id = Some(crate::cdc::CDC_ALGO_LITERAL);
+            lfh.cdc_algo_id = Some(sar_core::cdc::CDC_ALGO_LITERAL);
         }
         lfh.sparse_map = sparse_map_bytes;
         if self.flags.contains(GlobalFlags::COMPRESSED) {

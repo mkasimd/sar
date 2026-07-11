@@ -14,7 +14,7 @@ When implementation logic appears in a crate different from the ownership descri
 
 Final role: canonical SAR archive format crate.
 
-`sar-core` should own the wire format, archive structure, shared status model, and high-level archive reader/writer integration. It should remain the crate that other SAR crates integrate through, but it should not own every domain-specific algorithm.
+`sar-core` owns canonical wire format, shared status/error model, limits, checked parsing/writing primitives, and low-level structural helpers. High-level archive reader/writer integration is owned by `sar-archive` as of M11d.
 
 Should contain:
 
@@ -41,10 +41,8 @@ Should contain:
   * delta LFH metadata;
   * encryption metadata;
   * stream ID / sequence number fields.
-* archive reader/writer APIs.
-* indexed archive validation.
-* `NO_INDEX` archive processing.
-* transform pipeline orchestration.
+* low-level validation needed for safe SAR parsing.
+* low-level sparse-map wire helpers (`parse_sparse_map`, `write_sparse_map`).
 * integration with:
 
   * `sar-compression`;
@@ -56,20 +54,12 @@ Should contain:
   * `sar-sparse`;
   * `sar-loss-tolerant`.
 * profile/conformance reporting hooks.
-* high-level convenience APIs such as `ArchiveReader` and `ArchiveWriter`.
+Should keep as core APIs:
 
-Should keep, at least as integration APIs:
-
-* `ArchiveReader`.
-* `ArchiveWriter`.
-* `EntryInput`.
-* `EntryMetadata`.
-* `EntryReader`.
-* `LogicalFile`.
-* `ArchiveReaderOptions`.
-* `ArchiveWriterOptions`.
+* wire-format structs and parse/write helpers.
 * `ResourceLimits`.
-* `VerificationReport`.
+* `SarError` / `SarStatus`.
+* flag/type validation helpers.
 
 Should eventually move out or delegate:
 
@@ -93,9 +83,29 @@ Expected final shape:
 
 ```text
 sar-core:
-  owns canonical archive format and integration APIs.
-  delegates specialized behavior to specialized crates.
+  owns canonical archive format and low-level helpers.
+  does not own high-level archive integration APIs.
 ```
+
+---
+
+## `sar-archive`
+
+Final role: high-level archive integration crate (implemented in M11d).
+
+Should contain:
+
+* `ArchiveReader` / `ArchiveWriter`.
+* `ArchiveReaderOptions` / `ArchiveWriterOptions`.
+* `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`, `LogicalFile`.
+* archive verification/listing helpers.
+* indexed and `NO_INDEX` high-level archive flows.
+* transform orchestration and integration with compression/crypto/FEC/CDC/delta/sparse/fragmentation/loss-tolerant crates.
+* stream parser orchestration APIs used by transport/session layers.
+
+Should not contain:
+
+* wire-format ownership for GH/LFH/CD/Footer/TLV structs and parse/write primitives (owned by `sar-core`).
 
 ---
 

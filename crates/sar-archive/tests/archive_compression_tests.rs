@@ -1,14 +1,15 @@
 use std::io::Cursor;
 
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput, EntryMode,
+ EntryMode,
     GlobalFlags, SarError,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
 
 fn read_single_entry(bytes: Vec<u8>) -> Result<Vec<u8>, SarError> {
-    let mut reader = ArchiveReader::new(Cursor::new(bytes))?;
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes))?;
     let _ = reader.read_global_header()?;
     let entry = reader.next_entry()?.expect("entry");
     Ok(entry.payload)
@@ -17,23 +18,23 @@ fn read_single_entry(bytes: Vec<u8>) -> Result<Vec<u8>, SarError> {
 #[test]
 fn writer_reader_deflate_roundtrip_no_index() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new_with_compression(
+    let mut writer = sar_archive::ArchiveWriter::new_with_compression(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
             sparse: false,
             ..Default::default()
         },
-        CompressionSettings {
+        sar_archive::CompressionSettings {
             algo_id: COMP_ALGO_DEFLATE,
             level: Some(6),
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("a.txt", b"deflate payload".repeat(64)))
+        .add_entry(sar_archive::EntryInput::file("a.txt", b"deflate payload".repeat(64)))
         .expect("entry");
     writer.finish().expect("finish");
 
@@ -44,23 +45,23 @@ fn writer_reader_deflate_roundtrip_no_index() {
 #[test]
 fn writer_reader_zstd_roundtrip_indexed() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new_with_compression(
+    let mut writer = sar_archive::ArchiveWriter::new_with_compression(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: false,
             encryption: None,
             fec: None,
             sparse: false,
             ..Default::default()
         },
-        CompressionSettings {
+        sar_archive::CompressionSettings {
             algo_id: COMP_ALGO_ZSTD,
             level: Some(7),
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput::file("b.txt", b"zstd payload".repeat(64)))
+        .add_entry(sar_archive::EntryInput::file("b.txt", b"zstd payload".repeat(64)))
         .expect("entry");
     writer.finish().expect("finish");
 
@@ -85,7 +86,7 @@ fn global_compressed_with_inert_entry_mode_is_effective_store() {
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(b"12345");
 
-    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     let _ = reader.read_global_header().expect("header");
     let entry = reader.next_entry().expect("next").expect("entry");
     assert_eq!(entry.payload, b"12345");

@@ -1,9 +1,8 @@
 use std::io::Cursor;
 
+use sar_archive::{ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, StreamArchiveParser, StreamEvent, StreamParseState, StreamStep};
 use sar_core::{
-    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput,
-    EntryMode, GlobalFlags, SarError, StreamArchiveParser, StreamEvent, StreamParseState,
-    StreamStep,
+    EntryMode, GlobalFlags, SarError,
     format::{
         GlobalHeader, LocalFileHeader, parse_global_header, parse_lfh, write_global_header,
         write_lfh,
@@ -16,9 +15,9 @@ use sar_crypto::{
 
 fn no_index_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
@@ -29,36 +28,36 @@ fn no_index_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     .expect("writer");
     for (name, payload) in entries {
         writer
-            .add_entry(EntryInput::file((*name).to_string(), payload.to_vec()))
+            .add_entry(sar_archive::EntryInput::file((*name).to_string(), payload.to_vec()))
             .expect("entry");
     }
     writer.finish().expect("finish");
     out
 }
 
-fn next_ready(parser: &mut StreamArchiveParser) -> StreamEvent {
+fn next_ready(parser: &mut sar_archive::StreamArchiveParser) -> sar_archive::StreamEvent {
     match parser.step().expect("step") {
-        StreamStep::Ready(event) => event,
-        StreamStep::NeedMore { .. } => panic!("unexpected NeedMore"),
-        StreamStep::Complete => panic!("unexpected Complete"),
+        sar_archive::StreamStep::Ready(event) => event,
+        sar_archive::StreamStep::NeedMore { .. } => panic!("unexpected NeedMore"),
+        sar_archive::StreamStep::Complete => panic!("unexpected Complete"),
     }
 }
 
 #[test]
 fn parser_starts_in_need_global_header() {
-    let parser = StreamArchiveParser::new();
-    assert_eq!(parser.state(), StreamParseState::NeedGlobalHeader);
+    let parser = sar_archive::StreamArchiveParser::new();
+    assert_eq!(parser.state(), sar_archive::StreamParseState::NeedGlobalHeader);
 }
 
 #[test]
 fn partial_global_header_returns_need_more_until_finalized() {
     let archive = no_index_archive(&[("a", b"x")]);
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
 
     parser.push_bytes(&archive[..6]).expect("push");
     assert!(matches!(
         parser.step().expect("step"),
-        StreamStep::NeedMore { .. }
+        sar_archive::StreamStep::NeedMore { .. }
     ));
 
     parser.finalize_input();
@@ -84,17 +83,17 @@ fn global_header_resolution_establishes_lfh_layout_and_entry_mode_semantics() {
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(b"a");
 
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     parser.push_bytes(&bytes).expect("push");
 
     let header = match next_ready(&mut parser) {
-        StreamEvent::GlobalHeader(h) => h,
+        sar_archive::StreamEvent::GlobalHeader(h) => h,
         other => panic!("unexpected event: {other:?}"),
     };
     assert!(header.flags.contains(GlobalFlags::COMPRESSED));
 
     let entry = match next_ready(&mut parser) {
-        StreamEvent::Entry(e) => e,
+        sar_archive::StreamEvent::Entry(e) => e,
         other => panic!("unexpected event: {other:?}"),
     };
     assert_eq!(entry.payload, b"a");
@@ -105,7 +104,7 @@ fn global_header_resolution_establishes_lfh_layout_and_entry_mode_semantics() {
 #[test]
 fn partial_lfh_and_payload_return_need_more() {
     let archive = no_index_archive(&[("a", b"abc")]);
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
 
     let split = 16usize.min(archive.len());
     parser.push_bytes(&archive[..split]).expect("push");
@@ -113,29 +112,29 @@ fn partial_lfh_and_payload_return_need_more() {
 
     assert!(matches!(
         parser.step().expect("step"),
-        StreamStep::NeedMore { .. }
+        sar_archive::StreamStep::NeedMore { .. }
     ));
 
     parser.push_bytes(&archive[split..]).expect("push rest");
     let _ = next_ready(&mut parser);
-    assert_eq!(parser.state(), StreamParseState::EntryReady);
+    assert_eq!(parser.state(), sar_archive::StreamParseState::EntryReady);
 }
 
 #[test]
 fn lfhs_are_parsed_sequentially_and_forward_only_from_chunks() {
     let archive = no_index_archive(&[("a", b"1"), ("b", b"2")]);
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     let mut names = Vec::new();
 
     for chunk in archive.chunks(3) {
         parser.push_bytes(chunk).expect("chunk");
         loop {
             match parser.step().expect("step") {
-                StreamStep::NeedMore { .. } | StreamStep::Complete => break,
-                StreamStep::Ready(StreamEvent::Entry(entry)) => {
+                sar_archive::StreamStep::NeedMore { .. } | sar_archive::StreamStep::Complete => break,
+                sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => {
                     names.push(entry.metadata.name.clone())
                 }
-                StreamStep::Ready(_) => {}
+                sar_archive::StreamStep::Ready(_) => {}
             }
         }
     }
@@ -143,10 +142,10 @@ fn lfhs_are_parsed_sequentially_and_forward_only_from_chunks() {
 
     loop {
         match parser.step().expect("step") {
-            StreamStep::Ready(StreamEvent::Entry(entry)) => names.push(entry.metadata.name.clone()),
-            StreamStep::Ready(_) => {}
-            StreamStep::NeedMore { .. } => continue,
-            StreamStep::Complete => break,
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => names.push(entry.metadata.name.clone()),
+            sar_archive::StreamStep::Ready(_) => {}
+            sar_archive::StreamStep::NeedMore { .. } => continue,
+            sar_archive::StreamStep::Complete => break,
         }
     }
 
@@ -158,7 +157,7 @@ fn parser_handles_multiple_concatenated_archives() {
     let mut combined = no_index_archive(&[("a", b"x")]);
     combined.extend_from_slice(&no_index_archive(&[("b", b"y")]));
 
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     parser.push_bytes(&combined).expect("push");
     parser.finalize_input();
 
@@ -166,11 +165,11 @@ fn parser_handles_multiple_concatenated_archives() {
     let mut names = Vec::new();
     loop {
         match parser.step().expect("step") {
-            StreamStep::Ready(StreamEvent::Entry(entry)) => names.push(entry.metadata.name),
-            StreamStep::Ready(StreamEvent::ArchiveComplete(_)) => complete_count += 1,
-            StreamStep::Ready(StreamEvent::GlobalHeader(_)) => {}
-            StreamStep::NeedMore { .. } => {}
-            StreamStep::Complete => break,
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => names.push(entry.metadata.name),
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::ArchiveComplete(_)) => complete_count += 1,
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::GlobalHeader(_)) => {}
+            sar_archive::StreamStep::NeedMore { .. } => {}
+            sar_archive::StreamStep::Complete => break,
         }
     }
 
@@ -208,11 +207,11 @@ fn unset_is_encrypted_treats_payload_as_plaintext_with_physical_fields_present()
     bytes.extend_from_slice(&lfh_bytes);
     bytes.extend_from_slice(b"p");
 
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     parser.push_bytes(&bytes).expect("push");
     let _ = next_ready(&mut parser);
     let entry = match next_ready(&mut parser) {
-        StreamEvent::Entry(e) => e,
+        sar_archive::StreamEvent::Entry(e) => e,
         _ => unreachable!(),
     };
     assert_eq!(entry.payload, b"p");
@@ -238,19 +237,19 @@ fn opcode_and_session_control_are_parsed_structurally_only() {
     bytes.extend_from_slice(&write_lfh(&flags, &normal_lfh).expect("lfh2"));
     bytes.extend_from_slice(b"z");
 
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     parser.push_bytes(&bytes).expect("push");
     let _ = next_ready(&mut parser);
 
     let first = match next_ready(&mut parser) {
-        StreamEvent::Entry(e) => e,
+        sar_archive::StreamEvent::Entry(e) => e,
         _ => unreachable!(),
     };
     assert!(first.header.entry_mode.is_session_control());
     assert_eq!(first.header.entry_mode.op_code(), 0x6);
 
     let second = match next_ready(&mut parser) {
-        StreamEvent::Entry(e) => e,
+        sar_archive::StreamEvent::Entry(e) => e,
         _ => unreachable!(),
     };
     assert_eq!(second.metadata.name, "data");
@@ -287,11 +286,11 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
         let writer_key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
             password: password.clone(),
         });
-        let mut writer = ArchiveWriter::new_with_compression_and_key_provider(
+        let mut writer = sar_archive::ArchiveWriter::new_with_compression_and_key_provider(
             Cursor::new(&mut archive),
-            ArchiveWriterOptions {
+            sar_archive::ArchiveWriterOptions {
                 no_index: true,
-                encryption: Some(EncryptionSettings {
+                encryption: Some(sar_archive::EncryptionSettings {
                     algo_id: ENCR_AES256_GCM,
                     kms_params: KmsParams::Pbkdf2(Pbkdf2Params {
                         prf_algo_id: sar_crypto::PBKDF2_PRF_HMAC_SHA256,
@@ -304,7 +303,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
                 sparse: false,
                 ..Default::default()
             },
-            CompressionSettings {
+            sar_archive::CompressionSettings {
                 algo_id: 0x01,
                 level: Some(3),
             },
@@ -312,7 +311,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput::file(
+            .add_entry(sar_archive::EntryInput::file(
                 "enc",
                 b"secret-compressed-payload".to_vec(),
             ))
@@ -334,7 +333,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
 
     let reader_key_provider: Box<dyn sar_core::KeyProvider> =
         Box::new(TestKeyProvider { password });
-    let mut parser = StreamArchiveParser::new().with_key_provider(reader_key_provider);
+    let mut parser = sar_archive::StreamArchiveParser::new().with_key_provider(reader_key_provider);
     parser.push_bytes(&archive).expect("push");
     let _ = next_ready(&mut parser);
     let err = parser
@@ -358,7 +357,7 @@ fn malformed_structural_data_returns_structural_error() {
     bytes.extend_from_slice(&2u32.to_le_bytes()); // invalid LFH header size
     bytes.extend_from_slice(&[0u8; 2]);
 
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     parser.push_bytes(&bytes).expect("push");
     let _ = next_ready(&mut parser);
 
@@ -369,14 +368,14 @@ fn malformed_structural_data_returns_structural_error() {
 #[test]
 fn incomplete_data_is_not_corruption_until_finalized() {
     let archive = no_index_archive(&[("a", b"abc")]);
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
 
     parser.push_bytes(&archive[..20]).expect("push partial");
     let _ = next_ready(&mut parser);
 
     assert!(matches!(
         parser.step().expect("step"),
-        StreamStep::NeedMore { .. }
+        sar_archive::StreamStep::NeedMore { .. }
     ));
 
     parser.finalize_input();
@@ -421,11 +420,11 @@ fn compressed_store_patch_requires_decompress_before_patch() {
     bytes.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     bytes.extend_from_slice(&encoded);
 
-    let mut parser = StreamArchiveParser::new();
+    let mut parser = sar_archive::StreamArchiveParser::new();
     parser.push_bytes(&bytes).expect("push");
     let _ = next_ready(&mut parser);
     let entry = match next_ready(&mut parser) {
-        StreamEvent::Entry(e) => e,
+        sar_archive::StreamEvent::Entry(e) => e,
         _ => unreachable!(),
     };
     assert_eq!(entry.payload, payload);
@@ -434,9 +433,9 @@ fn compressed_store_patch_requires_decompress_before_patch() {
 #[test]
 fn archive_writer_exposes_structural_stream_state_model() {
     let mut out = Vec::new();
-    let mut writer = ArchiveWriter::new(
+    let mut writer = sar_archive::ArchiveWriter::new(
         &mut out,
-        ArchiveWriterOptions {
+        sar_archive::ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
@@ -448,13 +447,13 @@ fn archive_writer_exposes_structural_stream_state_model() {
 
     assert_eq!(
         writer.stream_state(),
-        sar_core::StreamWriteState::NeedLocalFileHeader
+        sar_archive::StreamWriteState::NeedLocalFileHeader
     );
     writer
-        .add_entry(EntryInput::file("x", b"1".to_vec()))
+        .add_entry(sar_archive::EntryInput::file("x", b"1".to_vec()))
         .expect("entry");
     assert_eq!(
         writer.stream_state(),
-        sar_core::StreamWriteState::EntryReady
+        sar_archive::StreamWriteState::EntryReady
     );
 }

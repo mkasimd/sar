@@ -15,8 +15,8 @@
 use std::io::Cursor;
 
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions};
+use sar_archive::{ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
-    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput,
     GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
     format::{
@@ -460,9 +460,9 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh0).expect("lfh0"));
     archive.extend_from_slice(&[0x42u8]);
 
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: ResourceLimits {
                 max_decoded_entry_size: 512,
                 ..unlimited()
@@ -550,16 +550,16 @@ fn decompression_output_above_limit_fails() {
 fn archive_reader_decompression_respects_entry_limit() {
     let mut out = Vec::new();
     {
-        let mut writer = ArchiveWriter::new_with_compression(
+        let mut writer = sar_archive::ArchiveWriter::new_with_compression(
             &mut out,
-            ArchiveWriterOptions {
+            sar_archive::ArchiveWriterOptions {
                 no_index: true,
                 encryption: None,
                 fec: None,
                 sparse: false,
                 ..Default::default()
             },
-            sar_core::CompressionSettings {
+            sar_archive::CompressionSettings {
                 algo_id: COMP_ALGO_DEFLATE,
                 level: Some(6),
             },
@@ -567,14 +567,14 @@ fn archive_reader_decompression_respects_entry_limit() {
         .expect("writer");
         // 8 KiB of compressible data
         writer
-            .add_entry(EntryInput::file("big.bin", b"AAAA".repeat(2048)))
+            .add_entry(sar_archive::EntryInput::file("big.bin", b"AAAA".repeat(2048)))
             .expect("entry");
         writer.finish().expect("finish");
     }
 
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(out),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: ResourceLimits {
                 max_decoded_entry_size: 1024,
                 ..unlimited()
@@ -700,7 +700,7 @@ fn excessive_fec_value_bytes_fails_at_parse_stage() {
 }
 
 // ---------------------------------------------------------------------------
-// §8  End-to-end expansion bomb via ArchiveReader
+// §8  End-to-end expansion bomb via sar_archive::ArchiveReader
 // ---------------------------------------------------------------------------
 
 /// End-to-end: `read_all_logical_files` rejects sparse expansion bomb
@@ -723,9 +723,9 @@ fn read_all_logical_files_rejects_sparse_expansion_bomb() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&[0x00u8]);
 
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: ResourceLimits {
                 max_decoded_entry_size: 1024,
                 ..unlimited()
@@ -763,9 +763,9 @@ fn read_all_logical_files_sparse_bounded_success() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&[0x42u8]);
 
-    let mut reader = ArchiveReader::with_options(
+    let mut reader = sar_archive::ArchiveReader::with_options(
         Cursor::new(archive),
-        ArchiveReaderOptions {
+        sar_archive::ArchiveReaderOptions {
             limits: ResourceLimits {
                 max_decoded_entry_size: 1024,
                 ..unlimited()

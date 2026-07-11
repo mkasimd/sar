@@ -13,11 +13,14 @@ use serde_json::json;
 use walkdir::WalkDir;
 
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
-use sar_core::{
+use sar_archive::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
-    EncryptionSettings, EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider,
-    KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv,
-    inspect_recovery_metadata, plan_archive_repair, repair_archive, sparse::SparseExtent,
+    EncryptionSettings, EntryInput, FecSettings,
+};
+use sar_core::{
+    ErasureInput, GlobalFlags, KeyProvider, KmsContext, KmsParams, ResourceLimits, SarError,
+    SecretBytes, fec::validate_recovery_tlv, inspect_recovery_metadata, plan_archive_repair,
+    repair_archive, sparse::SparseExtent,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
@@ -919,7 +922,7 @@ fn extract_archive(
     #[derive(Debug)]
     struct FragGroup {
         name: String,
-        entries: Vec<sar_core::archive::EntryReader>,
+        entries: Vec<sar_archive::EntryReader>,
         sparse_extents: Option<Vec<SparseExtent>>,
         sparse_uncompressed_size: u64,
         file_crc32: Option<u32>,
@@ -1170,7 +1173,7 @@ fn verify_archive(
         }
 
         // Group entries by fragment_id and validate fragment groups
-        let mut frag_groups: std::collections::HashMap<u32, Vec<&sar_core::EntryMetadata>> =
+        let mut frag_groups: std::collections::HashMap<u32, Vec<&sar_archive::EntryMetadata>> =
             std::collections::HashMap::new();
         for entry in &entries {
             if let (true, Some(fid)) = (entry.is_fragment, entry.fragment_id) {

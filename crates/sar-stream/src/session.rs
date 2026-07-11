@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
+use sar_archive::EntryReader;
 use sar_core::{
-    EntryReader, GlobalFlags, GlobalHeader, LocalFileHeader, ResourceLimits, SarError, SarStatus,
+    GlobalFlags, GlobalHeader, LocalFileHeader, ResourceLimits, SarError, SarStatus,
     validate_entry_mode_against_global, validate_global_flags,
 };
 
