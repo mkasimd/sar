@@ -397,3 +397,36 @@ fn preserve_permissions_strips_setuid_bits_by_default() {
         .mode();
     assert_eq!(mode & 0o7777, 0o755);
 }
+
+#[cfg(unix)]
+#[test]
+fn extraction_rejects_existing_symlink_parent_component() {
+    let td = tempdir().expect("tmp");
+    let archive = td.path().join("safe.sar");
+    write_archive(
+        &archive,
+        ArchiveWriterOptions {
+            no_index: true,
+            ..Default::default()
+        },
+        vec![EntryInput::file("safe/file.txt", b"payload".to_vec())],
+    )
+    .expect("archive");
+
+    let outside = td.path().join("outside");
+    fs::create_dir_all(&outside).expect("mkdir outside");
+    let extract_dir = td.path().join("extract");
+    fs::create_dir_all(&extract_dir).expect("mkdir extract");
+    symlink(&outside, extract_dir.join("safe")).expect("symlink parent");
+
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args([
+            "extract",
+            archive.to_str().expect("str"),
+            extract_dir.to_str().expect("str"),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("existing symlink"));
+}
