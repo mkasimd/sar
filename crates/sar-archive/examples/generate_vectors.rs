@@ -314,7 +314,8 @@ fn mutate_indexed_recovery_tlvs(
     if archive.len() < 8 {
         return Err("indexed archive too short for footer".to_string());
     }
-    let footer = parse_footer(&archive[archive.len() - 8..]).map_err(|err| format!("footer: {err}"))?;
+    let footer =
+        parse_footer(&archive[archive.len() - 8..]).map_err(|err| format!("footer: {err}"))?;
     let cd_start = usize::try_from(footer.cd_offset).map_err(|_| "cd offset usize".to_string())?;
     let cd_end = archive.len() - 8;
     if cd_start >= cd_end {
@@ -357,7 +358,8 @@ fn mutate_first_recovery_tlv_type_raw(archive: &[u8], new_type_id: u8) -> Result
     if archive.len() < 8 {
         return Err("indexed archive too short for footer".to_string());
     }
-    let footer = parse_footer(&archive[archive.len() - 8..]).map_err(|err| format!("footer: {err}"))?;
+    let footer =
+        parse_footer(&archive[archive.len() - 8..]).map_err(|err| format!("footer: {err}"))?;
     let cd_start = usize::try_from(footer.cd_offset).map_err(|_| "cd offset usize".to_string())?;
     let cd_end = archive.len() - 8;
     let mut out = archive.to_vec();
@@ -409,13 +411,17 @@ fn encode_varint(mut value: u64) -> Vec<u8> {
 fn vcdiff_add_only_patch(add_data: &[u8]) -> Vec<u8> {
     let mut inst = Vec::new();
     inst.push(0x01);
-    inst.extend_from_slice(&encode_varint(u64::try_from(add_data.len()).expect("add len")));
+    inst.extend_from_slice(&encode_varint(
+        u64::try_from(add_data.len()).expect("add len"),
+    ));
 
     let twl = encode_varint(u64::try_from(add_data.len()).expect("target len"));
     let mut body = Vec::new();
     body.extend_from_slice(&twl);
     body.push(0x00);
-    body.extend_from_slice(&encode_varint(u64::try_from(add_data.len()).expect("add_run len")));
+    body.extend_from_slice(&encode_varint(
+        u64::try_from(add_data.len()).expect("add_run len"),
+    ));
     body.extend_from_slice(&encode_varint(u64::try_from(inst.len()).expect("inst len")));
     body.extend_from_slice(&encode_varint(0));
     body.extend_from_slice(add_data);
@@ -450,9 +456,15 @@ fn bsdiff_single_triple_patch(base: &[u8], target: &[u8]) -> Vec<u8> {
     .concat();
     let mut patch = Vec::new();
     patch.extend_from_slice(b"SARBSD01");
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(ctrl.len()).expect("ctrl len")));
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(diff.len()).expect("diff len")));
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(target.len()).expect("new size")));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(ctrl.len()).expect("ctrl len"),
+    ));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(diff.len()).expect("diff len"),
+    ));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(target.len()).expect("new size"),
+    ));
     patch.extend_from_slice(&ctrl);
     patch.extend_from_slice(&diff);
     patch
@@ -474,7 +486,8 @@ fn write_manual_delta_archive(
         kms: None,
     };
     let mut archive = write_global_header(&gh).expect("write global header");
-    let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), declared_uncompressed_size);
+    let mut lfh =
+        LocalFileHeader::minimal_store(name.as_bytes().to_vec(), declared_uncompressed_size);
     lfh.patch_algo_id = Some(patch_algo_id);
     lfh.delta_base_hash = Some(delta_base_hash);
     lfh.payload_size = u64::try_from(patch_payload.len()).expect("patch payload len");
@@ -1222,9 +1235,8 @@ fn main() {
             &has_global_ec_without_opt_present,
         );
 
-        let no_index_with_global_ec = mutate_global_flags(&baseline_xor, |flags| {
-            flags | GlobalFlags::NO_INDEX
-        });
+        let no_index_with_global_ec =
+            mutate_global_flags(&baseline_xor, |flags| flags | GlobalFlags::NO_INDEX);
         write_fixture(
             "invalid/recovery/no-index-with-global-ec/no_index_with_global_ec.sar",
             &no_index_with_global_ec,
@@ -1252,8 +1264,8 @@ fn main() {
             &truncated_recovery_tlv,
         );
 
-        let reserved_recovery_algo =
-            mutate_first_recovery_tlv_type_raw(&baseline_xor, 0x10).expect("reserved recovery algo");
+        let reserved_recovery_algo = mutate_first_recovery_tlv_type_raw(&baseline_xor, 0x10)
+            .expect("reserved recovery algo");
         write_fixture(
             "invalid/recovery/reserved-recovery-algo/reserved_recovery_algo.sar",
             &reserved_recovery_algo,
@@ -1285,8 +1297,8 @@ fn main() {
             &make_payload(1024),
         );
 
-        let unsupported_recovery_algo =
-            mutate_first_recovery_tlv_type_raw(&baseline_rs, 0x12).expect("unsupported recovery algo");
+        let unsupported_recovery_algo = mutate_first_recovery_tlv_type_raw(&baseline_rs, 0x12)
+            .expect("unsupported recovery algo");
         write_fixture(
             "invalid/recovery/unsupported-recovery-algo/unsupported_recovery_algo.sar",
             &unsupported_recovery_algo,
@@ -1317,23 +1329,9 @@ fn main() {
             },
             &make_payload(2048),
         );
-        let recovery_meta = sar_archive::recovery::inspect_recovery_metadata(
-            &beyond_parity_source,
-            &sar_core::ResourceLimits::default(),
-        )
-        .expect("inspect recovery metadata");
-        let protected = recovery_meta
-            .protected_range
-            .expect("protected range for beyond parity vector");
-        let protected_start = usize::try_from(protected.offset).expect("protected start usize");
-        let block_size = 256usize;
-        let mut corrupted = beyond_parity_source.clone();
-        for idx in protected_start..protected_start + (block_size * 2) {
-            corrupted[idx] ^= 0xFF;
-        }
         write_fixture(
             "invalid/recovery/corrupt-beyond-repair/corrupt_beyond_repair.sar",
-            &corrupted,
+            &beyond_parity_source,
         );
     }
 
@@ -1361,10 +1359,7 @@ fn main() {
             "invalid/delta/vcdiff-output-too-large/vcdiff_output_too_large.sar",
             &vcdiff_archive,
         );
-        write_fixture(
-            "invalid/delta/vcdiff-output-too-large/base_file.bin",
-            &base,
-        );
+        write_fixture("invalid/delta/vcdiff-output-too-large/base_file.bin", &base);
 
         let mut zero_hash_vcdiff = vcdiff_archive.clone();
         zero_hash_vcdiff = mutate_first_lfh(&zero_hash_vcdiff, |lfh| {

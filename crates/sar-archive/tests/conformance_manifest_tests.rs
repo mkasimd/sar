@@ -709,55 +709,6 @@ fn non_deferred_valid_vectors_must_not_be_placeholders() {
             continue;
         }
 
-        #[test]
-        fn non_deferred_invalid_vectors_must_not_be_placeholders() {
-            let manifests = discover_manifests(&vectors_root()).expect("discover manifests");
-            let banned = [
-                "deferred",
-                "placeholder",
-                "fallback",
-                "requires more complex writer setup",
-                "future work",
-                "not yet generated",
-                "will be added later",
-            ];
-            let mut failures = Vec::new();
-
-            for (path, result) in &manifests {
-                let manifest = match result {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                if manifest.kind != VectorKind::Invalid || manifest.deferred {
-                    continue;
-                }
-                let combined = format!(
-                    "{}\n{}\n{}",
-                    manifest.title,
-                    manifest.description,
-                    manifest.notes.join("\n")
-                )
-                .to_ascii_lowercase();
-                for phrase in banned {
-                    if combined.contains(phrase) {
-                        failures.push(format!(
-                            "[{}] {}: contains placeholder language '{}'",
-                            manifest.id,
-                            path.display(),
-                            phrase
-                        ));
-                    }
-                }
-            }
-
-            if !failures.is_empty() {
-                panic!(
-                    "{} non-deferred invalid vector(s) contain placeholder language:\n{}",
-                    failures.len(),
-                    failures.join("\n")
-                );
-            }
-        }
         let combined = format!(
             "{}\n{}\n{}",
             manifest.title,
@@ -780,6 +731,56 @@ fn non_deferred_valid_vectors_must_not_be_placeholders() {
     if !failures.is_empty() {
         panic!(
             "{} canonical valid vector(s) contain placeholder language:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn non_deferred_invalid_vectors_must_not_be_placeholders() {
+    let manifests = discover_manifests(&vectors_root()).expect("discover manifests");
+    let banned = [
+        "deferred",
+        "placeholder",
+        "fallback",
+        "requires more complex writer setup",
+        "future work",
+        "not yet generated",
+        "will be added later",
+    ];
+    let mut failures = Vec::new();
+
+    for (path, result) in &manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if manifest.kind != VectorKind::Invalid || manifest.deferred {
+            continue;
+        }
+        let combined = format!(
+            "{}\n{}\n{}",
+            manifest.title,
+            manifest.description,
+            manifest.notes.join("\n")
+        )
+        .to_ascii_lowercase();
+        for phrase in banned {
+            if combined.contains(phrase) {
+                failures.push(format!(
+                    "[{}] {}: contains placeholder language '{}'",
+                    manifest.id,
+                    path.display(),
+                    phrase
+                ));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} non-deferred invalid vector(s) contain placeholder language:\n{}",
             failures.len(),
             failures.join("\n")
         );
@@ -1097,161 +1098,6 @@ fn archive_recovery_vectors_use_recovery_taxonomy_and_paths() {
             continue;
         }
 
-        #[test]
-        fn invalid_recovery_vectors_are_real_and_recovery_tagged() {
-            let root = vectors_root();
-            let manifests = discover_manifests(&root).expect("discover manifests");
-            let mut failures = Vec::new();
-            let mut seen = 0usize;
-
-            for (manifest_path, result) in manifests {
-                let manifest = match result {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                if manifest.kind != VectorKind::Invalid {
-                    continue;
-                }
-                let rel_manifest = manifest_path
-                    .strip_prefix(&root)
-                    .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
-                let rel_manifest_dir = rel_manifest
-                    .parent()
-                    .expect("manifest parent")
-                    .to_string_lossy();
-                if !rel_manifest_dir.starts_with("invalid/recovery/") {
-                    continue;
-                }
-                seen += 1;
-                if manifest.deferred {
-                    failures.push(format!(
-                        "[{}] {}: invalid recovery vectors with real fixtures must not be deferred",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                    continue;
-                }
-                let has_recovery_feature = manifest.features.iter().any(|f| f.starts_with("recovery:"));
-                let has_fec_feature = manifest.features.iter().any(|f| f.starts_with("fec:"));
-                if !has_recovery_feature {
-                    failures.push(format!(
-                        "[{}] {}: invalid recovery vectors must use recovery:* feature tags",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                }
-                if has_fec_feature {
-                    failures.push(format!(
-                        "[{}] {}: invalid recovery vectors must not use fec:* feature tags",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                }
-                let Some(file_name) = manifest.file.as_ref() else {
-                    failures.push(format!(
-                        "[{}] {}: non-deferred invalid recovery vector must reference a real .sar fixture",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                    continue;
-                };
-                let fixture_path = manifest_path
-                    .parent()
-                    .expect("manifest parent")
-                    .join(file_name);
-                if !fixture_path.exists() {
-                    failures.push(format!(
-                        "[{}] {}: referenced fixture does not exist: {}",
-                        manifest.id,
-                        rel_manifest.display(),
-                        fixture_path.display()
-                    ));
-                }
-            }
-
-            assert!(seen > 0, "expected at least one invalid recovery vector");
-            if !failures.is_empty() {
-                panic!(
-                    "{} invalid recovery manifest audit failure(s):\n{}",
-                    failures.len(),
-                    failures.join("\n")
-                );
-            }
-        }
-
-        #[test]
-        fn invalid_delta_vectors_are_real_and_delta_tagged() {
-            let root = vectors_root();
-            let manifests = discover_manifests(&root).expect("discover manifests");
-            let mut failures = Vec::new();
-            let mut seen = 0usize;
-
-            for (manifest_path, result) in manifests {
-                let manifest = match result {
-                    Ok(m) => m,
-                    Err(_) => continue,
-                };
-                if manifest.kind != VectorKind::Invalid {
-                    continue;
-                }
-                let rel_manifest = manifest_path
-                    .strip_prefix(&root)
-                    .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
-                let rel_manifest_dir = rel_manifest
-                    .parent()
-                    .expect("manifest parent")
-                    .to_string_lossy();
-                if !rel_manifest_dir.starts_with("invalid/delta/") {
-                    continue;
-                }
-                seen += 1;
-                if manifest.deferred {
-                    failures.push(format!(
-                        "[{}] {}: invalid delta vectors with real fixtures must not be deferred",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                    continue;
-                }
-                if !manifest.features.iter().any(|f| f.starts_with("delta:")) {
-                    failures.push(format!(
-                        "[{}] {}: invalid delta vectors must use delta:* feature tags",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                }
-                let Some(file_name) = manifest.file.as_ref() else {
-                    failures.push(format!(
-                        "[{}] {}: non-deferred invalid delta vector must reference a real .sar fixture",
-                        manifest.id,
-                        rel_manifest.display()
-                    ));
-                    continue;
-                };
-                let fixture_path = manifest_path
-                    .parent()
-                    .expect("manifest parent")
-                    .join(file_name);
-                if !fixture_path.exists() {
-                    failures.push(format!(
-                        "[{}] {}: referenced fixture does not exist: {}",
-                        manifest.id,
-                        rel_manifest.display(),
-                        fixture_path.display()
-                    ));
-                }
-            }
-
-            assert!(seen > 0, "expected at least one invalid delta vector");
-            if !failures.is_empty() {
-                panic!(
-                    "{} invalid delta manifest audit failure(s):\n{}",
-                    failures.len(),
-                    failures.join("\n")
-                );
-            }
-        }
-
         let rel_manifest = manifest_path
             .strip_prefix(&root)
             .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
@@ -1339,6 +1185,161 @@ fn archive_recovery_vectors_use_recovery_taxonomy_and_paths() {
     if !failures.is_empty() {
         panic!(
             "{} archive recovery taxonomy failure(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn invalid_recovery_vectors_are_real_and_recovery_tagged() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+    let mut failures = Vec::new();
+    let mut seen = 0usize;
+
+    for (manifest_path, result) in manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if manifest.kind != VectorKind::Invalid {
+            continue;
+        }
+        let rel_manifest = manifest_path
+            .strip_prefix(&root)
+            .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
+        let rel_manifest_dir = rel_manifest
+            .parent()
+            .expect("manifest parent")
+            .to_string_lossy();
+        if !rel_manifest_dir.starts_with("invalid/recovery/") {
+            continue;
+        }
+        seen += 1;
+        if manifest.deferred {
+            failures.push(format!(
+                "[{}] {}: invalid recovery vectors with real fixtures must not be deferred",
+                manifest.id,
+                rel_manifest.display()
+            ));
+            continue;
+        }
+        let has_recovery_feature = manifest.features.iter().any(|f| f.starts_with("recovery:"));
+        let has_fec_feature = manifest.features.iter().any(|f| f.starts_with("fec:"));
+        if !has_recovery_feature {
+            failures.push(format!(
+                "[{}] {}: invalid recovery vectors must use recovery:* feature tags",
+                manifest.id,
+                rel_manifest.display()
+            ));
+        }
+        if has_fec_feature {
+            failures.push(format!(
+                "[{}] {}: invalid recovery vectors must not use fec:* feature tags",
+                manifest.id,
+                rel_manifest.display()
+            ));
+        }
+        let Some(file_name) = manifest.file.as_ref() else {
+            failures.push(format!(
+                "[{}] {}: non-deferred invalid recovery vector must reference a real .sar fixture",
+                manifest.id,
+                rel_manifest.display()
+            ));
+            continue;
+        };
+        let fixture_path = manifest_path
+            .parent()
+            .expect("manifest parent")
+            .join(file_name);
+        if !fixture_path.exists() {
+            failures.push(format!(
+                "[{}] {}: referenced fixture does not exist: {}",
+                manifest.id,
+                rel_manifest.display(),
+                fixture_path.display()
+            ));
+        }
+    }
+
+    assert!(seen > 0, "expected at least one invalid recovery vector");
+    if !failures.is_empty() {
+        panic!(
+            "{} invalid recovery manifest audit failure(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn invalid_delta_vectors_are_real_and_delta_tagged() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+    let mut failures = Vec::new();
+    let mut seen = 0usize;
+
+    for (manifest_path, result) in manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if manifest.kind != VectorKind::Invalid {
+            continue;
+        }
+        let rel_manifest = manifest_path
+            .strip_prefix(&root)
+            .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
+        let rel_manifest_dir = rel_manifest
+            .parent()
+            .expect("manifest parent")
+            .to_string_lossy();
+        if !rel_manifest_dir.starts_with("invalid/delta/") {
+            continue;
+        }
+        seen += 1;
+        if manifest.deferred {
+            failures.push(format!(
+                "[{}] {}: invalid delta vectors with real fixtures must not be deferred",
+                manifest.id,
+                rel_manifest.display()
+            ));
+            continue;
+        }
+        if !manifest.features.iter().any(|f| f.starts_with("delta:")) {
+            failures.push(format!(
+                "[{}] {}: invalid delta vectors must use delta:* feature tags",
+                manifest.id,
+                rel_manifest.display()
+            ));
+        }
+        let Some(file_name) = manifest.file.as_ref() else {
+            failures.push(format!(
+                "[{}] {}: non-deferred invalid delta vector must reference a real .sar fixture",
+                manifest.id,
+                rel_manifest.display()
+            ));
+            continue;
+        };
+        let fixture_path = manifest_path
+            .parent()
+            .expect("manifest parent")
+            .join(file_name);
+        if !fixture_path.exists() {
+            failures.push(format!(
+                "[{}] {}: referenced fixture does not exist: {}",
+                manifest.id,
+                rel_manifest.display(),
+                fixture_path.display()
+            ));
+        }
+    }
+
+    assert!(seen > 0, "expected at least one invalid delta vector");
+    if !failures.is_empty() {
+        panic!(
+            "{} invalid delta manifest audit failure(s):\n{}",
             failures.len(),
             failures.join("\n")
         );

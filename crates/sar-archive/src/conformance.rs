@@ -942,7 +942,9 @@ fn attempt_archive_repair_beyond_parity(
     bytes: &[u8],
     limits: &sar_core::limits::ResourceLimits,
 ) -> Result<(), sar_core::error::SarError> {
-    use crate::recovery::{ErasureInput, ErasureRange, inspect_recovery_metadata, plan_archive_repair};
+    use crate::recovery::{
+        ErasureInput, ErasureRange, inspect_recovery_metadata, plan_archive_repair,
+    };
 
     let meta = inspect_recovery_metadata(bytes, limits)?;
     let protected = meta
@@ -950,12 +952,12 @@ fn attempt_archive_repair_beyond_parity(
         .ok_or(sar_core::error::SarError::RecoveryUnavailable(
             "archive-level repair requires a protected range",
         ))?;
-    let summary = meta
-        .recovery_tlvs
-        .first()
-        .ok_or(sar_core::error::SarError::RecoveryUnavailable(
-            "archive-level repair requires RECOVERY TLV metadata",
-        ))?;
+    let summary =
+        meta.recovery_tlvs
+            .first()
+            .ok_or(sar_core::error::SarError::RecoveryUnavailable(
+                "archive-level repair requires RECOVERY TLV metadata",
+            ))?;
     let block_size = match summary {
         sar_core::fec::FecSummary::Xor { block_size, .. } => u64::from(*block_size),
         sar_core::fec::FecSummary::ReedSolomon { symbol_size, .. } => u64::from(*symbol_size),
