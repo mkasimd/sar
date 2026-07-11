@@ -24,9 +24,7 @@ If this milestone document appears to describe library/profile layout differentl
 
 # Completed milestones
 
-## M1:
-
-core primitives, error model, flags, and checked parsing foundations
+## M1: core primitives, error model, flags, and checked parsing foundations
 
 * workspace/crate structure baseline
 * SAR status/error types
@@ -39,9 +37,7 @@ core primitives, error model, flags, and checked parsing foundations
 * fail-closed reserved/unsupported handling foundations
 * no unsafe parsing assumptions
 
-## M2:
-
-Global Header, LFH, Central Dictionary, and Footer parsing
+## M2: Global Header, LFH, Central Dictionary, and Footer parsing
 
 * Global Header parse/validate
 * LFH parse/validate
@@ -54,9 +50,7 @@ Global Header, LFH, Central Dictionary, and Footer parsing
 * malformed/truncated archive tests
 * deterministic parser behavior
 
-## M3:
-
-minimal archive read/write with STORE and NO_INDEX
+## M3: minimal archive read/write with STORE and NO_INDEX
 
 * minimal archive writer
 * minimal archive reader
@@ -68,9 +62,7 @@ minimal archive read/write with STORE and NO_INDEX
 * minimal CLI archive create/list/extract behavior where applicable
 * deterministic archive encoding tests
 
-## M4:
-
-compression and transform pipeline
+## M4: compression and transform pipeline
 
 * `sar-compression` crate
 * STORE transform path
@@ -83,9 +75,7 @@ compression and transform pipeline
 * expansion-limit protections
 * compression round-trip tests
 
-## M5:
-
-crypto, KMS, hashes, signatures, and AEAD
+## M5: crypto, KMS, hashes, signatures, and AEAD
 
 * `sar-crypto` crate
 * hash registry support
@@ -100,9 +90,7 @@ crypto, KMS, hashes, signatures, and AEAD
 * authentication failure is never loss-tolerant
 * crypto negative tests
 
-## M6:
-
-XOR FEC
+## M6: XOR FEC
 
 * `sar-fec` crate foundation
 * XOR parity generation
@@ -113,9 +101,7 @@ XOR FEC
 * missing/corrupt shard behavior
 * FEC validation tests
 
-## M7:
-
-Reed-Solomon FEC
+## M7: Reed-Solomon FEC
 
 * Reed-Solomon FEC support
 * shard layout and repair behavior
@@ -125,9 +111,7 @@ Reed-Solomon FEC
 * malformed FEC metadata tests
 * repair-before-transform ordering validation
 
-## M8:
-
-fragmentation, sparse files, recovery behavior, and security hardening
+## M8: fragmentation, sparse files, recovery behavior, and security hardening
 
 * file fragmentation metadata
 * fragment ID / fragment index / fragment descriptor handling
@@ -141,9 +125,7 @@ fragmentation, sparse files, recovery behavior, and security hardening
 * malformed sparse/fragment metadata tests
 * no panic/DoS behavior for malformed metadata
 
-## M9a:
-
-CDC metadata, chunk maps, FASTCDC, and CDC verification
+## M9a: CDC metadata, chunk maps, FASTCDC, and CDC verification
 
 * CDC algorithm registry
 * CDC LFH metadata handling
@@ -157,9 +139,7 @@ CDC metadata, chunk maps, FASTCDC, and CDC verification
 * no false claim of FASTCDC boundary-regeneration verification
 * external provider/CAS behavior left for future profile/spec clarification
 
-## M9b:
-
-Delta metadata, base identity, and patch algorithms
+## M9b: Delta metadata, base identity, and patch algorithms
 
 * delta algorithm registry
 * HAS_DELTA LFH behavior
@@ -173,9 +153,7 @@ Delta metadata, base identity, and patch algorithms
 * missing/zero base identity handling
 * delta negative tests
 
-## M10a:
-
-streaming-capable reader/writer state model
+## M10a: streaming-capable reader/writer state model
 
 * stateless Section 11 byte-stream parser/writer phases
 * forward-only NO_INDEX parsing
@@ -187,9 +165,7 @@ streaming-capable reader/writer state model
 * no session semantics
 * no transport implementation
 
-## M10b:
-
-session semantics and loss-tolerant streaming behavior
+## M10b: session semantics and loss-tolerant streaming behavior
 
 * `sar-stream` crate
 * SESSION_CONTROL state layer
@@ -209,9 +185,7 @@ session semantics and loss-tolerant streaming behavior
 * in-memory/session-only behavior
 * no real transport implementation
 
-## M10c:
-
-transport abstraction and in-memory harness
+## M10c: transport abstraction and in-memory harness
 
 * `sar-transport` crate
 * transport abstraction layer
@@ -226,9 +200,7 @@ transport abstraction and in-memory harness
 * no async/runtime dependency
 * transport conformance tests
 
-## M10d:
-
-SAR-over-TCP binding
+## M10d: SAR-over-TCP binding
 
 * real TCP listener/client wrapper
 * SAR-over-TCP stream handling
@@ -244,9 +216,7 @@ SAR-over-TCP binding
 * plaintext TCP rejects TLS_EXPORTER KMS mode
 * no TCP+TLS or STARTTLS implementation
 
-## M10e:
-
-SAR-over-QUIC binding
+## M10e: SAR-over-QUIC binding
 
 * real QUIC binding behind `quic` feature
 * quinn/rustls/tokio integration
@@ -262,9 +232,7 @@ SAR-over-QUIC binding
 * sequence wrap handling
 * TCP behavior preserved
 
-## M10f:
-
-M10 transport closeout, hardening, and validation
+## M10f: M10 transport closeout, hardening, and validation
 
 * transport abstraction validation
 * TCP binding validation
@@ -281,9 +249,7 @@ M10 transport closeout, hardening, and validation
 * workspace test/clippy validation
 * CodeQL or equivalent security scan where available
 
-## M10g:
-
-Section 18 transport/security specification refinement and initial implementation attempt
+## M10g: Section 18 transport/security specification refinement and initial implementation attempt
 
 * revised Stateful Streaming Mode transport rules
 * SAR-over-QUIC additional control stream semantics
@@ -298,9 +264,7 @@ Section 18 transport/security specification refinement and initial implementatio
 * initial additional-control-stream implementation attempted
 * incorrect `CTL!` private envelope introduced and identified for removal
 
-## M10h:
-
-M10g correction and revised Section 18 implementation alignment
+## M10h: M10g correction and revised Section 18 implementation alignment
 
 * remove `CTL!` public API and internal parser paths
 * remove `CTL!` docs/tests/machine-readable API entries
@@ -324,9 +288,7 @@ M10g correction and revised Section 18 implementation alignment
 * docs/API, CONFORMANCE, SECURITY, and MACHINE_READABLE_API cleanup
 * full workspace validation
 
-## M10i:
-
-M10 final alignment: TLS_EXPORTER/AAD coverage and crate responsibility guardrails
+## M10i: M10 final alignment: TLS_EXPORTER/AAD coverage and crate responsibility guardrails
 
 * add transport-integrated tests for post-binding TLS_EXPORTER SAR-AEAD enforcement
 * test that SESSION_INIT is plaintext bootstrap for KMS Mode 0x04 TLS_EXPORTER
@@ -351,9 +313,7 @@ M10 final alignment: TLS_EXPORTER/AAD coverage and crate responsibility guardrai
 * update `docs/API.md` and `docs/MACHINE_READABLE_API.json` only if public API descriptions change
 * full workspace validation
 
-## M10i.1:
-
-additional-control-stream TLS_EXPORTER AEAD decrypt/auth completion
+## M10i.1: additional-control-stream TLS_EXPORTER AEAD decrypt/auth completion
 
 * wire additional-control-stream payload AEAD decryption into the real transport path
 * construct additional-control-stream AAD from active session Global Header bytes and physically present LFH bytes
@@ -366,9 +326,7 @@ additional-control-stream TLS_EXPORTER AEAD decrypt/auth completion
 * keep `CTL!` removed and rejected
 * full workspace validation
 
-## M11a:
-
-LFH metadata API completeness
+## M11a: LFH metadata API completeness
 
 * expand `EntryInput` beyond name + payload
 * expand `EntryMetadata` beyond the previous partial metadata summary
@@ -397,9 +355,7 @@ LFH metadata API completeness
 * avoid filesystem restoration behavior
 * no CLI extraction policy changes
 
-## M11a.1:
-
-64BIT_SIZE LFH layout audit, correction, and implementation default policy
+## M11a.1: 64BIT_SIZE LFH layout audit, correction, and implementation default policy
 
 * audit Global Flag `64BIT_SIZE` support
 * verify LFH parser reads Uncompressed Size as 4 or 8 bytes based on Global Flags
@@ -428,9 +384,7 @@ LFH metadata API completeness
 * preserve existing wire format
 * no new protocol features
 
-## M11b:
-
-filesystem metadata encode/decode behavior
+## M11b: filesystem metadata encode/decode behavior
 
 * HAS_PATH writer and reader support
 * HAS_PERMS writer and reader support
@@ -460,9 +414,7 @@ filesystem metadata encode/decode behavior
   * no device/FIFO/socket creation
 * filesystem mutation is reserved for explicit CLI/application/profile extraction behavior
 
-## M11c:
-
-crate-boundary implementation cleanup
+## M11c: crate-boundary implementation cleanup
 
 * complete the M11c corrective crate-boundary pass
 * finish `sar-fragmentation` ownership of fragment semantic helpers
@@ -503,9 +455,7 @@ crate-boundary implementation cleanup
 * full workspace validation
 * CodeQL/security scan where available
 
-## M11c.1:
-
-final fragment completeness and API/docs consistency correction
+## M11c.1: final fragment completeness and API/docs consistency correction
 
 * finish the final M11c review corrections before starting M11d
 * do not create `sar-archive`
@@ -549,9 +499,7 @@ final fragment completeness and API/docs consistency correction
 
 # Current and future milestones
 
-## M11d:
-
-archive API architecture split
+## M11d: archive API architecture split
 
 * separate canonical SAR wire-format ownership from high-level archive integration
 * introduce preferred new integration crate: `sar-archive`
@@ -633,9 +581,7 @@ archive API architecture split
 * full workspace validation
 * CodeQL/security scan where available
 
-## M11e:
-
-CLI metadata support
+## M11e: CLI metadata support
 
 * create archives preserving permissions where supported
 * optional preserve owner/group flag
@@ -679,9 +625,7 @@ CLI metadata support
 * update `docs/SECURITY.md`
 * update `docs/MACHINE_READABLE_API.json` if CLI/API surface changes
 
-## M11f:
-
-API inventory, conformance profile, and security-doc refresh
+## M11f: API inventory, conformance profile, and security-doc refresh
 
 * `docs/API.md` update
 * `docs/MACHINE_READABLE_API.json` update
@@ -720,9 +664,7 @@ API inventory, conformance profile, and security-doc refresh
 * full workspace validation
 * CodeQL/security scan if available
 
-## M12a:
-
-conformance profile validator and official vectors
+## M12a: conformance profile validator and official vectors
 
 * canonical minimal archive vectors
 * canonical indexed vectors
@@ -747,9 +689,7 @@ conformance profile validator and official vectors
   * profile-disallowed transport/session behavior
 * cold-storage/tape profile vectors only if the profile uses interoperable SAR v1.0 behavior or an explicitly defined sidecar/container/profile mechanism
 
-## M12b:
-
-fuzzing and malicious corpus
+## M12b: fuzzing and malicious corpus
 
 * global header fuzzing
 * LFH fuzzing
@@ -788,9 +728,7 @@ fuzzing and malicious corpus
   * hostile metadata combinations
 * profile-specific rejection corpus
 
-## M12c:
-
-docs/API/security posture hardening
+## M12c: docs/API/security posture hardening
 
 * conformance docs
 * machine-readable API inventory
@@ -804,9 +742,7 @@ docs/API/security posture hardening
 * security-profile documentation draft if needed before M14a
 * document which hardening behavior is implementation/profile policy rather than SAR wire-format behavior
 
-## M13a:
-
-security audit
+## M13a: security audit
 
 * cryptography
 * parsing
@@ -847,9 +783,7 @@ security audit
   * evaluate interoperable sidecar/container/profile approaches
   * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
 
-## M13b:
-
-refactoring/remediation from M13a
+## M13b: refactoring/remediation from M13a
 
 * remove duplicated logic
 * simplify risky abstractions
@@ -864,9 +798,7 @@ refactoring/remediation from M13a
 * prepare C ABI/Python architecture after security findings
 * preserve monorepo layout when preparing C ABI/Python architecture
 
-## M14a:
-
-C ABI security profile and split-library design
+## M14a: C ABI security profile and split-library design
 
 * define C ABI security profiles before freezing the ABI
 * align profile design with `docs/LIBRARY_LAYOUT.md`
@@ -920,9 +852,7 @@ C ABI security profile and split-library design
 * update `SECURITY.md` / future `SECURITY_PROFILES.md`
 * no stable ABI freeze yet unless the design is complete and reviewed
 
-## M14b:
-
-stable C ABI
+## M14b: stable C ABI
 
 * define stable C header
 * opaque handle model
@@ -942,9 +872,7 @@ stable C ABI
 * C ABI errors do not reveal secret/AAD mismatch details
 * C ABI APIs do not expose raw key/exporter-derived material
 
-## M14c:
-
-C ABI examples/tests
+## M14c: C ABI examples/tests
 
 * C build examples
 * C archive read/write examples
@@ -960,9 +888,7 @@ C ABI examples/tests
 * no-panic-across-FFI tests
 * secret material non-exposure tests where practical
 
-## M14d:
-
-Python module
+## M14d: Python module
 
 * Python bindings over stable API surface
 * align Python package shape with `docs/LIBRARY_LAYOUT.md`
@@ -992,9 +918,7 @@ Python module
 * wheel/build documentation
 * Python examples/tests
 
-## M15a:
-
-monorepo packaging and CI layout
+## M15a: monorepo packaging and CI layout
 
 * keep all implementation, C ABI, Python, future mobile bindings, profiles, vectors, fuzzing harnesses, packaging metadata, and release scripts in one monorepo
 * do not introduce Git submodules
@@ -1042,9 +966,7 @@ monorepo packaging and CI layout
 * update `docs/LIBRARY_LAYOUT.md`
 * update `docs/SECURITY.md` or future `docs/SECURITY_PROFILES.md` if packaging profile behavior affects security posture
 
-## M15b:
-
-release artifact automation design
+## M15b: release artifact automation design
 
 * design GitHub Actions or equivalent CI/CD workflows for creating release artifacts from the monorepo
 * release automation is planned but not required for earlier milestones
@@ -1074,9 +996,7 @@ release artifact automation design
 * update packaging docs and CI docs
 * no requirement to publish packages automatically to external registries unless explicitly added by a later milestone
 
-## M16a:
-
-Swift/iOS package
+## M16a: Swift/iOS package
 
 * Swift package wrapper
 * iOS-compatible build configuration
@@ -1090,9 +1010,7 @@ Swift/iOS package
 * do not split Swift/iOS bindings into a separate Git repository
 * generated Apple framework/package artifacts are release/CI outputs and must not be committed to source control
 
-## M16b:
-
-Kotlin/Java Android package
+## M16b: Kotlin/Java Android package
 
 * Kotlin/Java wrapper
 * Android-compatible build configuration
