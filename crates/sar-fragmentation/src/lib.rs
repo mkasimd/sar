@@ -263,8 +263,12 @@ pub fn validate_fragment_group(
 ///    [`FragmentError::FragmentGap`].  With `LOSS_TOLERANT`, continue and mark
 ///    `is_degraded = true`.
 /// 6. Run [`validate_fragment_group`] for bounds/overlap checks.
-/// 7. Allocate a `logical_size`-byte zero buffer.
-/// 8. Scatter each fragment's `payload` at `descriptor.absolute_offset`.
+/// 7. Check descriptor byte-range gaps (initial/middle/tail).  If gaps exist
+///    and `LOSS_TOLERANT` is not set, return [`FragmentError::FragmentGap`].
+///    With `LOSS_TOLERANT`, enforce `limits.max_loss_tolerant_gap` and mark
+///    `is_degraded = true`.
+/// 8. Allocate a `logical_size`-byte zero buffer.
+/// 9. Scatter each fragment's `payload` at `descriptor.absolute_offset`.
 ///
 /// Returns `(reconstructed_bytes, is_degraded)` where `is_degraded` is `true`
 /// when the output is incomplete due to missing fragments permitted by
@@ -319,18 +323,18 @@ pub fn reconstruct_fragments(
     let is_loss_tolerant = fragments.iter().any(|f| f.is_loss_tolerant);
     let has_last = fragments.iter().any(|f| f.is_last_fragment);
 
-    // Check for index gaps
-    let mut has_gap = !has_last;
-    if !has_gap {
+    // Check for index gaps / missing LAST_FRAGMENT marker.
+    let mut has_index_gap = !has_last;
+    if !has_index_gap {
         for pair in fragments.windows(2) {
             if pair[1].fragment_index != pair[0].fragment_index.wrapping_add(1) {
-                has_gap = true;
+                has_index_gap = true;
                 break;
             }
         }
     }
 
-    if has_gap && !gap_degraded_output_permitted(is_loss_tolerant) {
+    if has_index_gap && !gap_degraded_output_permitted(is_loss_tolerant) {
         return Err(FragmentError::FragmentGap(
             "fragment index gap or missing last-fragment marker",
         ));
@@ -342,20 +346,39 @@ pub fn reconstruct_fragments(
     let mut sorted: Vec<&FragmentEntry> = fragments.iter().collect();
     sorted.sort_by_key(|f| f.descriptor.absolute_offset);
     let mut last_end: u64 = 0;
+    let mut has_descriptor_gap = false;
     for frag in &sorted {
-        if frag.descriptor.absolute_offset > last_end && is_loss_tolerant {
-            limits.check_loss_tolerant_gap(
-                frag.descriptor
-                    .absolute_offset
-                    .checked_sub(last_end)
-                    .ok_or(FragmentError::Overflow("fragment gap"))?,
-            )?;
+        if frag.descriptor.absolute_offset > last_end {
+            let gap = frag
+                .descriptor
+                .absolute_offset
+                .checked_sub(last_end)
+                .ok_or(FragmentError::Overflow("fragment gap"))?;
+            if !gap_degraded_output_permitted(is_loss_tolerant) {
+                return Err(FragmentError::FragmentGap(
+                    "fragment descriptor byte-range gap",
+                ));
+            }
+            limits.check_loss_tolerant_gap(gap)?;
+            has_descriptor_gap = true;
         }
         last_end = frag
             .descriptor
             .absolute_offset
             .checked_add(u64::from(frag.descriptor.fragment_size))
             .ok_or(FragmentError::Overflow("fragment end overflow"))?;
+    }
+    if logical_size > last_end {
+        let tail_gap = logical_size
+            .checked_sub(last_end)
+            .ok_or(FragmentError::Overflow("fragment tail gap"))?;
+        if !gap_degraded_output_permitted(is_loss_tolerant) {
+            return Err(FragmentError::FragmentGap(
+                "fragment descriptor byte-range gap",
+            ));
+        }
+        limits.check_loss_tolerant_gap(tail_gap)?;
+        has_descriptor_gap = true;
     }
 
     // Allocate logical output buffer
@@ -378,7 +401,7 @@ pub fn reconstruct_fragments(
         output[dst_start..dst_end].copy_from_slice(&frag.payload);
     }
 
-    Ok((output, has_gap))
+    Ok((output, has_index_gap || has_descriptor_gap))
 }
 
 #[cfg(test)]
@@ -631,5 +654,51 @@ mod tests {
         let (_, degraded) = reconstruct_fragments(vec![f0, f2], 12, &limits())
             .expect("loss-tolerant gap should succeed");
         assert!(degraded);
+    }
+
+    #[test]
+    fn descriptor_gap_without_loss_tolerant_fails() {
+        let f0 = make_entry(0, false, false, 0, 4, b"AAAA".to_vec());
+        let f1 = make_entry(1, true, false, 8, 4, b"BBBB".to_vec());
+        let result = reconstruct_fragments(vec![f0, f1], 12, &limits());
+        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
+    }
+
+    #[test]
+    fn descriptor_gap_with_loss_tolerant_returns_degraded() {
+        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
+        let f1 = make_entry(1, true, true, 8, 4, b"BBBB".to_vec());
+        let (data, degraded) =
+            reconstruct_fragments(vec![f0, f1], 12, &limits()).expect("reconstruct ok");
+        assert_eq!(&data[0..4], b"AAAA");
+        assert_eq!(&data[4..8], &[0u8; 4]);
+        assert_eq!(&data[8..12], b"BBBB");
+        assert!(degraded);
+    }
+
+    #[test]
+    fn initial_descriptor_gap_without_loss_tolerant_fails() {
+        let f0 = make_entry(0, true, false, 4, 4, b"BBBB".to_vec());
+        let result = reconstruct_fragments(vec![f0], 8, &limits());
+        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
+    }
+
+    #[test]
+    fn tail_descriptor_gap_without_loss_tolerant_fails() {
+        let f0 = make_entry(0, true, false, 0, 4, b"AAAA".to_vec());
+        let result = reconstruct_fragments(vec![f0], 8, &limits());
+        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
+    }
+
+    #[test]
+    fn descriptor_gap_exceeds_max_loss_tolerant_gap_fails() {
+        let limits = FragmentLimits {
+            max_loss_tolerant_gap: 3,
+            ..FragmentLimits::unlimited()
+        };
+        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
+        let f1 = make_entry(1, true, true, 8, 4, b"BBBB".to_vec());
+        let result = reconstruct_fragments(vec![f0, f1], 12, &limits);
+        assert!(matches!(result, Err(FragmentError::LimitExceeded(_))));
     }
 }

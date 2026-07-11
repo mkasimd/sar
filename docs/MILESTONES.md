@@ -542,6 +542,7 @@ final fragment completeness and API/docs consistency correction
   * `sar_core::fragment::*`
   * `sar_core::sparse::validate_sparse_extents`
   * `sar_core::sparse::apply_sparse_reconstruction`
+* ensure milestone/API inventory text does not describe return-type changes for removed symbols; removed symbols must be listed only under removal notes
 * keep `sar_core::sparse::parse_sparse_map` and `sar_core::sparse::write_sparse_map` as physical LFH sparse-map helpers
 * keep `sar_core::sparse::SparseExtent` only if still required by those wire-format helper signatures
 * remove duplicate Cargo dev-dependencies if present and unnecessary

@@ -6670,7 +6670,7 @@
         "M11c-cp"
       ],
       "features": [
-        "Milestone 11c-cp: Added FragmentError::PayloadSizeMismatch (payload.len() != descriptor.fragment_size, always fatal) and FragmentError::DuplicateIndex (duplicate fragment index, always fatal including with LOSS_TOLERANT). reconstruct_fragments now calls sar_loss_tolerant::gap_degraded_output_permitted() for gap policy. sar-fragmentation now depends on sar-loss-tolerant."
+        "Milestone 11c-cp: Added FragmentError::PayloadSizeMismatch (payload.len() != descriptor.fragment_size, always fatal) and FragmentError::DuplicateIndex (duplicate fragment index, always fatal including with LOSS_TOLERANT). reconstruct_fragments now validates index gaps, missing LAST_FRAGMENT, and descriptor byte-range gaps (initial/middle/tail), applying sar_loss_tolerant::gap_degraded_output_permitted() and max_loss_tolerant_gap for degraded output policy. sar-fragmentation now depends on sar-loss-tolerant."
       ],
       "modules": [
         {
@@ -6693,7 +6693,7 @@
             {
               "name": "FragmentLimits",
               "kind": "struct",
-              "signature": "pub struct FragmentLimits { pub max_fragment_count: u32, pub max_loss_tolerant_gap: u64, pub max_allocation_bytes: u64 }",
+              "signature": "pub struct FragmentLimits { pub max_fragment_count: usize, pub max_fragment_group_span: u64, pub max_decoded_entry_size: u64, pub max_loss_tolerant_gap: u64, pub max_allocation_bytes: u64 }",
               "visibility": "public",
               "stability": "stable",
               "description": "Resource limits for fragment operations.",
@@ -6735,7 +6735,7 @@
               "signature": "pub fn validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Validates fragment group ordering, bounds, continuity, and LAST_FRAGMENT presence.",
+              "description": "Validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap.",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
@@ -6748,7 +6748,7 @@
               "signature": "pub fn reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Fills gaps for LOSS_TOLERANT entries. M11c-cp: checks payload-size agreement and duplicate indexes before gap/degraded logic; calls sar_loss_tolerant::gap_degraded_output_permitted() for gap policy.",
+              "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Validates duplicate fragment indexes, payload-size agreement, index gaps, missing LAST_FRAGMENT, descriptor byte-range gaps (initial/middle/tail), and LOSS_TOLERANT degraded-output policy with max_loss_tolerant_gap.",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
@@ -6866,7 +6866,7 @@
             {
               "name": "SparseLimits",
               "kind": "struct",
-              "signature": "pub struct SparseLimits { pub max_sparse_descriptors: u32, pub max_allocation_bytes: u64 }",
+              "signature": "pub struct SparseLimits { pub max_sparse_map_bytes: usize, pub max_sparse_descriptors: usize, pub max_decoded_entry_size: u64, pub max_allocation_bytes: u64 }",
               "visibility": "public",
               "stability": "stable",
               "description": "Resource limits for sparse operations.",
@@ -6895,7 +6895,7 @@
               "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Validates sorted order, non-overlap, non-zero length, bounds, and payload sum. M11c-cp: zero-length extents now rejected with SparseError::InvalidMap.",
+              "description": "Validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety. Does not validate payload-length agreement.",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
@@ -6908,7 +6908,7 @@
               "signature": "pub fn apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Scatter/gather reconstruction of logical file from payload and extent map.",
+              "description": "Scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because payload bytes are available.",
               "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,

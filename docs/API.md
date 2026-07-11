@@ -634,7 +634,7 @@ Reads all entries, assembles fragment groups, applies sparse reconstruction, and
 
 ### `sar_core::sparse`
 
-Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
+Sparse file map parsing/writing helpers plus architectural `SparseExtent` re-export.
 
 #### Public types
 
@@ -646,10 +646,8 @@ Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
   — decodes the raw sparse map from an LFH; 8 bytes per entry in 32-bit mode, 16 bytes in 64-bit mode; returns `SarError::InvalidLength` when byte count is not a multiple of entry size
 - `write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>`
   — serializes extents back to the wire format; in 32-bit mode, fails closed with `SarError::Overflow` if any extent offset or length exceeds `u32::MAX` (no silent truncation); in 64-bit mode, writes full `u64` values
-- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>`
-  — checks that extents are sorted, non-overlapping, non-zero length, within `logical_size` bounds, and within configured sparse-descriptor limits; returns `SarError::InvalidMap` on violation (including zero-length extents), `SarError::Overflow` on arithmetic overflow
-- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<Vec<u8>, SarError>`
-  — creates a zero-filled buffer of exactly `logical_size` bytes (the LFH `Uncompressed Size`) and writes each extent slice from `payload` at its declared offset; trailing holes beyond the final extent are filled with `0x00`; returns `SarError::InvalidMap` if an extent exceeds `logical_size` or if payload has excess bytes; returns `SarError::Truncated` if payload is too short for the declared extents
+- `validate_sparse_extents` — **removed** from `sar_core::sparse`; import from `sar_sparse`
+- `apply_sparse_reconstruction` — **removed** from `sar_core::sparse`; import from `sar_sparse`
 
 **Transformation ordering:**
 
@@ -1763,7 +1761,9 @@ This crate has no dependency on `sar-core`. `sar-core` integrates it via `From<F
   - `FragmentError::PayloadSizeMismatch(msg)` — *(added M11c-cp)* payload `.len()` does not match `descriptor.fragment_size`; always fatal
   - `FragmentError::DuplicateIndex(msg)` — *(added M11c-cp)* duplicate fragment index in group; always fatal even with LOSS_TOLERANT
 - `FragmentLimits` — resource limits for fragment operations:
-  - `max_fragment_count: u32`
+  - `max_fragment_count: usize`
+  - `max_fragment_group_span: u64`
+  - `max_decoded_entry_size: u64`
   - `max_loss_tolerant_gap: u64`
   - `max_allocation_bytes: u64`
 - `FragmentDescriptor { absolute_offset: u64, fragment_size: u32 }` — per-fragment extent
@@ -1771,8 +1771,8 @@ This crate has no dependency on `sar-core`. `sar-core` integrates it via `From<F
 
 #### Functions
 
-- `validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>` — validates ordering, non-overlap, index continuity, LAST_FRAGMENT presence, and bounds
-- `reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>` — reassembles payloads; returns `(data, is_degraded)`; checks payload-size agreement and duplicate indexes before any gap/degraded logic; calls `sar_loss_tolerant::gap_degraded_output_permitted()` for gap policy
+- `validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>` — validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap only
+- `reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>` — reassembles payloads; returns `(data, is_degraded)`; validates duplicate indexes, payload-size agreement, index gaps, missing `LAST_FRAGMENT`, descriptor byte-range gaps (initial/middle/tail), and loss-tolerant degraded-output policy
 
 ### Error conversion bridge
 
@@ -1817,14 +1817,16 @@ Wire-format functions (`parse_sparse_map`, `write_sparse_map`) remain in `sar-co
   - `SparseError::LimitExceeded(msg)` — resource limit exceeded
   - `SparseError::Overflow(msg)` — arithmetic overflow in extent
 - `SparseLimits` — resource limits for sparse operations:
-  - `max_sparse_descriptors: u32`
+  - `max_sparse_map_bytes: usize`
+  - `max_sparse_descriptors: usize`
+  - `max_decoded_entry_size: u64`
   - `max_allocation_bytes: u64`
 - `SparseExtent { offset: u64, length: u64 }` — one sparse data region
 
 #### Functions
 
-- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>` — validates sorted order, non-overlap, non-zero length (M11c-cp: zero-length extents now rejected), bounds, and payload sum
-- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>` — scatter/gather reconstruction of logical file; zero-fills holes
+- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>` — validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety; does not validate payload-length agreement
+- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>` — scatter/gather reconstruction of logical file; zero-fills holes and validates payload-length agreement because payload bytes are available
 
 ### Re-exported from `sar-core`
 
@@ -1838,11 +1840,8 @@ Wire-format functions (`parse_sparse_map`, `write_sparse_map`) remain in `sar-co
 
 ### Breaking changes (M11c)
 
-- `sar_core::sparse::validate_sparse_extents` now returns `Result<(), SparseError>` (previously `Result<(), SarError>`)
-- `sar_core::sparse::apply_sparse_reconstruction` now returns `Result<Vec<u8>, SparseError>` (previously `Result<Vec<u8>, SarError>`)
-- `sar_core::fragment::validate_fragment_group` now returns `Result<(), FragmentError>` (previously `Result<(), SarError>`)
-- `sar_core::fragment::reconstruct_fragments` now returns `Result<(Vec<u8>, bool), FragmentError>` (previously `Result<(Vec<u8>, bool), SarError>`)
-- `SparseError` / `FragmentError` implement `Into<SarError>` via `From`; use `?` at call sites to propagate through `sar-core` APIs
+- Semantic fragment and sparse helpers were moved out of `sar-core` and now live in `sar-fragmentation` / `sar-sparse`.
+- `SparseError` / `FragmentError` implement `Into<SarError>` via `From`; use `?` at call sites to propagate through `sar-core` APIs.
 
 ### Breaking changes (M11c-cp)
 

@@ -21,8 +21,6 @@ sar-sparse = { path = "../sar-sparse" }
 [dev-dependencies]
 serde_json.workspace = true
 tempfile = "3.13"
-sar-fragmentation = { path = "../sar-fragmentation" }
-sar-sparse = { path = "../sar-sparse" }
 
 [lints]
 workspace = true

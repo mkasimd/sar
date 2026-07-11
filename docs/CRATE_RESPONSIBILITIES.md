@@ -370,10 +370,10 @@ Final role: fragment model, validation, grouping, and reassembly planning.
 
 * `FragmentDescriptor` — fragment absolute-offset and size model.
 * `FragmentEntry` — per-fragment payload and metadata envelope.
-* `validate_fragment_group` — validates ordering, bounds, non-overlap, index continuity, and LAST_FRAGMENT presence.
-* `reconstruct_fragments` — reassembles payload fragments in order, enforces limits, fills gaps for LOSS_TOLERANT, returns degraded-output flag.
+* `validate_fragment_group` — validates fragment count limits, fragment-group span limits, descriptor bounds, and descriptor non-overlap.
+* `reconstruct_fragments` — validates duplicate `fragment_index`, payload length agreement, index gaps, missing `LAST_FRAGMENT`, descriptor byte-range gaps (initial/middle/tail), and reassembles payloads with LOSS_TOLERANT degraded-output policy.
 * `FragmentError` — crate-local error type.
-* `FragmentLimits` — resource limits for fragment operations (`max_fragment_count`, `max_loss_tolerant_gap`, `max_allocation_bytes`).
+* `FragmentLimits` — resource limits for fragment operations (`max_fragment_count`, `max_fragment_group_span`, `max_decoded_entry_size`, `max_loss_tolerant_gap`, `max_allocation_bytes`).
 
 ### What remains in `sar-core`
 
@@ -456,10 +456,10 @@ Final role: sparse extent model, sparse map semantic validation, and sparse reco
 ### What was moved from `sar-core` (M11c)
 
 * `SparseExtent` — offset/length model for a sparse data region.
-* `validate_sparse_extents` — validates sorted order, non-overlap, non-zero length, bounds within logical size, and payload sum.
-* `apply_sparse_reconstruction` — scatter/gather reconstruction of logical file from payload and extent map.
+* `validate_sparse_extents` — validates non-zero extent length, sorted order, non-overlap, bounds within logical size, arithmetic overflow safety, and descriptor-count limits.
+* `apply_sparse_reconstruction` — scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because it receives payload bytes.
 * `SparseError` — crate-local error type.
-* `SparseLimits` — resource limits for sparse operations (`max_sparse_descriptors`, `max_allocation_bytes`).
+* `SparseLimits` — resource limits for sparse operations (`max_sparse_map_bytes`, `max_sparse_descriptors`, `max_decoded_entry_size`, `max_allocation_bytes`).
 
 ### What remains in `sar-core`
 
