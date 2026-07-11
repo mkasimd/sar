@@ -16,14 +16,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sar_archive::conformance::{
-    TransformExpectation, VectorKind, discover_manifests, validate_manifest_schema,
+use sar_archive::{
+    conformance::{TransformExpectation, VectorKind, discover_manifests, validate_manifest_schema},
+    recovery::inspect_recovery_metadata,
 };
 use sar_core::{
     GlobalFlags, ResourceLimits,
-    format::{parse_global_header, parse_lfh},
+    fec::FecSummary,
+    format::{GLOBAL_HEADER_FLAGS_OFFSET, parse_global_header, parse_lfh},
 };
 use sar_delta::{PATCH_ALGO_BSDIFF, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF};
+use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
 use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
@@ -973,4 +976,166 @@ fn promoted_bsdiff_vector_uses_bsdiff_algo_id() {
         algo_id, PATCH_ALGO_STORE_PATCH,
         "BSDIFF vector must not use STORE_PATCH"
     );
+}
+
+fn assert_real_archive_recovery_fixture(relative_fixture_path: &str, expected_algo_id: u8) {
+    let fixture = vectors_root().join(relative_fixture_path);
+    let bytes = fs::read(&fixture)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", fixture.display()));
+    let meta = inspect_recovery_metadata(&bytes, &ResourceLimits::default())
+        .unwrap_or_else(|err| panic!("failed to inspect {}: {err}", fixture.display()));
+    let protected_range = meta
+        .protected_range
+        .unwrap_or_else(|| panic!("{} is missing a protected range", fixture.display()));
+
+    assert!(
+        meta.has_global_ec,
+        "{} must set HAS_GLOBAL_EC",
+        fixture.display()
+    );
+    assert_eq!(
+        meta.recovery_tlvs.len(),
+        1,
+        "{} must contain exactly one RECOVERY TLV",
+        fixture.display()
+    );
+    let algo_id = match &meta.recovery_tlvs[0] {
+        FecSummary::Xor { algo_id, .. } | FecSummary::ReedSolomon { algo_id, .. } => *algo_id,
+    };
+    assert_eq!(
+        algo_id,
+        expected_algo_id,
+        "{} must use expected RECOVERY algo",
+        fixture.display()
+    );
+    assert_eq!(
+        protected_range.offset,
+        GLOBAL_HEADER_FLAGS_OFFSET,
+        "{} must protect bytes starting at the first Global Flags byte",
+        fixture.display()
+    );
+}
+
+#[test]
+fn promoted_archive_recovery_xor_vector_uses_real_recovery_tlv() {
+    assert_real_archive_recovery_fixture(
+        "valid/recovery/archive-xor/recovery_tlv_archive_xor.sar",
+        FEC_ALGO_XOR,
+    );
+}
+
+#[test]
+fn promoted_archive_recovery_rs_vector_uses_real_recovery_tlv() {
+    assert_real_archive_recovery_fixture(
+        "valid/recovery/archive-rs/recovery_tlv_archive_rs.sar",
+        FEC_ALGO_REED_SOLOMON,
+    );
+}
+
+#[test]
+fn archive_recovery_vectors_use_recovery_taxonomy_and_paths() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+    let mut failures = Vec::new();
+
+    for (manifest_path, result) in manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if manifest.kind != VectorKind::Valid {
+            continue;
+        }
+
+        let rel_manifest = manifest_path
+            .strip_prefix(&root)
+            .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
+        let rel_manifest_dir = rel_manifest
+            .parent()
+            .expect("manifest parent")
+            .to_string_lossy();
+
+        let has_archive_recovery = manifest.features.iter().any(|f| f == "recovery:archive");
+        let has_fec_feature = manifest.features.iter().any(|f| f.starts_with("fec:"));
+        let has_recovery_feature = manifest.features.iter().any(|f| f.starts_with("recovery:"));
+        let has_recovery_algo_feature = manifest
+            .features
+            .iter()
+            .any(|f| f == "recovery:xor" || f == "recovery:reed-solomon");
+        let has_selective_fec = manifest.features.iter().any(|f| f == "selective-fec");
+
+        if has_archive_recovery {
+            if manifest.deferred {
+                failures.push(format!(
+                    "[{}] {}: archive-level recovery manifest must not be deferred",
+                    manifest.id,
+                    rel_manifest.display()
+                ));
+            }
+            if !rel_manifest_dir.starts_with("valid/recovery/") {
+                failures.push(format!(
+                    "[{}] {}: archive-level recovery vectors must live under valid/recovery/",
+                    manifest.id,
+                    rel_manifest.display()
+                ));
+            }
+            if has_fec_feature {
+                failures.push(format!(
+                    "[{}] {}: archive-level recovery vectors must not use fec:* tags",
+                    manifest.id,
+                    rel_manifest.display()
+                ));
+            }
+            if !has_recovery_algo_feature {
+                failures.push(format!(
+                    "[{}] {}: archive-level recovery vectors must use recovery:xor or recovery:reed-solomon",
+                    manifest.id, rel_manifest.display()
+                ));
+            }
+            let Some(file_name) = manifest.file.as_ref() else {
+                failures.push(format!(
+                    "[{}] {}: promoted archive-level recovery manifest must reference a real .sar fixture",
+                    manifest.id, rel_manifest.display()
+                ));
+                continue;
+            };
+            let fixture_path = manifest_path
+                .parent()
+                .expect("manifest parent")
+                .join(file_name);
+            if !fixture_path.exists() {
+                failures.push(format!(
+                    "[{}] {}: referenced fixture does not exist: {}",
+                    manifest.id,
+                    rel_manifest.display(),
+                    fixture_path.display()
+                ));
+            }
+        }
+
+        if has_selective_fec || (has_fec_feature && !has_archive_recovery) {
+            if !rel_manifest_dir.starts_with("valid/fec/") {
+                failures.push(format!(
+                    "[{}] {}: LFH Selective FEC vectors must live under valid/fec/",
+                    manifest.id,
+                    rel_manifest.display()
+                ));
+            }
+            if has_recovery_feature {
+                failures.push(format!(
+                    "[{}] {}: LFH Selective FEC vectors must not use recovery:* tags",
+                    manifest.id,
+                    rel_manifest.display()
+                ));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} archive recovery taxonomy failure(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
 }

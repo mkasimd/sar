@@ -27,10 +27,10 @@ use sar_core::{
     error::SarError,
     flags::{EntryMode, GlobalFlags, validate_global_flags},
     format::{
-        CentralDictionary, Footer, GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION,
-        global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary,
-        parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
-        write_global_header,
+        CentralDictionary, Footer, GLOBAL_HEADER_FLAGS_OFFSET, GlobalHeader, KmsData,
+        LocalFileHeader, SUPPORTED_CD_VERSION, global_header_flags_bytes, lfh_bytes_for_aad,
+        lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
+        write_central_dictionary, write_footer, write_global_header,
     },
     limits::ResourceLimits,
     tlv::Tlv,
@@ -430,6 +430,57 @@ impl FecSettings {
     }
 }
 
+/// Archive-level RECOVERY TLV generation settings.
+///
+/// When provided in [`ArchiveWriterOptions`], the writer generates one
+/// archive-level RECOVERY TLV during [`ArchiveWriter::finish`], sets
+/// `HAS_GLOBAL_EC`, and protects the byte range from the first Global Flags
+/// byte through the final byte immediately before the Central Dictionary.
+#[derive(Debug, Clone)]
+pub struct ArchiveRecoverySettings {
+    /// Recovery algorithm ID (`FEC_ALGO_XOR = 0x14` or `FEC_ALGO_REED_SOLOMON = 0x11`).
+    pub algo_id: u8,
+    /// Config byte 0: for XOR = stripe size; for RS = `k` (data symbols per group).
+    pub config0: u8,
+    /// Config byte 1: for XOR = block-size index (0x00–0x08); for RS = parity count (`n-k`).
+    pub config1: u8,
+    /// Symbol size in bytes. Used by Reed-Solomon; ignored for XOR.
+    pub symbol_size: u32,
+}
+
+impl ArchiveRecoverySettings {
+    /// Constructs default XOR archive-recovery settings.
+    #[must_use]
+    pub fn default_xor() -> Self {
+        Self {
+            algo_id: FEC_ALGO_XOR,
+            config0: 4,
+            config1: 4,
+            symbol_size: 0,
+        }
+    }
+
+    /// Constructs default Reed-Solomon archive-recovery settings.
+    #[must_use]
+    pub fn default_rs() -> Self {
+        Self {
+            algo_id: FEC_ALGO_REED_SOLOMON,
+            config0: 4,
+            config1: 2,
+            symbol_size: 256,
+        }
+    }
+
+    fn as_fec_settings(&self) -> FecSettings {
+        FecSettings {
+            algo_id: self.algo_id,
+            config0: self.config0,
+            config1: self.config1,
+            symbol_size: self.symbol_size,
+        }
+    }
+}
+
 /// Encryption settings for archive writing.
 #[derive(Debug, Clone)]
 pub struct EncryptionSettings {
@@ -449,6 +500,9 @@ pub struct ArchiveWriterOptions {
     /// Optional FEC settings.  When set, `SELECTIVE_FEC` is enabled and every
     /// entry payload is FEC-encoded using the specified algorithm.
     pub fec: Option<FecSettings>,
+    /// Optional archive-level recovery settings. When set, the writer emits one
+    /// Central Dictionary RECOVERY TLV during finalization.
+    pub archive_recovery: Option<ArchiveRecoverySettings>,
     /// If `true`, set the global `SPARSE_FILES` flag.  Required before calling
     /// [`ArchiveWriter::write_sparse_entry`].
     pub sparse: bool,
@@ -521,6 +575,7 @@ impl Default for ArchiveWriterOptions {
             no_index: true,
             encryption: None,
             fec: None,
+            archive_recovery: None,
             sparse: false,
             with_path: false,
             with_permissions: false,
@@ -1815,7 +1870,21 @@ pub struct ArchiveWriter<W> {
     header_kms: Option<KmsData>,
     header_written: bool,
     fec: Option<FecSettings>,
+    archive_recovery: Option<ArchiveRecoveryState>,
     stream_state: StreamWriteState,
+}
+
+const RECOVERY_TLV_TYPE_MIN: u8 = 0x10;
+const RECOVERY_TLV_TYPE_MAX: u8 = 0x1F;
+
+struct ArchiveRecoveryState {
+    settings: ArchiveRecoverySettings,
+    global_flags_start_offset: u64,
+    protected_range_start: u64,
+    protected_range_end: Option<u64>,
+    central_dictionary_offset: Option<u64>,
+    footer_offset: Option<u64>,
+    protected_bytes: Vec<u8>,
 }
 
 /// Structural write phases for stream-oriented archive emission.
@@ -1947,6 +2016,7 @@ impl<W: Write> ArchiveWriter<W> {
             no_index,
             encryption,
             fec,
+            archive_recovery,
             sparse,
             with_path,
             with_permissions,
@@ -1959,9 +2029,23 @@ impl<W: Write> ArchiveWriter<W> {
             lfh_size_field_policy,
         } = options;
 
+        let has_recovery_cd_metadata = cd_metadata
+            .iter()
+            .any(|tlv| (RECOVERY_TLV_TYPE_MIN..=RECOVERY_TLV_TYPE_MAX).contains(&tlv.type_id));
+
         if no_index && !cd_metadata.is_empty() {
             return Err(SarError::FlagConflict(
                 "Central Dictionary metadata requires indexed archive output",
+            ));
+        }
+        if no_index && archive_recovery.is_some() {
+            return Err(SarError::FlagConflict(
+                "archive-level recovery requires indexed archive output",
+            ));
+        }
+        if archive_recovery.is_some() && has_recovery_cd_metadata {
+            return Err(SarError::FlagConflict(
+                "archive-level recovery option conflicts with pre-supplied RECOVERY TLV metadata",
             ));
         }
 
@@ -1971,6 +2055,9 @@ impl<W: Write> ArchiveWriter<W> {
         }
         if !cd_metadata.is_empty() {
             flags |= GlobalFlags::OPT_PRESENT;
+        }
+        if archive_recovery.is_some() || has_recovery_cd_metadata {
+            flags |= GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
         }
         if cd_metadata
             .iter()
@@ -2047,7 +2134,12 @@ impl<W: Write> ArchiveWriter<W> {
         for tlv in &cd_metadata {
             if sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
                 sar_core::cdc::validate_cdc_metadata_tlv(tlv, &limits)?;
+            } else if (RECOVERY_TLV_TYPE_MIN..=RECOVERY_TLV_TYPE_MAX).contains(&tlv.type_id) {
+                sar_core::fec::validate_recovery_tlv(tlv.type_id, &tlv.value, &limits)?;
             }
+        }
+        if let Some(recovery) = &archive_recovery {
+            validate_writer_fec_settings(&recovery.as_fec_settings())?;
         }
 
         validate_global_flags(flags)?;
@@ -2068,6 +2160,15 @@ impl<W: Write> ArchiveWriter<W> {
             header_kms: kms,
             header_written: false,
             fec,
+            archive_recovery: archive_recovery.map(|settings| ArchiveRecoveryState {
+                settings,
+                global_flags_start_offset: GLOBAL_HEADER_FLAGS_OFFSET,
+                protected_range_start: GLOBAL_HEADER_FLAGS_OFFSET,
+                protected_range_end: None,
+                central_dictionary_offset: None,
+                footer_offset: None,
+                protected_bytes: Vec::new(),
+            }),
             stream_state: StreamWriteState::NeedLocalFileHeader,
         })
     }
@@ -2076,6 +2177,54 @@ impl<W: Write> ArchiveWriter<W> {
     #[must_use]
     pub const fn stream_state(&self) -> StreamWriteState {
         self.stream_state
+    }
+
+    fn track_archive_recovery_bytes(&mut self, bytes: &[u8]) -> Result<(), SarError> {
+        let Some(recovery) = &mut self.archive_recovery else {
+            return Ok(());
+        };
+        let updated_len = recovery
+            .protected_bytes
+            .len()
+            .checked_add(bytes.len())
+            .ok_or(SarError::Overflow("archive recovery protected bytes len"))?;
+        let updated_len_u64 =
+            u64::try_from(updated_len).map_err(|_| SarError::Overflow("archive recovery len"))?;
+        let limits = ResourceLimits::default();
+        limits.check_in_memory_buffer(updated_len_u64)?;
+        limits.check_recovery_protected_range(updated_len_u64)?;
+        recovery.protected_bytes.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn finalize_archive_recovery_metadata(&mut self) -> Result<(), SarError> {
+        let Some(recovery) = &mut self.archive_recovery else {
+            return Ok(());
+        };
+        recovery.protected_range_end = Some(self.position);
+        recovery.central_dictionary_offset = Some(self.position);
+
+        let expected_protected_len = self
+            .position
+            .checked_sub(recovery.protected_range_start)
+            .ok_or(SarError::Overflow("archive recovery protected range len"))?;
+        let buffered_len = u64::try_from(recovery.protected_bytes.len())
+            .map_err(|_| SarError::Overflow("archive recovery buffered len"))?;
+        if buffered_len != expected_protected_len {
+            return Err(SarError::Internal(
+                "archive recovery protected byte tracking length mismatch",
+            ));
+        }
+
+        let fec_value = compute_fec_value(
+            &recovery.settings.as_fec_settings(),
+            &recovery.protected_bytes,
+        )?;
+        self.cd_metadata.push(Tlv {
+            type_id: recovery.settings.algo_id,
+            value: fec_value,
+        });
+        Ok(())
     }
 
     fn emit_global_header_if_needed(&mut self) -> Result<(), SarError> {
@@ -2092,6 +2241,16 @@ impl<W: Write> ArchiveWriter<W> {
         };
         self.global_flags_section = global_header_flags_bytes(&header);
         let bytes = write_global_header(&header)?;
+        if let Some(recovery) = &self.archive_recovery {
+            let recovery_start = usize::try_from(recovery.global_flags_start_offset)
+                .map_err(|_| SarError::Overflow("global header flags offset usize"))?;
+            if recovery_start > bytes.len() {
+                return Err(SarError::Bounds(
+                    "global header shorter than Global Flags offset",
+                ));
+            }
+            self.track_archive_recovery_bytes(&bytes[recovery_start..])?;
+        }
         self.writer.write_all(&bytes)?;
         self.position = self
             .position
@@ -2319,6 +2478,8 @@ impl<W: Write> ArchiveWriter<W> {
     ) -> Result<EntryWritten, SarError> {
         let lfh_offset = self.position;
         self.stream_state = StreamWriteState::NeedPayload;
+        self.track_archive_recovery_bytes(&lfh_bytes)?;
+        self.track_archive_recovery_bytes(&encoded_payload)?;
         self.writer.write_all(&lfh_bytes)?;
         self.writer.write_all(&encoded_payload)?;
 
@@ -2756,6 +2917,7 @@ impl<W: Write> ArchiveWriter<W> {
         self.stream_state = StreamWriteState::NeedCentralDictionaryOrFooter;
 
         if !self.flags.contains(GlobalFlags::NO_INDEX) {
+            self.finalize_archive_recovery_metadata()?;
             let cd_offset = self.position;
             let file_count = u64::try_from(self.offsets.len())
                 .map_err(|_| SarError::Overflow("offset count"))?;
@@ -2786,6 +2948,9 @@ impl<W: Write> ArchiveWriter<W> {
                     .ok_or(SarError::Overflow("archive position after padding"))?;
             }
 
+            if let Some(recovery) = &mut self.archive_recovery {
+                recovery.footer_offset = Some(self.position);
+            }
             self.writer.write_all(&write_footer(Footer { cd_offset }))?;
             self.position = self
                 .position
@@ -2841,6 +3006,28 @@ pub(crate) fn build_kms_context(header: &GlobalHeader) -> Result<KmsContext, Sar
         mode_id: kms.mode_id,
         params,
     })
+}
+
+fn validate_writer_fec_settings(fec: &FecSettings) -> Result<(), SarError> {
+    match fec.algo_id {
+        FEC_ALGO_XOR => {
+            sar_fec::XorCodec::new(fec.config0, fec.config1).map_err(SarError::from)?;
+        }
+        FEC_ALGO_REED_SOLOMON => {
+            sar_fec::RsCodec::new(fec.config0, fec.config1, fec.symbol_size)
+                .map_err(SarError::from)?;
+        }
+        other => {
+            return Err(SarError::Unsupported(
+                if (RECOVERY_TLV_TYPE_MIN..=RECOVERY_TLV_TYPE_MAX).contains(&other) {
+                    "FEC algorithm is assigned but not supported by archive writer"
+                } else {
+                    "FEC algorithm ID out of defined range"
+                },
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Encodes FEC parity for `protected` bytes using the provided [`FecSettings`] and

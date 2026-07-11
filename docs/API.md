@@ -38,7 +38,7 @@ After M11d:
   - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
   - `LogicalFile`
   - `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
-  - `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`, `SparseWriteOptions`
+  - `ArchiveRecoverySettings`, `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`, `SparseWriteOptions`
   - `StreamArchiveParser`, `StreamEvent`, `StreamStep`, `StreamParseState`, `StreamArchiveSummary`, `StreamWriteState`
 - Crypto/KMS/key-provider APIs are imported from `sar-crypto`:
   - `KeyProvider`, `KmsContext`, `KmsParams`, `SarCryptoError`, `SecretBytes`
@@ -690,7 +690,8 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 #### Public functions
 
 - `inspect_recovery_metadata(archive_bytes: &[u8], limits: &ResourceLimits) -> Result<RecoveryMetadata, SarError>`
-  — parses archive global header and CD, extracts RECOVERY TLVs (type IDs 0x10–0x1F), computes protected range `[GLOBAL_FLAGS_OFFSET, cd_offset)`
+  — parses archive global header and CD, extracts RECOVERY TLVs (type IDs 0x10–0x1F), and computes the protected range from the first Global Flags byte through the final byte immediately before the Central Dictionary
+  — fails closed for malformed RECOVERY TLVs (returns error rather than reporting `repair_possible=true`)
 - `plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput, limits: &ResourceLimits) -> Result<RecoveryPlan, SarError>`
   — validates erasures within protected range and against FEC block boundaries
   — returns `SarError::RecoveryUnavailable` for unaligned erasures or missing TLV (see SPEC_QUESTIONS.md)
@@ -704,6 +705,9 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 - `repair_archive` never writes to the filesystem; the caller handles temp-file + rename
 - Repair never guesses erasures; only explicit `ErasureInput` is accepted
 - LOSS_TOLERANT does not bypass AEAD authentication
+- Archive-level RECOVERY TLV protection excludes Magic, Version, Reserved, Flags Size, the Central Dictionary, and the Footer
+- Archive-level RECOVERY TLV generation is indexed-only; `NO_INDEX` output is rejected when `ArchiveWriterOptions::archive_recovery` is set
+- Conformance vectors distinguish wire-format taxonomy: `valid/fec/xor/` + `valid/fec/rs/` are LFH Selective FEC fixtures, while `valid/recovery/archive-xor/` + `valid/recovery/archive-rs/` are archive-level Central Dictionary Recovery TLV fixtures
 - FEC repair is applied to ciphertext bytes before AEAD authentication
 
 ### FFI / C ABI notes
@@ -776,12 +780,13 @@ Import high-level archive APIs from `sar_archive`, not `sar_core`.
   - `sparse: bool` — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
   - `encryption: Option<EncryptionSettings>`
   - `fec: Option<FecSettings>`
+  - `archive_recovery: Option<ArchiveRecoverySettings>` — generates an indexed-only Central Dictionary RECOVERY TLV during `finish()`, sets `HAS_GLOBAL_EC` and `OPT_PRESENT` before the Global Header is written, and rejects `no_index = true`
   - `lfh_size_field_policy: LfhSizeFieldPolicy`
-  - `with_path: bool`, `with_permissions: bool`, `with_uid_gid: bool`, `with_timestamps: bool`, `with_per_file_crc: bool`, `with_content_hash: bool`, `with_symlinks: bool`
+  - `with_path: bool`, `with_permissions: bool`, `with_uid_gid: bool`, `with_timestamps: bool`, `with_per_file_crc: bool`, `with_content_hash: bool`, `with_symlinks: bool`, `with_delta: bool`
 - `ArchiveReaderOptions`
   - `limits: ResourceLimits`
   - `delta_base: Option<Vec<u8>>`
-- `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`
+- `ArchiveRecoverySettings`, `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`
 - `SparseWriteOptions { logical_size: u64, extents: Vec<SparseExtent> }`
 - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`, `LogicalFile`
 - `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
