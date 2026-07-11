@@ -1,16 +1,17 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    collections::{HashMap, HashSet},
     env,
     fs::{self, File},
     io::{BufReader, Seek, SeekFrom, Write},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use clap::{ArgAction, Args, Parser, Subcommand};
+use filetime::{FileTime, set_file_times};
 use serde_json::json;
-use walkdir::WalkDir;
 
 use sar_archive::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
@@ -19,7 +20,8 @@ use sar_archive::{
 };
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
-    GlobalFlags, ResourceLimits, SarError, fec::validate_recovery_tlv, sparse::SparseExtent,
+    EntryKind, GlobalFlags, ResourceLimits, SarError, fec::validate_recovery_tlv,
+    sparse::SparseExtent,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KeyProvider, KmsContext, KmsParams,
@@ -145,10 +147,46 @@ enum FecChoice {
     Rs,
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum SymlinkCreatePolicy {
+    Skip,
+    Follow,
+    Archive,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct CreateCompression {
     algo_id: u8,
     level: Option<u8>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CreateMetadataOptions {
+    preserve_permissions: bool,
+    preserve_owner: bool,
+    preserve_times: bool,
+    symlink_policy: SymlinkCreatePolicy,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct ExtractMetadataOptions {
+    preserve_permissions: bool,
+    preserve_times: bool,
+    preserve_owner: bool,
+    allow_symlinks: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SafeRelativePath {
+    components: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingDirectoryMetadata {
+    relative_path: SafeRelativePath,
+    permissions: Option<u16>,
+    owner: Option<u32>,
+    timestamps: Option<[u64; 3]>,
 }
 
 struct CliKeyProvider {
@@ -218,6 +256,18 @@ enum Command {
         /// Use `xor` for XOR parity or `rs` for Reed-Solomon.
         #[arg(long, value_enum)]
         fec: Option<FecChoice>,
+        /// Preserve filesystem permission metadata where supported.
+        #[arg(long, action = ArgAction::SetTrue)]
+        preserve_permissions: bool,
+        /// Preserve owner/group metadata where supported.
+        #[arg(long, action = ArgAction::SetTrue)]
+        preserve_owner: bool,
+        /// Preserve timestamp metadata where supported.
+        #[arg(long, action = ArgAction::SetTrue)]
+        preserve_times: bool,
+        /// Symlink handling policy during archive creation.
+        #[arg(long, value_enum, default_value_t = SymlinkCreatePolicy::Skip)]
+        symlinks: SymlinkCreatePolicy,
     },
     /// Extract archive to output directory.
     Extract {
@@ -231,6 +281,18 @@ enum Command {
         /// Permit degraded (loss-tolerant) output when entries have LOSS_TOLERANT set.
         #[arg(long, action = ArgAction::SetTrue)]
         allow_lossy: bool,
+        /// Restore filesystem permission metadata where supported.
+        #[arg(long, action = ArgAction::SetTrue)]
+        preserve_permissions: bool,
+        /// Restore timestamp metadata where supported.
+        #[arg(long, action = ArgAction::SetTrue)]
+        preserve_times: bool,
+        /// Restore owner/group metadata where supported.
+        #[arg(long, action = ArgAction::SetTrue)]
+        preserve_owner: bool,
+        /// Permit extraction of symlink entries.
+        #[arg(long, action = ArgAction::SetTrue)]
+        allow_symlinks: bool,
         #[command(flatten)]
         limits: LimitArgs,
     },
@@ -238,6 +300,9 @@ enum Command {
     List {
         /// Archive path.
         archive: PathBuf,
+        /// Include filesystem metadata in output.
+        #[arg(long, action = ArgAction::SetTrue)]
+        metadata: bool,
     },
     /// Verify archive structure.
     Verify {
@@ -336,9 +401,21 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
             let output = value_after_flag(args, "-f");
             let compression = resolve_shorthand_compression(args);
             Some(match (input, output, compression) {
-                (Ok(input), Ok(output), Ok(compression)) => {
-                    create_archive(input, output, false, compression, None, None, None)
-                }
+                (Ok(input), Ok(output), Ok(compression)) => create_archive(
+                    input,
+                    output,
+                    false,
+                    compression,
+                    None,
+                    None,
+                    None,
+                    CreateMetadataOptions {
+                        preserve_permissions: false,
+                        preserve_owner: false,
+                        preserve_times: false,
+                        symlink_policy: SymlinkCreatePolicy::Skip,
+                    },
+                ),
                 (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => Err(err),
             })
         }
@@ -346,13 +423,18 @@ fn try_handle_shorthand(args: &[String]) -> Option<Result<(), SarError>> {
             let archive = value_after_flag(args, "-f");
             let out = value_after_flag(args, "-C");
             Some(match (archive, out) {
-                (Ok(archive), Ok(out)) => {
-                    extract_archive(archive, out, None, false, ResourceLimits::default())
-                }
+                (Ok(archive), Ok(out)) => extract_archive(
+                    archive,
+                    out,
+                    None,
+                    false,
+                    ResourceLimits::default(),
+                    ExtractMetadataOptions::default(),
+                ),
                 (Err(err), _) | (_, Err(err)) => Err(err),
             })
         }
-        "-t" => Some(value_after_flag(args, "-f").and_then(list_archive)),
+        "-t" => Some(value_after_flag(args, "-f").and_then(|path| list_archive(path, false))),
         "-v" => {
             Some(value_after_flag(args, "-f").and_then(|path| {
                 verify_archive(path, None, false, false, ResourceLimits::default())
@@ -457,6 +539,10 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             encrypt,
             password,
             fec,
+            preserve_permissions,
+            preserve_owner,
+            preserve_times,
+            symlinks,
         } => {
             if indexed && no_index {
                 return Err(SarError::Malformed(
@@ -473,6 +559,12 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
                 encrypt,
                 password,
                 fec,
+                CreateMetadataOptions {
+                    preserve_permissions,
+                    preserve_owner,
+                    preserve_times,
+                    symlink_policy: symlinks,
+                },
             )
         }
         Command::Extract {
@@ -480,6 +572,10 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             output_dir,
             password,
             allow_lossy,
+            preserve_permissions,
+            preserve_times,
+            preserve_owner,
+            allow_symlinks,
             limits,
         } => extract_archive(
             archive,
@@ -487,8 +583,14 @@ fn handle_normal_cli(args: &[String]) -> Result<(), SarError> {
             password,
             allow_lossy,
             limits.resource_limits(),
+            ExtractMetadataOptions {
+                preserve_permissions,
+                preserve_times,
+                preserve_owner,
+                allow_symlinks,
+            },
         ),
-        Command::List { archive } => list_archive(archive),
+        Command::List { archive, metadata } => list_archive(archive, metadata),
         Command::Verify {
             archive,
             password,
@@ -583,6 +685,51 @@ fn print_version() -> Result<(), SarError> {
     .map_err(SarError::Io)
 }
 
+impl SafeRelativePath {
+    fn from_components(components: Vec<String>) -> Result<Self, SarError> {
+        if components.is_empty() {
+            return Err(SarError::Malformed("empty paths are not allowed"));
+        }
+        Ok(Self { components })
+    }
+
+    fn file_name(&self) -> Result<&str, SarError> {
+        self.components
+            .last()
+            .map(String::as_str)
+            .ok_or(SarError::Malformed("output file name is missing"))
+    }
+
+    fn parent_components(&self) -> &[String] {
+        if self.components.len() <= 1 {
+            &[]
+        } else {
+            &self.components[..self.components.len() - 1]
+        }
+    }
+
+    fn to_path_buf(&self) -> PathBuf {
+        self.components.iter().collect()
+    }
+
+    fn depth(&self) -> usize {
+        self.components.len()
+    }
+
+    fn display(&self) -> String {
+        self.components.join("/")
+    }
+}
+
+fn entry_kind_label(kind: EntryKind) -> &'static str {
+    match kind {
+        EntryKind::RegularFile => "regular_file",
+        EntryKind::Directory => "directory",
+        EntryKind::Symlink => "symlink",
+        EntryKind::EmptyArea => "empty_area",
+    }
+}
+
 fn create_archive(
     input: PathBuf,
     output: PathBuf,
@@ -591,7 +738,10 @@ fn create_archive(
     encrypt: Option<EncryptionChoice>,
     password: Option<String>,
     fec: Option<FecChoice>,
+    metadata: CreateMetadataOptions,
 ) -> Result<(), SarError> {
+    validate_create_metadata_support(metadata)?;
+
     if encrypt.is_none() && (password.is_some() || env::var_os(PASSWORD_ENV).is_some()) {
         return Err(SarError::Malformed(
             "create only accepts passwords when --encrypt is specified",
@@ -618,17 +768,25 @@ fn create_archive(
     };
 
     let fec_settings = fec.map(fec_to_settings);
+    let writer_options = ArchiveWriterOptions {
+        no_index,
+        encryption: encryption.as_ref().map(|(settings, _)| settings.clone()),
+        fec: fec_settings,
+        sparse: false,
+        with_permissions: metadata.preserve_permissions,
+        with_uid_gid: metadata.preserve_owner,
+        with_timestamps: metadata.preserve_times,
+        with_symlinks: metadata.symlink_policy == SymlinkCreatePolicy::Archive,
+        ..Default::default()
+    };
 
     let file = File::create(output)?;
     let mut writer = match encryption {
         Some((settings, password)) => ArchiveWriter::new_with_compression_and_key_provider(
             file,
             ArchiveWriterOptions {
-                no_index,
                 encryption: Some(settings),
-                fec: fec_settings,
-                sparse: false,
-                ..Default::default()
+                ..writer_options
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -638,13 +796,7 @@ fn create_archive(
         )?,
         None => ArchiveWriter::new_with_compression(
             file,
-            ArchiveWriterOptions {
-                no_index,
-                encryption: None,
-                fec: fec_settings,
-                sparse: false,
-                ..Default::default()
-            },
+            writer_options,
             CompressionSettings {
                 algo_id: compression.algo_id,
                 level: compression.level,
@@ -652,30 +804,40 @@ fn create_archive(
         )?,
     };
 
-    if input.is_file() {
-        let name = input
-            .file_name()
-            .map(|s| s.to_string_lossy().into_owned())
-            .ok_or(SarError::Malformed("input file name is missing"))?;
-        let payload = fs::read(&input)?;
-        writer.add_entry(EntryInput::file(name, payload))?;
-    } else if input.is_dir() {
-        for entry in WalkDir::new(&input).into_iter().filter_map(Result::ok) {
-            if !entry.file_type().is_file() {
-                continue;
-            }
-            let rel = entry
-                .path()
-                .strip_prefix(&input)
-                .map_err(|_| SarError::Malformed("failed to compute relative path"))?;
-            let name = rel.to_string_lossy().replace('\\', "/");
-            let payload = fs::read(entry.path())?;
-            writer.add_entry(EntryInput::file(name, payload))?;
-        }
+    let input_metadata = fs::symlink_metadata(&input)?;
+    let input_name = input
+        .file_name()
+        .map(|name| PathBuf::from(name.to_os_string()))
+        .ok_or(SarError::Malformed("input file name is missing"))?;
+
+    if input_metadata.file_type().is_dir() {
+        let canonical_root = input.canonicalize()?;
+        let mut active_follow_dirs = HashSet::new();
+        traverse_input_path(
+            &mut writer,
+            &canonical_root,
+            &input,
+            None,
+            metadata,
+            &mut active_follow_dirs,
+        )?;
     } else {
-        return Err(SarError::Malformed(
-            "input path must be a file or directory",
-        ));
+        let canonical_root = if input_metadata.file_type().is_symlink() {
+            input
+                .canonicalize()
+                .map_err(|_| SarError::Malformed("failed to resolve input symlink target"))?
+        } else {
+            input.clone()
+        };
+        let mut active_follow_dirs = HashSet::new();
+        traverse_input_path(
+            &mut writer,
+            &canonical_root,
+            &input,
+            Some(&input_name),
+            metadata,
+            &mut active_follow_dirs,
+        )?;
     }
 
     let summary = writer.finish()?;
@@ -686,35 +848,433 @@ fn create_archive(
     Ok(())
 }
 
-fn list_archive(archive: PathBuf) -> Result<(), SarError> {
-    let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
-    let _ = reader.read_global_header()?;
-    while let Some(entry) = reader.next_entry()? {
-        println!(
-            "{}\t{}\tencoded={}\tuncompressed={}",
-            entry.metadata.name,
-            entry.metadata.compression_algorithm,
-            entry.metadata.payload_size,
-            entry.metadata.uncompressed_size
+fn validate_create_metadata_support(_metadata: CreateMetadataOptions) -> Result<(), SarError> {
+    #[cfg(not(unix))]
+    {
+        if metadata.preserve_permissions {
+            return Err(SarError::Unsupported(
+                "permission preservation is only supported on Unix-like platforms",
+            ));
+        }
+        if metadata.preserve_owner {
+            return Err(SarError::Unsupported(
+                "owner preservation is only supported on Unix-like platforms",
+            ));
+        }
+        if metadata.preserve_times {
+            return Err(SarError::Unsupported(
+                "timestamp preservation is only supported on Unix-like platforms",
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+fn traverse_input_path(
+    writer: &mut ArchiveWriter<File>,
+    canonical_root: &Path,
+    source_path: &Path,
+    archive_rel: Option<&Path>,
+    metadata: CreateMetadataOptions,
+    active_follow_dirs: &mut HashSet<PathBuf>,
+) -> Result<(), SarError> {
+    let fs_metadata = fs::symlink_metadata(source_path)?;
+    let file_type = fs_metadata.file_type();
+
+    if file_type.is_symlink() {
+        return match metadata.symlink_policy {
+            SymlinkCreatePolicy::Skip => Ok(()),
+            SymlinkCreatePolicy::Archive => {
+                add_symlink_entry(writer, source_path, archive_rel, &fs_metadata, metadata)
+            }
+            SymlinkCreatePolicy::Follow => add_followed_symlink(
+                writer,
+                canonical_root,
+                source_path,
+                archive_rel,
+                metadata,
+                active_follow_dirs,
+            ),
+        };
+    }
+
+    if file_type.is_dir() {
+        if let Some(archive_rel) = archive_rel {
+            let name = archive_name_from_path(archive_rel)?;
+            writer.add_entry(build_entry_input(
+                name,
+                Vec::new(),
+                EntryKind::Directory,
+                &fs_metadata,
+                metadata,
+            )?)?;
+        }
+
+        let mut entries: Vec<_> = fs::read_dir(source_path)?.collect::<Result<Vec<_>, _>>()?;
+        entries.sort_by(|left, right| {
+            left.file_name()
+                .to_string_lossy()
+                .cmp(&right.file_name().to_string_lossy())
+        });
+
+        for child in entries {
+            let child_path = child.path();
+            let child_rel = match archive_rel {
+                Some(prefix) => prefix.join(child.file_name()),
+                None => PathBuf::from(child.file_name()),
+            };
+            traverse_input_path(
+                writer,
+                canonical_root,
+                &child_path,
+                Some(&child_rel),
+                metadata,
+                active_follow_dirs,
+            )?;
+        }
+        return Ok(());
+    }
+
+    if file_type.is_file() {
+        let archive_rel =
+            archive_rel.ok_or(SarError::Malformed("archive entry name is missing"))?;
+        let name = archive_name_from_path(archive_rel)?;
+        let payload = fs::read(source_path)?;
+        writer.add_entry(build_entry_input(
+            name,
+            payload,
+            EntryKind::RegularFile,
+            &fs_metadata,
+            metadata,
+        )?)?;
+        return Ok(());
+    }
+
+    Err(SarError::Unsupported(
+        "only regular files, directories, and symlinks are supported",
+    ))
+}
+
+fn add_symlink_entry(
+    writer: &mut ArchiveWriter<File>,
+    source_path: &Path,
+    archive_rel: Option<&Path>,
+    fs_metadata: &fs::Metadata,
+    metadata: CreateMetadataOptions,
+) -> Result<(), SarError> {
+    let archive_rel = archive_rel.ok_or(SarError::Malformed("archive entry name is missing"))?;
+    let name = archive_name_from_path(archive_rel)?;
+    let target = fs::read_link(source_path)?;
+    let target = target
+        .to_str()
+        .ok_or(SarError::Malformed("symlink target must be valid UTF-8"))?;
+    writer.add_entry(build_entry_input(
+        name,
+        target.as_bytes().to_vec(),
+        EntryKind::Symlink,
+        fs_metadata,
+        metadata,
+    )?)?;
+    Ok(())
+}
+
+fn add_followed_symlink(
+    writer: &mut ArchiveWriter<File>,
+    canonical_root: &Path,
+    source_path: &Path,
+    archive_rel: Option<&Path>,
+    metadata: CreateMetadataOptions,
+    active_follow_dirs: &mut HashSet<PathBuf>,
+) -> Result<(), SarError> {
+    let resolved = source_path
+        .canonicalize()
+        .map_err(|_| SarError::Malformed("failed to resolve symlink target"))?;
+    if !resolved.starts_with(canonical_root) {
+        return Err(SarError::Malformed(
+            "refusing to follow symlink target outside the requested input root",
+        ));
+    }
+
+    let target_metadata = fs::metadata(source_path)?;
+    if target_metadata.file_type().is_dir() {
+        if !active_follow_dirs.insert(resolved.clone()) {
+            return Err(SarError::Malformed(
+                "refusing to follow recursive symlink directory cycle",
+            ));
+        }
+        let result = traverse_followed_directory(
+            writer,
+            canonical_root,
+            &resolved,
+            archive_rel,
+            metadata,
+            active_follow_dirs,
+            &target_metadata,
         );
+        active_follow_dirs.remove(&resolved);
+        return result;
+    }
+
+    if target_metadata.file_type().is_file() {
+        let archive_rel =
+            archive_rel.ok_or(SarError::Malformed("archive entry name is missing"))?;
+        let name = archive_name_from_path(archive_rel)?;
+        let payload = fs::read(source_path)?;
+        writer.add_entry(build_entry_input(
+            name,
+            payload,
+            EntryKind::RegularFile,
+            &target_metadata,
+            metadata,
+        )?)?;
+        return Ok(());
+    }
+
+    Err(SarError::Unsupported(
+        "followed symlink target is not a regular file or directory",
+    ))
+}
+
+fn traverse_followed_directory(
+    writer: &mut ArchiveWriter<File>,
+    canonical_root: &Path,
+    resolved_dir: &Path,
+    archive_rel: Option<&Path>,
+    metadata: CreateMetadataOptions,
+    active_follow_dirs: &mut HashSet<PathBuf>,
+    dir_metadata: &fs::Metadata,
+) -> Result<(), SarError> {
+    if let Some(archive_rel) = archive_rel {
+        let name = archive_name_from_path(archive_rel)?;
+        writer.add_entry(build_entry_input(
+            name,
+            Vec::new(),
+            EntryKind::Directory,
+            dir_metadata,
+            metadata,
+        )?)?;
+    }
+
+    let mut entries: Vec<_> = fs::read_dir(resolved_dir)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by(|left, right| {
+        left.file_name()
+            .to_string_lossy()
+            .cmp(&right.file_name().to_string_lossy())
+    });
+
+    for child in entries {
+        let child_rel = match archive_rel {
+            Some(prefix) => prefix.join(child.file_name()),
+            None => PathBuf::from(child.file_name()),
+        };
+        traverse_input_path(
+            writer,
+            canonical_root,
+            &child.path(),
+            Some(&child_rel),
+            metadata,
+            active_follow_dirs,
+        )?;
     }
     Ok(())
 }
 
-fn sanitize_relative(name: &str) -> Result<PathBuf, SarError> {
-    let rel = Path::new(name);
-    if rel.is_absolute() {
-        return Err(SarError::Malformed("absolute paths are not allowed"));
+fn archive_name_from_path(path: &Path) -> Result<String, SarError> {
+    let name = path.to_string_lossy().replace('\\', "/");
+    if name.is_empty() {
+        return Err(SarError::Malformed("archive entry name is missing"));
     }
-    if rel
-        .components()
-        .any(|component| matches!(component, Component::ParentDir))
-    {
+    Ok(name)
+}
+
+fn build_entry_input(
+    name: String,
+    payload: Vec<u8>,
+    kind: EntryKind,
+    fs_metadata: &fs::Metadata,
+    metadata: CreateMetadataOptions,
+) -> Result<EntryInput, SarError> {
+    Ok(EntryInput {
+        name,
+        payload,
+        kind: Some(kind),
+        permissions: if metadata.preserve_permissions {
+            Some(entry_permissions(fs_metadata)?)
+        } else {
+            None
+        },
+        uid_gid: if metadata.preserve_owner {
+            Some(entry_owner(fs_metadata)?)
+        } else {
+            None
+        },
+        timestamps: if metadata.preserve_times {
+            Some(entry_timestamps(fs_metadata)?)
+        } else {
+            None
+        },
+        ..Default::default()
+    })
+}
+
+#[cfg(unix)]
+fn entry_permissions(fs_metadata: &fs::Metadata) -> Result<u16, SarError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    u16::try_from(fs_metadata.permissions().mode())
+        .map_err(|_| SarError::Overflow("filesystem mode does not fit into SAR metadata"))
+}
+
+#[cfg(not(unix))]
+fn entry_permissions(_fs_metadata: &fs::Metadata) -> Result<u16, SarError> {
+    Err(SarError::Unsupported(
+        "permission preservation is only supported on Unix-like platforms",
+    ))
+}
+
+#[cfg(unix)]
+fn entry_owner(fs_metadata: &fs::Metadata) -> Result<u32, SarError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let uid = u16::try_from(fs_metadata.uid())
+        .map_err(|_| SarError::Overflow("UID does not fit into SAR metadata"))?;
+    let gid = u16::try_from(fs_metadata.gid())
+        .map_err(|_| SarError::Overflow("GID does not fit into SAR metadata"))?;
+    Ok(u32::from(uid) | (u32::from(gid) << 16))
+}
+
+#[cfg(not(unix))]
+fn entry_owner(_fs_metadata: &fs::Metadata) -> Result<u32, SarError> {
+    Err(SarError::Unsupported(
+        "owner preservation is only supported on Unix-like platforms",
+    ))
+}
+
+#[cfg(unix)]
+fn entry_timestamps(fs_metadata: &fs::Metadata) -> Result<[u64; 3], SarError> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok([
+        u64::try_from(fs_metadata.mtime())
+            .map_err(|_| SarError::Unsupported("negative mtime is not supported"))?,
+        u64::try_from(fs_metadata.atime())
+            .map_err(|_| SarError::Unsupported("negative atime is not supported"))?,
+        u64::try_from(fs_metadata.ctime())
+            .map_err(|_| SarError::Unsupported("negative ctime is not supported"))?,
+    ])
+}
+
+#[cfg(not(unix))]
+fn entry_timestamps(_fs_metadata: &fs::Metadata) -> Result<[u64; 3], SarError> {
+    Err(SarError::Unsupported(
+        "timestamp preservation is only supported on Unix-like platforms",
+    ))
+}
+
+fn list_archive(archive: PathBuf, show_metadata: bool) -> Result<(), SarError> {
+    let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
+    let _ = reader.read_global_header()?;
+    while let Some(entry) = reader.next_entry()? {
+        if show_metadata {
+            let mut extras = Vec::new();
+            if let Some(permissions) = entry.metadata.permissions {
+                extras.push(format!("mode={:o}", permissions.mode));
+            }
+            if let Some(owner) = entry.metadata.owner {
+                extras.push(format!("uid={} gid={}", owner.uid(), owner.gid()));
+            }
+            if let Some(timestamps) = entry.metadata.timestamps {
+                extras.push(format!(
+                    "mtime={} atime={} ctime={}",
+                    timestamps.mtime, timestamps.atime, timestamps.ctime
+                ));
+            }
+            if entry.metadata.is_hidden {
+                extras.push("hidden=true".to_string());
+            }
+            if let Some(target) = entry.metadata.symlink_target.as_deref() {
+                extras.push(format!("target={target}"));
+            }
+            println!(
+                "{}\tkind={}\t{}\tencoded={}\tuncompressed={}{}",
+                entry.metadata.name,
+                entry_kind_label(entry.metadata.entry_kind),
+                entry.metadata.compression_algorithm,
+                entry.metadata.payload_size,
+                entry.metadata.uncompressed_size,
+                if extras.is_empty() {
+                    String::new()
+                } else {
+                    format!("\t{}", extras.join("\t"))
+                }
+            );
+        } else {
+            let suffix = entry
+                .metadata
+                .symlink_target
+                .as_deref()
+                .map(|target| format!("\t-> {target}"))
+                .unwrap_or_default();
+            println!(
+                "{}\tkind={}\t{}\tencoded={}\tuncompressed={}{}",
+                entry.metadata.name,
+                entry_kind_label(entry.metadata.entry_kind),
+                entry.metadata.compression_algorithm,
+                entry.metadata.payload_size,
+                entry.metadata.uncompressed_size,
+                suffix
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_relative_archive_path(name: &str) -> Result<SafeRelativePath, SarError> {
+    if name.is_empty() {
+        return Err(SarError::Malformed("empty paths are not allowed"));
+    }
+    if name.starts_with("//") || name.starts_with("\\\\") {
         return Err(SarError::Malformed(
-            "parent directory traversal is not allowed",
+            "UNC and verbatim paths are not allowed",
         ));
     }
-    Ok(rel.to_path_buf())
+    if name.starts_with('/') || name.starts_with('\\') {
+        return Err(SarError::Malformed("absolute paths are not allowed"));
+    }
+    if name.contains('\0') || name.contains('\\') {
+        return Err(SarError::Malformed(
+            "backslashes and NUL bytes are not allowed in archive paths",
+        ));
+    }
+
+    let mut components = Vec::new();
+    for component in name.split('/') {
+        if component.is_empty() {
+            return Err(SarError::Malformed("empty path components are not allowed"));
+        }
+        if component == "." {
+            return Err(SarError::Malformed(
+                "current-directory path components are not allowed",
+            ));
+        }
+        if component == ".." {
+            return Err(SarError::Malformed(
+                "parent directory traversal is not allowed",
+            ));
+        }
+        if component.len() >= 2
+            && component.as_bytes()[1] == b':'
+            && component.as_bytes()[0].is_ascii_alphabetic()
+        {
+            return Err(SarError::Malformed(
+                "Windows drive-prefixed paths are not allowed",
+            ));
+        }
+        components.push(component.to_string());
+    }
+
+    SafeRelativePath::from_components(components)
 }
 
 fn make_temp_output_path(final_path: &Path) -> Result<PathBuf, SarError> {
@@ -899,7 +1459,9 @@ fn extract_archive(
     password: Option<String>,
     allow_lossy: bool,
     limits: ResourceLimits,
+    metadata: ExtractMetadataOptions,
 ) -> Result<(), SarError> {
+    validate_extract_metadata_support(metadata)?;
     fs::create_dir_all(&output_dir)?;
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
@@ -921,10 +1483,14 @@ fn extract_archive(
         sparse_extents: Option<Vec<SparseExtent>>,
         sparse_uncompressed_size: u64,
         file_crc32: Option<u32>,
+        permissions: Option<u16>,
+        owner: Option<u32>,
+        timestamps: Option<[u64; 3]>,
     }
 
     let mut frag_order = Vec::new();
-    let mut frag_groups = std::collections::HashMap::<u32, FragGroup>::new();
+    let mut frag_groups = HashMap::<u32, FragGroup>::new();
+    let mut pending_directories = HashMap::<String, PendingDirectoryMetadata>::new();
 
     while let Some(entry) = reader.next_entry()? {
         if entry.metadata.name.is_empty() && !entry.metadata.is_fragment {
@@ -950,6 +1516,12 @@ fn extract_archive(
                     sparse_extents: None,
                     sparse_uncompressed_size: 0,
                     file_crc32: None,
+                    permissions: entry.metadata.permissions.map(|value| value.mode),
+                    owner: entry.metadata.owner.map(|value| value.uid_gid),
+                    timestamps: entry
+                        .metadata
+                        .timestamps
+                        .map(|value| [value.mtime, value.atime, value.ctime]),
                 }
             });
             limits.check_fragment_count(
@@ -966,45 +1538,26 @@ fn extract_archive(
                     group.sparse_uncompressed_size = entry.metadata.uncompressed_size;
                 }
                 group.file_crc32 = entry.metadata.file_crc32;
+                group.permissions = entry.metadata.permissions.map(|value| value.mode);
+                group.owner = entry.metadata.owner.map(|value| value.uid_gid);
+                group.timestamps = entry
+                    .metadata
+                    .timestamps
+                    .map(|value| [value.mtime, value.atime, value.ctime]);
             }
 
             group.entries.push(entry);
             continue;
         }
 
-        let rel = sanitize_relative(&entry.metadata.name)?;
-        let out_path = output_dir.join(rel);
-        if let Some(extents) = entry.metadata.sparse_extents.as_ref() {
-            let actual_crc = compute_sparse_crc32(
-                &entry.payload,
-                extents,
-                entry.metadata.uncompressed_size,
-                &limits,
-            )?;
-            if header.flags.contains(GlobalFlags::PER_FILE_CRC) {
-                verify_crc32(
-                    entry.metadata.file_crc32,
-                    actual_crc,
-                    "file CRC32 mismatch on reconstructed logical file",
-                )?;
-            }
-            write_sparse_payload_via_temp(
-                &out_path,
-                &entry.payload,
-                extents,
-                entry.metadata.uncompressed_size,
-                &limits,
-            )?;
-        } else {
-            if header.flags.contains(GlobalFlags::PER_FILE_CRC) {
-                verify_crc32(
-                    entry.metadata.file_crc32,
-                    crc32fast::hash(&entry.payload),
-                    "file CRC32 mismatch on reconstructed logical file",
-                )?;
-            }
-            write_bytes_via_temp(&out_path, &entry.payload)?;
-        }
+        extract_non_fragment_entry(
+            &output_dir,
+            &entry,
+            header.flags,
+            &limits,
+            metadata,
+            &mut pending_directories,
+        )?;
     }
 
     for fid in frag_order {
@@ -1014,6 +1567,9 @@ fn extract_archive(
             sparse_extents,
             sparse_uncompressed_size,
             file_crc32,
+            permissions,
+            owner,
+            timestamps,
         } = frag_groups.remove(&fid).ok_or(SarError::Malformed(
             "fragment group ID vanished during reconstruction",
         ))?;
@@ -1059,8 +1615,8 @@ fn extract_archive(
             );
         }
 
-        let rel = sanitize_relative(&name)?;
-        let out_path = output_dir.join(rel);
+        let rel = validate_relative_archive_path(&name)?;
+        let out_path = prepare_output_file_path(&output_dir, &rel)?;
         if let Some(extents) = sparse_extents.as_ref() {
             let actual_crc =
                 compute_sparse_crc32(&raw, extents, sparse_uncompressed_size, &limits)?;
@@ -1088,9 +1644,340 @@ fn extract_archive(
             }
             write_bytes_via_temp(&out_path, &raw)?;
         }
+        apply_file_metadata(&out_path, permissions, owner, timestamps, metadata)?;
+    }
+
+    finalize_directory_metadata(&output_dir, pending_directories, metadata)?;
+    Ok(())
+}
+
+fn validate_extract_metadata_support(_metadata: ExtractMetadataOptions) -> Result<(), SarError> {
+    #[cfg(not(unix))]
+    {
+        if metadata.preserve_permissions {
+            return Err(SarError::Unsupported(
+                "permission restoration is only supported on Unix-like platforms",
+            ));
+        }
+        if metadata.preserve_owner {
+            return Err(SarError::Unsupported(
+                "owner restoration is only supported on Unix-like platforms",
+            ));
+        }
+        if metadata.allow_symlinks {
+            return Err(SarError::Unsupported(
+                "symlink extraction is only supported on Unix-like platforms",
+            ));
+        }
     }
 
     Ok(())
+}
+
+fn extract_non_fragment_entry(
+    output_dir: &Path,
+    entry: &sar_archive::EntryReader,
+    global_flags: GlobalFlags,
+    limits: &ResourceLimits,
+    metadata: ExtractMetadataOptions,
+    pending_directories: &mut HashMap<String, PendingDirectoryMetadata>,
+) -> Result<(), SarError> {
+    let rel = validate_relative_archive_path(&entry.metadata.name)?;
+    match entry.metadata.entry_kind {
+        EntryKind::Directory => {
+            let out_path = ensure_safe_directory_path(output_dir, &rel)?;
+            record_directory_metadata(pending_directories, &rel, entry);
+            let _ = out_path;
+            Ok(())
+        }
+        EntryKind::Symlink => extract_symlink_entry(output_dir, &rel, entry, metadata),
+        EntryKind::RegularFile => {
+            let out_path = prepare_output_file_path(output_dir, &rel)?;
+            if let Some(extents) = entry.metadata.sparse_extents.as_ref() {
+                let actual_crc = compute_sparse_crc32(
+                    &entry.payload,
+                    extents,
+                    entry.metadata.uncompressed_size,
+                    limits,
+                )?;
+                if global_flags.contains(GlobalFlags::PER_FILE_CRC) {
+                    verify_crc32(
+                        entry.metadata.file_crc32,
+                        actual_crc,
+                        "file CRC32 mismatch on reconstructed logical file",
+                    )?;
+                }
+                write_sparse_payload_via_temp(
+                    &out_path,
+                    &entry.payload,
+                    extents,
+                    entry.metadata.uncompressed_size,
+                    limits,
+                )?;
+            } else {
+                if global_flags.contains(GlobalFlags::PER_FILE_CRC) {
+                    verify_crc32(
+                        entry.metadata.file_crc32,
+                        crc32fast::hash(&entry.payload),
+                        "file CRC32 mismatch on reconstructed logical file",
+                    )?;
+                }
+                write_bytes_via_temp(&out_path, &entry.payload)?;
+            }
+            apply_file_metadata(
+                &out_path,
+                entry.metadata.permissions.map(|value| value.mode),
+                entry.metadata.owner.map(|value| value.uid_gid),
+                entry
+                    .metadata
+                    .timestamps
+                    .map(|value| [value.mtime, value.atime, value.ctime]),
+                metadata,
+            )
+        }
+        EntryKind::EmptyArea => Ok(()),
+    }
+}
+
+fn record_directory_metadata(
+    pending_directories: &mut HashMap<String, PendingDirectoryMetadata>,
+    rel: &SafeRelativePath,
+    entry: &sar_archive::EntryReader,
+) {
+    pending_directories.insert(
+        rel.display(),
+        PendingDirectoryMetadata {
+            relative_path: rel.clone(),
+            permissions: entry.metadata.permissions.map(|value| value.mode),
+            owner: entry.metadata.owner.map(|value| value.uid_gid),
+            timestamps: entry
+                .metadata
+                .timestamps
+                .map(|value| [value.mtime, value.atime, value.ctime]),
+        },
+    );
+}
+
+fn extract_symlink_entry(
+    output_dir: &Path,
+    rel: &SafeRelativePath,
+    entry: &sar_archive::EntryReader,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
+    if !metadata.allow_symlinks {
+        return Err(SarError::Unsupported(
+            "symlink extraction requires --allow-symlinks",
+        ));
+    }
+
+    let target = entry
+        .metadata
+        .symlink_target
+        .as_deref()
+        .ok_or(SarError::Malformed(
+            "symlink entry is missing target metadata",
+        ))?;
+    let _ = validate_relative_archive_path(target)?;
+
+    let out_path = prepare_output_file_path(output_dir, rel)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        if let Ok(existing) = fs::symlink_metadata(&out_path) {
+            if existing.file_type().is_dir() {
+                return Err(SarError::Malformed(
+                    "refusing to replace existing directory with symlink",
+                ));
+            }
+            fs::remove_file(&out_path)?;
+        }
+        symlink(target, &out_path)?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (output_dir, rel, entry);
+        Err(SarError::Unsupported(
+            "symlink extraction is only supported on Unix-like platforms",
+        ))
+    }
+}
+
+fn prepare_output_file_path(
+    output_dir: &Path,
+    rel: &SafeRelativePath,
+) -> Result<PathBuf, SarError> {
+    let parent = ensure_parent_directory_path(output_dir, rel.parent_components())?;
+    let out_path = parent.join(rel.file_name()?);
+    if let Ok(existing) = fs::symlink_metadata(&out_path)
+        && existing.file_type().is_dir()
+    {
+        return Err(SarError::Malformed(
+            "refusing to replace existing directory with file output",
+        ));
+    }
+    Ok(out_path)
+}
+
+fn ensure_safe_directory_path(
+    output_dir: &Path,
+    rel: &SafeRelativePath,
+) -> Result<PathBuf, SarError> {
+    ensure_parent_directory_path(output_dir, &rel.components)
+}
+
+fn ensure_parent_directory_path(
+    output_dir: &Path,
+    components: &[String],
+) -> Result<PathBuf, SarError> {
+    let mut current = output_dir.to_path_buf();
+    for component in components {
+        current.push(component);
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(SarError::Malformed(
+                        "refusing to traverse an existing symlink during extraction",
+                    ));
+                }
+                if !metadata.is_dir() {
+                    return Err(SarError::Malformed(
+                        "path component exists but is not a directory",
+                    ));
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                create_restrictive_directory(&current)?;
+            }
+            Err(err) => return Err(SarError::Io(err)),
+        }
+    }
+    Ok(current)
+}
+
+fn create_restrictive_directory(path: &Path) -> Result<(), SarError> {
+    fs::create_dir(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
+fn apply_file_metadata(
+    path: &Path,
+    permissions: Option<u16>,
+    owner: Option<u32>,
+    timestamps: Option<[u64; 3]>,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
+    apply_owner(path, owner, metadata)?;
+    apply_timestamps(path, timestamps, metadata)?;
+    apply_permissions(path, permissions, metadata)
+}
+
+fn finalize_directory_metadata(
+    output_dir: &Path,
+    pending_directories: HashMap<String, PendingDirectoryMetadata>,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
+    let mut pending: Vec<_> = pending_directories.into_values().collect();
+    pending.sort_by(|left, right| right.relative_path.depth().cmp(&left.relative_path.depth()));
+    for entry in pending {
+        let path = output_dir.join(entry.relative_path.to_path_buf());
+        apply_owner(&path, entry.owner, metadata)?;
+        apply_timestamps(&path, entry.timestamps, metadata)?;
+        apply_permissions(&path, entry.permissions, metadata)?;
+    }
+    Ok(())
+}
+
+fn apply_permissions(
+    path: &Path,
+    permissions: Option<u16>,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
+    if !metadata.preserve_permissions {
+        return Ok(());
+    }
+    let Some(mode) = permissions else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(u32::from(mode & 0o0777)))?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Err(SarError::Unsupported(
+            "permission restoration is only supported on Unix-like platforms",
+        ))
+    }
+}
+
+fn apply_owner(
+    path: &Path,
+    owner: Option<u32>,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
+    if !metadata.preserve_owner {
+        return Ok(());
+    }
+    let Some(owner) = owner else {
+        return Ok(());
+    };
+
+    #[cfg(unix)]
+    {
+        let uid = rustix::process::Uid::from_raw(owner & 0xFFFF);
+        let gid = rustix::process::Gid::from_raw((owner >> 16) & 0xFFFF);
+        rustix::fs::chown(path, Some(uid), Some(gid))
+            .map_err(std::io::Error::from)
+            .map_err(SarError::Io)?;
+        return Ok(());
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (path, owner);
+        Err(SarError::Unsupported(
+            "owner restoration is only supported on Unix-like platforms",
+        ))
+    }
+}
+
+fn apply_timestamps(
+    path: &Path,
+    timestamps: Option<[u64; 3]>,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
+    if !metadata.preserve_times {
+        return Ok(());
+    }
+    let Some([mtime, atime, _ctime]) = timestamps else {
+        return Ok(());
+    };
+
+    let atime = i64::try_from(atime)
+        .map_err(|_| SarError::Overflow("atime does not fit host timestamp range"))?;
+    let mtime = i64::try_from(mtime)
+        .map_err(|_| SarError::Overflow("mtime does not fit host timestamp range"))?;
+    set_file_times(
+        path,
+        FileTime::from_unix_time(atime, 0),
+        FileTime::from_unix_time(mtime, 0),
+    )
+    .map_err(SarError::Io)
 }
 
 fn verify_archive(
@@ -1382,9 +2269,17 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 let mut val = serde_json::to_value(entry).unwrap_or(json!({}));
                 if let Some(obj) = val.as_object_mut() {
                     obj.insert(
+                        "kind".to_string(),
+                        json!(entry_kind_label(entry.entry_kind)),
+                    );
+                    obj.insert(
                         "sparse_extent_count".to_string(),
                         json!(sparse_extent_count),
                     );
+                    if let Some(owner) = entry.owner {
+                        obj.insert("uid".to_string(), json!(owner.uid()));
+                        obj.insert("gid".to_string(), json!(owner.gid()));
+                    }
                     // Add human-readable patch algorithm name when present.
                     if let Some(algo_id) = entry.patch_algo_id {
                         obj.insert(

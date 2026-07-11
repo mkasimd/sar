@@ -7813,9 +7813,9 @@
     "commands": [
       {
         "name": "create",
-        "usage": "sar create <input> <output.sar> [--indexed|--no-index] [--compression store|deflate|zstd | -S | -z | -Z] [--compression-level 0..9 | -0..-9] [--encrypt aes256-gcm|xchacha20-poly] [--password PASSWORD] [--fec xor|rs]",
+        "usage": "sar create <input> <output.sar> [--indexed|--no-index] [--compression store|deflate|zstd | -S | -z | -Z] [--compression-level 0..9 | -0..-9] [--encrypt aes256-gcm|xchacha20-poly] [--password PASSWORD] [--fec xor|rs] [--preserve-permissions] [--preserve-owner] [--preserve-times] [--symlinks skip|follow|archive]",
         "status": "implemented",
-        "description": "Create an archive from a file or directory tree with optional compression, password-based encryption, and per-entry Selective FEC.",
+        "description": "Create an archive from a file or directory tree with optional compression, password-based encryption, per-entry Selective FEC, optional filesystem metadata capture, explicit directory entries, and explicit symlink policy.",
         "options": [
           {
             "name": "--indexed",
@@ -7860,6 +7860,22 @@
           {
             "name": "--fec",
             "description": "Select per-entry Selective FEC: `xor` or `rs`."
+          },
+          {
+            "name": "--preserve-permissions",
+            "description": "Record filesystem mode metadata on supported Unix-like platforms."
+          },
+          {
+            "name": "--preserve-owner",
+            "description": "Record packed UID/GID metadata on supported Unix-like platforms."
+          },
+          {
+            "name": "--preserve-times",
+            "description": "Record Unix mtime/atime/ctime seconds on supported Unix-like platforms."
+          },
+          {
+            "name": "--symlinks",
+            "description": "Select symlink handling policy: `skip` (default), `follow`, or `archive`."
           }
         ],
         "exit_codes": [
@@ -7881,13 +7897,13 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Passwords fall back to `SAR_PASSWORD` and then an interactive prompt when encryption is enabled. `sar create --cdc ...` is not implemented in M9a."
+        "notes": "Passwords fall back to `SAR_PASSWORD` and then an interactive prompt when encryption is enabled. Directory entries are emitted explicitly below the input root. `--symlinks follow` refuses targets that resolve outside the requested input root and rejects recursive directory-symlink cycles. `sar create --cdc ...` is not implemented in M9a."
       },
       {
         "name": "extract",
-        "usage": "sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
+        "usage": "sar extract <archive.sar> <output-dir> [--password PASSWORD] [--allow-lossy] [--preserve-permissions] [--preserve-times] [--preserve-owner] [--allow-symlinks] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
         "status": "implemented",
-        "description": "Extract an archive into a destination directory with traversal protection. Accepts ResourceLimits override flags; uses safe defaults when omitted. Sparse files are written via temp-file and scatter-gather seeks (no large in-memory sparse hole buffers). Resource-limit failures do not leave finalized output files behind.",
+        "description": "Extract an archive into a destination directory with lexical path validation, per-component symlink traversal rejection, optional metadata restoration, opt-in symlink creation, and temp-file safety for regular and sparse files. Accepts ResourceLimits override flags; uses safe defaults when omitted.",
         "options": [
           {
             "name": "--password",
@@ -7896,6 +7912,22 @@
           {
             "name": "--allow-lossy",
             "description": "Permit LOSS_TOLERANT degraded output when fragments are missing. Never bypasses AEAD authentication failures."
+          },
+          {
+            "name": "--preserve-permissions",
+            "description": "Restore regular-file and directory permissions when present; strips setuid/setgid/sticky bits."
+          },
+          {
+            "name": "--preserve-times",
+            "description": "Restore atime/mtime when present."
+          },
+          {
+            "name": "--preserve-owner",
+            "description": "Restore UID/GID metadata on supported Unix-like platforms; may require privileges."
+          },
+          {
+            "name": "--allow-symlinks",
+            "description": "Permit extraction of symlink entries; absolute and parent-traversing targets remain rejected."
           },
           {
             "name": "--max-archive-size BYTES",
@@ -7951,7 +7983,7 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Rejects absolute paths and parent-directory traversal. Sparse outputs use temp-file scatter-gather. Resource-limit failures return SAR_ERR_LIMIT_EXCEEDED and do not finalize outputs."
+        "notes": "Rejects absolute paths, parent-directory traversal, empty/current-directory components, Windows drive prefixes, and UNC/verbatim-style paths. Parent-directory creation rejects traversal through existing symlink components. Sparse outputs use temp-file scatter-gather. Directory metadata is applied after child extraction completes. Resource-limit failures return SAR_ERR_LIMIT_EXCEEDED and do not finalize outputs."
       },
       {
         "name": "inspect",
@@ -7981,14 +8013,19 @@
         ],
         "related_spec_sections": [],
         "ffi_equivalent_candidate": true,
-        "notes": "Implemented for unencrypted archives and current FEC/CDC metadata; JSON includes cdc_support, cdc_metadata_tlvs, legacy cdc_map_tlvs, and per-entry cdc_algo_id. No password option exists for encrypted inspect flows."
+        "notes": "Implemented for unencrypted archives and current FEC/CDC metadata; JSON includes cdc_support, cdc_metadata_tlvs, legacy cdc_map_tlvs, semantic entry kind, permissions, owner metadata plus uid/gid, timestamps, symlink targets, and per-entry cdc_algo_id. No password option exists for encrypted inspect flows."
       },
       {
         "name": "list",
-        "usage": "sar list <archive.sar>",
+        "usage": "sar list <archive.sar> [--metadata]",
         "status": "partial",
-        "description": "List archive entries with compression name and size information.",
-        "options": [],
+        "description": "List archive entries with semantic kind, compression name, and size information; optionally include filesystem metadata details.",
+        "options": [
+          {
+            "name": "--metadata",
+            "description": "Include permissions, owner, timestamps, hidden status, and symlink target details when present."
+          }
+        ],
         "exit_codes": [
           {
             "code": 0,

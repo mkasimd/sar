@@ -580,10 +580,6 @@ If this milestone document appears to describe library/profile layout differentl
 * full workspace validation
 * CodeQL/security scan where available
 
----
-
-# Current and future milestones
-
 ## M11e: CLI metadata support
 
 * create archives preserving permissions where supported
@@ -634,6 +630,10 @@ If this milestone document appears to describe library/profile layout differentl
 * update `docs/API.md`
 * update `docs/SECURITY.md`
 * update `docs/MACHINE_READABLE_API.json` if CLI/API surface changes
+
+---
+
+# Current and future milestones
 
 ## M11f: API inventory, conformance profile, and security-doc refresh
 

@@ -255,8 +255,15 @@ without a checked path through `ResourceLimits::allocation_len`.
 
 
 
-- Extraction rejects absolute paths.
-- Extraction rejects `..` traversal.
+- Extraction lexically rejects absolute paths, `..`, empty/current-directory components, Windows drive prefixes, and UNC/verbatim-style paths before archive-controlled filesystem writes begin.
+- Extraction validates each path component under the destination root and refuses to traverse an existing symlink component.
+- Symlink extraction is disabled by default; `--allow-symlinks` is required before a symlink entry may be created on the host filesystem.
+- Even when symlink extraction is enabled, absolute or parent-traversing symlink targets are rejected, and later entries cannot use an extracted symlink as a traversal primitive because parent-component symlinks are rejected.
+- Newly-created extraction directories are staged with restrictive permissions before any optional final metadata application.
+- Final directory permissions are applied only after entry extraction completes.
+- Permission restoration is disabled by default and strips setuid/setgid/sticky bits even when `--preserve-permissions` is requested.
+- UID/GID restoration is disabled by default and remains Unix-only / privilege-dependent when `--preserve-owner` is requested.
+- Timestamp restoration is disabled by default and currently restores atime/mtime only; archive `ctime` remains inspection metadata rather than a directly restorable host field.
 - Failed CLI extraction and failed CLI repair do not leave finalized output files behind after a resource-limit error.
 - Parsing uses checked arithmetic for offsets, lengths, header sizes, and region boundaries.
 - Unknown assigned-but-unsupported algorithms return SAR unsupported/reserved errors rather than silent fallback.
@@ -267,6 +274,8 @@ without a checked path through `ResourceLimits::allocation_len`.
 - No built-in asymmetric-wrap cryptography is present; application code must provide unwrap behavior.
 - `sar-core::profile` is not a complete security/compliance oracle.
 - The current CLI has no dedicated encrypted `list` or encrypted `inspect` path because those commands do not accept passwords.
+- Metadata-preserving create/extract behavior is currently strongest on Unix-like platforms; unsupported platforms fail clearly instead of claiming owner/group or symlink-restoration behavior they cannot provide safely.
+- CLI extraction uses a stable per-component validation approach rather than an `openat`/directory-fd extraction engine on every platform, so confinement guarantees are strongest when the host filesystem reports symlink state accurately for each component.
 - There is no stable FFI/C ABI yet, so no cross-language ownership guarantees exist.
 
 ## Future FFI / C ABI security concerns (Milestone 12)
