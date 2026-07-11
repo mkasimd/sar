@@ -460,10 +460,6 @@ filesystem metadata encode/decode behavior
   * no device/FIFO/socket creation
 * filesystem mutation is reserved for explicit CLI/application/profile extraction behavior
 
----
-
-# Current and future milestones
-
 ## M11c:
 
 crate-boundary implementation cleanup
@@ -549,6 +545,10 @@ final fragment completeness and API/docs consistency correction
 * full workspace validation
 * CodeQL/security scan where available
 
+---
+
+# Current and future milestones
+
 ## M11d:
 
 archive API architecture split
@@ -599,6 +599,7 @@ archive API architecture split
   * indexed and `NO_INDEX` high-level archive flows
   * high-level archive metadata reporting
 * prefer one `sar-archive` integration crate over immediate `sar-archive-reader` / `sar-archive-writer` split unless audit proves separate crates are cleaner
+* crate/archive split must stay inside the monorepo
 * preserve M11a.1 LFH size-field policy during the split:
 
   * `Auto` may promote to 64-bit only before the Global Header is emitted
@@ -715,6 +716,7 @@ API inventory, conformance profile, and security-doc refresh
   * any future redundancy mechanism must preserve interoperability with specification-compliant SAR readers or be explicitly profile-gated
 * no false Standard Compliance claims
 * binding-readiness notes updated for C/Python future work
+* document monorepo repository layout for C ABI, Python, future mobile bindings, profiles, vectors, fuzzing, and packaging paths
 * full workspace validation
 * CodeQL/security scan if available
 
@@ -860,6 +862,7 @@ refactoring/remediation from M13a
 * harden secret-handling and error-reporting paths
 * prepare stable public API surface
 * prepare C ABI/Python architecture after security findings
+* preserve monorepo layout when preparing C ABI/Python architecture
 
 ## M14a:
 
@@ -913,6 +916,7 @@ C ABI security profile and split-library design
   * compatibility impact for specification-compliant readers
 * document that shared libraries do not provide process isolation
 * document helper-process model for high-risk/networked use
+* C ABI source, headers, examples, tests, and packaging metadata live under a monorepo path such as `ffi/c/`
 * update `SECURITY.md` / future `SECURITY_PROFILES.md`
 * no stable ABI freeze yet unless the design is complete and reviewed
 
@@ -984,10 +988,93 @@ Python module
 * default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
 * Python exceptions must not reveal secret/AAD mismatch details
 * Python APIs must not expose raw key/exporter-derived material
+* Python binding source, packaging metadata, tests, and examples live under a monorepo path such as `bindings/python/`
 * wheel/build documentation
 * Python examples/tests
 
 ## M15a:
+
+monorepo packaging and CI layout
+
+* keep all implementation, C ABI, Python, future mobile bindings, profiles, vectors, fuzzing harnesses, packaging metadata, and release scripts in one monorepo
+* do not introduce Git submodules
+* do not plan separate repositories for C ABI, Python, Swift/iOS, Kotlin/Java Android, conformance vectors, profile definitions, or release packaging
+* define repository paths for packaging and generated artifacts, such as:
+
+  * `ffi/c/`
+  * `bindings/python/`
+  * `bindings/swift/`
+  * `bindings/android/`
+  * `profiles/`
+  * `vectors/`
+  * `fuzz/`
+  * `ci/`
+  * `ci/scripts/`
+  * `.github/workflows/`
+* define CI job boundaries:
+
+  * Rust workspace validation
+  * CodeQL/security scan
+  * C ABI build/test
+  * Python wheel build/test
+  * conformance vector validation
+  * fuzz smoke tests
+  * documentation/API inventory validation
+* define which generated outputs are CI artifacts only and must not be committed:
+
+  * `.so`
+  * `.dll`
+  * `.dylib`
+  * `.a`
+  * `.lib`
+  * `.rlib`
+  * `.whl`
+  * generated binary archives
+  * coverage reports
+  * fuzz corpus build outputs
+* define which generated or semi-generated files may be committed once stable:
+
+  * canonical C headers
+  * machine-readable API inventory
+  * conformance vector manifests
+  * package metadata templates
+* document that package creation jobs may look only at their relevant subpaths but still operate inside the same monorepo
+* update `docs/LIBRARY_LAYOUT.md`
+* update `docs/SECURITY.md` or future `docs/SECURITY_PROFILES.md` if packaging profile behavior affects security posture
+
+## M15b:
+
+release artifact automation design
+
+* design GitHub Actions or equivalent CI/CD workflows for creating release artifacts from the monorepo
+* release automation is planned but not required for earlier milestones
+* define artifact matrix for:
+
+  * Rust crates
+  * CLI binaries
+  * C ABI shared libraries
+  * C ABI headers/packages
+  * Python wheels
+  * conformance vectors
+  * documentation bundles
+* define platform matrix where practical:
+
+  * Linux
+  * macOS
+  * Windows
+  * x86_64
+  * aarch64
+* define signing/checksum expectations for release artifacts
+* define SBOM/provenance expectations where practical
+* define versioning rules across Rust crates, C ABI, Python package, CLI, and conformance vectors
+* define release notes expectations
+* define how generated artifacts attach to GitHub Releases or equivalent release pages
+* ensure release automation does not require splitting the repository
+* ensure release automation does not commit generated binaries/modules back to source control
+* update packaging docs and CI docs
+* no requirement to publish packages automatically to external registries unless explicitly added by a later milestone
+
+## M16a:
 
 Swift/iOS package
 
@@ -998,8 +1085,12 @@ Swift/iOS package
 * mobile storage constraints documented
 * profile selection documented
 * Swift examples/tests
+* keep Swift/iOS binding source, packaging metadata, tests, and examples inside this monorepo
+* use a monorepo path such as `bindings/swift/`
+* do not split Swift/iOS bindings into a separate Git repository
+* generated Apple framework/package artifacts are release/CI outputs and must not be committed to source control
 
-## M15b:
+## M16b:
 
 Kotlin/Java Android package
 
@@ -1010,3 +1101,7 @@ Kotlin/Java Android package
 * mobile storage constraints documented
 * profile selection documented
 * Android examples/tests
+* keep Android binding source, packaging metadata, tests, and examples inside this monorepo
+* use a monorepo path such as `bindings/android/`
+* do not split Android bindings into a separate Git repository
+* generated Android package artifacts are release/CI outputs and must not be committed to source control
