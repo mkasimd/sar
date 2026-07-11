@@ -1,8 +1,9 @@
+#![allow(unused_imports)]
 //! Tests for archive-level recovery orchestration (inspect, plan, repair).
 
 use sar_archive::{ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
- GlobalFlags, SarError,
+    GlobalFlags, SarError,
     error::SarStatus,
     format::{
         CentralDictionary, Footer, GlobalHeader, write_central_dictionary, write_footer,

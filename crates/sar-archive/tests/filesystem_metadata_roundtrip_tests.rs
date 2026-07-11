@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! M11b — Filesystem Metadata Encode/Decode Round-Trip Tests.
 //!
 //! Validates HAS_PATH, HAS_PERMS, EXT_UID_GID, EXT_TIME, HAS_SYMLINKS,
@@ -26,12 +27,12 @@
 
 use std::io::Cursor;
 
-use sar_core::format::{GlobalHeader, write_global_header, write_lfh};
-use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput, SparseWriteOptions};
-use sar_core::{
- EntryKind,
-    EntryMode, FieldPresence, GlobalFlags, SarError, SparseExtent,
+use sar_archive::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput,
+    SparseWriteOptions,
 };
+use sar_core::format::{GlobalHeader, write_global_header, write_lfh};
+use sar_core::{EntryKind, EntryMode, FieldPresence, GlobalFlags, SarError, SparseExtent};
 
 // ---------------------------------------------------------------------------
 // Helper: write one entry and read it back.
@@ -463,7 +464,9 @@ fn symlink_round_trip_target_via_payload() {
 #[test]
 fn symlink_without_has_symlinks_flag_is_rejected_by_writer() {
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: "link".into(),
@@ -557,7 +560,9 @@ fn directory_entry_round_trip_zero_payload() {
 #[test]
 fn directory_entry_with_nonzero_payload_rejected_by_writer() {
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: "mydir".into(),
@@ -1179,7 +1184,9 @@ fn writer_rejects_path_exceeding_u16_capacity() {
 fn writer_rejects_name_exceeding_u16_capacity() {
     let long_name = "n".repeat(65536); // exceeds u16::MAX
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: long_name,
@@ -1356,7 +1363,9 @@ fn field_presence_absent_means_no_value_and_not_active() {
 #[test]
 fn writer_fails_closed_for_path_without_flag() {
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: "f.txt".into(),
@@ -1378,7 +1387,9 @@ fn writer_fails_closed_for_path_without_flag() {
 #[test]
 fn writer_fails_closed_for_permissions_without_flag() {
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: "f.txt".into(),
@@ -1397,7 +1408,9 @@ fn writer_fails_closed_for_permissions_without_flag() {
 #[test]
 fn writer_fails_closed_for_uid_gid_without_flag() {
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: "f.txt".into(),
@@ -1416,7 +1429,9 @@ fn writer_fails_closed_for_uid_gid_without_flag() {
 #[test]
 fn writer_fails_closed_for_timestamps_without_flag() {
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer
         .add_entry(sar_archive::EntryInput {
             name: "f.txt".into(),

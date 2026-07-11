@@ -1,12 +1,15 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, FecSettings};
+use sar_archive::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
+    EntryInput, FecSettings,
+};
 use sar_core::{
- DecodingPlanV2,
-    EncodingPlanV2, EntryCryptoContext, GlobalFlags,
-    KmsContext, KmsParams, LocalFileHeader, SarCryptoError, SarError, decode_payload_v2,
-    encode_payload_v2, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
-    parse_global_header, parse_lfh, write_lfh,
+    DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, GlobalFlags, KmsContext, KmsParams,
+    LocalFileHeader, SarCryptoError, SarError, decode_payload_v2, encode_payload_v2,
+    fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad, parse_global_header,
+    parse_lfh, write_lfh,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretBytes, SecretString,
@@ -183,7 +186,10 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
         )
         .expect("writer");
         writer
-            .add_entry(sar_archive::EntryInput::file("entry.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file(
+                "entry.bin".to_string(),
+                payload.clone(),
+            ))
             .expect("add entry");
         writer.finish().expect("finish");
     }
@@ -256,7 +262,10 @@ fn payload_data_starts_at_lfh_start_plus_header_size() {
         )
         .expect("writer");
         writer
-            .add_entry(sar_archive::EntryInput::file("offset.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file(
+                "offset.bin".to_string(),
+                payload.clone(),
+            ))
             .expect("add entry");
         writer.finish().expect("finish");
     }

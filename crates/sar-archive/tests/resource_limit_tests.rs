@@ -1,8 +1,9 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
 use sar_archive::{ArchiveReader, ArchiveReaderOptions};
 use sar_core::{
- GlobalFlags, ResourceLimits, SarError,
+    GlobalFlags, ResourceLimits, SarError,
     format::{
         CentralDictionary, GlobalHeader, LocalFileHeader, lfh_bytes_for_aad,
         parse_central_dictionary, parse_global_header, parse_lfh, write_central_dictionary,

@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for FEC metadata in `sar-core`:
 //! - LFH Selective FEC parsing and validation.
 //! - Data Recovery TLV parsing and validation.

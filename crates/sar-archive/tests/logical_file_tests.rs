@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Tests for `sar_archive::ArchiveReader::read_all_logical_files` — fragment reassembly,
 //! sparse reconstruction, and loss-tolerant integration through the high-level
 //! read path.
@@ -6,7 +7,7 @@ use std::io::Cursor;
 
 use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
- GlobalFlags, SarError,
+    GlobalFlags, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
@@ -32,7 +33,10 @@ fn build_simple_archive(name: &str, payload: &[u8]) -> Vec<u8> {
     )
     .expect("writer");
     writer
-        .add_entry(sar_archive::EntryInput::file(name.to_string(), payload.to_vec()))
+        .add_entry(sar_archive::EntryInput::file(
+            name.to_string(),
+            payload.to_vec(),
+        ))
         .expect("add entry");
     writer.finish().expect("finish");
     out

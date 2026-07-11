@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Hash and CRC sparse-domain tests.
 //!
 //! File CRC32 and Content Hash must be computed against the fully
@@ -25,9 +26,9 @@
 
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader};
+use sar_archive::ArchiveReader;
 use sar_core::{
- GlobalFlags,
+    GlobalFlags,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
     sparse::{SparseExtent, write_sparse_map},
 };

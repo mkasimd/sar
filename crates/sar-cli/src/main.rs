@@ -12,11 +12,11 @@ use clap::{ArgAction, Args, Parser, Subcommand};
 use serde_json::json;
 use walkdir::WalkDir;
 
-use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_archive::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
     EncryptionSettings, EntryInput, FecSettings,
 };
+use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ErasureInput, GlobalFlags, KeyProvider, KmsContext, KmsParams, ResourceLimits, SarError,
     SecretBytes, fec::validate_recovery_tlv, inspect_recovery_metadata, plan_archive_repair,

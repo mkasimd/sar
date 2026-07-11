@@ -1,9 +1,10 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
 use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
- GlobalFlags, ResourceLimits,
-    SarError, TLV_CDC_CUSTOM, TLV_CDC_EXT_PROVIDER, TLV_DATA_HASH_BLAKE3,
+    GlobalFlags, ResourceLimits, SarError, TLV_CDC_CUSTOM, TLV_CDC_EXT_PROVIDER,
+    TLV_DATA_HASH_BLAKE3,
     format::write_lfh,
     make_cdc_ext_provider_tlv, make_cdc_map_tlv, parse_cdc_ext_provider_tlv, parse_entry_cdc_map,
     tlv::{Tlv, parse_tlvs, write_tlvs},

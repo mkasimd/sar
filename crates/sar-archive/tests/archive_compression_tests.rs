@@ -1,10 +1,12 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
+use sar_archive::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput,
+};
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
-use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput};
 use sar_core::{
- EntryMode,
-    GlobalFlags, SarError,
+    EntryMode, GlobalFlags, SarError,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
 
@@ -34,7 +36,10 @@ fn writer_reader_deflate_roundtrip_no_index() {
     )
     .expect("writer");
     writer
-        .add_entry(sar_archive::EntryInput::file("a.txt", b"deflate payload".repeat(64)))
+        .add_entry(sar_archive::EntryInput::file(
+            "a.txt",
+            b"deflate payload".repeat(64),
+        ))
         .expect("entry");
     writer.finish().expect("finish");
 
@@ -61,7 +66,10 @@ fn writer_reader_zstd_roundtrip_indexed() {
     )
     .expect("writer");
     writer
-        .add_entry(sar_archive::EntryInput::file("b.txt", b"zstd payload".repeat(64)))
+        .add_entry(sar_archive::EntryInput::file(
+            "b.txt",
+            b"zstd payload".repeat(64),
+        ))
         .expect("entry");
     writer.finish().expect("finish");
 

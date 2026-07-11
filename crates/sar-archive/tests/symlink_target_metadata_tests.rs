@@ -1,13 +1,11 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
 use tempfile::tempdir;
 
-use sar_core::format::{GlobalHeader, write_global_header};
 use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
-use sar_core::{
- EntryKind, EntryMode,
-    GlobalFlags, SarError,
-};
+use sar_core::format::{GlobalHeader, write_global_header};
+use sar_core::{EntryKind, EntryMode, GlobalFlags, SarError};
 
 fn write_read_entry(
     opts: sar_archive::ArchiveWriterOptions,

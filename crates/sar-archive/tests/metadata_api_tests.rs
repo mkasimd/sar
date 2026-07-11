@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! M11a metadata API completeness tests.
 //!
 //! Tests the expanded `sar_archive::EntryInput`, `sar_archive::EntryMetadata`, `FieldPresence`, and all
@@ -5,14 +6,16 @@
 
 use std::io::Cursor;
 
+use sar_archive::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput,
+    FecSettings,
+};
 use sar_core::format::{GlobalHeader, write_global_header};
-use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EntryInput, FecSettings};
 use sar_core::{
- EntryCdcMetadata,
-    EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata, EntryFecMetadata,
-    EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
-    EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata,
-    FieldPresence, GlobalFlags, SarError, SparseExtent,
+    EntryCdcMetadata, EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata,
+    EntryFecMetadata, EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
+    EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FieldPresence,
+    GlobalFlags, SarError, SparseExtent,
 };
 
 // ---------------------------------------------------------------------------
@@ -89,7 +92,8 @@ fn reader_exposes_stream_id_and_sequence_no() {
     entry_in.stream_id = Some(7);
     entry_in.sequence_no = Some(42);
 
-    let entry = write_read_entry(sar_archive::ArchiveWriterOptions::default(), entry_in).expect("roundtrip");
+    let entry = write_read_entry(sar_archive::ArchiveWriterOptions::default(), entry_in)
+        .expect("roundtrip");
     assert_eq!(entry.metadata.stream_id, 7);
     assert_eq!(entry.metadata.sequence_no, 42);
 }
@@ -136,7 +140,10 @@ fn reader_exposes_compression_metadata_active_when_compressed() {
     )
     .expect("writer");
     writer
-        .add_entry(sar_archive::EntryInput::file("f.txt", b"data".to_vec().repeat(100)))
+        .add_entry(sar_archive::EntryInput::file(
+            "f.txt",
+            b"data".to_vec().repeat(100),
+        ))
         .expect("add");
     writer.finish().expect("finish");
 
@@ -465,7 +472,10 @@ fn field_presence_absent_present_inactive_present_active_distinguishable() {
     )
     .expect("writer");
     writer
-        .add_entry(sar_archive::EntryInput::file("f.txt", b"data".to_vec().repeat(50)))
+        .add_entry(sar_archive::EntryInput::file(
+            "f.txt",
+            b"data".to_vec().repeat(50),
+        ))
         .expect("add");
     writer.finish().expect("finish");
     let mut reader = sar_archive::ArchiveReader::new(Cursor::new(buf)).expect("reader");
@@ -532,7 +542,9 @@ fn writer_rejects_path_without_has_path_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(
         matches!(err, SarError::FlagConflict(_)),
@@ -549,7 +561,9 @@ fn writer_rejects_permissions_without_has_perms_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -563,7 +577,9 @@ fn writer_rejects_symlink_without_has_symlinks_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -902,7 +918,9 @@ fn writer_rejects_uid_gid_without_ext_uid_gid_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -920,7 +938,9 @@ fn writer_rejects_timestamps_without_ext_time_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -938,7 +958,9 @@ fn writer_rejects_content_hash_without_deduplication_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
@@ -956,7 +978,9 @@ fn writer_rejects_crc32_without_per_file_crc_flag() {
         ..Default::default()
     };
     let mut buf = Vec::new();
-    let mut writer = sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default()).expect("writer");
+    let mut writer =
+        sar_archive::ArchiveWriter::new(&mut buf, sar_archive::ArchiveWriterOptions::default())
+            .expect("writer");
     let err = writer.add_entry(entry).expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
 }

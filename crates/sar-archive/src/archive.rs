@@ -228,7 +228,8 @@ pub struct EntryMetadata {
     /// entry mode is not set.
     /// `PresentActive` when `FILE_FRAGMENTATION` is set and `IS_FRAGMENT` is set.
     #[serde(skip)]
-    pub fragment_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryFragmentMetadata>,
+    pub fragment_presence:
+        sar_core::metadata::FieldPresence<sar_core::metadata::EntryFragmentMetadata>,
     /// CDC metadata.  `None` when `CDC_SUPPORT` global flag is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cdc: Option<sar_core::metadata::EntryCdcMetadata>,
@@ -1262,9 +1263,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 sar_core::metadata::FieldPresence::Absent
             },
             owner_presence: if header.flags.contains(GlobalFlags::EXT_UID_GID) {
-                sar_core::metadata::FieldPresence::PresentActive(sar_core::metadata::EntryOwnerMetadata {
-                    uid_gid: lfh.uid_gid.unwrap_or(0),
-                })
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryOwnerMetadata {
+                        uid_gid: lfh.uid_gid.unwrap_or(0),
+                    },
+                )
             } else {
                 sar_core::metadata::FieldPresence::Absent
             },

@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Sparse-file conformance tests: scatter-gather, trailing holes, ordering,
 //! compression/encryption integration, and fragmentation ordering.
 //!
@@ -6,7 +7,9 @@
 
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput};
+use sar_archive::{
+    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput,
+};
 use sar_core::{
     GlobalFlags, SarError,
     flags::EntryMode,

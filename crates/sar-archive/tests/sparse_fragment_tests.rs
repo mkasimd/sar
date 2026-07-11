@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Tests for sparse reconstruction across fragment groups (§13.7.6 / §19.6).
 //!
 //! Spec requirements tested:
@@ -12,9 +13,9 @@
 
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader};
+use sar_archive::ArchiveReader;
 use sar_core::{
- GlobalFlags, SarError,
+    GlobalFlags, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,

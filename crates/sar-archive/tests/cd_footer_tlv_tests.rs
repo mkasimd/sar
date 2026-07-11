@@ -1,8 +1,9 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
 use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
- GlobalFlags, SarError,
+    GlobalFlags, SarError,
     format::{
         CentralDictionary, Footer, parse_central_dictionary, parse_footer,
         write_central_dictionary, write_footer,

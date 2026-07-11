@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for `STORE_PATCH` (`0x00`) through the full archive
 //! reader pipeline (`sar-core`).
 //!
@@ -19,10 +20,10 @@
 
 use std::io::Cursor;
 
-use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
 use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
 use sar_core::{
- GlobalFlags, ResourceLimits, SarError,
+    GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,

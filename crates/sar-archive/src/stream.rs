@@ -5,12 +5,10 @@ use sar_delta::{
     PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
 };
 
-use crate::{
-    archive::{
-        ArchiveReaderOptions, EntryMetadata, EntryReader, bsdiff_limits_from_resource_limits,
-        build_kms_context, compression_algorithm_name, map_patch_error,
-        vcdiff_limits_from_resource_limits,
-    },
+use crate::archive::{
+    ArchiveReaderOptions, EntryMetadata, EntryReader, bsdiff_limits_from_resource_limits,
+    build_kms_context, compression_algorithm_name, map_patch_error,
+    vcdiff_limits_from_resource_limits,
 };
 use sar_core::{
     error::SarError,
@@ -797,9 +795,11 @@ impl StreamArchiveParser {
                 sar_core::metadata::FieldPresence::Absent
             },
             owner_presence: if archive.header.flags.contains(GlobalFlags::EXT_UID_GID) {
-                sar_core::metadata::FieldPresence::PresentActive(sar_core::metadata::EntryOwnerMetadata {
-                    uid_gid: lfh.uid_gid.unwrap_or(0),
-                })
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryOwnerMetadata {
+                        uid_gid: lfh.uid_gid.unwrap_or(0),
+                    },
+                )
             } else {
                 sar_core::metadata::FieldPresence::Absent
             },

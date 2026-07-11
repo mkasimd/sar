@@ -1,6 +1,10 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
-use sar_archive::{ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, StreamArchiveParser, StreamEvent, StreamParseState, StreamStep};
+use sar_archive::{
+    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput,
+    StreamArchiveParser, StreamEvent, StreamParseState, StreamStep,
+};
 use sar_core::{
     EntryMode, GlobalFlags, SarError,
     format::{
@@ -28,7 +32,10 @@ fn no_index_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     .expect("writer");
     for (name, payload) in entries {
         writer
-            .add_entry(sar_archive::EntryInput::file((*name).to_string(), payload.to_vec()))
+            .add_entry(sar_archive::EntryInput::file(
+                (*name).to_string(),
+                payload.to_vec(),
+            ))
             .expect("entry");
     }
     writer.finish().expect("finish");
@@ -46,7 +53,10 @@ fn next_ready(parser: &mut sar_archive::StreamArchiveParser) -> sar_archive::Str
 #[test]
 fn parser_starts_in_need_global_header() {
     let parser = sar_archive::StreamArchiveParser::new();
-    assert_eq!(parser.state(), sar_archive::StreamParseState::NeedGlobalHeader);
+    assert_eq!(
+        parser.state(),
+        sar_archive::StreamParseState::NeedGlobalHeader
+    );
 }
 
 #[test]
@@ -130,7 +140,9 @@ fn lfhs_are_parsed_sequentially_and_forward_only_from_chunks() {
         parser.push_bytes(chunk).expect("chunk");
         loop {
             match parser.step().expect("step") {
-                sar_archive::StreamStep::NeedMore { .. } | sar_archive::StreamStep::Complete => break,
+                sar_archive::StreamStep::NeedMore { .. } | sar_archive::StreamStep::Complete => {
+                    break;
+                }
                 sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => {
                     names.push(entry.metadata.name.clone())
                 }
@@ -142,7 +154,9 @@ fn lfhs_are_parsed_sequentially_and_forward_only_from_chunks() {
 
     loop {
         match parser.step().expect("step") {
-            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => names.push(entry.metadata.name.clone()),
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => {
+                names.push(entry.metadata.name.clone())
+            }
             sar_archive::StreamStep::Ready(_) => {}
             sar_archive::StreamStep::NeedMore { .. } => continue,
             sar_archive::StreamStep::Complete => break,
@@ -165,8 +179,12 @@ fn parser_handles_multiple_concatenated_archives() {
     let mut names = Vec::new();
     loop {
         match parser.step().expect("step") {
-            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => names.push(entry.metadata.name),
-            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::ArchiveComplete(_)) => complete_count += 1,
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::Entry(entry)) => {
+                names.push(entry.metadata.name)
+            }
+            sar_archive::StreamStep::Ready(sar_archive::StreamEvent::ArchiveComplete(_)) => {
+                complete_count += 1
+            }
             sar_archive::StreamStep::Ready(sar_archive::StreamEvent::GlobalHeader(_)) => {}
             sar_archive::StreamStep::NeedMore { .. } => {}
             sar_archive::StreamStep::Complete => break,

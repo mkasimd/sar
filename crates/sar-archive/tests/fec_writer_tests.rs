@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! End-to-end tests for the `sar_archive::ArchiveWriter` with `SELECTIVE_FEC` (Milestones 6–7).
 //!
 //! Each test round-trips an archive through the writer and reader, verifying that:
@@ -8,10 +9,11 @@
 
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, FecSettings};
-use sar_core::{
- GlobalFlags, SarError, fec::FecSummary,
+use sar_archive::{
+    ArchiveReader, ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings,
+    EntryInput, FecSettings,
 };
+use sar_core::{GlobalFlags, SarError, fec::FecSummary};
 use sar_crypto::{ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params};
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
 
@@ -33,7 +35,10 @@ fn write_and_read(
     {
         let mut writer = sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts)?;
         for (name, payload) in payloads {
-            writer.add_entry(sar_archive::EntryInput::file(name.to_string(), payload.clone()))?;
+            writer.add_entry(sar_archive::EntryInput::file(
+                name.to_string(),
+                payload.clone(),
+            ))?;
         }
         writer.finish()?;
     }
@@ -148,7 +153,10 @@ fn xor_fec_with_compression_roundtrip() {
         )
         .expect("writer");
         writer
-            .add_entry(sar_archive::EntryInput::file("file.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file(
+                "file.bin".to_string(),
+                payload.clone(),
+            ))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -231,7 +239,10 @@ fn xor_fec_with_aead_encryption_roundtrip() {
         )
         .expect("writer");
         writer
-            .add_entry(sar_archive::EntryInput::file("secret.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file(
+                "secret.bin".to_string(),
+                payload.clone(),
+            ))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -291,7 +302,10 @@ fn rs_fec_with_aead_encryption_roundtrip() {
         )
         .expect("writer");
         writer
-            .add_entry(sar_archive::EntryInput::file("file.bin".to_string(), payload.clone()))
+            .add_entry(sar_archive::EntryInput::file(
+                "file.bin".to_string(),
+                payload.clone(),
+            ))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -324,10 +338,14 @@ fn verify_fec_archive_succeeds() {
         &[("a.bin", make_payload(256)), ("b.bin", make_payload(512))];
     let mut buf = Vec::new();
     {
-        let mut writer = sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
+        let mut writer =
+            sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
         for (name, payload) in payloads {
             writer
-                .add_entry(sar_archive::EntryInput::file(name.to_string(), payload.clone()))
+                .add_entry(sar_archive::EntryInput::file(
+                    name.to_string(),
+                    payload.clone(),
+                ))
                 .expect("add");
         }
         writer.finish().expect("finish");
@@ -355,9 +373,13 @@ fn selective_fec_flag_is_set_in_global_header() {
     };
     let mut buf = Vec::new();
     {
-        let mut writer = sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
+        let mut writer =
+            sar_archive::ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
         writer
-            .add_entry(sar_archive::EntryInput::file("x".to_string(), vec![1u8, 2, 3]))
+            .add_entry(sar_archive::EntryInput::file(
+                "x".to_string(),
+                vec![1u8, 2, 3],
+            ))
             .expect("add");
         writer.finish().expect("finish");
     }

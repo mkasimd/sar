@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Empty Area invariant tests.
 //!
 //! An entry with `Name Length == 0` and `IS_FRAGMENT == 0` is treated as an
@@ -5,9 +6,9 @@
 
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader};
+use sar_archive::ArchiveReader;
 use sar_core::{
- GlobalFlags, SarError,
+    GlobalFlags, SarError,
     flags::EntryMode,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };

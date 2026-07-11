@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Integration tests for `VCDIFF` (`0x01`) through the full archive reader
 //! pipeline (`sar-core`).
 //!
@@ -13,10 +14,10 @@
 
 use std::io::Cursor;
 
-use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
 use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
 use sar_core::{
- GlobalFlags, ResourceLimits, SarError,
+    GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
@@ -363,7 +364,8 @@ fn vcdiff_loss_tolerant_does_not_suppress_patch_failed() {
         limits: ResourceLimits::unlimited(),
         delta_base: Some(b"base".to_vec()),
     };
-    let mut reader = sar_archive::ArchiveReader::with_options(Cursor::new(archive), opts).expect("reader");
+    let mut reader =
+        sar_archive::ArchiveReader::with_options(Cursor::new(archive), opts).expect("reader");
     reader.read_global_header().expect("global header");
     let err = reader
         .read_all_logical_files(false)

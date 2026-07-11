@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Tests for delta LFH field parsing, writing, and structural validation
 //! (spec section 6.1, `HAS_DELTA`).
 //!
@@ -214,9 +215,7 @@ fn lfh_no_delta_fields_when_flag_not_set() {
 #[test]
 fn archive_reader_reserved_patch_algo_id_returns_reserved_value_error() {
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
-use sar_core::{
-        format::{GlobalHeader, write_global_header},
-};
+    use sar_core::format::{GlobalHeader, write_global_header};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -256,9 +255,7 @@ use sar_core::{
 #[test]
 fn archive_reader_custom_patch_algo_id_returns_unsupported_error() {
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
-use sar_core::{
-        format::{GlobalHeader, write_global_header},
-};
+    use sar_core::format::{GlobalHeader, write_global_header};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -296,9 +293,7 @@ use sar_core::{
 #[test]
 fn archive_reader_assigned_patch_algo_id_passes_registry_check() {
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
-use sar_core::{
-        format::{GlobalHeader, write_global_header},
-};
+    use sar_core::format::{GlobalHeader, write_global_header};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -340,9 +335,7 @@ use sar_core::{
 #[test]
 fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
-use sar_core::{
-        format::{GlobalHeader, write_global_header},
-};
+    use sar_core::format::{GlobalHeader, write_global_header};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -388,9 +381,7 @@ use sar_core::{
 #[test]
 fn entry_metadata_delta_fields_none_when_has_delta_not_set() {
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
-use sar_core::{
-        format::{GlobalHeader, write_global_header},
-};
+    use sar_core::format::{GlobalHeader, write_global_header};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX;
@@ -431,9 +422,7 @@ use sar_core::{
 #[test]
 fn archive_reader_applies_store_patch_when_payload_length_matches() {
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
-use sar_core::{
-        format::{GlobalHeader, write_global_header},
-};
+    use sar_core::format::{GlobalHeader, write_global_header};
     use std::io::Cursor;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;

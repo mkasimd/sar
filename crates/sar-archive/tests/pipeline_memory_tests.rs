@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Stage 3: Pipeline memory accounting and expansion-bomb protection tests.
 //!
 //! Verifies that in-memory reconstruction and transformation pipelines enforce
@@ -14,8 +15,10 @@
 
 use std::io::Cursor;
 
+use sar_archive::{
+    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput,
+};
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions};
-use sar_archive::{ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
     GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
@@ -567,7 +570,10 @@ fn archive_reader_decompression_respects_entry_limit() {
         .expect("writer");
         // 8 KiB of compressible data
         writer
-            .add_entry(sar_archive::EntryInput::file("big.bin", b"AAAA".repeat(2048)))
+            .add_entry(sar_archive::EntryInput::file(
+                "big.bin",
+                b"AAAA".repeat(2048),
+            ))
             .expect("entry");
         writer.finish().expect("finish");
     }

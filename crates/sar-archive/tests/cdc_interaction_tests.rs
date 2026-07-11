@@ -1,10 +1,11 @@
+#![allow(unused_imports)]
 /// CDC interaction tests: CDC metadata with STORE, compressed, encrypted, sparse,
 /// fragmented entries.  Also verifies that resource limits are enforced for CDC.
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader};
+use sar_archive::ArchiveReader;
 use sar_core::{
- GlobalFlags, ResourceLimits, SarError,
+    GlobalFlags, ResourceLimits, SarError,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
     tlv::Tlv,
 };

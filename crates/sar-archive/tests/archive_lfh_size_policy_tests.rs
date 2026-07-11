@@ -1,6 +1,10 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
-use sar_archive::{ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput, LfhSizeFieldPolicy, SparseWriteOptions};
+use sar_archive::{
+    ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, EntryInput,
+    LfhSizeFieldPolicy, SparseWriteOptions,
+};
 use sar_core::{
     GlobalFlags, ResourceLimits, SarError, SparseExtent,
     format::{parse_global_header, parse_lfh},
@@ -207,7 +211,8 @@ fn reader_rejects_64bit_payload_over_limit_before_allocation() {
     let mut options = sar_archive::ArchiveReaderOptions::default();
     options.limits.max_in_memory_buffer = 2;
 
-    let mut reader = sar_archive::ArchiveReader::with_options(Cursor::new(out), options).expect("reader");
+    let mut reader =
+        sar_archive::ArchiveReader::with_options(Cursor::new(out), options).expect("reader");
     reader.read_global_header().expect("header");
     let err = reader.next_entry().expect_err("must fail");
     assert!(matches!(err, SarError::LimitExceeded(_)));

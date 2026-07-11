@@ -17,4 +17,6 @@ pub use archive::{
     StreamWriteState, VerificationReport,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
-pub use stream::{StreamArchiveParser, StreamArchiveSummary, StreamEvent, StreamParseState, StreamStep};
+pub use stream::{
+    StreamArchiveParser, StreamArchiveSummary, StreamEvent, StreamParseState, StreamStep,
+};

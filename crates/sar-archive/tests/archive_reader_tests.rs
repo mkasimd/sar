@@ -1,8 +1,9 @@
+#![allow(unused_imports)]
 use std::io::Cursor;
 
 use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use sar_core::{
- GlobalFlags, SarError,
+    GlobalFlags, SarError,
     format::{GlobalHeader, KmsData, write_global_header},
 };
 

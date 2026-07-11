@@ -1,3 +1,4 @@
+#![allow(unused_imports)]
 //! Tests for the sar_archive::ArchiveWriter sparse entry write path.
 //!
 //! Covers:
@@ -11,10 +12,7 @@
 use std::io::Cursor;
 
 use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, SparseWriteOptions};
-use sar_core::{
- SarError,
-    sparse::SparseExtent,
-};
+use sar_core::{SarError, sparse::SparseExtent};
 
 // ---------------------------------------------------------------------------
 // Helpers
