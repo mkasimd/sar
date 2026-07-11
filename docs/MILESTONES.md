@@ -554,6 +554,9 @@ If this milestone document appears to describe library/profile layout differentl
   * after the Global Header is emitted without `64BIT_SIZE`, entries requiring 64-bit LFH size fields fail closed
   * forward-only / non-rewindable writers must not attempt to rewrite Global Flags
   * streaming writers must require explicit size policy or fail closed when size requirements cannot be known before header emission
+  * unknown-size entries on forward-only / non-rewindable writers must not trigger implicit unbounded buffering
+  * if entry size cannot be known before LFH emission, the caller must choose an explicit size policy that can safely encode the entry or the writer must fail closed
+  * live pipes, sockets, stdin streams, and other dynamic sources must not rely on `Auto` promotion after the Global Header is emitted
 * preserve side-effect-free library parsing:
 
   * parsing and metadata decoding must not chmod, chown, set timestamps, create directories, create symlinks, or create device/FIFO/socket nodes
@@ -580,6 +583,7 @@ If this milestone document appears to describe library/profile layout differentl
 * no C ABI/Python/mobile bindings yet
 * full workspace validation
 * CodeQL/security scan where available
+
 
 ## M11e: CLI metadata support
 
@@ -609,6 +613,13 @@ If this milestone document appears to describe library/profile layout differentl
   * setuid/setgid/sticky bits are disabled by default
   * timestamps and permissions are applied only through explicit extraction policy
   * document platform-specific limitations and best-effort behavior
+  * validate archive paths lexically before filesystem operations:
+    * reject absolute paths
+    * reject parent-directory components such as `..`
+    * reject empty, ambiguous, or platform-reserved path components where applicable
+  * do not rely only on string prefix checks after host path concatenation
+  * prevent traversal through symlink components during extraction using platform-safe APIs where available
+  * ensure every created/opened path remains confined to the extraction root after each path component is processed
 * platform-specific behavior documented
 * deterministic CLI round-trip tests
 * hostile extraction tests where practical:
@@ -909,6 +920,10 @@ If this milestone document appears to describe library/profile layout differentl
 * Python exceptions mapped from SAR status codes
 * Python-owned metadata objects or safe opaque-handle wrappers
 * PyO3 ownership conversion rules
+* Python wrapper objects must release Rust-owned resources automatically when the Python object is dropped
+* PyO3 classes wrapping opaque Rust handles must implement safe ownership/drop behavior and must not leak heap-owned Rust metadata, readers, writers, buffers, or stream handles
+* long-lived readers/writers/streams should provide explicit close/release APIs or context-manager support where appropriate
+* Python garbage collection behavior must be tested for repeated create/drop cycles and long-running streaming use
 * no borrowed views into temporary archive buffers unless owner lifetime is enforced by Python object references
 * optional extras/features for archive/package/quic/backup/full profiles where appropriate
 * default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
