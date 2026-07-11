@@ -15,7 +15,8 @@ use sar_crypto::{
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
     PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, apply_bsdiff, apply_store_patch, apply_vcdiff,
-    bsdiff::BsdiffLimits, generate_bsdiff_patch, generate_vcdiff_patch, vcdiff::VcdiffLimits,
+    bsdiff::BsdiffLimits, generate_bsdiff_patch, generate_store_patch, generate_vcdiff_patch,
+    vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
 use sar_fragmentation::FragmentDescriptor;
@@ -1848,7 +1849,10 @@ fn generate_entry_patch(
     match delta_opts.algorithm {
         PatchAlgoId::StorePatch => {
             // STORE_PATCH: the patch payload is the target bytes verbatim.
-            Ok(target.to_vec())
+            // Use generate_store_patch for consistency with the other generation paths.
+            let expected_len = u64::try_from(target.len())
+                .map_err(|_| SarError::Overflow("STORE_PATCH target length exceeds u64"))?;
+            generate_store_patch(target, expected_len).map_err(map_patch_error)
         }
         PatchAlgoId::Vcdiff => {
             let limits = VcdiffLimits::default();
