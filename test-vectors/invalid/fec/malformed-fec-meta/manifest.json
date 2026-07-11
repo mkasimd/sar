@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "invalid-malformed-fec-meta",
+  "title": "Invalid: malformed FEC value bytes",
+  "description": "SAR archive with SELECTIVE_FEC flag and malformed FEC value bytes (incorrect length for the declared algorithm). Must fail with a malformed or invalid length error.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "selective-fec"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires precise FEC value field corruption."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

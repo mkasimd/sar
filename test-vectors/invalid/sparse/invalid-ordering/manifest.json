@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "invalid-sparse-invalid-ordering",
+  "title": "Invalid: sparse extents out of order",
+  "description": "SAR archive with sparse extents not in ascending offset order. Must be rejected as an invalid map.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "sparse-files"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_MAP",
+    "error": "InvalidMap",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires sparse map construction with out-of-order extents."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

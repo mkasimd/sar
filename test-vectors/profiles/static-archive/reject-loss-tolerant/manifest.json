@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "profile-static-archive-reject-loss-tolerant",
+  "title": "Profile (static-archive): reject LOSS_TOLERANT entries",
+  "description": "Any archive with LOSS_TOLERANT entry mode must be rejected by the static-archive profile. Static archives require complete, authenticated data.",
+  "kind": "profile",
+  "file": null,
+  "profiles": [
+    "static-archive"
+  ],
+  "features": [
+    "loss-tolerant"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "package": "reject",
+    "telemetry": "accept",
+    "live-media": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: no canonical fragment-gap binary fixture is committed in this corrective pass.",
+    "Profile expectation remains documented here until a real LOSS_TOLERANT fragment fixture is restored."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false,
+  "deferred": true
+}

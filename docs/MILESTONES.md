@@ -645,32 +645,51 @@ If this milestone document appears to describe library/profile layout differentl
 
 ---
 
-# Current and future milestones
-
 ## M12a: conformance profile validator and official vectors
 
-* canonical minimal archive vectors
-* canonical indexed vectors
-* canonical `NO_INDEX` vectors
-* compression vectors
-* crypto vectors
-* FEC vectors
-* fragmentation/sparse vectors
-* CDC vectors
-* delta vectors
-* stream/session vectors
-* filesystem metadata vectors
-* negative/error vectors
-* profile-specific vectors for static archive, package, stream package, backup, telemetry, and live-media profiles where applicable
-* strict-profile rejection vectors for:
+* `test-vectors/` directory structure created with `valid/`, `invalid/`, and `profiles/` subtrees
+* `test-vectors/manifest.schema.json` JSON Schema for conformance vector manifests
+* `test-vectors/README.md` and `test-vectors/profiles/README.md` documentation
+* 76+ `manifest.json` files covering valid, invalid, and profile-specific vectors
+* binary `.sar` fixture files generated deterministically via `generate_vectors` example
+* `sar_archive::conformance` module with `ConformanceManifest`, `validate_manifest_schema()`, `run_conformance_check()`, `discover_manifests()`
+* `sar_archive::profile::ComplianceProfile` extended with 6 profile variants and `canonical_name()` / `from_canonical_name()` methods
+* `crates/sar-archive/tests/conformance_tests.rs` integration test suite (9 tests, all passing)
+* canonical valid vectors: minimal, indexed, NO_INDEX, compression (STORE/DEFLATE/ZSTD), crypto (AES-256-GCM, XChaCha20-Poly1305), LFH selective FEC (XOR, RS), sparse reconstruction, CDC literal mode, delta `STORE_PATCH`, filesystem metadata (permissions, owner, timestamps, symlink, directory, combined, field-presence-inactive), size layout (32-bit, 64-bit)
+* invalid vectors: truncated GH/LFH, invalid magic, unknown global flag, unsupported compression/crypto algo, bad AEAD tag
+* profile-specific vectors: static-archive, stream-package acceptance/rejection; cold-storage/tape deferred with documented placeholder
+* deferred/reference-only manifests document future fragment reassembly, LOSS_TOLERANT fragment gaps, sparse+delta ordering, FASTCDC `CDC_MAP`, generated VCDIFF, and generated SAR BSDIFF v1 without overclaiming fallback binaries
+* known gaps documented in manifests (stream/session, unsafe metadata, resource limits, many invalid cases deferred)
+* `docs/CONFORMANCE.md` updated with M12a vector structure, validator status, and known gaps
+* no wire-format changes; no CLI behavior changes; no M12b work started
 
-  * unsupported/custom algorithms
-  * unsafe filesystem metadata
-  * lossy package data
-  * unauthenticated post-binding stream entries
-  * excessive resource declarations
-  * profile-disallowed transport/session behavior
-* cold-storage/tape profile vectors only if the profile uses interoperable SAR v1.0 behavior or an explicitly defined sidecar/container/profile mechanism
+---
+
+# Current and future milestones
+
+## M12a-M9b-cp: Delta patch generation corrective pass
+
+* restore canonical generated-fixture coverage for VCDIFF and SAR BSDIFF v1
+* implement or harden writer-side VCDIFF patch generation from base + target bytes
+* implement or harden writer-side SAR BSDIFF v1 patch generation from base + target bytes
+* require deterministic, bounded, interoperable patch generation; optimal/minimal patch size is not required
+* integrate generated patches with archive writer delta output where configured
+* add positive apply/round-trip tests for generated VCDIFF and SAR BSDIFF v1 patches
+* replace deferred/reference-only VCDIFF/BSDIFF manifests with real generated fixtures
+* keep M12a vector claims auditable while this corrective pass remains pending
+
+## M12a-M8-cp: Archive-level Recovery TLV corrective pass
+
+* restore canonical generated-fixture coverage for archive-level Recovery TLV / `HAS_GLOBAL_EC`
+* implement or harden writer-side archive-level Recovery TLV generation
+* keep archive-level Recovery TLV indexed-only; reject `NO_INDEX` when archive-level recovery is requested
+* require and emit `OPT_PRESENT` and `HAS_GLOBAL_EC` from the start of writing
+* compute Recovery TLV payload at archive finalization after protected bytes are known
+* emit Central Dictionary RECOVERY TLV metadata for supported archive-level recovery algorithms
+* add positive inspect/verify/repair tests for at least one simple block-aligned repair case
+* replace deferred/reference-only archive-level Recovery TLV manifests with real generated fixtures
+* preserve LFH Selective FEC as a separate already-implemented feature
+* keep M12a vector claims auditable while this corrective pass remains pending
 
 ## M12b: fuzzing and malicious corpus
 

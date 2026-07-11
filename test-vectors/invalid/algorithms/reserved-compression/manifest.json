@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "invalid-reserved-compression",
+  "title": "Invalid: reserved compression algorithm ID",
+  "description": "SAR archive with a reserved compression algorithm ID. Reserved IDs must be rejected fail-closed.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "compression:reserved"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_RESERVED_VALUE",
+    "error": "ReservedValue",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: distinguish reserved vs unsupported ID rejection behavior."
+  ],
+  "deferred": true,
+  "compression": {
+    "algorithm": "reserved",
+    "id": "0x7f"
+  },
+  "crypto": false
+}

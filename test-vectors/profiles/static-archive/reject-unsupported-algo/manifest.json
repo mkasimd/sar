@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "profile-static-archive-reject-unsupported-algo",
+  "title": "Profile (static-archive): reject unsupported compression algorithm",
+  "description": "An archive with an unsupported compression algorithm ID must be rejected by all strict profiles (static-archive, package) as well as the base parser.",
+  "kind": "profile",
+  "file": "../../../invalid/algorithms/unsupported-compression/unsupported_compression.sar",
+  "profiles": [
+    "static-archive",
+    "package"
+  ],
+  "features": [
+    "compression:unsupported"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "package": "reject",
+    "backup": "reject",
+    "telemetry": "reject"
+  },
+  "limits": {},
+  "notes": [
+    "Binary shared with invalid/algorithms/unsupported-compression/."
+  ],
+  "generated_by": "hand-crafted",
+  "compression": {
+    "algorithm": "unsupported",
+    "id": "0xfe"
+  },
+  "crypto": false
+}

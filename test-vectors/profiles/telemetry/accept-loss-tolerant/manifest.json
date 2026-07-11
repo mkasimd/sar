@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "profile-telemetry-accept-loss-tolerant",
+  "title": "Profile (telemetry): accept LOSS_TOLERANT entries",
+  "description": "Telemetry profile explicitly permits LOSS_TOLERANT entries. Missing fragments are acceptable within configured loss limits. Authentication failures are still fatal.",
+  "kind": "profile",
+  "file": null,
+  "profiles": [
+    "telemetry"
+  ],
+  "features": [
+    "no-index",
+    "loss-tolerant"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "package": "reject",
+    "telemetry": "accept",
+    "live-media": "accept"
+  },
+  "limits": {
+    "max_loss_tolerant_gap": 65536
+  },
+  "notes": [
+    "DEFERRED: binary shared with valid/fragmentation/loss-tolerant-gap/ when available.",
+    "Even in telemetry profile, AEAD/structural failures remain fatal."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

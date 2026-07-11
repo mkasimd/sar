@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "sparse-with-delta-ordering",
+  "title": "Deferred reference: sparse plus delta ordering fixture",
+  "description": "Reference-only manifest for a future canonical sparse-plus-delta ordering fixture. The removed fallback archive was a normal STORE archive and did not contain both patch metadata and sparse reconstruction metadata in one entry.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "backup"
+  ],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "backup": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "Reference-only manifest: no canonical binary fixture is committed in this pass.",
+    "Discovered during the M12a vector audit. A real sparse-plus-delta fixture requires combined patch and sparse metadata on the same logical entry.",
+    "The previous fallback STORE archive was removed so the vector does not overclaim sparse-plus-delta coverage."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false,
+  "entries": [],
+  "deferred": true,
+  "base_files": []
+}

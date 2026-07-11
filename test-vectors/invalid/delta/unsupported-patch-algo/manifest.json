@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "invalid-unsupported-patch-algo",
+  "title": "Invalid: unsupported patch algorithm ID",
+  "description": "SAR archive with HAS_DELTA flag and an unrecognized patch algorithm ID. Must fail closed with unsupported error.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "delta"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires LFH with custom-range patch algo ID."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

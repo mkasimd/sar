@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "id": "delta-bsdiff",
+  "title": "Deferred reference: SAR BSDIFF v1 generated patch vector",
+  "description": "Reference-only manifest for a future canonical SAR BSDIFF v1 generated-patch fixture. The committed fallback archive was a normal STORE archive and did not contain BSDIFF patch data, so this vector is deferred until writer-side patch generation is restored.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "backup"
+  ],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "backup": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "Reference-only manifest: no canonical binary fixture is committed in this pass.",
+    "Discovered during M12a vector audit. Writer-side VCDIFF/SAR BSDIFF v1 patch generation belongs semantically to M9b delta functionality and will be backfilled in M12a-M9b-cp before these vectors become canonical valid fixtures.",
+    "The previous fallback STORE archive was removed so the vector does not overclaim SAR BSDIFF v1 coverage."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false,
+  "entries": [
+    {
+      "name": "bsdiff_target.bin",
+      "kind": "file",
+      "payload_utf8": null,
+      "payload_hex": null,
+      "payload_sha256": "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108",
+      "size": 64,
+      "logical_size": 64,
+      "payload_generation": {
+        "kind": "repeated_pattern",
+        "pattern_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff",
+        "length": 64
+      },
+      "extents": []
+    }
+  ],
+  "base_files": [
+    {
+      "path": "base_file.bin",
+      "payload_hex": null,
+      "payload_sha256": "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108",
+      "size": 64,
+      "payload_generation": {
+        "kind": "repeated_pattern",
+        "pattern_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+        "length": 64
+      }
+    }
+  ],
+  "deferred": true
+}

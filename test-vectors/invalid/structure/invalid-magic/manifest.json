@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "invalid-magic-bytes",
+  "title": "Invalid: wrong magic bytes",
+  "description": "Binary blob with corrupted SAR magic bytes. Must be rejected with an invalid magic error.",
+  "kind": "invalid",
+  "file": "invalid_magic.sar",
+  "profiles": [],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_MAGIC",
+    "error": "InvalidMagic",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "Hand-crafted: first 4 bytes replaced with 0x00 0x00 0x00 0x00."
+  ],
+  "generated_by": "hand-crafted",
+  "compression": false,
+  "crypto": false
+}
