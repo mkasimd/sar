@@ -16,12 +16,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sar_archive::conformance::{
-    TransformExpectation, VectorKind, discover_manifests, validate_manifest_schema,
+use sar_archive::{
+    conformance::{TransformExpectation, VectorKind, discover_manifests, validate_manifest_schema},
+    recovery::inspect_recovery_metadata,
 };
 use sar_core::{
     GlobalFlags, ResourceLimits,
-    format::{parse_global_header, parse_lfh},
+    format::{GLOBAL_HEADER_FLAGS_OFFSET, parse_global_header, parse_lfh},
 };
 use sar_delta::{PATCH_ALGO_BSDIFF, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF};
 use serde_json::{Map, Value};
@@ -972,5 +973,35 @@ fn promoted_bsdiff_vector_uses_bsdiff_algo_id() {
     assert_ne!(
         algo_id, PATCH_ALGO_STORE_PATCH,
         "BSDIFF vector must not use STORE_PATCH"
+    );
+}
+
+#[test]
+fn promoted_archive_recovery_vector_uses_real_recovery_tlv() {
+    let fixture = vectors_root().join("valid/fec/metadata/recovery_tlv_archive.sar");
+    let bytes = fs::read(&fixture)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", fixture.display()));
+    let meta = inspect_recovery_metadata(&bytes, &ResourceLimits::default())
+        .unwrap_or_else(|err| panic!("failed to inspect {}: {err}", fixture.display()));
+    let protected_range = meta
+        .protected_range
+        .unwrap_or_else(|| panic!("{} is missing a protected range", fixture.display()));
+
+    assert!(
+        meta.has_global_ec,
+        "{} must set HAS_GLOBAL_EC",
+        fixture.display()
+    );
+    assert_eq!(
+        meta.recovery_tlvs.len(),
+        1,
+        "{} must contain exactly one RECOVERY TLV",
+        fixture.display()
+    );
+    assert_eq!(
+        protected_range.offset,
+        GLOBAL_HEADER_FLAGS_OFFSET,
+        "{} must protect bytes starting at the first Global Flags byte",
+        fixture.display()
     );
 }

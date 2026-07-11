@@ -46,6 +46,7 @@ use sar_crypto::{
     provider::KeyProvider,
 };
 use sar_delta::{PATCH_ALGO_STORE_PATCH, PatchAlgoId};
+use sar_fec::FEC_ALGO_XOR;
 
 // ---------------------------------------------------------------------------
 // Test password / key material (TEST-ONLY — do not use for real data)

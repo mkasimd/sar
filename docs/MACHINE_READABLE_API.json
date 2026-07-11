@@ -3417,7 +3417,7 @@
               "signature": "pub fn ArchiveWriter<W>::finish(self) -> Result<ArchiveSummary, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Finalize the archive and optionally write the CD/footer, including any configured Central Dictionary metadata.",
+              "description": "Finalize the archive and optionally write the CD/footer, including any configured Central Dictionary metadata. When archive_recovery is configured, finish() computes the protected byte range from the first Global Flags byte through the final byte before the Central Dictionary and emits one Central Dictionary RECOVERY TLV before writing the footer.",
               "parameters": [],
               "returns": "Result<ArchiveSummary, SarError>",
               "errors": [
@@ -3525,10 +3525,10 @@
             {
               "name": "ArchiveWriterOptions",
               "kind": "struct",
-              "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings>, pub with_path: bool, pub with_permissions: bool, pub with_uid_gid: bool, pub with_timestamps: bool, pub with_per_file_crc: bool, pub with_content_hash: bool, pub with_symlinks: bool, pub lfh_size_field_policy: LfhSizeFieldPolicy }",
+              "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings>, pub archive_recovery: Option<ArchiveRecoverySettings>, pub with_path: bool, pub with_permissions: bool, pub with_uid_gid: bool, pub with_timestamps: bool, pub with_per_file_crc: bool, pub with_content_hash: bool, pub with_symlinks: bool, pub with_delta: bool, pub lfh_size_field_policy: LfhSizeFieldPolicy }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Writer options for indexing, sparse, encryption, and Selective FEC. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`).",
+              "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`).",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -3561,6 +3561,72 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "FFI-friendly tri-state policy; avoid boolean-only API."
+            },
+            {
+              "name": "ArchiveRecoverySettings",
+              "kind": "struct",
+              "signature": "pub struct ArchiveRecoverySettings { pub algo_id: u8, pub config0: u8, pub config1: u8, pub symbol_size: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [
+                "9.2"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": "Small configuration struct."
+            },
+            {
+              "name": "ArchiveRecoverySettings::default_rs",
+              "kind": "function",
+              "signature": "pub fn ArchiveRecoverySettings::default_rs() -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Return default Reed-Solomon archive-level recovery settings.",
+              "parameters": [],
+              "returns": "ArchiveRecoverySettings",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [
+                "9.2"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": "Pure constructor."
+            },
+            {
+              "name": "ArchiveRecoverySettings::default_xor",
+              "kind": "function",
+              "signature": "pub fn ArchiveRecoverySettings::default_xor() -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Return default XOR archive-level recovery settings.",
+              "parameters": [],
+              "returns": "ArchiveRecoverySettings",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "8",
+              "related_spec_sections": [
+                "9.2"
+              ],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": "Pure constructor."
             },
             {
               "name": "SparseWriteOptions",

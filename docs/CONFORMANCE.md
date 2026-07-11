@@ -115,7 +115,7 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 - Fragmentation reassembly and LOSS_TOLERANT fragment-gap fixtures remain deferred/reference-only until real fragment binaries exist.
 - Sparse+delta combined fixture remains deferred/reference-only.
 - FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
-- Archive-level Recovery TLV coverage is not claimed by the committed FEC metadata fixture.
+- Archive-level Recovery TLV coverage is now backed by a real generated indexed fixture (`test-vectors/valid/fec/metadata/recovery_tlv_archive.sar`).
 - Many invalid vectors deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
 - Cold-storage/tape profile vectors deferred (no SAR v1.0 interoperable mechanism yet).
@@ -168,9 +168,9 @@ by M12b fuzzing infrastructure without changing the M12a schema.
 - `LOSS_TOLERANT` degraded-output behavior for missing-fragment cases only.
 - Authentication/structural failures are never bypassed by lossy flags.
 
-The committed M12a fixture set currently includes a real sparse reconstruction binary and
-real LFH selective-FEC binaries, but does not claim real fragment-group or archive-level
-Recovery TLV fixture coverage beyond those binaries.
+The committed M12a fixture set currently includes a real sparse reconstruction binary,
+real LFH selective-FEC binaries, and a real indexed archive-level Recovery TLV binary,
+but does not claim real fragment-group fixture coverage beyond those binaries.
 
 ### CDC and delta
 - CDC metadata/TLV structures and current CDC map handling.
