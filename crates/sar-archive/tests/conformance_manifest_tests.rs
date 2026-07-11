@@ -55,25 +55,27 @@ fn value_is_string_or_null(value: &Value) -> bool {
     value.is_null() || value.is_string()
 }
 
-fn validate_payload_generation_shape(
-    value: &Value,
-    label: &str,
-    failures: &mut Vec<String>,
-) {
+fn validate_payload_generation_shape(value: &Value, label: &str, failures: &mut Vec<String>) {
     let Some(object) = value.as_object() else {
-        failures.push(format!("{label}: payload_generation must be an object or null"));
+        failures.push(format!(
+            "{label}: payload_generation must be an object or null"
+        ));
         return;
     };
     let allowed = ["kind", "byte_hex", "pattern_hex", "length", "path"];
     let required = ["kind"];
     for key in object_keys(object) {
         if !allowed.contains(&key) {
-            failures.push(format!("{label}: payload_generation has unexpected key '{key}'"));
+            failures.push(format!(
+                "{label}: payload_generation has unexpected key '{key}'"
+            ));
         }
     }
     for key in required {
         if !object.contains_key(key) {
-            failures.push(format!("{label}: payload_generation missing required key '{key}'"));
+            failures.push(format!(
+                "{label}: payload_generation missing required key '{key}'"
+            ));
         }
     }
 }
@@ -172,7 +174,9 @@ fn validate_base_files_shape(base_files: &Value, label: &str, failures: &mut Vec
         };
         for key in object_keys(object) {
             if !allowed.contains(&key) {
-                failures.push(format!("{label}[{index}]: unexpected base_files key '{key}'"));
+                failures.push(format!(
+                    "{label}[{index}]: unexpected base_files key '{key}'"
+                ));
             }
         }
         if !object.contains_key("path") {
@@ -294,7 +298,11 @@ fn all_non_deferred_vector_files_exist() {
 
     let checked = manifests
         .iter()
-        .filter(|(_, r)| r.as_ref().ok().map_or(false, |m| !m.deferred && m.file.is_some()))
+        .filter(|(_, r)| {
+            r.as_ref()
+                .ok()
+                .map_or(false, |m| !m.deferred && m.file.is_some())
+        })
         .count();
     println!("All {} non-deferred file references exist.", checked);
 }
@@ -465,10 +473,7 @@ fn crypto_feature_consistency() {
             continue;
         }
 
-        let has_crypto_feature = manifest
-            .features
-            .iter()
-            .any(|f| f.starts_with("crypto:"));
+        let has_crypto_feature = manifest.features.iter().any(|f| f.starts_with("crypto:"));
 
         match &manifest.crypto {
             TransformExpectation::Enabled(info) => {
@@ -712,10 +717,16 @@ fn deferred_vectors_do_not_reference_binary_fixtures() {
     for path in manifests {
         let raw = raw_manifest_json(&path);
         let Some(object) = raw.as_object() else {
-            failures.push(format!("{}: manifest root must be an object", path.display()));
+            failures.push(format!(
+                "{}: manifest root must be an object",
+                path.display()
+            ));
             continue;
         };
-        let deferred = object.get("deferred").and_then(Value::as_bool).unwrap_or(false);
+        let deferred = object
+            .get("deferred")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         if !deferred {
             continue;
         }
@@ -824,17 +835,28 @@ fn raw_manifest_shapes_match_schema_contract() {
     for path in manifest_paths() {
         let raw = raw_manifest_json(&path);
         let Some(object) = raw.as_object() else {
-            failures.push(format!("{}: manifest root must be an object", path.display()));
+            failures.push(format!(
+                "{}: manifest root must be an object",
+                path.display()
+            ));
             continue;
         };
         for key in object_keys(object) {
             if !allowed.contains(&key) {
-                failures.push(format!("{}: unexpected top-level key '{}'", path.display(), key));
+                failures.push(format!(
+                    "{}: unexpected top-level key '{}'",
+                    path.display(),
+                    key
+                ));
             }
         }
         for key in required {
             if !object.contains_key(key) {
-                failures.push(format!("{}: missing required top-level key '{}'", path.display(), key));
+                failures.push(format!(
+                    "{}: missing required top-level key '{}'",
+                    path.display(),
+                    key
+                ));
             }
         }
         if let Some(file) = object.get("file") {
@@ -859,7 +881,11 @@ fn raw_manifest_shapes_match_schema_contract() {
             );
         }
         if let Some(entries) = object.get("entries") {
-            validate_entries_shape(entries, &format!("{}: entries", path.display()), &mut failures);
+            validate_entries_shape(
+                entries,
+                &format!("{}: entries", path.display()),
+                &mut failures,
+            );
         }
         if let Some(base_files) = object.get("base_files") {
             validate_base_files_shape(

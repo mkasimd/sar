@@ -41,11 +41,9 @@ use sar_core::{
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsContext, KmsParams, SecretBytes, SecretString,
-    error::SarCryptoError,
-    kms::types::Pbkdf2Params,
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsContext, KmsParams, PBKDF2_PRF_HMAC_SHA256,
+    SecretBytes, SecretString, error::SarCryptoError, kms::types::Pbkdf2Params,
     provider::KeyProvider,
-    PBKDF2_PRF_HMAC_SHA256,
 };
 
 // ---------------------------------------------------------------------------
@@ -58,17 +56,13 @@ const TEST_PASSWORD_XCHACHA: &str = "sar-test-password-xchacha";
 /// Fixed 32-byte salt for all PBKDF2 derivations in test vectors.
 /// This is TEST-ONLY material.
 const TEST_SALT_AES: [u8; 32] = [
-    0x73, 0x61, 0x72, 0x2d, 0x74, 0x65, 0x73, 0x74,
-    0x2d, 0x61, 0x65, 0x73, 0x2d, 0x73, 0x61, 0x6c,
-    0x74, 0x2d, 0x76, 0x31, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x73, 0x61, 0x72, 0x2d, 0x74, 0x65, 0x73, 0x74, 0x2d, 0x61, 0x65, 0x73, 0x2d, 0x73, 0x61, 0x6c,
+    0x74, 0x2d, 0x76, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ];
 
 const TEST_SALT_XCHACHA: [u8; 32] = [
-    0x73, 0x61, 0x72, 0x2d, 0x74, 0x65, 0x73, 0x74,
-    0x2d, 0x78, 0x63, 0x68, 0x61, 0x63, 0x68, 0x61,
-    0x2d, 0x73, 0x61, 0x6c, 0x74, 0x2d, 0x76, 0x31,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x73, 0x61, 0x72, 0x2d, 0x74, 0x65, 0x73, 0x74, 0x2d, 0x78, 0x63, 0x68, 0x61, 0x63, 0x68, 0x61,
+    0x2d, 0x73, 0x61, 0x6c, 0x74, 0x2d, 0x76, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 ];
 
 // ---------------------------------------------------------------------------
@@ -80,10 +74,7 @@ struct StaticPasswordProvider {
 }
 
 impl KeyProvider for StaticPasswordProvider {
-    fn password_for(
-        &self,
-        _ctx: &KmsContext,
-    ) -> Result<Option<SecretString>, SarCryptoError> {
+    fn password_for(&self, _ctx: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(Some(self.password.clone()))
     }
 
@@ -95,10 +86,7 @@ impl KeyProvider for StaticPasswordProvider {
         Ok(None)
     }
 
-    fn external_key(
-        &self,
-        _ctx: &KmsContext,
-    ) -> Result<Option<SecretBytes>, SarCryptoError> {
+    fn external_key(&self, _ctx: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 }
@@ -108,8 +96,7 @@ impl KeyProvider for StaticPasswordProvider {
 // ---------------------------------------------------------------------------
 
 fn vectors_root() -> PathBuf {
-    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
-        .expect("CARGO_MANIFEST_DIR not set");
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     // crates/sar-archive → workspace root
     let workspace = Path::new(&manifest_dir)
         .parent()
@@ -130,7 +117,10 @@ fn write_fixture(relative_path: &str, bytes: &[u8]) {
 }
 
 fn skip_deferred_vector(relative_path: &str, reason: &str) {
-    println!("skipped {} ({reason})", vectors_root().join(relative_path).display());
+    println!(
+        "skipped {} ({reason})",
+        vectors_root().join(relative_path).display()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -183,12 +173,7 @@ fn write_compressed_archive(algo_id: u8, no_index: bool, entries: &[(&str, &[u8]
     buf
 }
 
-fn write_encrypted_archive(
-    algo_id: u8,
-    salt: &[u8],
-    password: &str,
-    payload: &[u8],
-) -> Vec<u8> {
+fn write_encrypted_archive(algo_id: u8, salt: &[u8], password: &str, payload: &[u8]) -> Vec<u8> {
     let kms_params = KmsParams::Pbkdf2(Pbkdf2Params {
         prf_algo_id: PBKDF2_PRF_HMAC_SHA256,
         salt: salt.to_vec(),
@@ -328,10 +313,7 @@ fn main() {
         TEST_PASSWORD_AES,
         &crypto_payload,
     );
-    write_fixture(
-        "valid/crypto/aes256-gcm/aes256_gcm_entry.sar",
-        &aes_bytes,
-    );
+    write_fixture("valid/crypto/aes256-gcm/aes256_gcm_entry.sar", &aes_bytes);
 
     let xchacha_bytes = write_encrypted_archive(
         ENCR_XCHACHA20_POLY,
@@ -441,8 +423,14 @@ fn main() {
     {
         // Sparse file with two extents: [0..32) and [64..96), logical size 128.
         let extents = vec![
-            SparseExtent { offset: 0, length: 32 },
-            SparseExtent { offset: 64, length: 32 },
+            SparseExtent {
+                offset: 0,
+                length: 32,
+            },
+            SparseExtent {
+                offset: 64,
+                length: 32,
+            },
         ];
         let gathered = make_payload(64); // 32 + 32 bytes of data
 
@@ -537,10 +525,8 @@ fn main() {
         };
         let mut archive = write_global_header(&gh).unwrap();
 
-        let mut lfh = LocalFileHeader::minimal_store(
-            b"store_patch.bin".to_vec(),
-            target.len() as u64,
-        );
+        let mut lfh =
+            LocalFileHeader::minimal_store(b"store_patch.bin".to_vec(), target.len() as u64);
         // STORE_PATCH = 0x00, zero base hash (no base required).
         lfh.patch_algo_id = Some(0x00);
         lfh.delta_base_hash = Some([0u8; 32]);
@@ -548,10 +534,7 @@ fn main() {
         archive.extend_from_slice(&write_lfh(&flags, &lfh).unwrap());
         archive.extend_from_slice(&target);
 
-        write_fixture(
-            "valid/delta/store-patch/store_patch_entry.sar",
-            &archive,
-        );
+        write_fixture("valid/delta/store-patch/store_patch_entry.sar", &archive);
     }
 
     // VCDIFF and BSDIFF writer-side patch generation is deferred to the
@@ -617,10 +600,7 @@ fn main() {
         entry.uid_gid = Some((1000u32) | (1000u32 << 16));
         writer.add_entry(entry).unwrap();
         writer.finish().unwrap();
-        write_fixture(
-            "valid/filesystem-metadata/owner/owner_entry.sar",
-            &buf,
-        );
+        write_fixture("valid/filesystem-metadata/owner/owner_entry.sar", &buf);
     }
 
     // Timestamps (fixed deterministic values: Unix epoch + 1_700_000_000)
@@ -662,10 +642,7 @@ fn main() {
         entry.kind = Some(EntryKind::Symlink);
         writer.add_entry(entry).unwrap();
         writer.finish().unwrap();
-        write_fixture(
-            "valid/filesystem-metadata/symlink/symlink_entry.sar",
-            &buf,
-        );
+        write_fixture("valid/filesystem-metadata/symlink/symlink_entry.sar", &buf);
     }
 
     // Directory entry
@@ -826,10 +803,8 @@ fn main() {
         let mut archive = write_global_header(&gh).unwrap();
 
         let payload = b"compressed payload";
-        let mut lfh = LocalFileHeader::minimal_store(
-            b"compressed.bin".to_vec(),
-            payload.len() as u64,
-        );
+        let mut lfh =
+            LocalFileHeader::minimal_store(b"compressed.bin".to_vec(), payload.len() as u64);
         // Set IS_COMPRESSED entry mode bit so the reader uses the compression path.
         lfh.entry_mode = sar_core::flags::EntryMode::from_bits(
             lfh.entry_mode.bits() | sar_core::flags::EntryMode::COMPRESSED,
@@ -875,10 +850,8 @@ fn main() {
         let mut archive = write_global_header(&gh).unwrap();
 
         let payload = b"encrypted payload";
-        let mut lfh = LocalFileHeader::minimal_store(
-            b"encrypted.bin".to_vec(),
-            payload.len() as u64,
-        );
+        let mut lfh =
+            LocalFileHeader::minimal_store(b"encrypted.bin".to_vec(), payload.len() as u64);
         // Set IS_ENCRYPTED entry mode so reader enters the encryption path.
         lfh.entry_mode = sar_core::flags::EntryMode::from_bits(
             lfh.entry_mode.bits() | sar_core::flags::EntryMode::ENCRYPTED,

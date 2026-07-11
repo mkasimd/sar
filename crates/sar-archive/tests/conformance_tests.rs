@@ -19,8 +19,7 @@
 use std::path::Path;
 
 use sar_archive::conformance::{
-    VectorKind, discover_manifests, run_conformance_check,
-    validate_manifest_schema,
+    VectorKind, discover_manifests, run_conformance_check, validate_manifest_schema,
 };
 
 // ---------------------------------------------------------------------------
@@ -119,7 +118,9 @@ fn valid_non_deferred_vectors_parse_ok() {
         if !check.passed {
             failures.push(format!(
                 "[{}] {}: {}",
-                manifest.id, path.display(), check.reason
+                manifest.id,
+                path.display(),
+                check.reason
             ));
         } else {
             println!("[PASS] {} — {}", manifest.id, check.reason);
@@ -173,7 +174,9 @@ fn invalid_non_deferred_vectors_are_rejected() {
         if !check.passed {
             failures.push(format!(
                 "[{}] {}: {}",
-                manifest.id, path.display(), check.reason
+                manifest.id,
+                path.display(),
+                check.reason
             ));
         } else {
             println!("[PASS] {} — {}", manifest.id, check.reason);
@@ -189,7 +192,10 @@ fn invalid_non_deferred_vectors_are_rejected() {
         );
     }
 
-    println!("{} invalid non-deferred vectors all correctly rejected.", checked);
+    println!(
+        "{} invalid non-deferred vectors all correctly rejected.",
+        checked
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +223,8 @@ fn deferred_vectors_have_no_binary_file() {
                 if file_path.exists() {
                     inconsistencies.push(format!(
                         "[{}] marked deferred but binary exists: {}",
-                        manifest.id, file_path.display()
+                        manifest.id,
+                        file_path.display()
                     ));
                 }
             }
@@ -256,7 +263,9 @@ fn profile_expectations_use_known_profile_names() {
             if ComplianceProfile::from_canonical_name(profile_name).is_none() {
                 failures.push(format!(
                     "[{}] {}: unknown profile name '{}'",
-                    manifest.id, path.display(), profile_name
+                    manifest.id,
+                    path.display(),
+                    profile_name
                 ));
             }
         }
@@ -294,7 +303,9 @@ fn manifest_ids_are_unique() {
         if let Some(existing) = id_map.get(&manifest.id) {
             duplicates.push(format!(
                 "id '{}' appears in both {} and {}",
-                manifest.id, existing, path.display()
+                manifest.id,
+                existing,
+                path.display()
             ));
         } else {
             id_map.insert(manifest.id.clone(), path.display().to_string());
@@ -358,10 +369,7 @@ fn conformance_summary() {
     println!("  Profile vectors: {}", profile_kind);
     println!("  Deferred:        {}", deferred);
     println!("  Active:          {}", total - deferred);
-    println!(
-        "  Test-vectors dir: {}",
-        root.display()
-    );
+    println!("  Test-vectors dir: {}", root.display());
 }
 
 // ---------------------------------------------------------------------------
@@ -400,13 +408,12 @@ impl sar_crypto::provider::KeyProvider for StaticTestPassword {
 
 #[test]
 fn bad_aead_tag_auth_failure() {
-    use std::io::Cursor;
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
     use sar_core::error::SarError;
+    use std::io::Cursor;
 
     let root = vectors_root();
-    let vector_path = root
-        .join("invalid/crypto/bad-aead-tag/bad_aead_tag.sar");
+    let vector_path = root.join("invalid/crypto/bad-aead-tag/bad_aead_tag.sar");
 
     let bytes = std::fs::read(&vector_path)
         .unwrap_or_else(|e| panic!("cannot read {}: {}", vector_path.display(), e));
@@ -438,8 +445,8 @@ fn bad_aead_tag_auth_failure() {
 
 #[test]
 fn crypto_vectors_parse_structurally_with_key_provider() {
-    use std::io::Cursor;
     use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+    use std::io::Cursor;
 
     let root = vectors_root();
     let crypto_vectors = [
@@ -495,7 +502,10 @@ fn crypto_vectors_parse_structurally_with_key_provider() {
             }
         }
 
-        println!("[PASS] {} — parsed successfully with key provider", rel_path);
+        println!(
+            "[PASS] {} — parsed successfully with key provider",
+            rel_path
+        );
     }
 
     if !failures.is_empty() {

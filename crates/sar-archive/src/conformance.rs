@@ -424,16 +424,12 @@ pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchem
 
     // Validate compression field: boolean true is not allowed.
     if let TransformExpectation::Disabled(true) = &manifest.compression {
-        errors.push(
-            "compression must be false or an object, not true".to_string(),
-        );
+        errors.push("compression must be false or an object, not true".to_string());
     }
 
     // Validate crypto field: boolean true is not allowed.
     if let TransformExpectation::Disabled(true) = &manifest.crypto {
-        errors.push(
-            "crypto must be false or an object, not true".to_string(),
-        );
+        errors.push("crypto must be false or an object, not true".to_string());
     }
 
     // Feature consistency: compression object ↔ compression:* feature tag.
@@ -493,14 +489,8 @@ fn validate_compression_feature_consistency(
 }
 
 /// Checks that the `crypto` field and `crypto:*` feature tags agree.
-fn validate_crypto_feature_consistency(
-    manifest: &ConformanceManifest,
-    errors: &mut Vec<String>,
-) {
-    let has_crypto_feature = manifest
-        .features
-        .iter()
-        .any(|f| f.starts_with("crypto:"));
+fn validate_crypto_feature_consistency(manifest: &ConformanceManifest, errors: &mut Vec<String>) {
+    let has_crypto_feature = manifest.features.iter().any(|f| f.starts_with("crypto:"));
 
     match &manifest.crypto {
         TransformExpectation::Enabled(info) => {
@@ -538,7 +528,10 @@ fn validate_entries(manifest: &ConformanceManifest, errors: &mut Vec<String>) {
 
         // Symlink entries must have symlink_target.
         if entry.kind == ExpectedEntryKind::Symlink && entry.symlink_target.is_none() {
-            errors.push(format!("{}: symlink entry must include symlink_target", label));
+            errors.push(format!(
+                "{}: symlink entry must include symlink_target",
+                label
+            ));
         }
 
         // File entries: payload rules.
@@ -587,7 +580,6 @@ fn validate_entries(manifest: &ConformanceManifest, errors: &mut Vec<String>) {
             }
         }
     }
-
 }
 
 /// Validates expected base files for correctness.
@@ -663,10 +655,7 @@ pub fn sar_error_matches_expected_status(
             error,
             SarError::Malformed(_) | SarError::InvalidLength(_) | SarError::ReservedValue(_)
         ),
-        "SAR_ERR_TRUNCATED" => matches!(
-            error,
-            SarError::Truncated(_) | SarError::Io(_)
-        ),
+        "SAR_ERR_TRUNCATED" => matches!(error, SarError::Truncated(_) | SarError::Io(_)),
         "SAR_ERR_UNSUPPORTED" => matches!(error, SarError::Unsupported(_)),
         "SAR_ERR_RESERVED_VALUE" => {
             matches!(error, SarError::ReservedValue(_) | SarError::Malformed(_))
@@ -778,17 +767,14 @@ pub fn run_conformance_check(
     }
     if let Some(&v) = manifest.limits.get("max_fec_value_size") {
         // Alias for max_fec_value_bytes.
-        limits.max_fec_value_bytes =
-            usize::try_from(v).unwrap_or(usize::MAX);
+        limits.max_fec_value_bytes = usize::try_from(v).unwrap_or(usize::MAX);
     }
     if let Some(&v) = manifest.limits.get("max_fec_value_bytes") {
         // Canonical key; takes precedence over alias above.
-        limits.max_fec_value_bytes =
-            usize::try_from(v).unwrap_or(usize::MAX);
+        limits.max_fec_value_bytes = usize::try_from(v).unwrap_or(usize::MAX);
     }
     if let Some(&v) = manifest.limits.get("max_tlv_count") {
-        limits.max_tlv_count =
-            usize::try_from(v).unwrap_or(usize::MAX);
+        limits.max_tlv_count = usize::try_from(v).unwrap_or(usize::MAX);
     }
     if let Some(&v) = manifest.limits.get("max_loss_tolerant_gap") {
         limits.max_loss_tolerant_gap = v;
