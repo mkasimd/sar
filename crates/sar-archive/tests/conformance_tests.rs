@@ -334,22 +334,18 @@ fn conformance_summary() {
     let parse_ok = manifests.iter().filter(|(_, r)| r.is_ok()).count();
     let deferred = manifests
         .iter()
-        .filter(|(_, r)| r.as_ref().ok().map_or(false, |m| m.deferred))
+        .filter(|(_, r)| r.as_ref().ok().is_some_and(|m| m.deferred))
         .count();
     let valid_kind = manifests
         .iter()
-        .filter(|(_, r)| {
-            r.as_ref()
-                .ok()
-                .map_or(false, |m| m.kind == VectorKind::Valid)
-        })
+        .filter(|(_, r)| r.as_ref().ok().is_some_and(|m| m.kind == VectorKind::Valid))
         .count();
     let invalid_kind = manifests
         .iter()
         .filter(|(_, r)| {
             r.as_ref()
                 .ok()
-                .map_or(false, |m| m.kind == VectorKind::Invalid)
+                .is_some_and(|m| m.kind == VectorKind::Invalid)
         })
         .count();
     let profile_kind = manifests
@@ -357,7 +353,7 @@ fn conformance_summary() {
         .filter(|(_, r)| {
             r.as_ref()
                 .ok()
-                .map_or(false, |m| m.kind == VectorKind::Profile)
+                .is_some_and(|m| m.kind == VectorKind::Profile)
         })
         .count();
 

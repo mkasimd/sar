@@ -47,7 +47,7 @@ fn raw_manifest_json(path: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(path).expect("read manifest")).expect("parse manifest")
 }
 
-fn object_keys<'a>(obj: &'a Map<String, Value>) -> impl Iterator<Item = &'a str> {
+fn object_keys(obj: &Map<String, Value>) -> impl Iterator<Item = &str> {
     obj.keys().map(String::as_str)
 }
 
@@ -118,10 +118,10 @@ fn validate_entries_shape(entries: &Value, label: &str, failures: &mut Vec<Strin
                 failures.push(format!("{label}[{index}]: missing required key '{key}'"));
             }
         }
-        if let Some(value) = object.get("payload_generation") {
-            if !value.is_null() {
-                validate_payload_generation_shape(value, &format!("{label}[{index}]"), failures);
-            }
+        if let Some(value) = object.get("payload_generation")
+            && !value.is_null()
+        {
+            validate_payload_generation_shape(value, &format!("{label}[{index}]"), failures);
         }
         if let Some(extents) = object.get("extents") {
             let Some(extents) = extents.as_array() else {
@@ -182,10 +182,10 @@ fn validate_base_files_shape(base_files: &Value, label: &str, failures: &mut Vec
         if !object.contains_key("path") {
             failures.push(format!("{label}[{index}]: missing required key 'path'"));
         }
-        if let Some(value) = object.get("payload_generation") {
-            if !value.is_null() {
-                validate_payload_generation_shape(value, &format!("{label}[{index}]"), failures);
-            }
+        if let Some(value) = object.get("payload_generation")
+            && !value.is_null()
+        {
+            validate_payload_generation_shape(value, &format!("{label}[{index}]"), failures);
         }
     }
 }
@@ -222,18 +222,17 @@ fn validate_transform_shape(
             failures.push(format!("{label}: missing required key '{key}'"));
         }
     }
-    if allow_crypto_fields {
-        if let Some(kms) = object.get("kms") {
-            if !kms.is_null() {
-                let Some(kms) = kms.as_object() else {
-                    failures.push(format!("{label}.kms: must be an object or null"));
-                    return;
-                };
-                for key in object_keys(kms) {
-                    if !["mode", "salt_hex", "kdf", "iterations"].contains(&key) {
-                        failures.push(format!("{label}.kms: unexpected key '{key}'"));
-                    }
-                }
+    if allow_crypto_fields
+        && let Some(kms) = object.get("kms")
+        && !kms.is_null()
+    {
+        let Some(kms) = kms.as_object() else {
+            failures.push(format!("{label}.kms: must be an object or null"));
+            return;
+        };
+        for key in object_keys(kms) {
+            if !["mode", "salt_hex", "kdf", "iterations"].contains(&key) {
+                failures.push(format!("{label}.kms: unexpected key '{key}'"));
             }
         }
     }
@@ -301,7 +300,7 @@ fn all_non_deferred_vector_files_exist() {
         .filter(|(_, r)| {
             r.as_ref()
                 .ok()
-                .map_or(false, |m| !m.deferred && m.file.is_some())
+                .is_some_and(|m| !m.deferred && m.file.is_some())
         })
         .count();
     println!("All {} non-deferred file references exist.", checked);
@@ -335,7 +334,10 @@ fn profile_vector_files_exist() {
         }
 
         let base_dir = path.parent().expect("manifest dir");
-        let file_name = manifest.file.as_deref().unwrap();
+        let file_name = manifest
+            .file
+            .as_deref()
+            .expect("non-deferred profile manifest has file");
         let file_path = base_dir.join(file_name);
         checked += 1;
 
@@ -565,9 +567,9 @@ fn valid_vectors_have_entries() {
     let count = manifests
         .iter()
         .filter(|(_, r)| {
-            r.as_ref().ok().map_or(false, |m| {
-                m.kind == VectorKind::Valid && !m.deferred && m.file.is_some()
-            })
+            r.as_ref()
+                .ok()
+                .is_some_and(|m| m.kind == VectorKind::Valid && !m.deferred && m.file.is_some())
         })
         .count();
     println!("All {} valid non-deferred vectors have entries.", count);
@@ -859,10 +861,10 @@ fn raw_manifest_shapes_match_schema_contract() {
                 ));
             }
         }
-        if let Some(file) = object.get("file") {
-            if !value_is_string_or_null(file) {
-                failures.push(format!("{}: file must be a string or null", path.display()));
-            }
+        if let Some(file) = object.get("file")
+            && !value_is_string_or_null(file)
+        {
+            failures.push(format!("{}: file must be a string or null", path.display()));
         }
         if let Some(compression) = object.get("compression") {
             validate_transform_shape(
