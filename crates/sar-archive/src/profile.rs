@@ -65,8 +65,10 @@ pub enum ComplianceProfile {
 }
 
 impl ComplianceProfile {
-    /// Returns the canonical profile name as used in manifest
-    /// `profile_expectations`.
+    /// Returns the canonical profile name as used in manifest `profile_expectations`.
+    ///
+    /// Names use lowercase-hyphenated format matching the manifest schema convention,
+    /// for example `"static-archive"`, `"stream-package"`, `"live-media"`.
     #[must_use]
     pub fn canonical_name(self) -> &'static str {
         match self {

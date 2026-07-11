@@ -353,24 +353,31 @@ pub fn run_conformance_check(
     };
 
     // Build resource limits from manifest.limits.
+    // Precedence: later keys overwrite earlier ones if both are specified.
+    // Canonical key: "max_decoded_entry_size".
+    // Aliases for readability in manifests (checked after canonical, so canonical wins if both present):
+    //   "max_payload_size" and "max_sparse_logical_size" → max_decoded_entry_size
+    //   "max_fec_value_size" → max_fec_value_bytes
     let mut limits = sar_core::limits::ResourceLimits::default();
-    if let Some(&v) = manifest.limits.get("max_decoded_entry_size") {
-        limits.max_decoded_entry_size = v;
-    }
     if let Some(&v) = manifest.limits.get("max_payload_size") {
-        // Alias used in manifests for decoded entry size.
+        // Alias for max_decoded_entry_size; overwritten if canonical key is also present.
         limits.max_decoded_entry_size = v;
     }
     if let Some(&v) = manifest.limits.get("max_sparse_logical_size") {
-        // Manifest alias: maps to max_decoded_entry_size for sparse validation.
+        // Alias for max_decoded_entry_size; overwritten if canonical key is also present.
+        limits.max_decoded_entry_size = v;
+    }
+    if let Some(&v) = manifest.limits.get("max_decoded_entry_size") {
+        // Canonical key; takes precedence over aliases above.
         limits.max_decoded_entry_size = v;
     }
     if let Some(&v) = manifest.limits.get("max_fec_value_size") {
-        // Manifest alias: maps to max_fec_value_bytes.
+        // Alias for max_fec_value_bytes.
         limits.max_fec_value_bytes =
             usize::try_from(v).unwrap_or(usize::MAX);
     }
     if let Some(&v) = manifest.limits.get("max_fec_value_bytes") {
+        // Canonical key; takes precedence over alias above.
         limits.max_fec_value_bytes =
             usize::try_from(v).unwrap_or(usize::MAX);
     }

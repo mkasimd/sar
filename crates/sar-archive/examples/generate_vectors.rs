@@ -385,6 +385,11 @@ fn main() {
         let mut bad_tag = aes_no_index;
         if bad_tag.len() >= 16 {
             let len = bad_tag.len();
+            // In a NO_INDEX AES-256-GCM archive the file layout is:
+            //   global_header | LFH | ciphertext (plaintext_len bytes) | AEAD tag (16 bytes)
+            // Because there is no Central Dictionary or Footer (NO_INDEX), the last
+            // 16 bytes of the file are always the AES-GCM authentication tag.
+            // Flipping them causes AEAD decryption to return an authentication error.
             for b in bad_tag[len - 16..].iter_mut() {
                 *b ^= 0xFF;
             }

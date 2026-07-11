@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fs-meta-owner",
   "title": "Filesystem metadata: UID/GID (EXT_UID_GID)",
-  "description": "SAR archive with EXT_UID_GID global flag and one entry with UID=1000, GID=1000. Validates EntryOwnerMetadata encode/decode round-trip. UID/GID restoration is NOT performed by the library.",
+  "description": "SAR archive with EXT_UID_GID global flag and one entry with UID=1000, GID=1000. Validates EntryOwnerMetadata encode/decode round-trip. UID/GID preservation is a CLI-layer concern; the library parses and encodes owner fields but filesystem restoration (chown) is opt-in at the CLI level.",
   "kind": "valid",
   "file": "owner_entry.sar",
   "profiles": [

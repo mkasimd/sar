@@ -32,8 +32,10 @@ and data archives.
 - Unsafe filesystem metadata (absolute paths, traversal, setuid/setgid)
 - Excessive resource declarations
 
-**Implementation status:** Partially implemented. Profile validation helpers exist
-in `sar-archive::profile`. Full conformance oracle is deferred to M12a/M13.
+**Implementation status:** Partially implemented. `sar_archive::profile::validate_archive_profile`
+checks global-flag-level constraints (NO_INDEX rejection, LOSS_TOLERANT rejection). Entry-level
+checks (per-entry algorithm gating, unsafe metadata detection) are not yet enforced at the profile
+layer; they are deferred to CLI extraction guards and future M13 work.
 
 ---
 
@@ -54,7 +56,7 @@ non-repudiation. Similar to `static-archive` with stricter requirements.
 - Lossy package data
 - Unsafe filesystem metadata
 
-**Implementation status:** Partially implemented.
+**Implementation status:** Partially implemented. `validate_archive_profile` rejects LOSS_TOLERANT and NO_INDEX globally. Entry-level checks (algorithm gating, lossy data, unsafe metadata) are deferred to CLI extraction guards and future M13 work.
 
 ---
 
@@ -101,7 +103,7 @@ state, potentially with deduplication, delta, and sparse support.
 - Excessive resource declarations
 - Unsupported/custom algorithms
 
-**Implementation status:** Partially implemented.
+**Implementation status:** Partially implemented. `validate_archive_profile` enforces indexed-archive and metadata-flag-level checks. Full entry-level profile enforcement is deferred.
 
 ---
 
@@ -121,7 +123,7 @@ where best-effort delivery is acceptable for non-critical entries.
 - Unsafe filesystem metadata
 - Authentication/structural failures (LOSS_TOLERANT never suppresses these)
 
-**Implementation status:** Partially implemented.
+**Implementation status:** Partially implemented. Profile acceptance/rejection expectations are documented in manifests. Full validator enforcement deferred.
 
 ---
 
@@ -142,7 +144,7 @@ must be bounded. Compatible with transport-level loss tolerance.
 - Fragment gaps exceeding `max_loss_tolerant_gap`
 - Authentication/structural failures
 
-**Implementation status:** Partially implemented.
+**Implementation status:** Partially implemented. Profile acceptance/rejection expectations are documented in manifests. Full validator enforcement deferred.
 
 ---
 
