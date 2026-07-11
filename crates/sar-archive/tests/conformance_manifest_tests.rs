@@ -19,6 +19,11 @@ use std::{
 use sar_archive::conformance::{
     TransformExpectation, VectorKind, discover_manifests, validate_manifest_schema,
 };
+use sar_core::{
+    GlobalFlags, ResourceLimits,
+    format::{parse_global_header, parse_lfh},
+};
+use sar_delta::{PATCH_ALGO_BSDIFF, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF};
 use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
@@ -772,8 +777,6 @@ fn deferred_vectors_do_not_reference_binary_fixtures() {
 fn known_deferred_feature_tags_are_not_canonical_unless_real() {
     let manifests = discover_manifests(&vectors_root()).expect("discover manifests");
     let deferred_tags = [
-        "delta:vcdiff",
-        "delta:bsdiff",
         "cdc:fastcdc",
         "cdc-map",
         "sparse+delta",
@@ -922,4 +925,52 @@ fn raw_manifest_shapes_match_schema_contract() {
             failures.join("\n")
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Promoted VCDIFF/BSDIFF vector algo-ID validation
+// ---------------------------------------------------------------------------
+
+/// Reads the `patch_algo_id` byte from the first LFH of a fixture file.
+///
+/// Returns `None` when the archive cannot be parsed or lacks `HAS_DELTA`.
+fn read_first_entry_patch_algo_id(fixture_path: &Path) -> Option<u8> {
+    let bytes = fs::read(fixture_path).ok()?;
+    let limits = ResourceLimits::default();
+    let (gh, after_gh) = parse_global_header(&bytes, &limits).ok()?;
+    if !gh.flags.contains(GlobalFlags::HAS_DELTA) {
+        return None;
+    }
+    let (lfh, _) = parse_lfh(&bytes[after_gh..], &gh.flags, &limits).ok()?;
+    lfh.patch_algo_id
+}
+
+#[test]
+fn promoted_vcdiff_vector_uses_vcdiff_algo_id() {
+    let fixture = vectors_root().join("valid/delta/vcdiff/vcdiff_patch_entry.sar");
+    let algo_id = read_first_entry_patch_algo_id(&fixture)
+        .unwrap_or_else(|| panic!("could not read patch_algo_id from {}", fixture.display()));
+    assert_eq!(
+        algo_id, PATCH_ALGO_VCDIFF,
+        "VCDIFF vector must use patch algorithm ID {PATCH_ALGO_VCDIFF:#04x}, got {algo_id:#04x}"
+    );
+    assert_ne!(
+        algo_id, PATCH_ALGO_STORE_PATCH,
+        "VCDIFF vector must not use STORE_PATCH"
+    );
+}
+
+#[test]
+fn promoted_bsdiff_vector_uses_bsdiff_algo_id() {
+    let fixture = vectors_root().join("valid/delta/bsdiff/bsdiff_patch_entry.sar");
+    let algo_id = read_first_entry_patch_algo_id(&fixture)
+        .unwrap_or_else(|| panic!("could not read patch_algo_id from {}", fixture.display()));
+    assert_eq!(
+        algo_id, PATCH_ALGO_BSDIFF,
+        "BSDIFF vector must use patch algorithm ID {PATCH_ALGO_BSDIFF:#04x}, got {algo_id:#04x}"
+    );
+    assert_ne!(
+        algo_id, PATCH_ALGO_STORE_PATCH,
+        "BSDIFF vector must not use STORE_PATCH"
+    );
 }

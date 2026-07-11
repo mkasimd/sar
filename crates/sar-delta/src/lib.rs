@@ -9,19 +9,22 @@
 //! * [`validate_patch_algo_id`] for registry enforcement;
 //! * a display helper [`patch_algo_name`];
 //! * [`apply_store_patch`] for `STORE_PATCH` (`0x00`) application;
+//! * [`generate_store_patch`] for `STORE_PATCH` (`0x00`) generation;
 //! * [`apply_bsdiff`] for `BSDIFF` (`0x02`) application (SAR BSDIFF v1, `SARBSD01`);
-//! * [`apply_vcdiff`] for `VCDIFF` (`0x01`) application (RFC 3284).
+//! * [`generate_bsdiff_patch`] for `BSDIFF` (`0x02`) generation;
+//! * [`apply_vcdiff`] for `VCDIFF` (`0x01`) application (RFC 3284);
+//! * [`generate_vcdiff_patch`] for `VCDIFF` (`0x01`) generation.
 //!
 //! # Supported patch algorithms
 //!
-//! | ID       | Name         | Status                                               |
-//! |----------|--------------|------------------------------------------------------|
-//! | `0x00`   | `STORE_PATCH`| assigned, mandatory; application **implemented**    |
-//! | `0x01`   | `VCDIFF`     | assigned, mandatory; application **implemented**     |
-//! | `0x02`   | `BSDIFF`     | assigned, optional;  application **implemented**     |
-//! | `0x03`   | `ZSTD_PATCH` | assigned, optional;  application **not implemented** |
-//! | `0x04–0xEF` | reserved  | `SAR_ERR_RESERVED_VALUE`                             |
-//! | `0xF0–0xFF` | CUSTOM    | `SAR_ERR_UNSUPPORTED` unless negotiated              |
+//! | ID       | Name         | Status                                                        |
+//! |----------|--------------|---------------------------------------------------------------|
+//! | `0x00`   | `STORE_PATCH`| assigned, mandatory; application and generation **implemented**|
+//! | `0x01`   | `VCDIFF`     | assigned, mandatory; application and generation **implemented**|
+//! | `0x02`   | `BSDIFF`     | assigned, optional;  application and generation **implemented**|
+//! | `0x03`   | `ZSTD_PATCH` | assigned, optional;  application **not implemented**           |
+//! | `0x04–0xEF` | reserved  | `SAR_ERR_RESERVED_VALUE`                                      |
+//! | `0xF0–0xFF` | CUSTOM    | `SAR_ERR_UNSUPPORTED` unless negotiated                       |
 //!
 //! # STORE_PATCH semantics
 //!
@@ -51,6 +54,9 @@
 //! [`PatchError::BaseMissing`]; this check belongs in the archive reader that
 //! calls [`apply_bsdiff`].
 //!
+//! [`generate_bsdiff_patch`] produces a deterministic, bounded `SARBSD01`
+//! patch using a single control triple.  Patch optimality is not guaranteed.
+//!
 //! # VCDIFF semantics
 //!
 //! `VCDIFF` (`0x01`) follows RFC 3284 with the default code table
@@ -59,6 +65,9 @@
 //! Base bytes MUST be supplied explicitly; automatic base discovery is not
 //! performed.  All-zero `Delta Base Hash` MUST result in
 //! [`PatchError::BaseMissing`]; this check belongs in the archive reader.
+//!
+//! [`generate_vcdiff_patch`] produces a deterministic, bounded VCDIFF stream
+//! using only ADD instructions.  COPY optimisation is not performed.
 //!
 //! # Spec gaps
 //!
@@ -72,16 +81,16 @@
 /// Patch algorithm ID constants (spec section 8.4, `SAR_L_PATCH`).
 pub mod algo;
 
-/// SAR BSDIFF v1 patch application (`SARBSD01`, spec §8.4.4).
+/// SAR BSDIFF v1 patch application and generation (`SARBSD01`, spec §8.4.4).
 pub mod bsdiff;
 
-/// VCDIFF patch application per RFC 3284.
+/// VCDIFF patch application and generation per RFC 3284.
 pub mod vcdiff;
 
 pub use algo::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MAX, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH,
     PATCH_ALGO_VCDIFF, PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, PatchError, apply_store_patch,
-    patch_algo_name, validate_patch_algo_id,
+    generate_store_patch, patch_algo_name, validate_patch_algo_id,
 };
-pub use bsdiff::{BsdiffLimits, apply_bsdiff, decode_bsdiff_int};
-pub use vcdiff::{VcdiffLimits, apply_vcdiff};
+pub use bsdiff::{BsdiffLimits, apply_bsdiff, decode_bsdiff_int, generate_bsdiff_patch};
+pub use vcdiff::{VcdiffLimits, apply_vcdiff, generate_vcdiff_patch};

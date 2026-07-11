@@ -22,9 +22,9 @@ pub mod transform;
 
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
-    ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, FecSettings, LfhSizeFieldPolicy, LogicalFile, SparseWriteOptions,
-    StreamWriteState, VerificationReport,
+    ArchiveWriterOptions, CompressionSettings, DeltaWriteOptions, EncryptionSettings, EntryInput,
+    EntryMetadata, EntryReader, EntryWritten, FecSettings, LfhSizeFieldPolicy, LogicalFile,
+    SparseWriteOptions, StreamWriteState, VerificationReport,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
 pub use recovery::{

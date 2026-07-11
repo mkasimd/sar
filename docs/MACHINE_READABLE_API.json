@@ -3885,6 +3885,28 @@
               "ffi_candidate": false,
               "ffi_readiness": "not_ready",
               "ffi_notes": ""
+            },
+            {
+              "name": "DeltaWriteOptions",
+              "kind": "struct",
+              "signature": "pub struct DeltaWriteOptions { pub algorithm: PatchAlgoId, pub base: Vec<u8>, pub delta_base_hash: [u8; 32] }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Per-entry delta write options. Set on EntryInput.delta when with_delta=true. algorithm selects the patch algorithm; base provides the base bytes for VCDIFF/BSDIFF; delta_base_hash is a non-zero 32-byte opaque identity written to LFH. All-zero delta_base_hash is rejected for VCDIFF and BSDIFF at write time.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "12a-M9b-cp",
+              "related_spec_sections": [
+                "8.4"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "No C ABI in M12a-M9b-cp."
             }
           ]
         },
@@ -5397,10 +5419,11 @@
     {
       "name": "sar-delta",
       "path": "crates/sar-delta",
-      "purpose": "Patch algorithm registry and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1.",
+      "purpose": "Patch algorithm registry, patch generation, and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1.",
       "status": "implemented",
       "milestones": [
-        "9b"
+        "9b",
+        "12a-M9b-cp"
       ],
       "features": [
         "sar_bsdiff_v1: normative",
@@ -5821,6 +5844,86 @@
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
               "ffi_notes": ""
+            },
+            {
+              "name": "generate_vcdiff_patch",
+              "kind": "function",
+              "signature": "pub fn generate_vcdiff_patch(base: &[u8], target: &[u8], limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Generates a valid RFC 3284 VCDIFF ADD-only stream from target bytes. base is accepted for API symmetry. Output is accepted by apply_vcdiff. O(target.len()) memory. Fails closed on limit violations.",
+              "parameters": [
+                {
+                  "name": "base",
+                  "type": "&[u8]",
+                  "description": "Base object bytes (unused in ADD-only strategy)."
+                },
+                {
+                  "name": "target",
+                  "type": "&[u8]",
+                  "description": "Target bytes to encode."
+                },
+                {
+                  "name": "limits",
+                  "type": "&VcdiffLimits",
+                  "description": "Resource limits."
+                }
+              ],
+              "returns": "Ok(patch_bytes); Err(LimitExceeded) on limit violation.",
+              "errors": [
+                "LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "12a-M9b-cp",
+              "related_spec_sections": [
+                "8.4.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "No C ABI in M12a-M9b-cp."
+            },
+            {
+              "name": "generate_bsdiff_patch",
+              "kind": "function",
+              "signature": "pub fn generate_bsdiff_patch(base: &[u8], target: &[u8], limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Generates a valid SARBSD01 patch using a single control triple. Output is accepted by apply_bsdiff. O(target.len()) memory. Fails closed on limit violations.",
+              "parameters": [
+                {
+                  "name": "base",
+                  "type": "&[u8]",
+                  "description": "Base object bytes."
+                },
+                {
+                  "name": "target",
+                  "type": "&[u8]",
+                  "description": "Target bytes to encode."
+                },
+                {
+                  "name": "limits",
+                  "type": "&BsdiffLimits",
+                  "description": "Resource limits."
+                }
+              ],
+              "returns": "Ok(patch_bytes); Err(LimitExceeded) on limit violation.",
+              "errors": [
+                "LimitExceeded"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "12a-M9b-cp",
+              "related_spec_sections": [
+                "8.4.4"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_applicable",
+              "ffi_notes": "No C ABI in M12a-M9b-cp."
             }
           ]
         }

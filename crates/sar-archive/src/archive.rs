@@ -14,7 +14,8 @@ use sar_crypto::{
 };
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
-    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff, bsdiff::BsdiffLimits,
+    PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, apply_bsdiff, apply_store_patch, apply_vcdiff,
+    bsdiff::BsdiffLimits, generate_bsdiff_patch, generate_store_patch, generate_vcdiff_patch,
     vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
@@ -38,6 +39,9 @@ use sar_core::{
 use crate::transform::{
     DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
 };
+
+const ZERO_DELTA_BASE_HASH: [u8; 32] = [0u8; 32];
+const ZERO_CONTENT_HASH: [u8; 32] = [0u8; 32];
 
 /// Metadata summary for profile/verification checks.
 #[derive(Debug, Clone)]
@@ -296,7 +300,31 @@ pub struct EntryReader {
 
 /// Writer input.
 ///
-/// Use [`EntryInput::file`] to construct a simple regular-file entry.
+/// Delta write configuration for a single archive entry.
+///
+/// When attached to an [`EntryInput`], the archive writer generates a real
+/// patch from the supplied base bytes and encodes it as the stored payload.
+/// The global `HAS_DELTA` flag must be enabled via
+/// [`ArchiveWriterOptions::with_delta`].
+///
+/// # Constraints
+///
+/// * `VCDIFF` and `BSDIFF` require a non-zero `delta_base_hash` (all-zero is
+///   rejected as missing reconstruction identity).
+/// * `STORE_PATCH` accepts an all-zero `delta_base_hash` (no base required).
+/// * No automatic base discovery is performed; the caller must supply `base`.
+#[derive(Debug, Clone)]
+pub struct DeltaWriteOptions {
+    /// Patch algorithm to generate.
+    pub algorithm: PatchAlgoId,
+    /// Base object bytes used by the patch generator.  For `STORE_PATCH` this
+    /// is ignored; for `VCDIFF` and `BSDIFF` it is the source bytes.
+    pub base: Vec<u8>,
+    /// Opaque 32-byte reconstruction identity stored in the LFH
+    /// `Delta Base Hash` field.  Must be non-zero for `VCDIFF` and `BSDIFF`.
+    pub delta_base_hash: [u8; 32],
+}
+
 /// All metadata fields are optional and default to `None`/`false`/`0`.
 /// Fields that require a corresponding global flag in
 /// [`ArchiveWriterOptions`] are validated fail-closed by
@@ -332,6 +360,10 @@ pub struct EntryInput {
     pub file_crc32: Option<u32>,
     /// Content hash (32 bytes).  Written when `with_content_hash` is enabled.
     pub content_hash: Option<[u8; 32]>,
+    /// Delta write options.  When `Some`, the writer generates a real patch
+    /// from `delta.base` + `payload` and stores the patch bytes.  The global
+    /// [`ArchiveWriterOptions::with_delta`] flag must be enabled.
+    pub delta: Option<DeltaWriteOptions>,
 }
 
 impl EntryInput {
@@ -441,6 +473,11 @@ pub struct ArchiveWriterOptions {
     /// If `true`, set the global `HAS_SYMLINKS` flag.  Required when any
     /// entry has `kind = Some(EntryKind::Symlink)`.
     pub with_symlinks: bool,
+    /// If `true`, set the global `HAS_DELTA` flag.  Required when any entry
+    /// supplies [`EntryInput::delta`] with `VCDIFF` or `BSDIFF` options.
+    /// Entries without a `delta` field emit `STORE_PATCH` with an all-zero
+    /// base hash when this flag is active.
+    pub with_delta: bool,
     /// LFH size-field encoding policy for `Uncompressed Size` and `Payload Size`.
     pub lfh_size_field_policy: LfhSizeFieldPolicy,
 }
@@ -492,6 +529,7 @@ impl Default for ArchiveWriterOptions {
             with_per_file_crc: false,
             with_content_hash: false,
             with_symlinks: false,
+            with_delta: false,
             lfh_size_field_policy: LfhSizeFieldPolicy::Auto,
         }
     }
@@ -931,8 +969,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     }
                 }
                 PATCH_ALGO_VCDIFF => {
-                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
-                    if hash == [0u8; 32] {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
                         return Err(SarError::BaseMissing(
                             "VCDIFF: all-zero Delta Base Hash indicates missing base",
                         ));
@@ -949,8 +987,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         .map_err(map_patch_error)?
                 }
                 PATCH_ALGO_BSDIFF => {
-                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
-                    if hash == [0u8; 32] {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
                         return Err(SarError::BaseMissing(
                             "BSDIFF: all-zero Delta Base Hash indicates missing base",
                         ));
@@ -1154,7 +1192,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let delta: Option<sar_core::metadata::EntryDeltaMetadata> = if is_has_delta {
             Some(sar_core::metadata::EntryDeltaMetadata {
                 patch_algo_id: patch_raw_id,
-                base_hash: lfh.delta_base_hash.unwrap_or([0u8; 32]),
+                base_hash: lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH),
             })
         } else {
             None
@@ -1219,7 +1257,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 None
             },
             delta_base_hash: if is_has_delta {
-                Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
+                Some(lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH))
             } else {
                 None
             },
@@ -1797,6 +1835,45 @@ pub enum StreamWriteState {
     Error,
 }
 
+/// Generates patch bytes for a delta entry.
+///
+/// For `VCDIFF` and `BSDIFF`, the patch is generated from `delta_opts.base` +
+/// `target` using the bounded deterministic generators in `sar-delta`.
+/// For `STORE_PATCH`, the target bytes are returned as-is (the patch payload
+/// **is** the target for STORE_PATCH).
+///
+/// # Errors
+///
+/// Returns an error for unsupported algorithms or generation failures.
+fn generate_entry_patch(
+    delta_opts: &DeltaWriteOptions,
+    target: &[u8],
+) -> Result<Vec<u8>, SarError> {
+    match delta_opts.algorithm {
+        PatchAlgoId::StorePatch => {
+            // STORE_PATCH: the patch payload is the target bytes verbatim.
+            // Use generate_store_patch for consistency with the other generation paths.
+            let expected_len = u64::try_from(target.len())
+                .map_err(|_| SarError::Overflow("STORE_PATCH target length exceeds u64"))?;
+            generate_store_patch(target, expected_len).map_err(map_patch_error)
+        }
+        PatchAlgoId::Vcdiff => {
+            let limits = VcdiffLimits::default();
+            generate_vcdiff_patch(&delta_opts.base, target, &limits).map_err(map_patch_error)
+        }
+        PatchAlgoId::Bsdiff => {
+            let limits = BsdiffLimits::default();
+            generate_bsdiff_patch(&delta_opts.base, target, &limits).map_err(map_patch_error)
+        }
+        PatchAlgoId::ZstdPatch => Err(SarError::Unsupported(
+            "ZSTD_PATCH: patch generation not implemented",
+        )),
+        PatchAlgoId::Custom(_) => Err(SarError::Unsupported(
+            "CUSTOM patch algorithm: generation not supported",
+        )),
+    }
+}
+
 impl<W: Write> ArchiveWriter<W> {
     /// Creates a new archive writer.
     pub fn new(writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
@@ -1878,6 +1955,7 @@ impl<W: Write> ArchiveWriter<W> {
             with_per_file_crc,
             with_content_hash,
             with_symlinks,
+            with_delta,
             lfh_size_field_policy,
         } = options;
 
@@ -1929,6 +2007,9 @@ impl<W: Write> ArchiveWriter<W> {
         }
         if with_symlinks {
             flags |= GlobalFlags::HAS_SYMLINKS;
+        }
+        if with_delta {
+            flags |= GlobalFlags::HAS_DELTA;
         }
         if matches!(lfh_size_field_policy, LfhSizeFieldPolicy::Force64) {
             flags |= GlobalFlags::SIZE_64BIT;
@@ -2067,11 +2148,22 @@ impl<W: Write> ArchiveWriter<W> {
         // Validate metadata vs global flags before encoding anything.
         self.validate_entry_input_metadata(&entry)?;
 
+        // `uncompressed_size` is always the logical target size (entry.payload.len()).
+        // When delta is active, the stored payload bytes are the *patch* bytes, not
+        // the target bytes; `uncompressed_size` still reflects the target size.
         let uncompressed_len =
             u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
+
+        // Generate the wire payload: patch bytes for VCDIFF/BSDIFF, target bytes otherwise.
+        let wire_payload: Vec<u8> = if let Some(ref delta_opts) = entry.delta {
+            generate_entry_patch(delta_opts, &entry.payload)?
+        } else {
+            entry.payload.clone()
+        };
+
         let is_compressed = self.compression.algo_id != COMP_ALGO_STORE;
         let mut encoded_payload = encode_payload_v2(
-            &entry.payload,
+            &wire_payload,
             EncodingPlanV2 {
                 is_compressed,
                 comp_algo_id: self.compression.algo_id,
@@ -2161,7 +2253,7 @@ impl<W: Write> ArchiveWriter<W> {
                 .as_ref()
                 .ok_or(SarError::KeyMissing("writer CEK is unavailable"))?;
             encoded_payload = encode_payload_v2(
-                &entry.payload,
+                &wire_payload,
                 EncodingPlanV2 {
                     is_compressed,
                     comp_algo_id: self.compression.algo_id,
@@ -2336,6 +2428,24 @@ impl<W: Write> ArchiveWriter<W> {
             ));
         }
 
+        // Delta options require HAS_DELTA global flag.
+        if let Some(ref delta_opts) = entry.delta {
+            if !self.flags.contains(GlobalFlags::HAS_DELTA) {
+                return Err(SarError::FlagConflict(
+                    "EntryInput::delta requires ArchiveWriterOptions::with_delta = true",
+                ));
+            }
+            // VCDIFF and BSDIFF require non-zero reconstruction identity.
+            let algo = delta_opts.algorithm;
+            if matches!(algo, PatchAlgoId::Vcdiff | PatchAlgoId::Bsdiff)
+                && delta_opts.delta_base_hash == ZERO_DELTA_BASE_HASH
+            {
+                return Err(SarError::BaseMissing(
+                    "VCDIFF/BSDIFF delta_base_hash must be non-zero (all-zero means missing identity)",
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -2406,7 +2516,21 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         if self.flags.contains(GlobalFlags::DEDUPLICATION) {
-            lfh.content_hash = entry.content_hash.or(Some([0u8; 32]));
+            lfh.content_hash = entry.content_hash.or(Some(ZERO_CONTENT_HASH));
+        }
+
+        // When HAS_DELTA is globally active, every LFH must carry Patch Algo ID
+        // and Delta Base Hash (the format uses unwrap_or(default) on read, so these
+        // fields are mandatory wire-format fields whenever the global flag is set).
+        if self.flags.contains(GlobalFlags::HAS_DELTA) {
+            if let Some(ref delta_opts) = entry.delta {
+                lfh.patch_algo_id = Some(delta_opts.algorithm.as_u8());
+                lfh.delta_base_hash = Some(delta_opts.delta_base_hash);
+            } else {
+                // No per-entry delta: default to STORE_PATCH with all-zero hash.
+                lfh.patch_algo_id = Some(PATCH_ALGO_STORE_PATCH);
+                lfh.delta_base_hash = Some(ZERO_DELTA_BASE_HASH);
+            }
         }
 
         Ok(())

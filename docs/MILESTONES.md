@@ -655,10 +655,10 @@ If this milestone document appears to describe library/profile layout differentl
 * `sar_archive::conformance` module with `ConformanceManifest`, `validate_manifest_schema()`, `run_conformance_check()`, `discover_manifests()`
 * `sar_archive::profile::ComplianceProfile` extended with 6 profile variants and `canonical_name()` / `from_canonical_name()` methods
 * `crates/sar-archive/tests/conformance_tests.rs` integration test suite (9 tests, all passing)
-* canonical valid vectors: minimal, indexed, NO_INDEX, compression (STORE/DEFLATE/ZSTD), crypto (AES-256-GCM, XChaCha20-Poly1305), LFH selective FEC (XOR, RS), sparse reconstruction, CDC literal mode, delta `STORE_PATCH`, filesystem metadata (permissions, owner, timestamps, symlink, directory, combined, field-presence-inactive), size layout (32-bit, 64-bit)
+* canonical valid vectors at initial M12a completion: minimal, indexed, NO_INDEX, compression (STORE/DEFLATE/ZSTD), crypto (AES-256-GCM, XChaCha20-Poly1305), LFH selective FEC (XOR, RS), sparse reconstruction, CDC literal mode, delta `STORE_PATCH`, filesystem metadata (permissions, owner, timestamps, symlink, directory, combined, field-presence-inactive), size layout (32-bit, 64-bit)
 * invalid vectors: truncated GH/LFH, invalid magic, unknown global flag, unsupported compression/crypto algo, bad AEAD tag
 * profile-specific vectors: static-archive, stream-package acceptance/rejection; cold-storage/tape deferred with documented placeholder
-* deferred/reference-only manifests document future fragment reassembly, LOSS_TOLERANT fragment gaps, sparse+delta ordering, FASTCDC `CDC_MAP`, generated VCDIFF, and generated SAR BSDIFF v1 without overclaiming fallback binaries
+* deferred/reference-only manifests at initial M12a completion document future fragment reassembly, LOSS_TOLERANT fragment gaps, sparse+delta ordering, FASTCDC `CDC_MAP`, generated VCDIFF, and generated SAR BSDIFF v1 without overclaiming fallback binaries
 * known gaps documented in manifests (stream/session, unsafe metadata, resource limits, many invalid cases deferred)
 * `docs/CONFORMANCE.md` updated with M12a vector structure, validator status, and known gaps
 * no wire-format changes; no CLI behavior changes; no M12b work started
@@ -667,17 +667,19 @@ If this milestone document appears to describe library/profile layout differentl
 
 # Current and future milestones
 
-## M12a-M9b-cp: Delta patch generation corrective pass
+## M12a-M9b-cp: Delta patch generation corrective pass (complete)
 
-* restore canonical generated-fixture coverage for VCDIFF and SAR BSDIFF v1
-* implement or harden writer-side VCDIFF patch generation from base + target bytes
-* implement or harden writer-side SAR BSDIFF v1 patch generation from base + target bytes
-* require deterministic, bounded, interoperable patch generation; optimal/minimal patch size is not required
-* integrate generated patches with archive writer delta output where configured
-* add positive apply/round-trip tests for generated VCDIFF and SAR BSDIFF v1 patches
-* replace deferred/reference-only VCDIFF/BSDIFF manifests with real generated fixtures
-* keep M12a vector claims auditable while this corrective pass remains pending
-
+* `sar-delta`: `generate_vcdiff_patch` and `generate_bsdiff_patch` public APIs implemented (RFC 3284 ADD-only VCDIFF stream; SARBSD01 single-control-triple BSDIFF)
+* `sar-delta`: all generation functions use checked arithmetic; O(target.len()) memory only; no suffix arrays, BWT, or quadratic structures
+* `sar-archive`: writer integrates VCDIFF and BSDIFF generation via `DeltaWriteOptions`; sets `HAS_DELTA`, `Patch Algo ID`, and `Delta Base Hash` in each LFH
+* `sar-archive`: `DeltaWriteOptions` requires non-zero `delta_base_hash` for VCDIFF/BSDIFF (all-zero rejected as missing identity)
+* `crates/sar-archive/tests/delta_writer_tests.rs`: 12 tests covering VCDIFF/BSDIFF round-trips, algo-ID wire checks, missing-base rejection, zero-hash rejection, flag-conflict rejection, STORE_PATCH default for no-delta entries
+* `crates/sar-delta/tests/generate_tests.rs`: generation and apply/round-trip tests for VCDIFF and BSDIFF
+* VCDIFF and BSDIFF manifests promoted from deferred/reference-only to real generated fixtures (`test-vectors/valid/delta/vcdiff/`, `test-vectors/valid/delta/bsdiff/`)
+* this promotion updates the earlier M12a historical state without starting `M12a-M8-cp`, `M12b`, or later milestones
+* `conformance_manifest_tests`: two new tests asserting promoted VCDIFF vector uses algo ID `0x01` and promoted BSDIFF vector uses algo ID `0x02`
+* `conformance_manifest_tests`: `delta:vcdiff` and `delta:bsdiff` removed from deferred feature tag guard (no longer deferred)
+* all targeted tests passing; workspace Clippy clean
 ## M12a-M8-cp: Archive-level Recovery TLV corrective pass
 
 * restore canonical generated-fixture coverage for archive-level Recovery TLV / `HAS_GLOBAL_EC`

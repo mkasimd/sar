@@ -32,12 +32,12 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use sar_archive::{
-    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput,
-    FecSettings,
+    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, DeltaWriteOptions,
+    EncryptionSettings, EntryInput, FecSettings,
 };
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
-    EntryKind, GlobalFlags, SparseExtent,
+    CDC_ALGO_LITERAL, EntryKind, GlobalFlags, SparseExtent,
     format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
 use sar_crypto::{
@@ -45,6 +45,7 @@ use sar_crypto::{
     SecretBytes, SecretString, error::SarCryptoError, kms::types::Pbkdf2Params,
     provider::KeyProvider,
 };
+use sar_delta::{PATCH_ALGO_STORE_PATCH, PatchAlgoId};
 
 // ---------------------------------------------------------------------------
 // Test password / key material (TEST-ONLY — do not use for real data)
@@ -52,6 +53,10 @@ use sar_crypto::{
 
 const TEST_PASSWORD_AES: &str = "sar-test-password-aes";
 const TEST_PASSWORD_XCHACHA: &str = "sar-test-password-xchacha";
+const DELTA_VECTOR_PAYLOAD_LEN: usize = 64;
+const ZERO_DELTA_BASE_HASH: [u8; 32] = [0u8; 32];
+const PROMOTED_DELTA_BASE_HASH_WORD_0: u64 = 0x_bdaa_cafe_dead_beef_u64;
+const PROMOTED_DELTA_BASE_HASH_WORD_1: u64 = 0x_1234_5678_9abc_def0_u64;
 
 /// Fixed 32-byte salt for all PBKDF2 derivations in test vectors.
 /// This is TEST-ONLY material.
@@ -121,6 +126,16 @@ fn skip_deferred_vector(relative_path: &str, reason: &str) {
         "skipped {} ({reason})",
         vectors_root().join(relative_path).display()
     );
+}
+
+fn make_promoted_delta_base_hash() -> [u8; 32] {
+    let mut base_hash = ZERO_DELTA_BASE_HASH;
+    let first_word_end = std::mem::size_of::<u64>();
+    let second_word_end = first_word_end + std::mem::size_of::<u64>();
+    base_hash[..first_word_end].copy_from_slice(&PROMOTED_DELTA_BASE_HASH_WORD_0.to_le_bytes());
+    base_hash[first_word_end..second_word_end]
+        .copy_from_slice(&PROMOTED_DELTA_BASE_HASH_WORD_1.to_le_bytes());
+    base_hash
 }
 
 // ---------------------------------------------------------------------------
@@ -475,7 +490,7 @@ fn main() {
     // not yet expose CDC directly. Write a minimal CDC Literal Mode archive
     // using the raw write_lfh path.
     {
-        let payload = make_payload(64);
+        let payload = make_payload(DELTA_VECTOR_PAYLOAD_LEN);
 
         // GlobalFlags with CDC_SUPPORT
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT;
@@ -488,12 +503,12 @@ fn main() {
         };
         let mut archive = write_global_header(&gh).unwrap();
 
-        // Minimal LFH with CDC_ALGO_ID = 0x00 (Literal Mode).
+        // Minimal LFH with the CDC literal-mode algorithm ID.
         let mut lfh = sar_core::format::LocalFileHeader::minimal_store(
             b"cdc_literal.bin".to_vec(),
             payload.len() as u64,
         );
-        lfh.cdc_algo_id = Some(0x00); // CDC_ALGO_LITERAL
+        lfh.cdc_algo_id = Some(CDC_ALGO_LITERAL);
 
         archive.extend_from_slice(&write_lfh(&flags, &lfh).unwrap());
         archive.extend_from_slice(&payload);
@@ -513,7 +528,7 @@ fn main() {
     // -----------------------------------------------------------------------
 
     {
-        let target = make_payload(64);
+        let target = make_payload(DELTA_VECTOR_PAYLOAD_LEN);
 
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
         let gh = GlobalHeader {
@@ -527,9 +542,8 @@ fn main() {
 
         let mut lfh =
             LocalFileHeader::minimal_store(b"store_patch.bin".to_vec(), target.len() as u64);
-        // STORE_PATCH = 0x00, zero base hash (no base required).
-        lfh.patch_algo_id = Some(0x00);
-        lfh.delta_base_hash = Some([0u8; 32]);
+        lfh.patch_algo_id = Some(PATCH_ALGO_STORE_PATCH);
+        lfh.delta_base_hash = Some(ZERO_DELTA_BASE_HASH);
 
         archive.extend_from_slice(&write_lfh(&flags, &lfh).unwrap());
         archive.extend_from_slice(&target);
@@ -537,25 +551,78 @@ fn main() {
         write_fixture("valid/delta/store-patch/store_patch_entry.sar", &archive);
     }
 
-    // VCDIFF and BSDIFF writer-side patch generation is deferred to the
-    // M12a-M9b-cp corrective pass. Do not emit STORE fallback archives.
+    // -----------------------------------------------------------------------
+    // Valid: delta — VCDIFF
+    // -----------------------------------------------------------------------
+
     {
-        skip_deferred_vector(
-            "valid/delta/vcdiff/vcdiff_patch_entry.sar",
-            "writer-side VCDIFF patch generation is scheduled for M12a-M9b-cp",
-        );
-        skip_deferred_vector(
-            "valid/delta/vcdiff/base_file.bin",
-            "reference-only delta manifest now carries its base-file descriptor without committing fallback bytes",
-        );
-        skip_deferred_vector(
-            "valid/delta/bsdiff/bsdiff_patch_entry.sar",
-            "writer-side SAR BSDIFF v1 patch generation is scheduled for M12a-M9b-cp",
-        );
-        skip_deferred_vector(
-            "valid/delta/bsdiff/base_file.bin",
-            "reference-only delta manifest now carries its base-file descriptor without committing fallback bytes",
-        );
+        let base = make_payload(DELTA_VECTOR_PAYLOAD_LEN);
+        let target: Vec<u8> = make_payload(DELTA_VECTOR_PAYLOAD_LEN)
+            .into_iter()
+            .map(|b| b.wrapping_add(1))
+            .collect();
+
+        // Delta base hash: non-zero opaque identity (SHA-256 of the base bytes
+        // used by the reader to locate the base object; treated as opaque here).
+        let base_hash = make_promoted_delta_base_hash();
+
+        let mut buf = Vec::new();
+        let mut writer = ArchiveWriter::new(
+            &mut buf,
+            ArchiveWriterOptions {
+                no_index: true,
+                with_delta: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut entry = EntryInput::file("vcdiff_target.bin", target);
+        entry.delta = Some(DeltaWriteOptions {
+            algorithm: PatchAlgoId::Vcdiff,
+            base: base.clone(),
+            delta_base_hash: base_hash,
+        });
+        writer.add_entry(entry).unwrap();
+        writer.finish().unwrap();
+
+        write_fixture("valid/delta/vcdiff/vcdiff_patch_entry.sar", &buf);
+        write_fixture("valid/delta/vcdiff/base_file.bin", &base);
+    }
+
+    // -----------------------------------------------------------------------
+    // Valid: delta — BSDIFF
+    // -----------------------------------------------------------------------
+
+    {
+        let base = make_payload(DELTA_VECTOR_PAYLOAD_LEN);
+        let target: Vec<u8> = make_payload(DELTA_VECTOR_PAYLOAD_LEN)
+            .into_iter()
+            .map(|b| b.wrapping_add(1))
+            .collect();
+
+        let base_hash = make_promoted_delta_base_hash();
+
+        let mut buf = Vec::new();
+        let mut writer = ArchiveWriter::new(
+            &mut buf,
+            ArchiveWriterOptions {
+                no_index: true,
+                with_delta: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut entry = EntryInput::file("bsdiff_target.bin", target);
+        entry.delta = Some(DeltaWriteOptions {
+            algorithm: PatchAlgoId::Bsdiff,
+            base: base.clone(),
+            delta_base_hash: base_hash,
+        });
+        writer.add_entry(entry).unwrap();
+        writer.finish().unwrap();
+
+        write_fixture("valid/delta/bsdiff/bsdiff_patch_entry.sar", &buf);
+        write_fixture("valid/delta/bsdiff/base_file.bin", &base);
     }
 
     // -----------------------------------------------------------------------
