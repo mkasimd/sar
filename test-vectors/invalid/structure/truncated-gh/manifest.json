@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "invalid-truncated-global-header",
+  "title": "Invalid: truncated Global Header",
+  "description": "Binary blob with a valid SAR magic prefix but truncated before the Global Header is complete. Must be rejected with a truncated or malformed error.",
+  "kind": "invalid",
+  "file": "truncated_global_header.sar",
+  "profiles": [],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_TRUNCATED",
+    "error": "Truncated",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "Hand-crafted minimal truncation case."
+  ],
+  "generated_by": "hand-crafted"
+}

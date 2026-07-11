@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "invalid-frag-overlap",
+  "title": "Invalid: overlapping fragment descriptors",
+  "description": "SAR archive where two fragment descriptors have overlapping byte ranges. Must fail with an invalid map error regardless of LOSS_TOLERANT.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "fragmentation"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_MAP",
+    "error": "InvalidMap",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: LOSS_TOLERANT must not suppress overlap errors."
+  ],
+  "deferred": true
+}

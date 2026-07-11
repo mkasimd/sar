@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "invalid-duplicate-stream-id",
+  "title": "Invalid: duplicate active Stream ID",
+  "description": "SAR transport vector with two SESSION_INIT entries using the same Stream ID without intervening SESSION_CLOSE. Must be rejected.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [
+    "stream-package"
+  ],
+  "features": [
+    "no-index",
+    "stream-session"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_STREAM_STATE",
+    "error": "StreamState",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires sar-transport SESSION_INIT duplicate rejection test."
+  ],
+  "deferred": true
+}

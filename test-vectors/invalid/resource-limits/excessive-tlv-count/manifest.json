@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "invalid-excessive-tlv-count",
+  "title": "Invalid: excessive TLV count in LFH",
+  "description": "SAR archive with an LFH containing more TLV entries than allowed by max_tlv_count. Must fail before allocating or processing all TLVs.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_LIMIT_EXCEEDED",
+    "error": "LimitExceeded",
+    "warnings": []
+  },
+  "limits": {
+    "max_tlv_count": 4
+  },
+  "notes": [
+    "DEFERRED: requires LFH construction with many TLV entries."
+  ],
+  "deferred": true
+}

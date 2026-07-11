@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "invalid-malformed-cdc-map",
+  "title": "Invalid: malformed CDC_MAP TLV",
+  "description": "SAR archive with CDC_SUPPORT flag and a CDC_MAP TLV with incorrect record size. Must fail with a malformed or invalid length error.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "cdc",
+    "cdc-map"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires CDC_MAP TLV with truncated record."
+  ],
+  "deferred": true
+}

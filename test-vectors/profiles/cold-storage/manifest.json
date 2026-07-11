@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "profile-cold-storage-placeholder",
+  "title": "Profile (cold-storage): DEFERRED placeholder",
+  "description": "Cold-storage/tape profile vectors are deferred. No binary SAR vectors exist for cold-storage/tape in M12a. See profiles/README.md for deferral rationale.",
+  "kind": "profile",
+  "file": null,
+  "profiles": [
+    "cold-storage"
+  ],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: cold-storage/tape vectors require an explicitly defined profile mechanism not yet in SAR v1.0.",
+    "General FEC vectors cover the data-recovery aspect of cold storage.",
+    "When a cold-storage profile spec is agreed, add vectors here and update profiles/README.md."
+  ],
+  "deferred": true
+}

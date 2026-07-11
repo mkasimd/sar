@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "invalid-unsupported-crypto",
+  "title": "Invalid: unsupported encryption algorithm ID",
+  "description": "SAR archive with an encryption algorithm ID that is not implemented. Must fail closed with an unsupported error.",
+  "kind": "invalid",
+  "file": "unsupported_crypto.sar",
+  "profiles": [],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "Hand-crafted: encryption algo ID set to a reserved value."
+  ],
+  "generated_by": "hand-crafted"
+}

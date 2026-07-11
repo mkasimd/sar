@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "invalid-reserved-fec",
+  "title": "Invalid: reserved FEC algorithm ID",
+  "description": "SAR archive with SELECTIVE_FEC flag and a reserved FEC algorithm ID. Must fail closed.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "selective-fec"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires SELECTIVE_FEC LFH field construction with reserved algo ID."
+  ],
+  "deferred": true
+}

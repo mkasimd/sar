@@ -645,32 +645,27 @@ If this milestone document appears to describe library/profile layout differentl
 
 ---
 
-# Current and future milestones
-
 ## M12a: conformance profile validator and official vectors
 
-* canonical minimal archive vectors
-* canonical indexed vectors
-* canonical `NO_INDEX` vectors
-* compression vectors
-* crypto vectors
-* FEC vectors
-* fragmentation/sparse vectors
-* CDC vectors
-* delta vectors
-* stream/session vectors
-* filesystem metadata vectors
-* negative/error vectors
-* profile-specific vectors for static archive, package, stream package, backup, telemetry, and live-media profiles where applicable
-* strict-profile rejection vectors for:
+* `test-vectors/` directory structure created with `valid/`, `invalid/`, and `profiles/` subtrees
+* `test-vectors/manifest.schema.json` JSON Schema for conformance vector manifests
+* `test-vectors/README.md` and `test-vectors/profiles/README.md` documentation
+* 76+ `manifest.json` files covering valid, invalid, and profile-specific vectors
+* binary `.sar` fixture files generated deterministically via `generate_vectors` example
+* `sar_archive::conformance` module with `ConformanceManifest`, `validate_manifest_schema()`, `run_conformance_check()`, `discover_manifests()`
+* `sar_archive::profile::ComplianceProfile` extended with 6 profile variants and `canonical_name()` / `from_canonical_name()` methods
+* `crates/sar-archive/tests/conformance_tests.rs` integration test suite (9 tests, all passing)
+* canonical valid vectors: minimal, indexed, NO_INDEX, compression (STORE/DEFLATE/ZSTD), crypto (AES-256-GCM, XChaCha20-Poly1305), FEC (XOR, RS, metadata), fragmentation, sparse, CDC, delta (STORE_PATCH, VCDIFF, BSDIFF), filesystem metadata (permissions, owner, timestamps, symlink, directory, combined, field-presence-inactive), size layout (32-bit, 64-bit)
+* invalid vectors: truncated GH/LFH, invalid magic, unknown global flag, unsupported compression/crypto algo, bad AEAD tag
+* profile-specific vectors: static-archive, stream-package acceptance/rejection; cold-storage/tape deferred with documented placeholder
+* cross-feature vectors: sparse+delta ordering, fragment descriptor gaps (partial), size layout boundaries, metadata field-presence
+* known gaps documented in manifests (stream/session, unsafe metadata, resource limits, many invalid cases deferred)
+* `docs/CONFORMANCE.md` updated with M12a vector structure, validator status, and known gaps
+* no wire-format changes; no CLI behavior changes; no M12b work started
 
-  * unsupported/custom algorithms
-  * unsafe filesystem metadata
-  * lossy package data
-  * unauthenticated post-binding stream entries
-  * excessive resource declarations
-  * profile-disallowed transport/session behavior
-* cold-storage/tape profile vectors only if the profile uses interoperable SAR v1.0 behavior or an explicitly defined sidecar/container/profile mechanism
+---
+
+# Current and future milestones
 
 ## M12b: fuzzing and malicious corpus
 

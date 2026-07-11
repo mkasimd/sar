@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "invalid-frag-tail-gap",
+  "title": "Invalid: fragment group tail descriptor gap (no LOSS_TOLERANT)",
+  "description": "SAR archive where the logical_size exceeds the final fragment descriptor end, creating a tail gap, and LOSS_TOLERANT is not set. Must fail closed.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "fragmentation"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_FRAGMENT_GAP",
+    "error": "FragmentGap",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires fragment descriptor with tail gap construction."
+  ],
+  "deferred": true
+}

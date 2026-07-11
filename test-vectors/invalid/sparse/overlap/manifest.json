@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "invalid-sparse-overlap",
+  "title": "Invalid: overlapping sparse extents",
+  "description": "SAR archive with SPARSE_FILES flag where two sparse extents overlap. Extent overlap must be rejected fail-closed.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "sparse-files"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_MAP",
+    "error": "InvalidMap",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires precise sparse map construction with overlapping extents."
+  ],
+  "deferred": true
+}

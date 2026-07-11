@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "invalid-frag-initial-gap",
+  "title": "Invalid: fragment group initial descriptor gap (no LOSS_TOLERANT)",
+  "description": "SAR archive where the first fragment descriptor does not start at offset 0 of the logical file and LOSS_TOLERANT is not set. This initial descriptor gap represents missing data and must fail closed.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "fragmentation"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_FRAGMENT_GAP",
+    "error": "FragmentGap",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires precise fragment descriptor construction.",
+    "Required invariant: initial descriptor gap without LOSS_TOLERANT is always fatal."
+  ],
+  "deferred": true
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "invalid-truncated-cd",
+  "title": "Invalid: truncated Central Dictionary",
+  "description": "SAR archive with valid entries but Central Dictionary truncated before completion. Must be rejected.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_TRUNCATED",
+    "error": "Truncated",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: Central Dictionary truncation test requires indexed archive with partial CD."
+  ],
+  "deferred": true
+}

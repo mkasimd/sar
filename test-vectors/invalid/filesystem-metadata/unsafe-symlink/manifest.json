@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "invalid-fs-unsafe-symlink",
+  "title": "Invalid: unsafe symlink target",
+  "description": "SAR archive with a symlink entry whose target is an absolute path (e.g. '/etc/passwd'). Unsafe symlink targets must be rejected at the metadata validation level.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "has-symlinks"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires ArchiveWriter symlink target validation bypass.",
+    "Absolute symlink targets must fail closed."
+  ],
+  "deferred": true
+}

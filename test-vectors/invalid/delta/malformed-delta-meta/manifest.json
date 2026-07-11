@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "invalid-malformed-delta-meta",
+  "title": "Invalid: malformed delta metadata",
+  "description": "SAR archive with HAS_DELTA flag where the delta base hash field is truncated. Must fail with a malformed or truncated error.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "delta"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires HAS_DELTA LFH with truncated base hash field."
+  ],
+  "deferred": true
+}

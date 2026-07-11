@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "stream-session-init-close",
+  "title": "Stream/session: SESSION_INIT and SESSION_CLOSE lifecycle",
+  "description": "Structural/session vector with a complete session lifecycle: SESSION_INIT followed by one regular entry followed by SESSION_CLOSE. Validates session ID binding, sequence number continuity, and clean session termination.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "stream-package",
+    "telemetry",
+    "live-media"
+  ],
+  "features": [
+    "no-index",
+    "stream-session"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "stream-package": "accept",
+    "telemetry": "accept",
+    "live-media": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: session binary vector generation requires sar-stream session state integration.",
+    "Manifest documents intended session lifecycle behavior for future test generation.",
+    "See docs/CONFORMANCE.md known gaps."
+  ],
+  "deferred": true
+}

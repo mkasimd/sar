@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "invalid-frag-duplicate-index",
+  "title": "Invalid: duplicate fragment index",
+  "description": "SAR archive where two fragments in the same group have the same fragment_index value. Must fail closed regardless of LOSS_TOLERANT.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "fragmentation"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: duplicate index must always fail closed."
+  ],
+  "deferred": true
+}

@@ -5,6 +5,8 @@
 
 /// High-level archive reader/writer APIs and integration types.
 pub mod archive;
+/// Conformance vector manifest types and schema validator (M12a).
+pub mod conformance;
 /// Archive profile validation APIs.
 pub mod profile;
 /// Archive-level Data Recovery TLV inspection, planning, and repair.

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "invalid-sparse-excessive-logical-size",
+  "title": "Invalid: excessive sparse logical expansion",
+  "description": "SAR archive where the declared sparse logical size exceeds max_sparse_logical_size resource limit. Must fail before allocation.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "sparse-files"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_LIMIT_EXCEEDED",
+    "error": "LimitExceeded",
+    "warnings": []
+  },
+  "limits": {
+    "max_sparse_logical_size": 1024
+  },
+  "notes": [
+    "DEFERRED: requires LFH with sparse size exceeding the limit."
+  ],
+  "deferred": true
+}

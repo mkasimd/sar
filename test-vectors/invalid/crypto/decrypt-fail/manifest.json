@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "id": "invalid-decrypt-fail",
+  "title": "Invalid: encrypted entry with corrupted ciphertext",
+  "description": "Encrypted SAR archive where the ciphertext payload has been partially overwritten. AEAD must reject it before releasing any plaintext.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "crypto:aes256-gcm"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_AUTH_FAILED",
+    "error": "AuthFailed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: combine with bad-aead-tag vector generation."
+  ],
+  "deferred": true
+}

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "id": "invalid-fs-absolute-path",
+  "title": "Invalid: absolute path in filesystem metadata",
+  "description": "SAR archive with HAS_PATH flag where an entry has an absolute path (starting with '/'). Must fail closed with a malformed or invalid map error. Absolute paths are always rejected to prevent path traversal.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "has-path"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires ArchiveWriter path validation bypass or hand-crafted LFH.",
+    "Absolute paths must be rejected regardless of profile."
+  ],
+  "deferred": true
+}

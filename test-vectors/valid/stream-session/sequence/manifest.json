@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "stream-session-sequence-continuity",
+  "title": "Stream/session: sequence number continuity",
+  "description": "Session vector with multiple entries having monotonically increasing sequence numbers. Validates sequence continuity enforcement in sar-stream session state.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "stream-package",
+    "live-media"
+  ],
+  "features": [
+    "no-index",
+    "stream-session"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "stream-package": "accept",
+    "live-media": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: session binary vector generation requires sar-stream session state integration.",
+    "See docs/CONFORMANCE.md known gaps."
+  ],
+  "deferred": true
+}

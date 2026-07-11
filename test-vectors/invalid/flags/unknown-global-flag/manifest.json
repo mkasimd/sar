@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "id": "invalid-unknown-global-flag",
+  "title": "Invalid: unknown Global Flag bits set",
+  "description": "SAR archive with reserved/unknown Global Flag bits set. Must fail closed with a malformed or reserved value error.",
+  "kind": "invalid",
+  "file": "unknown_global_flag.sar",
+  "profiles": [],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_FLAG_CONFLICT",
+    "error": "FlagConflict",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "Hand-crafted: reserved Global Flag bits set to 0xFFFF in the upper 16 bits."
+  ],
+  "generated_by": "hand-crafted"
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "invalid-frag-gap-exceeds-loss-limit",
+  "title": "Invalid: LOSS_TOLERANT gap exceeding max_loss_tolerant_gap",
+  "description": "SAR archive where a fragment gap exceeds max_loss_tolerant_gap even though LOSS_TOLERANT is set. Must fail closed when the gap exceeds the configured limit.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "no-index",
+    "fragmentation",
+    "loss-tolerant"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_FRAGMENT_GAP",
+    "error": "FragmentGap",
+    "warnings": []
+  },
+  "limits": {
+    "max_loss_tolerant_gap": 1024
+  },
+  "notes": [
+    "DEFERRED: gap value must exceed max_loss_tolerant_gap (1024 bytes in this vector)."
+  ],
+  "deferred": true
+}

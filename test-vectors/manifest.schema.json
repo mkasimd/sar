@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "sar-conformance-manifest/v1",
+  "title": "SAR Conformance Vector Manifest",
+  "description": "Machine-readable manifest for a SAR Protocol v1.0 conformance vector or vector group.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "description",
+    "kind",
+    "expected"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Manifest schema version. Must be 1."
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+      "description": "Stable unique identifier for this vector. Use lowercase letters, digits, hyphens, and underscores only."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable title for this vector."
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What this vector proves or exercises."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["valid", "invalid", "profile"],
+      "description": "Vector kind: valid (must parse successfully), invalid (must be rejected), profile (profile-specific acceptance/rejection)."
+    },
+    "file": {
+      "type": "string",
+      "description": "Relative path to the binary .sar vector file from the manifest location. May be null or absent for deferred/placeholder vectors."
+    },
+    "profiles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "SAR profiles this vector is relevant to. Use canonical profile names: static-archive, package, stream-package, backup, telemetry, live-media, cold-storage.",
+      "default": []
+    },
+    "features": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "SAR feature tags this vector exercises (e.g. 'indexed', 'no-index', 'compression:zstd', 'crypto:aes256-gcm', 'fec:xor').",
+      "default": []
+    },
+    "expected": {
+      "type": "object",
+      "required": ["valid", "status"],
+      "properties": {
+        "valid": {
+          "type": "boolean",
+          "description": "Whether the vector is expected to parse and validate successfully."
+        },
+        "status": {
+          "type": "string",
+          "description": "Expected stable SAR status identifier. Use SAR_OK for success, or the relevant SAR_ERR_* identifier for failures.",
+          "examples": [
+            "SAR_OK",
+            "SAR_ERR_MALFORMED",
+            "SAR_ERR_TRUNCATED",
+            "SAR_ERR_UNSUPPORTED",
+            "SAR_ERR_RESERVED_VALUE",
+            "SAR_ERR_FLAG_CONFLICT",
+            "SAR_ERR_AUTH_FAILED",
+            "SAR_ERR_LIMIT_EXCEEDED",
+            "SAR_ERR_INVALID_MAGIC",
+            "SAR_ERR_FRAGMENT_GAP",
+            "SAR_ERR_BOUNDS"
+          ]
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Optional short error class description. Do not over-specify exact human-readable message strings. Prefer stable status identifiers."
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Expected warning identifiers, if any.",
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "profile_expectations": {
+      "type": "object",
+      "description": "Per-profile acceptance or rejection expectations. Values: 'accept', 'reject', 'skip'. Absent key means this profile is not addressed by this vector.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["accept", "reject", "skip"]
+      },
+      "default": {}
+    },
+    "limits": {
+      "type": "object",
+      "description": "ResourceLimits overrides to use when validating this vector. Keys are limit field names; values are integers.",
+      "additionalProperties": { "type": "integer" },
+      "default": {}
+    },
+    "notes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Human-readable notes about this vector: known gaps, deferral reasons, generation notes.",
+      "default": []
+    },
+    "deferred": {
+      "type": "boolean",
+      "description": "When true, the binary vector file has not yet been generated. The manifest documents intended behavior; see notes for deferral reason.",
+      "default": false
+    },
+    "generated_by": {
+      "type": "string",
+      "description": "How the binary file was generated: 'rust-generator' (crates/sar-archive/examples/generate_vectors.rs), 'hand-crafted', or a description."
+    }
+  },
+  "additionalProperties": false
+}
