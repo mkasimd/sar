@@ -239,7 +239,7 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - LFH selective FEC (`fec:xor`, `fec:reed-solomon`)
 - sparse reconstruction (`valid/sparse/simple`)
 - CDC literal mode (`valid/cdc/literal-mode`)
-- delta `STORE_PATCH`
+- delta `STORE_PATCH`, VCDIFF, and SAR BSDIFF v1
 - filesystem metadata fixtures
 - 32-bit and 64-bit LFH size-layout fixtures
 
