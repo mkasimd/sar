@@ -208,20 +208,8 @@ pub fn inspect_recovery_metadata(
         // Parse and validate all RECOVERY TLVs
         let mut summaries = Vec::new();
         for (type_id, value) in &layout.recovery_tlvs {
-            match validate_recovery_tlv(*type_id, value, limits) {
-                Ok(summary) => summaries.push(summary),
-                Err(_) => {
-                    // Structurally invalid TLV — include raw placeholder
-                    summaries.push(FecSummary::Xor {
-                        algo_id: *type_id,
-                        stripe_size: 0,
-                        block_size: 0,
-                        original_protected_len: 0,
-                        stripe_count: 0,
-                        parity_data_len: 0,
-                    });
-                }
-            }
+            let summary = validate_recovery_tlv(*type_id, value, limits)?;
+            summaries.push(summary);
         }
 
         let first_algo = summaries.first().map_or(0, |s| match s {

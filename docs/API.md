@@ -691,6 +691,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 
 - `inspect_recovery_metadata(archive_bytes: &[u8], limits: &ResourceLimits) -> Result<RecoveryMetadata, SarError>`
   — parses archive global header and CD, extracts RECOVERY TLVs (type IDs 0x10–0x1F), and computes the protected range from the first Global Flags byte through the final byte immediately before the Central Dictionary
+  — fails closed for malformed RECOVERY TLVs (returns error rather than reporting `repair_possible=true`)
 - `plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput, limits: &ResourceLimits) -> Result<RecoveryPlan, SarError>`
   — validates erasures within protected range and against FEC block boundaries
   — returns `SarError::RecoveryUnavailable` for unaligned erasures or missing TLV (see SPEC_QUESTIONS.md)
@@ -706,6 +707,7 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 - LOSS_TOLERANT does not bypass AEAD authentication
 - Archive-level RECOVERY TLV protection excludes Magic, Version, Reserved, Flags Size, the Central Dictionary, and the Footer
 - Archive-level RECOVERY TLV generation is indexed-only; `NO_INDEX` output is rejected when `ArchiveWriterOptions::archive_recovery` is set
+- Conformance vectors distinguish wire-format taxonomy: `valid/fec/xor/` + `valid/fec/rs/` are LFH Selective FEC fixtures, while `valid/recovery/archive-xor/` + `valid/recovery/archive-rs/` are archive-level Central Dictionary Recovery TLV fixtures
 - FEC repair is applied to ciphertext bytes before AEAD authentication
 
 ### FFI / C ABI notes

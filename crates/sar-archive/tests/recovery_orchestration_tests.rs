@@ -106,6 +106,41 @@ fn build_archive_with_global_ec() -> Vec<u8> {
     archive
 }
 
+/// Builds an indexed SAR archive with HAS_GLOBAL_EC and a malformed RECOVERY TLV.
+fn build_archive_with_malformed_recovery_tlv() -> Vec<u8> {
+    let flags = GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
+    let header = GlobalHeader {
+        version: 0x01,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    let header_bytes = write_global_header(&header).expect("header");
+    let cd_offset = header_bytes.len() as u64;
+
+    let malformed_recovery_tlv = Tlv {
+        type_id: 0x14,
+        value: vec![0x01], // invalid/truncated XOR RECOVERY TLV payload
+    };
+
+    let cd = CentralDictionary {
+        version: 0x01,
+        file_count: 0,
+        partition_info: None,
+        global_crc32: None,
+        metadata: vec![malformed_recovery_tlv],
+        offsets: Vec::new(),
+    };
+    let cd_bytes = write_central_dictionary(&cd, flags).expect("cd");
+    let footer_bytes = write_footer(Footer { cd_offset });
+
+    let mut archive = header_bytes;
+    archive.extend_from_slice(&cd_bytes);
+    archive.extend_from_slice(&footer_bytes);
+    archive
+}
+
 // ---------------------------------------------------------------------------
 // inspect_recovery_metadata
 // ---------------------------------------------------------------------------
@@ -129,6 +164,16 @@ fn inspect_recovery_metadata_with_ec() {
     assert!(meta.protected_range.is_some());
     assert!(meta.repair_possible);
     assert!(meta.repair_unavailable_reason.is_none());
+}
+
+#[test]
+fn inspect_recovery_metadata_rejects_malformed_recovery_tlv() {
+    let archive = build_archive_with_malformed_recovery_tlv();
+    let err = inspect_recovery_metadata(&archive, &unlimited_limits()).expect_err("must fail");
+    assert!(
+        matches!(err, SarError::Truncated(_) | SarError::Malformed(_) | SarError::InvalidLength(_)),
+        "expected malformed RECOVERY TLV failure, got {err:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

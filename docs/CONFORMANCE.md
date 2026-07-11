@@ -115,7 +115,7 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 - Fragmentation reassembly and LOSS_TOLERANT fragment-gap fixtures remain deferred/reference-only until real fragment binaries exist.
 - Sparse+delta combined fixture remains deferred/reference-only.
 - FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
-- Archive-level Recovery TLV coverage is now backed by a real generated indexed fixture (`test-vectors/valid/fec/metadata/recovery_tlv_archive.sar`).
+- Archive-level Recovery TLV coverage is now backed by real generated indexed fixtures (`test-vectors/valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `test-vectors/valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`).
 - Many invalid vectors deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
 - Cold-storage/tape profile vectors deferred (no SAR v1.0 interoperable mechanism yet).
@@ -161,6 +161,9 @@ by M12b fuzzing infrastructure without changing the M12a schema.
 - Selective FEC metadata handling and validation.
 - XOR and Reed-Solomon file-level FEC support.
 - Archive-level recovery metadata inspection/planning/repair for currently supported cases.
+- Conformance fixtures keep LFH Selective FEC and archive-level Recovery TLV taxonomy separate:
+  - `valid/fec/xor/` and `valid/fec/rs/` for LFH Selective FEC (`fec:*` tags)
+  - `valid/recovery/archive-xor/` and `valid/recovery/archive-rs/` for archive-level Central Dictionary Recovery TLVs (`recovery:*` tags)
 
 ### Sparse, fragmentation, and loss-tolerant behavior
 - Sparse map parse/write, validation, and bounded reconstruction.
@@ -169,7 +172,7 @@ by M12b fuzzing infrastructure without changing the M12a schema.
 - Authentication/structural failures are never bypassed by lossy flags.
 
 The committed M12a fixture set currently includes a real sparse reconstruction binary,
-real LFH selective-FEC binaries, and a real indexed archive-level Recovery TLV binary,
+real LFH selective-FEC binaries, and real indexed archive-level Recovery TLV binaries,
 but does not claim real fragment-group fixture coverage beyond those binaries.
 
 ### CDC and delta

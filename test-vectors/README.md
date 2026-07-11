@@ -242,7 +242,7 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - delta `STORE_PATCH`, VCDIFF, and SAR BSDIFF v1
 - filesystem metadata fixtures
 - 32-bit and 64-bit LFH size-layout fixtures
-- archive-level Recovery TLV (`valid/fec/metadata/recovery_tlv_archive.sar`)
+- archive-level Recovery TLV (`valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`)
 
 ### Deferred/reference-only manifests in this tree
 
@@ -251,10 +251,11 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - sparse+delta combined ordering
 - FASTCDC `CDC_MAP`
 
-Archive-level Recovery TLV coverage is now backed by the real generated
-`valid/fec/metadata/recovery_tlv_archive.sar` fixture. That archive uses a Central
-Dictionary RECOVERY TLV plus `HAS_GLOBAL_EC`; it is intentionally separate from the
-LFH Selective FEC fixtures in `valid/fec/xor/` and `valid/fec/rs/`.
+Archive-level Recovery TLV coverage is now backed by real generated fixtures:
+`valid/recovery/archive-xor/recovery_tlv_archive_xor.sar` and
+`valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`. These archives use Central
+Dictionary RECOVERY TLVs plus `HAS_GLOBAL_EC`; they are intentionally separate from
+the LFH Selective FEC fixtures in `valid/fec/xor/` and `valid/fec/rs/`.
 
 TODO: add top-level fixture digests/provenance fields in a later M12a hardening pass.
 

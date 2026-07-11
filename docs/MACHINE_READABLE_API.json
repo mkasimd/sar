@@ -3528,7 +3528,7 @@
               "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings>, pub archive_recovery: Option<ArchiveRecoverySettings>, pub with_path: bool, pub with_permissions: bool, pub with_uid_gid: bool, pub with_timestamps: bool, pub with_per_file_crc: bool, pub with_content_hash: bool, pub with_symlinks: bool, pub with_delta: bool, pub lfh_size_field_policy: LfhSizeFieldPolicy }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`).",
+              "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`).",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -4295,7 +4295,7 @@
         {
           "name": "recovery",
           "status": "active",
-          "description": "Archive-level recovery/repair orchestration (moved from sar-core in M11d)",
+          "description": "Archive-level recovery/repair orchestration (moved from sar-core in M11d); malformed RECOVERY TLVs are fail-closed during metadata inspection.",
           "public_types": [
             "EntryErasure",
             "ErasureInput",

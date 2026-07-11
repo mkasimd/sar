@@ -12,11 +12,14 @@ use sar_core::{
         GLOBAL_HEADER_FLAGS_OFFSET, parse_central_dictionary, parse_footer, parse_global_header,
     },
 };
-use sar_fec::FEC_ALGO_XOR;
+use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
 
 const ARCHIVE_RECOVERY_STRIPE_SIZE: u8 = 1;
 const ARCHIVE_RECOVERY_BLOCK_SIZE_INDEX: u8 = 0x00;
 const ARCHIVE_RECOVERY_BLOCK_SIZE: u64 = 256;
+const RS_K: u8 = 4;
+const RS_PARITY: u8 = 2;
+const RS_SYMBOL_SIZE: u32 = 256;
 const CORRUPTION_BLOCK_INDEX: u64 = 1;
 const ENTRY_PAYLOAD_LEN: usize = 1024;
 
@@ -24,7 +27,7 @@ fn make_payload(len: usize) -> Vec<u8> {
     (0..len).map(|index| (index & 0xFF) as u8).collect()
 }
 
-fn archive_recovery_settings() -> ArchiveRecoverySettings {
+fn archive_recovery_xor_settings() -> ArchiveRecoverySettings {
     ArchiveRecoverySettings {
         algo_id: FEC_ALGO_XOR,
         config0: ARCHIVE_RECOVERY_STRIPE_SIZE,
@@ -33,13 +36,22 @@ fn archive_recovery_settings() -> ArchiveRecoverySettings {
     }
 }
 
-fn build_archive() -> Vec<u8> {
+fn archive_recovery_rs_settings() -> ArchiveRecoverySettings {
+    ArchiveRecoverySettings {
+        algo_id: FEC_ALGO_REED_SOLOMON,
+        config0: RS_K,
+        config1: RS_PARITY,
+        symbol_size: RS_SYMBOL_SIZE,
+    }
+}
+
+fn build_archive(recovery_settings: ArchiveRecoverySettings) -> Vec<u8> {
     let mut archive = Vec::new();
     let mut writer = ArchiveWriter::new(
         &mut archive,
         ArchiveWriterOptions {
             no_index: false,
-            archive_recovery: Some(archive_recovery_settings()),
+            archive_recovery: Some(recovery_settings),
             ..Default::default()
         },
     )
@@ -76,33 +88,15 @@ fn parse_cd(
     (header, cd, cd_offset)
 }
 
-#[test]
-fn writer_rejects_archive_recovery_with_no_index() {
-    let err = ArchiveWriter::new(
-        Vec::new(),
-        ArchiveWriterOptions {
-            no_index: true,
-            archive_recovery: Some(archive_recovery_settings()),
-            ..Default::default()
-        },
-    )
-    .err()
-    .expect("archive recovery must reject NO_INDEX");
-    assert!(matches!(err, SarError::FlagConflict(_)));
-}
-
-#[test]
-fn writer_emits_archive_recovery_flags_and_tlv() {
-    let archive = build_archive();
-    let (header, cd, cd_offset) = parse_cd(&archive);
+fn assert_writer_emits_valid_archive_recovery(archive: &[u8], expected_algo_id: u8) {
+    let (header, cd, cd_offset) = parse_cd(archive);
 
     assert!(header.flags.contains(GlobalFlags::HAS_GLOBAL_EC));
     assert!(header.flags.contains(GlobalFlags::OPT_PRESENT));
     assert_eq!(cd.metadata.len(), 1);
-    assert_eq!(cd.metadata[0].type_id, FEC_ALGO_XOR);
+    assert_eq!(cd.metadata[0].type_id, expected_algo_id);
 
-    let recovery =
-        inspect_recovery_metadata(&archive, &ResourceLimits::default()).expect("inspect");
+    let recovery = inspect_recovery_metadata(archive, &ResourceLimits::default()).expect("inspect");
     assert!(recovery.has_global_ec);
     assert!(recovery.repair_possible);
     assert_eq!(recovery.recovery_tlvs.len(), 1);
@@ -120,15 +114,13 @@ fn writer_emits_archive_recovery_flags_and_tlv() {
     );
 }
 
-#[test]
-fn repair_round_trip_restores_writer_generated_archive_recovery_bytes() {
-    let original_archive = build_archive();
+fn assert_repair_round_trip(recovery_settings: ArchiveRecoverySettings, block_size: u64) {
+    let original_archive = build_archive(recovery_settings);
     let recovery =
         inspect_recovery_metadata(&original_archive, &ResourceLimits::default()).expect("inspect");
     let protected_range = recovery.protected_range.expect("protected range");
-    let corruption_offset =
-        protected_range.offset + (CORRUPTION_BLOCK_INDEX * ARCHIVE_RECOVERY_BLOCK_SIZE);
-    let corruption_end = corruption_offset + ARCHIVE_RECOVERY_BLOCK_SIZE;
+    let corruption_offset = protected_range.offset + (CORRUPTION_BLOCK_INDEX * block_size);
+    let corruption_end = corruption_offset + block_size;
     let protected_end = protected_range.offset + protected_range.length;
     assert!(
         corruption_end <= protected_end,
@@ -148,7 +140,7 @@ fn repair_round_trip_restores_writer_generated_archive_recovery_bytes() {
             entries: Vec::new(),
             archive_ranges: vec![ErasureRange {
                 offset: corruption_offset,
-                length: ARCHIVE_RECOVERY_BLOCK_SIZE,
+                length: block_size,
             }],
         },
         &ResourceLimits::default(),
@@ -172,4 +164,43 @@ fn repair_round_trip_restores_writer_generated_archive_recovery_bytes() {
         .expect("next_entry")
         .expect("entry");
     assert_eq!(entry.payload, make_payload(ENTRY_PAYLOAD_LEN));
+}
+
+#[test]
+fn writer_rejects_archive_recovery_with_no_index() {
+    let err = ArchiveWriter::new(
+        Vec::new(),
+        ArchiveWriterOptions {
+            no_index: true,
+            archive_recovery: Some(archive_recovery_xor_settings()),
+            ..Default::default()
+        },
+    )
+    .err()
+    .expect("archive recovery must reject NO_INDEX");
+    assert!(matches!(err, SarError::FlagConflict(_)));
+}
+
+#[test]
+fn writer_emits_archive_recovery_xor_tlv() {
+    let archive = build_archive(archive_recovery_xor_settings());
+    assert_writer_emits_valid_archive_recovery(&archive, FEC_ALGO_XOR);
+}
+
+#[test]
+fn writer_emits_archive_recovery_rs_tlv() {
+    let archive = build_archive(archive_recovery_rs_settings());
+    assert_writer_emits_valid_archive_recovery(&archive, FEC_ALGO_REED_SOLOMON);
+}
+
+#[test]
+fn archive_recovery_xor_repair_round_trip() {
+    assert_repair_round_trip(archive_recovery_xor_settings(), ARCHIVE_RECOVERY_BLOCK_SIZE);
+}
+
+#[test]
+fn archive_recovery_rs_repair_round_trip() {
+    // RS repair currently uses explicit, block-aligned erasures where block size
+    // matches symbol size.
+    assert_repair_round_trip(archive_recovery_rs_settings(), u64::from(RS_SYMBOL_SIZE));
 }

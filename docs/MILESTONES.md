@@ -685,9 +685,10 @@ If this milestone document appears to describe library/profile layout differentl
 * `sar-archive`: `ArchiveWriterOptions::archive_recovery` and `ArchiveRecoverySettings` add explicit writer-side archive-level Recovery TLV generation without changing LFH Selective FEC behavior
 * writer rejects `NO_INDEX` + archive-level recovery, sets `HAS_GLOBAL_EC` and `OPT_PRESENT` before the Global Header is emitted, and generates the RECOVERY TLV during `finish()`
 * protected range tracking now follows the spec exactly: first byte of Global Flags through the final byte immediately before the Central Dictionary; Magic/Version/Reserved/Flags Size/CD/Footer remain excluded
-* `crates/sar-archive/tests/archive_recovery_writer_tests.rs`: positive writer/inspect/verify/repair coverage including a block-aligned XOR repair round-trip and explicit protected-range assertions
-* `test-vectors/valid/fec/metadata/recovery_tlv_archive.sar`: real generated indexed archive-level Recovery TLV fixture promoted from deferred/reference-only status
+* `crates/sar-archive/tests/archive_recovery_writer_tests.rs`: positive writer/inspect/verify/repair coverage including block-aligned XOR and Reed-Solomon repair round-trips and explicit protected-range assertions
+* `test-vectors/valid/recovery/archive-xor/recovery_tlv_archive_xor.sar` and `test-vectors/valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`: real generated indexed archive-level Recovery TLV fixtures, separated from LFH Selective FEC vectors
 * docs/API inventory updated to describe indexed-only archive-level recovery generation and `NO_INDEX` rejection while preserving the distinction from LFH Selective FEC
+* `inspect_recovery_metadata` now fails closed when RECOVERY TLVs are malformed (no `repair_possible=true` on malformed metadata)
 * this corrective pass updates M8 recovery behavior discovered during M12a without starting `M12b`, `M12c`, `M13`, `M14`, `M15`, or `M16`
 
 ## M12b: fuzzing and malicious corpus

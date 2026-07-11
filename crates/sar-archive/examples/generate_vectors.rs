@@ -46,7 +46,7 @@ use sar_crypto::{
     provider::KeyProvider,
 };
 use sar_delta::{PATCH_ALGO_STORE_PATCH, PatchAlgoId};
-use sar_fec::FEC_ALGO_XOR;
+use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
 
 // ---------------------------------------------------------------------------
 // Test password / key material (TEST-ONLY — do not use for real data)
@@ -428,7 +428,7 @@ fn main() {
     let rs_bytes = write_fec_archive(FecSettings::default_rs(), &fec_payload);
     write_fixture("valid/fec/rs/rs_fec_entry.sar", &rs_bytes);
 
-    let archive_recovery_bytes = write_archive_recovery_archive(
+    let archive_recovery_xor_bytes = write_archive_recovery_archive(
         ArchiveRecoverySettings {
             algo_id: FEC_ALGO_XOR,
             config0: 1,
@@ -438,8 +438,22 @@ fn main() {
         &make_payload(1024),
     );
     write_fixture(
-        "valid/fec/metadata/recovery_tlv_archive.sar",
-        &archive_recovery_bytes,
+        "valid/recovery/archive-xor/recovery_tlv_archive_xor.sar",
+        &archive_recovery_xor_bytes,
+    );
+
+    let archive_recovery_rs_bytes = write_archive_recovery_archive(
+        ArchiveRecoverySettings {
+            algo_id: FEC_ALGO_REED_SOLOMON,
+            config0: 4,
+            config1: 2,
+            symbol_size: 256,
+        },
+        &make_payload(1024),
+    );
+    write_fixture(
+        "valid/recovery/archive-rs/recovery_tlv_archive_rs.sar",
+        &archive_recovery_rs_bytes,
     );
 
     // -----------------------------------------------------------------------
