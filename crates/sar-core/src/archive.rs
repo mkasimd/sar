@@ -18,6 +18,8 @@ use sar_delta::{
     vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
+use sar_fragmentation::FragmentDescriptor;
+use sar_sparse::{SparseExtent, apply_sparse_reconstruction, validate_sparse_extents};
 use serde::Serialize;
 
 use crate::{
@@ -50,10 +52,17 @@ pub struct ArchiveMetadata {
 pub struct EntryMetadata {
     /// Absolute LFH offset.
     pub lfh_offset: u64,
-    /// Name bytes interpreted as UTF-8 lossily.
+    /// Name bytes interpreted as UTF-8.
     pub name: String,
-    /// Optional path bytes interpreted as UTF-8 lossily.
+    /// Optional path bytes interpreted as UTF-8.
     pub path: Option<String>,
+    /// Decoded symlink target for symlink entries.
+    ///
+    /// This is `Some(target)` only when `entry_kind == EntryKind::Symlink`.
+    /// The target is decoded strictly from the entry payload bytes (no lossy
+    /// conversion). Invalid UTF-8 payload for symlink entries is rejected by
+    /// the reader.
+    pub symlink_target: Option<String>,
     /// Encoded payload size.
     pub payload_size: u64,
     /// Logical uncompressed size.
@@ -76,7 +85,7 @@ pub struct EntryMetadata {
     pub fragment_index: Option<u32>,
     /// Typed fragment descriptor (absolute offset + declared size).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fragment_descriptor: Option<crate::fragment::FragmentDescriptor>,
+    pub fragment_descriptor: Option<FragmentDescriptor>,
     /// True when the `IS_FRAGMENT` entry mode bit is set.
     pub is_fragment: bool,
     /// True when the `LAST_FRAGMENT` entry mode bit is set.
@@ -86,7 +95,7 @@ pub struct EntryMetadata {
     /// Parsed sparse extents.  `None` when `SPARSE_FILES` is not enabled or
     /// the sparse map is empty.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
+    pub sparse_extents: Option<Vec<SparseExtent>>,
     /// Per-file CRC32.  `None` when `PER_FILE_CRC` global flag is not set
     /// or the field contains zero.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,6 +135,114 @@ pub struct EntryMetadata {
         serialize_with = "serialize_hash_hex_opt"
     )]
     pub delta_base_hash: Option<[u8; 32]>,
+
+    // -----------------------------------------------------------------------
+    // M11a expanded metadata
+    // -----------------------------------------------------------------------
+    /// Semantic entry kind derived from Entry Mode bits 0/1 and name state.
+    pub entry_kind: crate::metadata::EntryKind,
+    /// Raw Entry Mode bits from the LFH.
+    pub entry_mode_raw: u16,
+    /// Stream ID from the LFH.
+    pub stream_id: u16,
+    /// Sequence number from the LFH.
+    pub sequence_no: u16,
+    /// True when the `HIDDEN_ATTR` entry mode bit is set.
+    pub is_hidden: bool,
+    /// POSIX permissions.  `None` when the `HAS_PERMS` global flag is not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<crate::metadata::EntryPermissionMetadata>,
+    /// UID/GID.  `None` when the `EXT_UID_GID` global flag is not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<crate::metadata::EntryOwnerMetadata>,
+    /// Timestamps (mtime/atime/ctime).  `None` when the `EXT_TIME` global flag
+    /// is not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamps: Option<crate::metadata::EntryTimestampMetadata>,
+
+    // -----------------------------------------------------------------------
+    // M11b filesystem metadata presence model
+    // -----------------------------------------------------------------------
+    /// Path field presence model (M11b).
+    ///
+    /// `Absent` when global `HAS_PATH` is not set.
+    /// `PresentInactive("")` when `HAS_PATH` is set but path length is zero
+    /// (field is physically present in LFH but no path is provided for this entry).
+    /// `PresentActive(path)` when `HAS_PATH` is set and a non-empty path is provided.
+    ///
+    /// Do not collapse `PresentInactive` into `None`; zero-length path is not
+    /// the same as an absent path field.
+    #[serde(skip)]
+    pub path_presence: crate::metadata::FieldPresence<String>,
+    /// Permissions field presence model (M11b).
+    ///
+    /// `Absent` when global `HAS_PERMS` is not set.
+    /// `PresentActive(value)` when `HAS_PERMS` is set (including when value
+    /// is zero/default — a zero mode is not the same as an absent field).
+    #[serde(skip)]
+    pub permissions_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryPermissionMetadata>,
+    /// UID/GID field presence model (M11b).
+    ///
+    /// `Absent` when global `EXT_UID_GID` is not set.
+    /// `PresentActive(value)` when `EXT_UID_GID` is set (including zero).
+    #[serde(skip)]
+    pub owner_presence: crate::metadata::FieldPresence<crate::metadata::EntryOwnerMetadata>,
+    /// Timestamps field presence model (M11b).
+    ///
+    /// `Absent` when global `EXT_TIME` is not set.
+    /// `PresentActive(value)` when `EXT_TIME` is set (including all-zero timestamps).
+    #[serde(skip)]
+    pub timestamps_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryTimestampMetadata>,
+
+    /// Compression field presence model.
+    ///
+    /// Distinguishes between the compression field being absent (global
+    /// `COMPRESSED` not set), physically present but inactive (`IS_COMPRESSED`
+    /// entry-mode bit unset), and present and active.  When `PresentInactive`,
+    /// the inner value contains the raw algo_id even though the effective
+    /// algorithm is STORE.
+    #[serde(skip)]
+    pub compression_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryCompressionMetadata>,
+    /// Encryption field presence model.
+    ///
+    /// Distinguishes between the encryption fields being absent (global
+    /// `ENCRYPTED` not set), physically present but inactive (`IS_ENCRYPTED`
+    /// entry-mode bit unset), and present and active.
+    #[serde(skip)]
+    pub encryption_presence:
+        crate::metadata::FieldPresence<crate::metadata::EntryEncryptionMetadata>,
+    /// FEC field presence model.
+    ///
+    /// `Absent` when global `SELECTIVE_FEC` is not set.
+    /// `PresentInactive` when `SELECTIVE_FEC` is set but `fec_algo_id == 0`.
+    /// `PresentActive` when `SELECTIVE_FEC` is set and `fec_algo_id != 0`.
+    #[serde(skip)]
+    pub fec_presence: crate::metadata::FieldPresence<crate::metadata::EntryFecMetadata>,
+    /// Fragment field presence model.
+    ///
+    /// `Absent` when global `FILE_FRAGMENTATION` is not set.
+    /// `PresentInactive` when `FILE_FRAGMENTATION` is set but `IS_FRAGMENT`
+    /// entry mode is not set.
+    /// `PresentActive` when `FILE_FRAGMENTATION` is set and `IS_FRAGMENT` is set.
+    #[serde(skip)]
+    pub fragment_presence: crate::metadata::FieldPresence<crate::metadata::EntryFragmentMetadata>,
+    /// CDC metadata.  `None` when `CDC_SUPPORT` global flag is not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cdc: Option<crate::metadata::EntryCdcMetadata>,
+    /// Delta metadata.  `None` when `HAS_DELTA` global flag is not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delta: Option<crate::metadata::EntryDeltaMetadata>,
+    /// Sparse metadata.  `None` when `SPARSE_FILES` global flag is not set or
+    /// the sparse map is empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sparse: Option<crate::metadata::EntrySparseMetadata>,
+    /// Combined CRC32 and content-hash metadata.  `None` when neither
+    /// `PER_FILE_CRC` nor `DEDUPLICATION` global flags are set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<crate::metadata::EntryHashMetadata>,
 }
 
 /// Serializes an `Option<[u8; 32]>` as an optional lowercase hex string.
@@ -176,12 +293,58 @@ pub struct EntryReader {
 }
 
 /// Writer input.
-#[derive(Debug, Clone)]
+///
+/// Use [`EntryInput::file`] to construct a simple regular-file entry.
+/// All metadata fields are optional and default to `None`/`false`/`0`.
+/// Fields that require a corresponding global flag in
+/// [`ArchiveWriterOptions`] are validated fail-closed by
+/// [`ArchiveWriter::add_entry`]. If the required flag is not enabled, writing
+/// fails with an error.
+#[derive(Debug, Clone, Default)]
 pub struct EntryInput {
     /// Entry name.
     pub name: String,
     /// Entry payload bytes.
     pub payload: Vec<u8>,
+    /// Explicit entry kind.  `None` resolves to `RegularFile` (or
+    /// `EmptyArea` when `name` is empty and `is_fragment` is not set).
+    pub kind: Option<crate::metadata::EntryKind>,
+    /// Optional directory path.  Written to the LFH when the writer's
+    /// `with_path` option is enabled (`HAS_PATH` global flag).
+    pub path: Option<String>,
+    /// POSIX permission mode.  Written when `with_permissions` is enabled.
+    pub permissions: Option<u16>,
+    /// Packed UID/GID (low 16 = UID, high 16 = GID).  Written when
+    /// `with_uid_gid` is enabled.
+    pub uid_gid: Option<u32>,
+    /// Timestamps `[mtime, atime, ctime]` as 64-bit Unix seconds.  Written
+    /// when `with_timestamps` is enabled.
+    pub timestamps: Option<[u64; 3]>,
+    /// If `true`, sets the `HIDDEN_ATTR` entry mode bit.
+    pub is_hidden: bool,
+    /// Stream ID override.  Defaults to `0` when `None`.
+    pub stream_id: Option<u16>,
+    /// Sequence number override.  Defaults to `0` when `None`.
+    pub sequence_no: Option<u16>,
+    /// Per-file CRC32.  Written when `with_per_file_crc` is enabled.
+    pub file_crc32: Option<u32>,
+    /// Content hash (32 bytes).  Written when `with_content_hash` is enabled.
+    pub content_hash: Option<[u8; 32]>,
+}
+
+impl EntryInput {
+    /// Constructs a simple regular-file entry with the given name and payload.
+    ///
+    /// All metadata fields are set to their defaults (`None`/`false`/`0`).
+    /// This is the ergonomic constructor for ordinary file entries.
+    #[must_use]
+    pub fn file(name: impl Into<String>, payload: impl Into<Vec<u8>>) -> Self {
+        Self {
+            name: name.into(),
+            payload: payload.into(),
+            ..Self::default()
+        }
+    }
 }
 
 /// Result of writing one entry.
@@ -255,6 +418,42 @@ pub struct ArchiveWriterOptions {
     /// If `true`, set the global `SPARSE_FILES` flag.  Required before calling
     /// [`ArchiveWriter::write_sparse_entry`].
     pub sparse: bool,
+    /// If `true`, set the global `HAS_PATH` flag.  Entries may then supply
+    /// `path` in [`EntryInput`] and the writer will include it in the LFH.
+    pub with_path: bool,
+    /// If `true`, set the global `HAS_PERMS` flag.  Entries may then supply
+    /// `permissions` in [`EntryInput`].
+    pub with_permissions: bool,
+    /// If `true`, set the global `EXT_UID_GID` flag.  Entries may then supply
+    /// `uid_gid` in [`EntryInput`].
+    pub with_uid_gid: bool,
+    /// If `true`, set the global `EXT_TIME` flag.  Entries may then supply
+    /// `timestamps` in [`EntryInput`].
+    pub with_timestamps: bool,
+    /// If `true`, set the global `PER_FILE_CRC` flag.  Entries may then
+    /// supply `file_crc32` in [`EntryInput`].
+    pub with_per_file_crc: bool,
+    /// If `true`, set the global `DEDUPLICATION` flag.  Entries may then
+    /// supply `content_hash` in [`EntryInput`].
+    pub with_content_hash: bool,
+    /// If `true`, set the global `HAS_SYMLINKS` flag.  Required when any
+    /// entry has `kind = Some(EntryKind::Symlink)`.
+    pub with_symlinks: bool,
+    /// LFH size-field encoding policy for `Uncompressed Size` and `Payload Size`.
+    pub lfh_size_field_policy: LfhSizeFieldPolicy,
+}
+
+/// LFH size-field encoding policy used by the archive writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LfhSizeFieldPolicy {
+    /// Default behavior. Uses 32-bit LFH size fields unless a 64-bit field is
+    /// required before the global header is emitted.
+    Auto,
+    /// Require 32-bit LFH size fields. Writing fails closed when any required
+    /// size exceeds `u32::MAX`.
+    Force32,
+    /// Always emit 64-bit LFH size fields and set global `SIZE_64BIT`.
+    Force64,
 }
 
 /// Archive writer compression settings.
@@ -284,6 +483,14 @@ impl Default for ArchiveWriterOptions {
             encryption: None,
             fec: None,
             sparse: false,
+            with_path: false,
+            with_permissions: false,
+            with_uid_gid: false,
+            with_timestamps: false,
+            with_per_file_crc: false,
+            with_content_hash: false,
+            with_symlinks: false,
+            lfh_size_field_policy: LfhSizeFieldPolicy::Auto,
         }
     }
 }
@@ -306,7 +513,7 @@ pub struct SparseWriteOptions {
     /// The writer will not derive this value from the extents alone.
     pub logical_size: u64,
     /// Ordered, non-overlapping sparse extents that describe the data regions.
-    pub extents: Vec<crate::sparse::SparseExtent>,
+    pub extents: Vec<SparseExtent>,
 }
 
 /// Reader-side limits.
@@ -807,34 +1014,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
-        let metadata = EntryMetadata {
-            lfh_offset: self.next_offset,
-            name: String::from_utf8_lossy(&lfh.name).into_owned(),
-            path: if lfh.path.is_empty() {
-                None
-            } else {
-                Some(String::from_utf8_lossy(&lfh.path).into_owned())
-            },
-            payload_size: lfh.payload_size,
-            uncompressed_size: lfh.uncompressed_size,
-            compression_algo_id: effective_comp_algo_id,
-            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
-            is_compressed: is_effectively_compressed,
-            fec,
-            fragment_id: lfh.fragment_id,
-            fragment_index: lfh.fragment_index,
-            fragment_descriptor: lfh.fragment_descriptor.as_ref().map(|fd| {
-                crate::fragment::FragmentDescriptor {
-                    absolute_offset: fd.absolute_offset,
-                    fragment_size: fd.fragment_size,
-                }
-            }),
-            is_fragment: lfh.entry_mode.is_fragment(),
-            is_last_fragment: lfh.entry_mode.is_last_fragment(),
-            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
-            sparse_extents: if header.flags.contains(GlobalFlags::SPARSE_FILES)
-                && !lfh.sparse_map.is_empty()
-            {
+        // Parse sparse extents (needed for both legacy and new metadata fields).
+        let sparse_extents: Option<Vec<SparseExtent>> =
+            if header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
                 let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
                 Some(crate::sparse::parse_sparse_map(
                     &lfh.sparse_map,
@@ -843,21 +1025,189 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 )?)
             } else {
                 None
+            };
+
+        // Compute effective CDC algo ID (for legacy field).
+        let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+            let algo_id = lfh.cdc_algo_id.unwrap_or(0);
+            crate::cdc::validate_cdc_algo_id(algo_id)?;
+            Some(algo_id)
+        } else {
+            None
+        };
+
+        // Derive entry name string (for entry-kind determination).
+        // The SAR specification requires all strings to be UTF-8.  Reject
+        // any entry whose name bytes are not valid UTF-8.
+        let name_str = String::from_utf8(lfh.name.clone())
+            .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
+
+        // Validate directory entry payload rule: IS_DIRECTORY entries MUST have
+        // Payload Size == 0 (spec §15, IS_DIRECTORY entry mode bit 1).
+        if lfh.entry_mode.is_directory() && lfh.payload_size != 0 {
+            return Err(SarError::Malformed(
+                "IS_DIRECTORY entry must have zero Payload Size",
+            ));
+        }
+
+        let entry_kind =
+            crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
+        let symlink_target = if matches!(entry_kind, crate::metadata::EntryKind::Symlink) {
+            Some(
+                std::str::from_utf8(&decoded)
+                    .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+
+        // Compression presence model.
+        let compression_presence: crate::metadata::FieldPresence<
+            crate::metadata::EntryCompressionMetadata,
+        > = if header.flags.contains(GlobalFlags::COMPRESSED) {
+            let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
+            let cm = crate::metadata::EntryCompressionMetadata {
+                algo_id: raw_algo_id,
+                algorithm_name: compression_algorithm_name(raw_algo_id),
+            };
+            if is_effectively_compressed {
+                crate::metadata::FieldPresence::PresentActive(cm)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(cm)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        // Encryption presence model.
+        let encryption_presence: crate::metadata::FieldPresence<
+            crate::metadata::EntryEncryptionMetadata,
+        > = if header.flags.contains(GlobalFlags::ENCRYPTED) {
+            let algo_id = lfh.encr_algo_id.unwrap_or(0);
+            let iv_nonce = lfh.iv_nonce.unwrap_or([0u8; 24]);
+            let em = crate::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
+            if is_encrypted {
+                crate::metadata::FieldPresence::PresentActive(em)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(em)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        // FEC presence model.
+        let fec_presence: crate::metadata::FieldPresence<crate::metadata::EntryFecMetadata> =
+            if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
+                let algo_id = lfh.fec_algo_id.unwrap_or(0);
+                let fm = crate::metadata::EntryFecMetadata {
+                    algo_id,
+                    summary: fec.clone(),
+                };
+                if algo_id != 0 {
+                    crate::metadata::FieldPresence::PresentActive(fm)
+                } else {
+                    crate::metadata::FieldPresence::PresentInactive(fm)
+                }
+            } else {
+                crate::metadata::FieldPresence::Absent
+            };
+
+        // Fragment descriptor for new metadata.
+        let frag_desc_new = lfh
+            .fragment_descriptor
+            .as_ref()
+            .map(|fd| FragmentDescriptor {
+                absolute_offset: fd.absolute_offset,
+                fragment_size: fd.fragment_size,
+            });
+
+        // Fragment presence model.
+        let fragment_presence: crate::metadata::FieldPresence<
+            crate::metadata::EntryFragmentMetadata,
+        > = if header.flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
+            let frag_id = lfh.fragment_id.unwrap_or(0);
+            let frag_idx = lfh.fragment_index.unwrap_or(0);
+            let fm = crate::metadata::EntryFragmentMetadata {
+                fragment_id: frag_id,
+                fragment_index: frag_idx,
+                descriptor: frag_desc_new.clone(),
+                is_last: lfh.entry_mode.is_last_fragment(),
+                is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            };
+            if lfh.entry_mode.is_fragment() {
+                crate::metadata::FieldPresence::PresentActive(fm)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(fm)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        // CDC metadata (no active/inactive distinction — just present/absent).
+        let cdc: Option<crate::metadata::EntryCdcMetadata> =
+            cdc_algo_id_opt.map(|algo_id| crate::metadata::EntryCdcMetadata { algo_id });
+
+        // Delta metadata.
+        let delta: Option<crate::metadata::EntryDeltaMetadata> = if is_has_delta {
+            Some(crate::metadata::EntryDeltaMetadata {
+                patch_algo_id: patch_raw_id,
+                base_hash: lfh.delta_base_hash.unwrap_or([0u8; 32]),
+            })
+        } else {
+            None
+        };
+
+        // Sparse metadata.
+        let sparse: Option<crate::metadata::EntrySparseMetadata> =
+            sparse_extents
+                .as_ref()
+                .map(|extents| crate::metadata::EntrySparseMetadata {
+                    extents: extents.clone(),
+                });
+
+        // Hash metadata.
+        let has_crc = header.flags.contains(GlobalFlags::PER_FILE_CRC);
+        let has_hash = header.flags.contains(GlobalFlags::DEDUPLICATION);
+        let hash: Option<crate::metadata::EntryHashMetadata> = if has_crc || has_hash {
+            Some(crate::metadata::EntryHashMetadata {
+                crc32: if has_crc { lfh.file_crc32 } else { None },
+                content_hash: if has_hash { lfh.content_hash } else { None },
+            })
+        } else {
+            None
+        };
+
+        let metadata = EntryMetadata {
+            lfh_offset: self.next_offset,
+            name: name_str,
+            // `path` retains backward-compatible Option<String> semantics: None
+            // when HAS_PATH is not set or path is empty.  Use `path_presence` for
+            // the authoritative three-state presence model.
+            path: if lfh.path.is_empty() {
+                None
+            } else {
+                let p = String::from_utf8(lfh.path.clone())
+                    .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                Some(p)
             },
+            symlink_target,
+            payload_size: lfh.payload_size,
+            uncompressed_size: lfh.uncompressed_size,
+            compression_algo_id: effective_comp_algo_id,
+            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
+            is_compressed: is_effectively_compressed,
+            fec,
+            fragment_id: lfh.fragment_id,
+            fragment_index: lfh.fragment_index,
+            fragment_descriptor: frag_desc_new,
+            is_fragment: lfh.entry_mode.is_fragment(),
+            is_last_fragment: lfh.entry_mode.is_last_fragment(),
+            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            sparse_extents,
             file_crc32: lfh.file_crc32,
             content_hash: lfh.content_hash,
-            cdc_algo_id: if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
-                // `lfh.cdc_algo_id` is `None` when parsing an archive written by
-                // an older implementation that sets `CDC_SUPPORT` but omits the
-                // per-entry byte.  Default to `LITERAL_MODE (0x00)` so validation
-                // still proceeds — 0x00 is always valid and never triggers a
-                // chunking path, making it the safest conservative fallback.
-                let algo_id = lfh.cdc_algo_id.unwrap_or(0);
-                crate::cdc::validate_cdc_algo_id(algo_id)?;
-                Some(algo_id)
-            } else {
-                None
-            },
+            cdc_algo_id: cdc_algo_id_opt,
             // Patch fields: present when HAS_DELTA is globally set.
             // Registry validation and patch application have already been performed
             // above; this block only surfaces the validated ID and opaque hash bytes.
@@ -867,13 +1217,77 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 None
             },
             delta_base_hash: if is_has_delta {
-                // Preserved as opaque 32 bytes.  No hash algorithm is assumed.
-                // All-zero bytes mean "no base required" for STORE_PATCH; the
-                // field is still preserved verbatim for all other algorithms.
                 Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
             } else {
                 None
             },
+            // M11a expanded metadata.
+            entry_kind,
+            entry_mode_raw: lfh.entry_mode.bits(),
+            stream_id: lfh.stream_id,
+            sequence_no: lfh.sequence_no,
+            is_hidden: lfh.entry_mode.is_hidden_attr(),
+            permissions: lfh
+                .permissions
+                .map(|mode| crate::metadata::EntryPermissionMetadata { mode }),
+            owner: lfh
+                .uid_gid
+                .map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
+            timestamps: lfh
+                .timestamps
+                .map(|ts| crate::metadata::EntryTimestampMetadata {
+                    mtime: ts[0],
+                    atime: ts[1],
+                    ctime: ts[2],
+                }),
+            // M11b filesystem metadata presence model.
+            path_presence: if header.flags.contains(GlobalFlags::HAS_PATH) {
+                if lfh.path.is_empty() {
+                    crate::metadata::FieldPresence::PresentInactive(String::new())
+                } else {
+                    let p = String::from_utf8(lfh.path.clone())
+                        .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                    crate::metadata::FieldPresence::PresentActive(p)
+                }
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            permissions_presence: if header.flags.contains(GlobalFlags::HAS_PERMS) {
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryPermissionMetadata {
+                        mode: lfh.permissions.unwrap_or(0),
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            owner_presence: if header.flags.contains(GlobalFlags::EXT_UID_GID) {
+                crate::metadata::FieldPresence::PresentActive(crate::metadata::EntryOwnerMetadata {
+                    uid_gid: lfh.uid_gid.unwrap_or(0),
+                })
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            timestamps_presence: if header.flags.contains(GlobalFlags::EXT_TIME) {
+                let ts = lfh.timestamps.unwrap_or([0u64; 3]);
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryTimestampMetadata {
+                        mtime: ts[0],
+                        atime: ts[1],
+                        ctime: ts[2],
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            compression_presence,
+            encryption_presence,
+            fec_presence,
+            fragment_presence,
+            cdc,
+            delta,
+            sparse,
+            hash,
         };
 
         self.next_offset = payload_end;
@@ -997,13 +1411,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// address automatically:
     ///
     /// * **Fragment groups** — entries sharing a `fragment_id` are assembled
-    ///   using [`crate::fragment::reconstruct_fragments`].  All fragments must
+    ///   using [`sar_fragmentation::reconstruct_fragments`].  All fragments must
     ///   be present unless `allow_lossy` is `true` **and** the group has
     ///   `LOSS_TOLERANT` set.
     /// * **Sparse entries** — when global `SPARSE_FILES` is active and an entry
     ///   carries a sparse map, the raw data segments are scattered into a
     ///   zero-filled logical-size buffer via
-    ///   [`crate::sparse::apply_sparse_reconstruction`].
+    ///   [`apply_sparse_reconstruction`].
     ///
     /// # Loss-tolerant behavior
     ///
@@ -1069,7 +1483,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         &mut self,
         allow_lossy: bool,
     ) -> Result<Vec<LogicalFile>, SarError> {
-        use crate::fragment::{FragmentEntry, reconstruct_fragments};
+        use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
         use std::collections::HashMap;
 
         // Ensure global header is read.
@@ -1103,7 +1517,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             entries: Vec<EntryReader>,
             /// Sparse extents from fragment index 0.  `None` when this group
             /// has no sparse map.
-            sparse_extents: Option<Vec<crate::sparse::SparseExtent>>,
+            sparse_extents: Option<Vec<SparseExtent>>,
             /// LFH `Uncompressed Size` from fragment index 0 for sparse
             /// reconstruction.  Meaningful only when `sparse_extents.is_some()`.
             sparse_uncompressed_size: u64,
@@ -1244,8 +1658,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 })
                 .collect();
 
-            let (raw, is_degraded) =
-                reconstruct_fragments(frag_entries, assembled_size, &self.options.limits)?;
+            let (raw, is_degraded) = reconstruct_fragments(
+                frag_entries,
+                assembled_size,
+                &self.options.limits.fragment_limits(),
+            )?;
 
             // When the caller does not allow lossy and degraded output was
             // produced by a LOSS_TOLERANT group, surface it as an error.
@@ -1264,16 +1681,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         "sparse logical file size exceeds configured limit",
                     ));
                 }
-                crate::sparse::validate_sparse_extents(
+                validate_sparse_extents(
                     extents,
                     group_sparse_uncompressed_size,
-                    &self.options.limits,
+                    &self.options.limits.sparse_limits(),
                 )?;
-                crate::sparse::apply_sparse_reconstruction(
+                apply_sparse_reconstruction(
                     &raw,
                     extents,
                     group_sparse_uncompressed_size,
-                    &self.options.limits,
+                    &self.options.limits.sparse_limits(),
                 )?
             } else {
                 raw
@@ -1315,7 +1732,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     fn apply_sparse_if_needed(
         limits: &ResourceLimits,
         payload: Vec<u8>,
-        sparse_extents: &Option<Vec<crate::sparse::SparseExtent>>,
+        sparse_extents: &Option<Vec<SparseExtent>>,
         uncompressed_size: u64,
     ) -> Result<Vec<u8>, SarError> {
         let Some(extents) = sparse_extents else {
@@ -1329,8 +1746,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // This correctly handles trailing sparse holes that extend beyond the
         // last extent.
         limits.check_decoded_entry_size(uncompressed_size)?;
-        crate::sparse::validate_sparse_extents(extents, uncompressed_size, limits)?;
-        crate::sparse::apply_sparse_reconstruction(&payload, extents, uncompressed_size, limits)
+        validate_sparse_extents(extents, uncompressed_size, &limits.sparse_limits())?;
+        Ok(apply_sparse_reconstruction(
+            &payload,
+            extents,
+            uncompressed_size,
+            &limits.sparse_limits(),
+        )?)
     }
 }
 
@@ -1338,6 +1760,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 pub struct ArchiveWriter<W> {
     writer: W,
     flags: GlobalFlags,
+    lfh_size_field_policy: LfhSizeFieldPolicy,
     compression: CompressionSettings,
     position: u64,
     offsets: Vec<u64>,
@@ -1347,6 +1770,8 @@ pub struct ArchiveWriter<W> {
     encr_algo_id: Option<u8>,
     used_nonces: HashSet<[u8; 24]>,
     global_flags_section: Vec<u8>,
+    header_kms: Option<KmsData>,
+    header_written: bool,
     fec: Option<FecSettings>,
     stream_state: StreamWriteState,
 }
@@ -1354,7 +1779,7 @@ pub struct ArchiveWriter<W> {
 /// Structural write phases for stream-oriented archive emission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamWriteState {
-    /// Writer has emitted a global header and is ready for an LFH.
+    /// Writer is ready to emit an LFH (global header may be emitted lazily).
     NeedLocalFileHeader,
     /// Writer is currently emitting an LFH+payload sequence.
     NeedPayload,
@@ -1369,7 +1794,7 @@ pub enum StreamWriteState {
 }
 
 impl<W: Write> ArchiveWriter<W> {
-    /// Creates a new archive writer and writes the global header.
+    /// Creates a new archive writer.
     pub fn new(writer: W, options: ArchiveWriterOptions) -> Result<Self, SarError> {
         Self::new_with_compression_key_provider_and_cd_metadata(
             writer,
@@ -1431,20 +1856,35 @@ impl<W: Write> ArchiveWriter<W> {
     }
 
     fn new_with_compression_key_provider_and_cd_metadata(
-        mut writer: W,
+        writer: W,
         options: ArchiveWriterOptions,
         compression: CompressionSettings,
         key_provider: Option<Box<dyn KeyProvider>>,
         cd_metadata: Vec<Tlv>,
     ) -> Result<Self, SarError> {
-        if options.no_index && !cd_metadata.is_empty() {
+        let ArchiveWriterOptions {
+            no_index,
+            encryption,
+            fec,
+            sparse,
+            with_path,
+            with_permissions,
+            with_uid_gid,
+            with_timestamps,
+            with_per_file_crc,
+            with_content_hash,
+            with_symlinks,
+            lfh_size_field_policy,
+        } = options;
+
+        if no_index && !cd_metadata.is_empty() {
             return Err(SarError::FlagConflict(
                 "Central Dictionary metadata requires indexed archive output",
             ));
         }
 
         let mut flags = GlobalFlags::empty();
-        if options.no_index {
+        if no_index {
             flags |= GlobalFlags::NO_INDEX;
         }
         if !cd_metadata.is_empty() {
@@ -1459,16 +1899,40 @@ impl<W: Write> ArchiveWriter<W> {
         if compression.algo_id != COMP_ALGO_STORE {
             flags |= GlobalFlags::COMPRESSED;
         }
-        if options.fec.is_some() {
+        if fec.is_some() {
             flags |= GlobalFlags::SELECTIVE_FEC;
         }
-        if options.sparse {
+        if sparse {
             flags |= GlobalFlags::SPARSE_FILES;
+        }
+        if with_path {
+            flags |= GlobalFlags::HAS_PATH;
+        }
+        if with_permissions {
+            flags |= GlobalFlags::HAS_PERMS;
+        }
+        if with_uid_gid {
+            flags |= GlobalFlags::EXT_UID_GID;
+        }
+        if with_timestamps {
+            flags |= GlobalFlags::EXT_TIME;
+        }
+        if with_per_file_crc {
+            flags |= GlobalFlags::PER_FILE_CRC;
+        }
+        if with_content_hash {
+            flags |= GlobalFlags::DEDUPLICATION;
+        }
+        if with_symlinks {
+            flags |= GlobalFlags::HAS_SYMLINKS;
+        }
+        if matches!(lfh_size_field_policy, LfhSizeFieldPolicy::Force64) {
+            flags |= GlobalFlags::SIZE_64BIT;
         }
 
         let mut cek = None;
         let mut encr_algo_id = None;
-        let kms = if let Some(encryption) = &options.encryption {
+        let kms = if let Some(encryption) = &encryption {
             validate_encr_algo_id(encryption.algo_id).map_err(SarError::from)?;
             if !matches!(encryption.algo_id, ENCR_AES256_GCM | ENCR_XCHACHA20_POLY) {
                 return Err(SarError::Unsupported(
@@ -1502,30 +1966,23 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         validate_global_flags(flags)?;
-        let header = GlobalHeader {
-            version: 0x01,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
-            flags,
-            partition_descriptor: None,
-            kms,
-        };
-        let global_flags_section = global_header_flags_bytes(&header);
-        let bytes = write_global_header(&header)?;
-        writer.write_all(&bytes)?;
 
         Ok(Self {
             writer,
             flags,
+            lfh_size_field_policy,
             compression,
-            position: u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?,
+            position: 0,
             offsets: Vec::new(),
             cd_metadata,
             finished: false,
             cek,
             encr_algo_id,
             used_nonces: HashSet::new(),
-            global_flags_section,
-            fec: options.fec,
+            global_flags_section: Vec::new(),
+            header_kms: kms,
+            header_written: false,
+            fec,
             stream_state: StreamWriteState::NeedLocalFileHeader,
         })
     }
@@ -1536,12 +1993,75 @@ impl<W: Write> ArchiveWriter<W> {
         self.stream_state
     }
 
+    fn emit_global_header_if_needed(&mut self) -> Result<(), SarError> {
+        if self.header_written {
+            return Ok(());
+        }
+        validate_global_flags(self.flags)?;
+        let header = GlobalHeader {
+            version: 0x01,
+            flags_bytes: self.flags.bits().to_le_bytes().to_vec(),
+            flags: self.flags,
+            partition_descriptor: None,
+            kms: self.header_kms.clone(),
+        };
+        self.global_flags_section = global_header_flags_bytes(&header);
+        let bytes = write_global_header(&header)?;
+        self.writer.write_all(&bytes)?;
+        self.position = self
+            .position
+            .checked_add(u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?)
+            .ok_or(SarError::Overflow("archive position after header"))?;
+        self.header_written = true;
+        Ok(())
+    }
+
+    fn apply_size_policy(
+        &mut self,
+        uncompressed_size: u64,
+        payload_size: u64,
+    ) -> Result<(), SarError> {
+        let exceeds_u32 =
+            uncompressed_size > u64::from(u32::MAX) || payload_size > u64::from(u32::MAX);
+        match self.lfh_size_field_policy {
+            LfhSizeFieldPolicy::Force64 => {
+                self.flags |= GlobalFlags::SIZE_64BIT;
+                Ok(())
+            }
+            LfhSizeFieldPolicy::Force32 => {
+                if exceeds_u32 {
+                    return Err(SarError::Overflow(
+                        "size does not fit 32-bit field under Force32 policy",
+                    ));
+                }
+                self.flags.remove(GlobalFlags::SIZE_64BIT);
+                Ok(())
+            }
+            LfhSizeFieldPolicy::Auto => {
+                if exceeds_u32 {
+                    if self.header_written && !self.flags.contains(GlobalFlags::SIZE_64BIT) {
+                        return Err(SarError::Overflow(
+                            "Auto policy cannot promote to 64-bit size fields after header emission",
+                        ));
+                    }
+                    self.flags |= GlobalFlags::SIZE_64BIT;
+                } else if !self.header_written {
+                    self.flags.remove(GlobalFlags::SIZE_64BIT);
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Adds one archive entry.
     pub fn add_entry(&mut self, entry: EntryInput) -> Result<EntryWritten, SarError> {
         if self.finished {
             self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
+
+        // Validate metadata vs global flags before encoding anything.
+        self.validate_entry_input_metadata(&entry)?;
 
         let uncompressed_len =
             u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
@@ -1569,8 +2089,14 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
         };
-        let mut lfh = LocalFileHeader::minimal_store(entry.name.into_bytes(), payload_len);
+        self.apply_size_policy(uncompressed_len, payload_len)?;
+        self.emit_global_header_if_needed()?;
+        let mut lfh = LocalFileHeader::minimal_store(entry.name.as_bytes().to_vec(), payload_len);
         lfh.uncompressed_size = uncompressed_len;
+
+        // Apply expanded EntryInput metadata to the LFH.
+        self.apply_entry_input_to_lfh(&entry, &mut lfh)?;
+
         if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
             lfh.cdc_algo_id = Some(crate::cdc::CDC_ALGO_LITERAL);
         }
@@ -1721,6 +2247,167 @@ impl<W: Write> ArchiveWriter<W> {
         })
     }
 
+    /// Validates that expanded [`EntryInput`] metadata is consistent with the
+    /// writer's currently enabled global flags.  Returns `Err` for any
+    /// metadata field that is requested but the corresponding flag is not set.
+    fn validate_entry_input_metadata(&self, entry: &EntryInput) -> Result<(), SarError> {
+        use crate::metadata::EntryKind;
+
+        // Symlink entries require HAS_SYMLINKS.
+        if matches!(entry.kind, Some(EntryKind::Symlink))
+            && !self.flags.contains(GlobalFlags::HAS_SYMLINKS)
+        {
+            return Err(SarError::FlagConflict(
+                "Symlink entry requires ArchiveWriterOptions::with_symlinks = true",
+            ));
+        }
+        if matches!(entry.kind, Some(EntryKind::Symlink))
+            && std::str::from_utf8(&entry.payload).is_err()
+        {
+            return Err(SarError::Malformed(
+                "Symlink entry payload must be valid UTF-8",
+            ));
+        }
+
+        // Directory entries must have zero payload.
+        if matches!(entry.kind, Some(EntryKind::Directory)) && !entry.payload.is_empty() {
+            return Err(SarError::Malformed(
+                "Directory entry must have zero-length payload",
+            ));
+        }
+
+        // Path requires HAS_PATH.
+        if entry.path.is_some() && !self.flags.contains(GlobalFlags::HAS_PATH) {
+            return Err(SarError::FlagConflict(
+                "EntryInput::path requires ArchiveWriterOptions::with_path = true",
+            ));
+        }
+
+        // Path length must fit in a u16 LFH field (max 65535 bytes).
+        if matches!(&entry.path, Some(p) if p.len() > usize::from(u16::MAX)) {
+            return Err(SarError::Overflow(
+                "path length exceeds LFH u16 field capacity",
+            ));
+        }
+
+        // Name length must fit in a u16 LFH field (max 65535 bytes).
+        if entry.name.len() > usize::from(u16::MAX) {
+            return Err(SarError::Overflow(
+                "name length exceeds LFH u16 field capacity",
+            ));
+        }
+
+        // Permissions require HAS_PERMS.
+        if entry.permissions.is_some() && !self.flags.contains(GlobalFlags::HAS_PERMS) {
+            return Err(SarError::FlagConflict(
+                "EntryInput::permissions requires ArchiveWriterOptions::with_permissions = true",
+            ));
+        }
+
+        // UID/GID requires EXT_UID_GID.
+        if entry.uid_gid.is_some() && !self.flags.contains(GlobalFlags::EXT_UID_GID) {
+            return Err(SarError::FlagConflict(
+                "EntryInput::uid_gid requires ArchiveWriterOptions::with_uid_gid = true",
+            ));
+        }
+
+        // Timestamps require EXT_TIME.
+        if entry.timestamps.is_some() && !self.flags.contains(GlobalFlags::EXT_TIME) {
+            return Err(SarError::FlagConflict(
+                "EntryInput::timestamps requires ArchiveWriterOptions::with_timestamps = true",
+            ));
+        }
+
+        // CRC32 requires PER_FILE_CRC.
+        if entry.file_crc32.is_some() && !self.flags.contains(GlobalFlags::PER_FILE_CRC) {
+            return Err(SarError::FlagConflict(
+                "EntryInput::file_crc32 requires ArchiveWriterOptions::with_per_file_crc = true",
+            ));
+        }
+
+        // Content hash requires DEDUPLICATION.
+        if entry.content_hash.is_some() && !self.flags.contains(GlobalFlags::DEDUPLICATION) {
+            return Err(SarError::FlagConflict(
+                "EntryInput::content_hash requires ArchiveWriterOptions::with_content_hash = true",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Copies expanded [`EntryInput`] metadata fields into the LFH.
+    ///
+    /// Called after the LFH is constructed and before encoding begins.
+    /// Only sets fields whose corresponding global flag is enabled.
+    fn apply_entry_input_to_lfh(
+        &self,
+        entry: &EntryInput,
+        lfh: &mut LocalFileHeader,
+    ) -> Result<(), SarError> {
+        use crate::metadata::EntryKind;
+
+        // Stream ID and sequence number.
+        lfh.stream_id = entry.stream_id.unwrap_or(0);
+        lfh.sequence_no = entry.sequence_no.unwrap_or(0);
+
+        // Entry kind → entry mode bits.
+        let effective_kind = entry.kind.unwrap_or(if entry.name.is_empty() {
+            EntryKind::EmptyArea
+        } else {
+            EntryKind::RegularFile
+        });
+        match effective_kind {
+            EntryKind::Directory => {
+                lfh.entry_mode =
+                    EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::IS_DIRECTORY);
+            }
+            EntryKind::Symlink => {
+                lfh.entry_mode =
+                    EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::IS_SYMLINK);
+            }
+            EntryKind::RegularFile | EntryKind::EmptyArea => {}
+        }
+
+        // Hidden attribute.
+        if entry.is_hidden {
+            lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::HIDDEN_ATTR);
+        }
+
+        // Optional metadata fields (only when the global flag is set).
+        if self.flags.contains(GlobalFlags::HAS_PATH)
+            && let Some(ref path) = entry.path
+        {
+            lfh.path = path.as_bytes().to_vec();
+        }
+
+        // When a Global Flag forces a field to be physically present in the LFH,
+        // the field must be written even if the caller did not provide a value.
+        // Zero is the correct wire-format fill: parsers treat it as "present with default
+        // value", not "absent".  This is distinct from the fail-closed validation above,
+        // which rejects entries that *provide* a non-None value when the flag is unset.
+        if self.flags.contains(GlobalFlags::HAS_PERMS) {
+            lfh.permissions = entry.permissions.or(Some(0));
+        }
+
+        if self.flags.contains(GlobalFlags::EXT_UID_GID) {
+            lfh.uid_gid = entry.uid_gid.or(Some(0));
+        }
+
+        if self.flags.contains(GlobalFlags::EXT_TIME) {
+            lfh.timestamps = Some(entry.timestamps.unwrap_or([0u64; 3]));
+        }
+
+        if self.flags.contains(GlobalFlags::PER_FILE_CRC) {
+            lfh.file_crc32 = entry.file_crc32.or(Some(0));
+        }
+
+        if self.flags.contains(GlobalFlags::DEDUPLICATION) {
+            lfh.content_hash = entry.content_hash.or(Some([0u8; 32]));
+        }
+
+        Ok(())
+    }
+
     /// Writes a sparse archive entry.
     ///
     /// The writer must have been created with
@@ -1767,10 +2454,10 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         // Validate extents against logical_size (overlap and bounds).
-        crate::sparse::validate_sparse_extents(
+        validate_sparse_extents(
             &sparse.extents,
             sparse.logical_size,
-            &ResourceLimits::unlimited(),
+            &ResourceLimits::unlimited().sparse_limits(),
         )?;
 
         // Validate payload length equals sum of extent lengths.
@@ -1810,10 +2497,12 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             u64::try_from(encoded_payload.len()).map_err(|_| SarError::Overflow("payload len"))?
         };
+        self.apply_size_policy(sparse.logical_size, encoded_len)?;
+        self.emit_global_header_if_needed()?;
 
         // Build LFH: uncompressed_size = logical_size (full sparse extent including holes).
         let is_64bit = self.flags.contains(GlobalFlags::SIZE_64BIT);
-        let sparse_map_bytes = crate::sparse::write_sparse_map(&sparse.extents, is_64bit);
+        let sparse_map_bytes = crate::sparse::write_sparse_map(&sparse.extents, is_64bit)?;
 
         let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), encoded_len);
         lfh.uncompressed_size = sparse.logical_size;
@@ -1935,6 +2624,7 @@ impl<W: Write> ArchiveWriter<W> {
             self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
+        self.emit_global_header_if_needed()?;
         self.stream_state = StreamWriteState::NeedCentralDictionaryOrFooter;
 
         if !self.flags.contains(GlobalFlags::NO_INDEX) {

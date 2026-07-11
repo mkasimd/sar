@@ -617,10 +617,18 @@
         "stage-4",
         "9a",
         "9b",
-        "10a"
+        "10a",
+        "11a",
+        "11b",
+        "11c",
+        "11c-cp"
       ],
       "features": [
-        "Milestone 10a stateless forward-only stream parser/writer state model."
+        "Milestone 10a stateless forward-only stream parser/writer state model.",
+        "Milestone 11a LFH Metadata API Completeness: expanded EntryInput, expanded EntryMetadata, FieldPresence<T> presence model, EntryKind, all metadata structs, complete LFH metadata round-trip.",
+        "Milestone 11b Filesystem Metadata Encode/Decode: FieldPresence-typed path_presence/permissions_presence/owner_presence/timestamps_presence in EntryMetadata, symlink_target metadata, symlink payload UTF-8 validation, directory payload validation, IS_SYMLINK->HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests.",
+        "Milestone 11c: Crate-boundary cleanup \u2014 fragment semantic logic moved to sar-fragmentation, sparse semantic logic moved to sar-sparse, loss-tolerant policy helpers added to sar-loss-tolerant, partition deliberately deferred.",
+        "Milestone 11c-cp (corrective pass): sar_core::fragment module removed (was pure re-exports); semantic sparse re-exports removed from sar_core::sparse (SparseExtent kept as architectural re-export); sar-loss-tolerant integrated into sar-fragmentation; FragmentError::PayloadSizeMismatch and DuplicateIndex added (always fatal); zero-length sparse extents now rejected; write_sparse_map now returns Result<Vec<u8>, SarError> (fail-closed on 32-bit truncation); error conversion bridges updated."
       ],
       "modules": [
         {
@@ -1071,10 +1079,10 @@
             {
               "name": "ArchiveWriterOptions",
               "kind": "struct",
-              "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings> }",
+              "signature": "pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings>, pub with_path: bool, pub with_permissions: bool, pub with_uid_gid: bool, pub with_timestamps: bool, pub with_per_file_crc: bool, pub with_content_hash: bool, pub with_symlinks: bool, pub lfh_size_field_policy: LfhSizeFieldPolicy }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Writer options for indexing, sparse, encryption, and Selective FEC. Set sparse=true to enable SPARSE_FILES in the global header and permit write_sparse_entry calls.",
+              "description": "Writer options for indexing, sparse, encryption, and Selective FEC. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`).",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -1087,6 +1095,26 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Good create-options wrapper target."
+            },
+            {
+              "name": "LfhSizeFieldPolicy",
+              "kind": "enum",
+              "signature": "pub enum LfhSizeFieldPolicy { Auto, Force32, Force64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Archive-writer LFH size-field policy: Auto (default 32-bit with promotion before header emission), Force32 (fail closed if any size exceeds u32::MAX), Force64 (always emit 64-bit fields and set global SIZE_64BIT).",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a.1",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "FFI-friendly tri-state policy; avoid boolean-only API."
             },
             {
               "name": "SparseWriteOptions",
@@ -1173,10 +1201,10 @@
             {
               "name": "EntryInput",
               "kind": "struct",
-              "signature": "pub struct EntryInput { pub name: String, pub payload: Vec<u8> }",
+              "signature": "pub struct EntryInput { pub name: String, pub payload: Vec<u8>, pub kind: Option<EntryKind>, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub stream_id: Option<u16>, pub sequence_no: Option<u16>, pub file_crc32: Option<u32>, pub content_hash: Option<EntryHashMetadata> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Input payload for archive writing.",
+              "description": "Input payload for archive writing. Use EntryInput::file(name, payload) for simple regular file entries. All metadata fields are optional and default to absent. Metadata fields are validated fail-closed against enabled GlobalFlags at add_entry time; missing flag causes SarError::FlagConflict. Symlink entries require HAS_SYMLINKS and a UTF-8 payload target.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -1188,15 +1216,35 @@
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
-              "ffi_notes": "FFI should use explicit name/buffer arguments instead of exposing Rust-owned types directly."
+              "ffi_notes": "FFI should use explicit name/buffer arguments plus an options struct for optional metadata instead of exposing Rust-owned types directly."
+            },
+            {
+              "name": "EntryInput::file",
+              "kind": "function",
+              "signature": "pub fn EntryInput::file(name: impl Into<String>, payload: Vec<u8>) -> Self",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Ergonomic constructor for a regular file entry with default metadata. Use this instead of struct literal construction.",
+              "parameters": [],
+              "returns": "EntryInput",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "n/a",
+              "ffi_notes": "FFI would take separate name/buffer arguments."
             },
             {
               "name": "EntryMetadata",
               "kind": "struct",
-              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8> }",
+              "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8>, pub kind: EntryKind, pub path: Option<String>, pub symlink_target: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub compression_presence: FieldPresence<EntryCompressionMetadata>, pub encryption_presence: FieldPresence<EntryEncryptionMetadata>, pub fec_presence: FieldPresence<EntryFecMetadata>, pub fragment_presence: FieldPresence<EntryFragmentMetadata>, pub cdc: Option<EntryCdcMetadata>, pub delta: Option<EntryDeltaMetadata>, pub sparse: Option<EntrySparseMetadata>, pub content_hash_meta: Option<EntryHashMetadata>, pub raw_entry_mode: u16, pub path_presence: FieldPresence<String>, pub permissions_presence: FieldPresence<EntryPermissionMetadata>, pub owner_presence: FieldPresence<EntryOwnerMetadata>, pub timestamps_presence: FieldPresence<EntryTimestampMetadata> }",
               "visibility": "public",
               "stability": "stable",
-              "description": "Human-readable metadata summary for one entry. sparse_extents is populated for SPARSE_FILES entries. file_crc32 is populated when GlobalFlags::PER_FILE_CRC is set and CRC32 verification has passed (read_all_logical_files verifies CRC32 over reconstructed bytes). content_hash is populated when GlobalFlags::DEDUPLICATION is set; content_hash bytes are preserved from the LFH but not verified (algorithm not determinable from archive format; see API.md Known Limitations). cdc_algo_id is populated when CDC_SUPPORT is active.",
+              "description": "Complete metadata for a parsed archive entry. Includes all LFH fields, M11a presence-model fields, and M11b filesystem metadata FieldPresence fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but semantically inactive), PresentActive(T) (global flag set and active). New in M11b: path_presence (HAS_PATH), permissions_presence (HAS_PERMS), owner_presence (EXT_UID_GID), timestamps_presence (EXT_TIME), and symlink_target decoded from symlink payload bytes. Symlink target payload is validated as strict UTF-8; invalid UTF-8 is rejected (not lossy). Zero values are preserved and never collapsed to Absent. kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value.",
               "parameters": [],
               "returns": "",
               "errors": [],
@@ -1208,7 +1256,7 @@
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
-              "ffi_notes": "Good inspect/list wrapper target."
+              "ffi_notes": "Good inspect/list wrapper target. FieldPresence<T> maps well to C tagged unions or nullable pointers."
             },
             {
               "name": "LogicalFile",
@@ -2024,6 +2072,272 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Useful for archive-inspection wrappers."
+            }
+          ]
+        },
+        {
+          "name": "metadata",
+          "path": "src/metadata.rs",
+          "items": [
+            {
+              "name": "FieldPresence",
+              "kind": "enum",
+              "signature": "pub enum FieldPresence<T> { Absent, PresentInactive(T), PresentActive(T) }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Three-state presence model for LFH metadata fields. Absent: global flag not set, field physically missing from wire. PresentInactive: global flag set but entry mode bit unset. PresentActive: global flag set and semantically active.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Maps to C tagged union or nullable pointer plus a discriminant byte."
+            },
+            {
+              "name": "EntryKind",
+              "kind": "enum",
+              "signature": "pub enum EntryKind { RegularFile, Directory, Symlink, EmptyArea }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Entry kind derived from EntryMode bits. RegularFile: default. Directory: IS_DIRECTORY set. Symlink: IS_SYMLINK set. EmptyArea: name is empty.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": "Simple discriminant enum."
+            },
+            {
+              "name": "EntryPermissionMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryPermissionMetadata { pub mode: u16 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "POSIX-style permission mode bits from LFH HAS_PERMS field.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": "Single u16 field."
+            },
+            {
+              "name": "EntryOwnerMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryOwnerMetadata { pub uid_gid: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "UID/GID ownership info decoded from the packed EXT_UID_GID u32 field (low 16 bits = UID, high 16 bits = GID, i.e. uid | (gid << 16)). Use uid() and gid() accessor methods.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "EntryTimestampMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryTimestampMetadata { pub mtime: u64, pub atime: u64, pub ctime: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Modification, access, and status-change timestamps (64-bit Unix seconds) from LFH EXT_TIME field.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": "Three u64 values; map directly to struct fields."
+            },
+            {
+              "name": "EntryCompressionMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryCompressionMetadata { pub algo_id: u8 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Compression algorithm ID from LFH COMPRESSED field.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "EntryEncryptionMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryEncryptionMetadata { pub algo_id: u8, pub iv_nonce: [u8; 24] }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Encryption algorithm ID and IV/nonce from LFH ENCRYPTED fields.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "iv_nonce is a fixed-size 24-byte array."
+            },
+            {
+              "name": "EntryFecMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryFecMetadata { pub algo_id: u8 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "FEC algorithm ID from LFH SELECTIVE_FEC field.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "EntryCdcMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryCdcMetadata { pub algo_id: u8 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "CDC algorithm ID from LFH CDC_SUPPORT field.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "EntryDeltaMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryDeltaMetadata { pub algo_id: u8, pub base_hash: [u8; 32] }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Delta patch algorithm ID and base-file hash from LFH HAS_DELTA fields.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "base_hash is a fixed-size 32-byte array."
+            },
+            {
+              "name": "EntryFragmentMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryFragmentMetadata { pub fragment_id: u32, pub fragment_index: u32, pub absolute_offset: u64, pub fragment_size: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Fragment descriptor fields from LFH FILE_FRAGMENTATION global flag.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "EntrySparseMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntrySparseMetadata { pub logical_size: u64, pub extents: Vec<SparseExtent> }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Sparse file map from LFH SPARSE_FILES global flag.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "extents Vec must be flattened to C array."
+            },
+            {
+              "name": "EntryHashMetadata",
+              "kind": "struct",
+              "signature": "pub struct EntryHashMetadata { pub algo_id: u8, pub hash: [u8; 32] }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Content hash algorithm ID and hash bytes from LFH DEDUPLICATION field.",
+              "parameters": [],
+              "returns": "",
+              "errors": [],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "11a",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "hash is a fixed-size 32-byte array."
             }
           ]
         },
@@ -3846,148 +4160,23 @@
             {
               "name": "write_sparse_map",
               "kind": "function",
-              "signature": "pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>",
+              "signature": "pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>",
               "visibility": "public",
               "stability": "stable",
-              "description": "Encodes sparse extents to the on-wire byte format.",
+              "description": "Serializes sparse extents to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates.",
               "parameters": [],
               "returns": "Vec<u8>",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            },
-            {
-              "name": "validate_sparse_extents",
-              "kind": "function",
-              "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Validates sparse extents for overlap, bounds, and arithmetic overflow.",
-              "parameters": [],
-              "returns": "Result<(), SarError>",
               "errors": [
-                "SarError::LimitExceeded",
-                "SarError::InvalidMap",
-                "SarError::Overflow"
+                "SarError::Overflow if 32-bit mode and offset or length exceeds u32::MAX"
               ],
               "safety_notes": [],
               "examples": [],
               "feature_flags": [],
-              "since_milestone": "8",
+              "since_milestone": "11c-cp",
               "related_spec_sections": [],
               "implemented": true,
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            },
-            {
-              "name": "apply_sparse_reconstruction",
-              "kind": "function",
-              "signature": "pub fn apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<Vec<u8>, SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Scatter-gather reconstruction of a sparse logical file. Checks logical_size against configured limits before allocating. Sparse expansion-bomb attack shape (tiny payload + huge logical_size + sparse extent near end) returns LimitExceeded, not InvalidMap.",
-              "parameters": [],
-              "returns": "Result<Vec<u8>, SarError>",
-              "errors": [
-                "SarError::LimitExceeded",
-                "SarError::InvalidMap"
-              ],
-              "safety_notes": [
-                "Rejects oversized logical_size before allocation (expansion-bomb protection).",
-                "Error for oversized logical_size is LimitExceeded, not InvalidMap \u2014 the sparse map may be structurally valid."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            }
-          ]
-        },
-        {
-          "name": "fragment",
-          "path": "src/fragment.rs",
-          "items": [
-            {
-              "name": "FragmentDescriptor",
-              "kind": "struct",
-              "signature": "pub struct FragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Named-field struct for fragment placement. No .0/.1 tuple access in SAR-owned protocol/domain code.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [
-                "Named fields only; no .0/.1 tuple access in SAR-owned protocol/domain code."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Flat C struct mapping."
-            },
-            {
-              "name": "FragmentEntry",
-              "kind": "struct",
-              "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub descriptor: FragmentDescriptor, pub payload: Vec<u8> }",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "A single fragment payload and placement metadata.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "complex",
-              "ffi_notes": "Owns a Vec<u8>; needs opaque-buffer handling in FFI."
-            },
-            {
-              "name": "reconstruct_fragments",
-              "kind": "function",
-              "signature": "pub fn reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64, allow_lossy: bool, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Sorts by fragment_index and scatter-gathers by absolute_offset. Returns (data, is_degraded). Fragment group span bounded by max_fragment_group_span before allocation.",
-              "parameters": [],
-              "returns": "Result<(Vec<u8>, bool), SarError>",
-              "errors": [
-                "SarError::LimitExceeded",
-                "SarError::FragmentGap",
-                "SarError::InvalidMap"
-              ],
-              "safety_notes": [
-                "Fragment group span bounded by max_fragment_group_span before allocation.",
-                "Descriptor arithmetic overflow detected before any buffer is allocated.",
-                "Loss-tolerant gap fill bounded by max_loss_tolerant_gap.",
-                "AEAD failures are never suppressed by allow_lossy."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "complex",
               "ffi_notes": ""
             }
           ]
@@ -4319,6 +4508,13 @@
               "ffi_notes": ""
             }
           ]
+        },
+        {
+          "name": "fragment",
+          "path": "REMOVED",
+          "description": "Removed in M11c-cp. Was a pure compatibility re-export of sar-fragmentation types. Import from sar_fragmentation directly.",
+          "items": [],
+          "removed_in": "11c-cp"
         }
       ]
     },
@@ -6467,34 +6663,97 @@
     {
       "name": "sar-fragmentation",
       "path": "crates/sar-fragmentation",
-      "purpose": "Placeholder crate for future fragmentation support.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "Fragment semantic validation and reassembly logic (moved from sar-core in M11c).",
+      "status": "implemented",
+      "milestones": [
+        "M11c",
+        "M11c-cp"
+      ],
+      "features": [
+        "Milestone 11c-cp: Added FragmentError::PayloadSizeMismatch (payload.len() != descriptor.fragment_size, always fatal) and FragmentError::DuplicateIndex (duplicate fragment index, always fatal including with LOSS_TOLERANT). reconstruct_fragments now validates index gaps, missing LAST_FRAGMENT, and descriptor byte-range gaps (initial/middle/tail), applying sar_loss_tolerant::gap_degraded_output_permitted() and max_loss_tolerant_gap for degraded output policy. sar-fragmentation now depends on sar-loss-tolerant."
+      ],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "FragmentError",
+              "kind": "enum",
+              "signature": "pub enum FragmentError",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented fragmentation functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "stability": "stable",
+              "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow. M11c-cp additions: PayloadSizeMismatch (payload length does not match descriptor.fragment_size, always fatal) and DuplicateIndex (duplicate fragment_index in group, always fatal even with LOSS_TOLERANT).",
+              "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "FragmentLimits",
+              "kind": "struct",
+              "signature": "pub struct FragmentLimits { pub max_fragment_count: usize, pub max_fragment_group_span: u64, pub max_decoded_entry_size: u64, pub max_loss_tolerant_gap: u64, pub max_allocation_bytes: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Resource limits for fragment operations.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "FragmentDescriptor",
+              "kind": "struct",
+              "signature": "pub struct FragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Per-fragment extent descriptor.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "FragmentEntry",
+              "kind": "struct",
+              "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub is_last_fragment: bool, pub is_loss_tolerant: bool, pub descriptor: FragmentDescriptor, pub payload: Vec<u8> }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Decoded fragment with payload and metadata.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "validate_fragment_group",
+              "kind": "function",
+              "signature": "pub fn validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "reconstruct_fragments",
+              "kind": "function",
+              "signature": "pub fn reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Validates duplicate fragment indexes, payload-size agreement, index gaps, missing LAST_FRAGMENT, descriptor byte-range gaps (initial/middle/tail), and LOSS_TOLERANT degraded-output policy with max_loss_tolerant_gap.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         }
@@ -6503,9 +6762,11 @@
     {
       "name": "sar-loss-tolerant",
       "path": "crates/sar-loss-tolerant",
-      "purpose": "Placeholder crate for future loss-tolerant mode support.",
-      "status": "placeholder",
-      "milestones": [],
+      "purpose": "Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). No dependency on sar-core.",
+      "status": "implemented",
+      "milestones": [
+        "M11c"
+      ],
       "features": [],
       "modules": [
         {
@@ -6513,24 +6774,43 @@
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "RecoveryStatus",
+              "kind": "enum",
+              "signature": "pub enum RecoveryStatus",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented loss-tolerant functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "stability": "stable",
+              "description": "Reconstruction outcome. Variants: Complete, Degraded, Failed.",
+              "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "gap_degraded_output_permitted",
+              "kind": "function",
+              "signature": "pub fn gap_degraded_output_permitted(is_loss_tolerant: bool) -> bool",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Returns whether a missing-fragment gap may produce degraded output. Requires LOSS_TOLERANT flag.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "classify_recovery",
+              "kind": "function",
+              "signature": "pub fn classify_recovery(has_gap: bool, failed: bool) -> RecoveryStatus",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Maps gap/failure booleans to RecoveryStatus.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         }
@@ -6539,70 +6819,101 @@
     {
       "name": "sar-partition",
       "path": "crates/sar-partition",
-      "purpose": "Placeholder crate for future partition support.",
-      "status": "placeholder",
-      "milestones": [],
+      "purpose": "Partition/multi-volume archive support. Deliberately deferred in M11c. PartitionDescriptor and PARTITIONED_ARCHIVE remain in sar-core.",
+      "status": "deferred",
+      "milestones": [
+        "M11c-deferred"
+      ],
       "features": [],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
-          "items": [
-            {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
-              "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented partition functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
-            }
-          ]
+          "items": []
         }
       ]
     },
     {
       "name": "sar-sparse",
       "path": "crates/sar-sparse",
-      "purpose": "Placeholder crate for future sparse-file support.",
-      "status": "placeholder",
-      "milestones": [],
-      "features": [],
+      "purpose": "Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core.",
+      "status": "implemented",
+      "milestones": [
+        "M11c",
+        "M11c-cp"
+      ],
+      "features": [
+        "Milestone 11c-cp: validate_sparse_extents now rejects zero-length extents (returns SparseError::InvalidMap). sar_core::sparse semantic re-exports removed; import SparseError/SparseLimits/validate_sparse_extents/apply_sparse_reconstruction from sar_sparse directly."
+      ],
       "modules": [
         {
           "name": "lib",
           "path": "src/lib.rs",
           "items": [
             {
-              "name": "NotImplemented",
-              "kind": "struct",
-              "signature": "pub struct NotImplemented;",
+              "name": "SparseError",
+              "kind": "enum",
+              "signature": "pub enum SparseError",
               "visibility": "public",
-              "stability": "placeholder",
-              "description": "Marker type for not-yet-implemented sparse-file functionality.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "future",
-              "related_spec_sections": [],
+              "stability": "stable",
+              "description": "Error type for sparse operations. Variants: InvalidMap, Truncated, LimitExceeded, Overflow.",
+              "since_milestone": "M11c",
               "implemented": true,
               "ffi_candidate": false,
-              "ffi_readiness": "not_applicable",
-              "ffi_notes": "Placeholder only."
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "SparseLimits",
+              "kind": "struct",
+              "signature": "pub struct SparseLimits { pub max_sparse_map_bytes: usize, pub max_sparse_descriptors: usize, pub max_decoded_entry_size: u64, pub max_allocation_bytes: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Resource limits for sparse operations.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "SparseExtent",
+              "kind": "struct",
+              "signature": "pub struct SparseExtent { pub offset: u64, pub length: u64 }",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "One sparse data region (offset + length).",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "validate_sparse_extents",
+              "kind": "function",
+              "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety. Does not validate payload-length agreement.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
+            },
+            {
+              "name": "apply_sparse_reconstruction",
+              "kind": "function",
+              "signature": "pub fn apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because payload bytes are available.",
+              "since_milestone": "M11c",
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": ""
             }
           ]
         }
@@ -7248,9 +7559,13 @@
                 "DER sizes are bounded by QuicTransportConfig.max_cert_chain_bytes and max_private_key_bytes."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7271,9 +7586,13 @@
                 "Insecure verification is never the default."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7288,16 +7607,22 @@
               "description": "TLS key agreement policy for SAR-over-QUIC connections (Section 18.6.7). Controls which TLS key agreement algorithm classes are offered and accepted. Default is ClassicalAllowed when the TLS stack does not support PQ or hybrid groups. RequirePqOrHybrid and RequirePqOnly fail closed with SAR_ERR_UNSUPPORTED when PQ/hybrid key agreement is unavailable.",
               "parameters": [],
               "returns": "",
-              "errors": ["SAR_ERR_UNSUPPORTED when RequirePqOrHybrid or RequirePqOnly is set and the TLS provider does not support PQ or hybrid groups"],
+              "errors": [
+                "SAR_ERR_UNSUPPORTED when RequirePqOrHybrid or RequirePqOnly is set and the TLS provider does not support PQ or hybrid groups"
+              ],
               "safety_notes": [
                 "RequirePqOrHybrid and RequirePqOnly fail closed if the TLS provider cannot satisfy the requirement.",
                 "PreferPq permits classical fallback but the connection MUST NOT be described as PQ-safe or HNDL-resistant if classical-only key agreement was negotiated.",
                 "No TLS secrets, exporter outputs, or derived keys are logged or placed in KMS Data."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10g",
-              "related_spec_sections": ["18.6.7"],
+              "related_spec_sections": [
+                "18.6.7"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7319,9 +7644,14 @@
                 "pq_policy RequirePqOrHybrid/RequirePqOnly fail closed with SAR_ERR_UNSUPPORTED if the TLS provider does not support PQ/hybrid groups."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2", "18.6.7"],
+              "related_spec_sections": [
+                "18.5.2",
+                "18.6.7"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7339,9 +7669,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7359,9 +7693,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7382,9 +7720,13 @@
                 "max_connections limit enforced before accepting new connections."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7398,15 +7740,25 @@
               "stability": "experimental",
               "description": "Bind a QUIC listener on an OS-assigned port. Returns a ready-to-accept listener.",
               "parameters": [
-                { "name": "config", "type": "QuicServerConfig", "description": "Server configuration." }
+                {
+                  "name": "config",
+                  "type": "QuicServerConfig",
+                  "description": "Server configuration."
+                }
               ],
               "returns": "Result<QuicSarListener, SarError>",
-              "errors": ["SarError::Io on bind failure"],
+              "errors": [
+                "SarError::Io on bind failure"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7421,12 +7773,18 @@
               "description": "Accept the next incoming QUIC connection.",
               "parameters": [],
               "returns": "Result<QuicSarConnection, SarError>",
-              "errors": ["SarError::StreamClosed if listener is closed"],
+              "errors": [
+                "SarError::StreamClosed if listener is closed"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7447,9 +7805,13 @@
                 "Malformed QUIC stream does not corrupt other active streams unless connection-fatal."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7464,12 +7826,18 @@
               "description": "Accept the next incoming bidirectional QUIC stream on this connection.",
               "parameters": [],
               "returns": "Result<QuicSarStream, SarError>",
-              "errors": ["SarError::StreamClosed if connection is closed"],
+              "errors": [
+                "SarError::StreamClosed if connection is closed"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7484,12 +7852,19 @@
               "description": "Open a new outgoing bidirectional QUIC stream on this connection.",
               "parameters": [],
               "returns": "Result<QuicSarStream, SarError>",
-              "errors": ["SarError::StreamClosed if connection is closed", "SarError::LimitExceeded if max_quic_streams_per_connection is reached"],
+              "errors": [
+                "SarError::StreamClosed if connection is closed",
+                "SarError::LimitExceeded if max_quic_streams_per_connection is reached"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7503,16 +7878,33 @@
               "stability": "experimental",
               "description": "Feed bytes for a specific QUIC stream into the M10c QUIC-policy harness. Returns transport actions. Control-frame bytes are buffered; call flush_pending_control_frames to send.",
               "parameters": [
-                { "name": "stream_id", "type": "TransportStreamId", "description": "The transport stream ID from QuicSarStream::stream_id()." },
-                { "name": "bytes", "type": "&[u8]", "description": "Bytes received from the QUIC stream." }
+                {
+                  "name": "stream_id",
+                  "type": "TransportStreamId",
+                  "description": "The transport stream ID from QuicSarStream::stream_id()."
+                },
+                {
+                  "name": "bytes",
+                  "type": "&[u8]",
+                  "description": "Bytes received from the QUIC stream."
+                }
               ],
               "returns": "Result<Vec<TransportAction>, SarError>",
-              "errors": ["SarError::StreamState on session protocol violation", "SarError::LimitExceeded on buffer/stream limit"],
-              "safety_notes": ["No plaintext is exposed before AEAD authentication succeeds."],
+              "errors": [
+                "SarError::StreamState on session protocol violation",
+                "SarError::LimitExceeded on buffer/stream limit"
+              ],
+              "safety_notes": [
+                "No plaintext is exposed before AEAD authentication succeeds."
+              ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7526,15 +7918,25 @@
               "stability": "experimental",
               "description": "Flush any control-frame bytes buffered by feed_stream_bytes to the QUIC send stream.",
               "parameters": [
-                { "name": "stream", "type": "&mut quinn::SendStream", "description": "The QUIC send stream to write to." }
+                {
+                  "name": "stream",
+                  "type": "&mut quinn::SendStream",
+                  "description": "The QUIC send stream to write to."
+                }
               ],
               "returns": "Result<(), SarError>",
-              "errors": ["SarError::Io on write failure"],
+              "errors": [
+                "SarError::Io on write failure"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7548,20 +7950,39 @@
               "stability": "experimental",
               "description": "Derive TLS exporter material from the active QUIC/TLS session using the given label, context, and output length. Used for TLS_EXPORTER SAR-AEAD key derivation.",
               "parameters": [
-                { "name": "label", "type": "&[u8]", "description": "TLS exporter label (ASCII)." },
-                { "name": "context", "type": "&[u8]", "description": "TLS exporter context (encoded TlsExporterContextV1)." },
-                { "name": "len", "type": "usize", "description": "Output length in bytes (Derived Key Length from KMS data)." }
+                {
+                  "name": "label",
+                  "type": "&[u8]",
+                  "description": "TLS exporter label (ASCII)."
+                },
+                {
+                  "name": "context",
+                  "type": "&[u8]",
+                  "description": "TLS exporter context (encoded TlsExporterContextV1)."
+                },
+                {
+                  "name": "len",
+                  "type": "usize",
+                  "description": "Output length in bytes (Derived Key Length from KMS data)."
+                }
               ],
               "returns": "Result<Vec<u8>, SarError>",
-              "errors": ["SarError::Unsupported if exporter material is unavailable"],
+              "errors": [
+                "SarError::Unsupported if exporter material is unavailable"
+              ],
               "safety_notes": [
                 "Exporter output is never logged, never transmitted, and never placed in KMS Data.",
                 "Used only as SAR AEAD keying material input."
               ],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["5.3", "18.6"],
+              "related_spec_sections": [
+                "5.3",
+                "18.6"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7579,9 +8000,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7599,9 +8024,13 @@
               "errors": [],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",
@@ -7615,17 +8044,36 @@
               "stability": "experimental",
               "description": "Async QUIC client entry point. Establishes a QUIC connection to a QuicSarListener. Returns a ready-to-use QuicSarConnection.",
               "parameters": [
-                { "name": "server_name", "type": "&str", "description": "TLS SNI server name." },
-                { "name": "addr", "type": "SocketAddr", "description": "Remote address." },
-                { "name": "config", "type": "QuicClientConfig", "description": "Client configuration." }
+                {
+                  "name": "server_name",
+                  "type": "&str",
+                  "description": "TLS SNI server name."
+                },
+                {
+                  "name": "addr",
+                  "type": "SocketAddr",
+                  "description": "Remote address."
+                },
+                {
+                  "name": "config",
+                  "type": "QuicClientConfig",
+                  "description": "Client configuration."
+                }
               ],
               "returns": "Result<QuicSarConnection, SarError>",
-              "errors": ["SarError::Io on connection failure", "SarError::Unsupported if TLS config is invalid"],
+              "errors": [
+                "SarError::Io on connection failure",
+                "SarError::Unsupported if TLS config is invalid"
+              ],
               "safety_notes": [],
               "examples": [],
-              "feature_flags": ["quic"],
+              "feature_flags": [
+                "quic"
+              ],
               "since_milestone": "10e",
-              "related_spec_sections": ["18.5.2"],
+              "related_spec_sections": [
+                "18.5.2"
+              ],
               "implemented": true,
               "ffi_candidate": false,
               "ffi_readiness": "not_applicable",

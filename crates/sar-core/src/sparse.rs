@@ -1,17 +1,27 @@
-//! Sparse-file map parsing, writing, validation, and scatter-gather reconstruction.
+//! Sparse-file map parsing, writing, and scatter-gather reconstruction.
+//!
+//! This module provides physical LFH sparse map parse/write functions:
+//!
+//! * [`parse_sparse_map`] — decodes the on-wire byte blob into a
+//!   `Vec<SparseExtent>`.
+//! * [`write_sparse_map`] — encodes `SparseExtent` values to the on-wire byte
+//!   format.  Returns an error rather than silently truncating `u64` values
+//!   that exceed `u32::MAX` in 32-bit sparse-map mode.
+//!
+//! Semantic validation ([`sar_sparse::validate_sparse_extents`]) and
+//! scatter-gather reconstruction ([`sar_sparse::apply_sparse_reconstruction`])
+//! are owned by the `sar-sparse` crate.  Import them directly from there.
+//!
+//! # Architectural note on `SparseExtent` re-export
+//!
+//! [`SparseExtent`] is re-exported here because it is the shared data type
+//! between the wire-format functions in this module and the semantic functions
+//! in `sar-sparse`.  Callers of [`parse_sparse_map`] and [`write_sparse_map`]
+//! need to name the type without an additional direct dependency on `sar-sparse`.
 
-use serde::Serialize;
+pub use sar_sparse::SparseExtent;
 
 use crate::{error::SarError, limits::ResourceLimits};
-
-/// A single contiguous data extent within a sparse logical file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SparseExtent {
-    /// Byte offset of this extent within the logical file.
-    pub offset: u64,
-    /// Byte length of this extent.
-    pub length: u64,
-}
 
 /// Parses a sparse map byte blob into a [`Vec<SparseExtent>`].
 ///
@@ -77,7 +87,13 @@ pub fn parse_sparse_map(
 ///
 /// When `is_64bit` is `true` each entry is written as two little-endian `u64`
 /// values; otherwise as two little-endian `u32` values.
-pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8> {
+///
+/// # Errors
+///
+/// In 32-bit mode (`is_64bit = false`), returns [`SarError::Overflow`] if any
+/// extent's `offset` or `length` exceeds [`u32::MAX`].  Silent truncation is
+/// never permitted.
+pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError> {
     let entry_size: usize = if is_64bit { 16 } else { 8 };
     let mut bytes = Vec::with_capacity(extents.len() * entry_size);
     for extent in extents {
@@ -85,117 +101,15 @@ pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8> {
             bytes.extend_from_slice(&extent.offset.to_le_bytes());
             bytes.extend_from_slice(&extent.length.to_le_bytes());
         } else {
-            #[allow(clippy::cast_possible_truncation)]
-            bytes.extend_from_slice(&(extent.offset as u32).to_le_bytes());
-            #[allow(clippy::cast_possible_truncation)]
-            bytes.extend_from_slice(&(extent.length as u32).to_le_bytes());
+            let offset32 = u32::try_from(extent.offset).map_err(|_| {
+                SarError::Overflow("sparse extent offset exceeds u32::MAX in 32-bit sparse map")
+            })?;
+            let length32 = u32::try_from(extent.length).map_err(|_| {
+                SarError::Overflow("sparse extent length exceeds u32::MAX in 32-bit sparse map")
+            })?;
+            bytes.extend_from_slice(&offset32.to_le_bytes());
+            bytes.extend_from_slice(&length32.to_le_bytes());
         }
     }
-    bytes
-}
-
-/// Validates a sparse extent list against the logical file size.
-///
-/// Checks that:
-/// - No extent's `offset + length` exceeds `logical_size`.
-/// - No two extents overlap (extents must be sorted by offset in ascending
-///   order with no overlap).
-///
-/// # Errors
-///
-/// Returns [`SarError::InvalidMap`] on overlap or bounds violation.
-/// Returns [`SarError::Overflow`] on arithmetic overflow.
-pub fn validate_sparse_extents(
-    extents: &[SparseExtent],
-    logical_size: u64,
-    limits: &ResourceLimits,
-) -> Result<(), SarError> {
-    limits.check_sparse_descriptor_count(extents.len())?;
-    let mut last_end: u64 = 0;
-    let mut total_length: u64 = 0;
-    for extent in extents {
-        let end = extent
-            .offset
-            .checked_add(extent.length)
-            .ok_or(SarError::Overflow("sparse extent offset+length overflow"))?;
-        if end > logical_size {
-            return Err(SarError::InvalidMap(
-                "sparse extent exceeds logical file size",
-            ));
-        }
-        if extent.offset < last_end {
-            return Err(SarError::InvalidMap("sparse extents overlap"));
-        }
-        total_length = total_length
-            .checked_add(extent.length)
-            .ok_or(SarError::Overflow("sparse extent length sum overflow"))?;
-        last_end = end;
-    }
-    // Keep the checked running sum even when reconstruction is not performed
-    // here so malformed maps with overflowing total sparse lengths fail during
-    // validation.
-    let _checked_total_length = total_length;
-    Ok(())
-}
-
-/// Scatter-gathers a flat payload into a logical-size output buffer using the
-/// sparse extent map.
-///
-/// Creates a `logical_size`-byte zero-filled buffer, then writes consecutive
-/// chunks from `payload` at the positions specified by `extents`.  Gaps
-/// between extents remain as `0x00` bytes.
-///
-/// # Errors
-///
-/// Returns [`SarError::InvalidMap`] (`SAR_ERR_INVALID_MAP`) when any extent's
-/// `offset + length` exceeds `logical_size`.
-/// Returns [`SarError::Truncated`] when `payload` is shorter than the total
-/// data described by `extents`.
-/// Returns [`SarError::Overflow`] on arithmetic overflow.
-pub fn apply_sparse_reconstruction(
-    payload: &[u8],
-    extents: &[SparseExtent],
-    logical_size: u64,
-    limits: &ResourceLimits,
-) -> Result<Vec<u8>, SarError> {
-    limits.check_decoded_entry_size(logical_size)?;
-    let logical_size_usize = limits.allocation_len(logical_size, "logical size usize")?;
-    validate_sparse_extents(extents, logical_size, limits)?;
-    let mut output = vec![0u8; logical_size_usize];
-    let mut payload_pos: usize = 0;
-
-    for extent in extents {
-        let end = extent
-            .offset
-            .checked_add(extent.length)
-            .ok_or(SarError::Overflow("sparse extent offset+length overflow"))?;
-        if end > logical_size {
-            return Err(SarError::InvalidMap(
-                "sparse extent exceeds logical file size",
-            ));
-        }
-        let dst_start =
-            usize::try_from(extent.offset).map_err(|_| SarError::Overflow("extent offset"))?;
-        let len =
-            usize::try_from(extent.length).map_err(|_| SarError::Overflow("extent length"))?;
-        let dst_end = dst_start
-            .checked_add(len)
-            .ok_or(SarError::Overflow("extent end"))?;
-        let src_end = payload_pos
-            .checked_add(len)
-            .ok_or(SarError::Overflow("payload position"))?;
-        if src_end > payload.len() {
-            return Err(SarError::Truncated(
-                "payload too short for declared sparse extents",
-            ));
-        }
-        output[dst_start..dst_end].copy_from_slice(&payload[payload_pos..src_end]);
-        payload_pos = src_end;
-    }
-    if payload_pos != payload.len() {
-        return Err(SarError::InvalidMap(
-            "sparse payload has excess bytes beyond declared extents",
-        ));
-    }
-    Ok(output)
+    Ok(bytes)
 }

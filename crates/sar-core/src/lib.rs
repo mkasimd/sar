@@ -16,17 +16,21 @@ pub mod fec;
 pub mod flags;
 /// Binary format structures and parser/writer functions.
 pub mod format;
-/// Fragment-group reassembly (Section 19).
-pub mod fragment;
 /// Checked binary parsing/writing primitives.
 pub mod io;
 /// Unified resource-limit model for the parse/read/write pipeline.
 pub mod limits;
+/// Expanded LFH metadata types (M11a).
+pub mod metadata;
 /// Compliance profile checks.
 pub mod profile;
 /// Archive-level Data Recovery TLV inspection, planning, and repair.
 pub mod recovery;
-/// Sparse-file map parsing, writing, and scatter-gather reconstruction.
+/// Sparse-file map parsing/writing.
+///
+/// Wire-format parse/write lives here (`parse_sparse_map`, `write_sparse_map`).
+/// Semantic validation and reconstruction are owned by [`sar_sparse`]; import
+/// them directly from that crate.
 pub mod sparse;
 /// Forward-only stateless SAR byte-stream parser state model.
 pub mod stream;
@@ -38,8 +42,8 @@ pub mod transform;
 pub use archive::{
     ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput, EntryMetadata,
-    EntryReader, EntryWritten, FecSettings, LogicalFile, SparseWriteOptions, StreamWriteState,
-    VerificationReport,
+    EntryReader, EntryWritten, FecSettings, LfhSizeFieldPolicy, LogicalFile, SparseWriteOptions,
+    StreamWriteState, VerificationReport,
 };
 pub use cdc::{
     CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
@@ -59,10 +63,12 @@ pub use format::{
     lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header,
     parse_lfh, write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
-pub use fragment::{
-    FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
-};
 pub use limits::ResourceLimits;
+pub use metadata::{
+    EntryCdcMetadata, EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata,
+    EntryFecMetadata, EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
+    EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FieldPresence,
+};
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
 pub use recovery::{
     EntryErasure, ErasureInput, ErasureRange, ProtectedRange, RecoveryMetadata, RecoveryPlan,
@@ -77,10 +83,7 @@ pub use sar_delta::{
     apply_store_patch, apply_vcdiff, bsdiff::BsdiffLimits, patch_algo_name, validate_patch_algo_id,
     vcdiff::VcdiffLimits,
 };
-pub use sparse::{
-    SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
-    write_sparse_map,
-};
+pub use sparse::{SparseExtent, parse_sparse_map, write_sparse_map};
 pub use stream::{
     StreamArchiveParser, StreamArchiveSummary, StreamEvent, StreamParseState, StreamStep,
 };

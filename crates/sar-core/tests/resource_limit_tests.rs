@@ -7,12 +7,11 @@ use sar_core::{
         parse_central_dictionary, parse_global_header, parse_lfh, write_central_dictionary,
         write_global_header, write_lfh,
     },
-    fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
-    sparse::{
-        SparseExtent, apply_sparse_reconstruction, parse_sparse_map, validate_sparse_extents,
-    },
+    sparse::{SparseExtent, parse_sparse_map},
     tlv::{Tlv, parse_tlvs, write_tlvs},
 };
+use sar_fragmentation::{FragmentDescriptor, FragmentEntry, FragmentError, reconstruct_fragments};
+use sar_sparse::{SparseError, apply_sparse_reconstruction, validate_sparse_extents};
 
 fn base_limits() -> ResourceLimits {
     ResourceLimits::default()
@@ -228,14 +227,12 @@ fn archive_reader_rejects_excessive_cd_region() {
                 encryption: None,
                 fec: None,
                 sparse: false,
+                ..Default::default()
             },
         )
         .expect("writer");
         writer
-            .add_entry(sar_core::EntryInput {
-                name: "a.txt".into(),
-                payload: b"abc".to_vec(),
-            })
+            .add_entry(sar_core::EntryInput::file("a.txt", b"abc".to_vec()))
             .expect("entry");
         writer.finish().expect("finish");
     }
@@ -344,8 +341,9 @@ fn excessive_fragment_count_fails() {
         ..base_limits()
     };
 
-    let err = reconstruct_fragments(fragments, 2, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)));
+    let err =
+        reconstruct_fragments(fragments, 2, &limits.fragment_limits()).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)));
 }
 
 #[test]
@@ -377,8 +375,9 @@ fn excessive_loss_tolerant_gap_fails() {
         ..base_limits()
     };
 
-    let err = reconstruct_fragments(fragments, 11, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)));
+    let err =
+        reconstruct_fragments(fragments, 11, &limits.fragment_limits()).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)));
 }
 
 #[test]
@@ -404,9 +403,9 @@ fn checked_arithmetic_catches_offset_plus_length_overflow() {
         length: 1,
     }];
 
-    let err =
-        validate_sparse_extents(&extents, u64::MAX, &unlimited_limits()).expect_err("must fail");
-    assert!(matches!(err, SarError::Overflow(_)));
+    let err = validate_sparse_extents(&extents, u64::MAX, &unlimited_limits().sparse_limits())
+        .expect_err("must fail");
+    assert!(matches!(err, SparseError::Overflow(_)));
 }
 
 #[test]
@@ -416,9 +415,14 @@ fn unsafe_u64_to_usize_conversion_fails_safely() {
         length: 1,
     }];
 
-    let err = apply_sparse_reconstruction(&[1], &extents, u64::MAX, &unlimited_limits())
-        .expect_err("must fail");
-    assert!(matches!(err, SarError::Overflow(_)));
+    let err = apply_sparse_reconstruction(
+        &[1],
+        &extents,
+        u64::MAX,
+        &unlimited_limits().sparse_limits(),
+    )
+    .expect_err("must fail");
+    assert!(matches!(err, SparseError::Overflow(_)));
 }
 
 #[test]

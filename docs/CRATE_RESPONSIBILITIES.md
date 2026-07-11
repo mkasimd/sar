@@ -364,7 +364,37 @@ sar-delta:
 
 Final role: fragment model, validation, grouping, and reassembly planning.
 
-Current state: marker or near-empty. Some fragment functionality currently appears to be implemented inside `sar-core`, especially through high-level logical reconstruction APIs. This should be corrected later.
+**M11c status: Implemented.** Fragment semantic logic has been moved from `sar-core` to this crate.
+
+### What was moved from `sar-core` (M11c)
+
+* `FragmentDescriptor` — fragment absolute-offset and size model.
+* `FragmentEntry` — per-fragment payload and metadata envelope.
+* `validate_fragment_group` — validates fragment count limits, fragment-group span limits, descriptor bounds, and descriptor non-overlap.
+* `reconstruct_fragments` — validates duplicate `fragment_index`, payload length agreement, index gaps, missing `LAST_FRAGMENT`, descriptor byte-range gaps (initial/middle/tail), and reassembles payloads with LOSS_TOLERANT degraded-output policy.
+* `FragmentError` — crate-local error type.
+* `FragmentLimits` — resource limits for fragment operations (`max_fragment_count`, `max_fragment_group_span`, `max_decoded_entry_size`, `max_loss_tolerant_gap`, `max_allocation_bytes`).
+
+### What remains in `sar-core`
+
+* `LFH fragment descriptor fields` — raw LFH parse/write fields (fragment ID, index, absolute offset, fragment size, LAST_FRAGMENT bit).
+* `FILE_FRAGMENTATION` / `IS_FRAGMENT` / `LAST_FRAGMENT` flag constants.
+* `archive reader/writer fragment integration` — calls into `sar-fragmentation` via `limits.fragment_limits()`.
+* `From<FragmentError> for SarError` — error propagation bridge.
+* `ResourceLimits::fragment_limits()` — converts `ResourceLimits` to `FragmentLimits`.
+
+**M11c corrective pass (M11c-cp):** The `sar_core::fragment` module has been **removed**. It was a thin compatibility re-export with no architectural justification. Callers must import fragment types directly from `sar-fragmentation`.
+
+### Dependency direction
+
+```
+sar-core → sar-fragmentation  (one-way, no cycle)
+sar-fragmentation has no dependency on sar-core
+```
+
+### Deferred
+
+None. All identified semantic logic has been moved.
 
 Should contain:
 
@@ -421,7 +451,37 @@ sar-fragmentation:
 
 Final role: sparse extent model, sparse map semantic validation, and sparse reconstruction planning.
 
-Current state: marker or near-empty. Sparse write/read behavior currently appears to live in `sar-core`, including `write_sparse_entry`, `SparseWriteOptions`, and sparse zero-fill behavior.
+**M11c status: Implemented.** Sparse semantic logic has been moved from `sar-core` to this crate.
+
+### What was moved from `sar-core` (M11c)
+
+* `SparseExtent` — offset/length model for a sparse data region.
+* `validate_sparse_extents` — validates non-zero extent length, sorted order, non-overlap, bounds within logical size, arithmetic overflow safety, and descriptor-count limits.
+* `apply_sparse_reconstruction` — scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because it receives payload bytes.
+* `SparseError` — crate-local error type.
+* `SparseLimits` — resource limits for sparse operations (`max_sparse_map_bytes`, `max_sparse_descriptors`, `max_decoded_entry_size`, `max_allocation_bytes`).
+
+### What remains in `sar-core`
+
+* `parse_sparse_map` / `write_sparse_map` — wire-format binary parse/write of the LFH sparse map blob; remain in `sar-core` because moving them would require `sar-sparse` to depend on `sar-core` (creating a cycle).
+* `SparseExtent` — re-exported from `sar_core::sparse` because `parse_sparse_map` and `write_sparse_map` return/accept it; callers of those wire-format functions must not need a direct `sar-sparse` dependency to name the type. This re-export is **architectural**, not a compatibility shim.
+* `SPARSE_FILES` flag.
+* `archive reader/writer sparse integration` — calls into `sar-sparse` via `limits.sparse_limits()`.
+* `From<SparseError> for SarError` — error propagation bridge.
+* `ResourceLimits::sparse_limits()` — converts `ResourceLimits` to `SparseLimits`.
+
+**M11c corrective pass (M11c-cp):** Semantic sparse re-exports (`SparseError`, `SparseLimits`, `validate_sparse_extents`, `apply_sparse_reconstruction`) have been **removed** from `sar_core::sparse`. `SparseExtent` is kept as documented above. Callers must import semantic sparse types directly from `sar-sparse`.
+
+### Dependency direction
+
+```
+sar-core → sar-sparse  (one-way, no cycle)
+sar-sparse has no dependency on sar-core
+```
+
+### Deferred
+
+`parse_sparse_map` / `write_sparse_map` remain in `sar-core`. Moving them would require `sar-sparse → sar-core` which creates a cycle. These are wire-format functions explicitly listed as "must remain in `sar-core`" by the spec boundary.
 
 Should contain:
 
@@ -477,7 +537,34 @@ sar-sparse:
 
 Final role: recoverable-vs-fatal degradation policy.
 
-Current state: marker or near-empty. LOSS_TOLERANT behavior currently appears partly embedded in `sar-core` high-level reconstruction APIs and CLI flags such as `--allow-lossy`.
+**M11c status: Implemented.** Policy helpers have been added to this crate. `sar-fragmentation` now depends on `sar-loss-tolerant` and calls `gap_degraded_output_permitted()` directly for missing-fragment gap decisions; LOSS_TOLERANT policy is no longer duplicated inline in `sar-fragmentation`.
+
+### What was added (M11c)
+
+* `RecoveryStatus` — enum: `Complete`, `Degraded`, `Failed`.
+* `gap_degraded_output_permitted(is_loss_tolerant: bool) -> bool` — returns whether a missing-fragment gap may produce degraded output.
+* `classify_recovery(has_gap: bool, failed: bool) -> RecoveryStatus` — classifies reconstruction outcome.
+* Documented invariant: LOSS_TOLERANT never suppresses AEAD/authentication failures, signature failures, decompression failures, patch failures, malformed structure, invalid sparse maps, invalid fragment metadata, or deterministic reconstruction failures.
+
+### What remains in `sar-core`
+
+* `LOSS_TOLERANT` flag.
+* Fail-closed behavior for auth/decompression/patch/structural failures.
+* Archive reader/writer integration.
+* Transform ordering (LOSS_TOLERANT never changes transform order).
+* Status/error mapping.
+
+### Dependency direction
+
+```
+sar-fragmentation → sar-loss-tolerant  (one-way; sar-fragmentation calls gap_degraded_output_permitted)
+sar-loss-tolerant has no dependency on sar-core or sar-fragmentation
+sar-core does not depend on sar-loss-tolerant directly
+```
+
+### Deferred
+
+Integration of `RecoveryStatus` into archive reader return types is deferred. The current integration in `sar-core` uses its own `is_degraded: bool` flag. Migrating to `RecoveryStatus` would be an API-breaking change that can be done in a future milestone.
 
 Should contain:
 
@@ -534,7 +621,18 @@ sar-loss-tolerant:
 
 Final role: partition/multi-volume archive-set support, if SAR v1 keeps this as an active feature.
 
-Current state: marker or near-empty. This is the least certain crate.
+**M11c status: Deliberately deferred.** No partition/multi-volume behavior has been invented or implemented. The crate exists as a planned placeholder.
+
+### What remains in `sar-core`
+
+* `PartitionDescriptor` struct.
+* `PARTITIONED_ARCHIVE` flag.
+
+These must remain in `sar-core` because they are wire-format fields. Moving them to `sar-partition` would require `sar-core` to depend on `sar-partition` for integration, which creates a cycle, or require duplication of wire-format structs.
+
+### Deferred reason
+
+Partition/multi-volume spec behavior is not fully defined for SAR v1. No existing implementation to move. Partition functionality is explicitly listed as out-of-scope for M11c.
 
 Should contain, if partition support remains in scope:
 

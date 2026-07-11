@@ -23,15 +23,13 @@ fn no_index_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     for (name, payload) in entries {
         writer
-            .add_entry(EntryInput {
-                name: (*name).to_string(),
-                payload: payload.to_vec(),
-            })
+            .add_entry(EntryInput::file((*name).to_string(), payload.to_vec()))
             .expect("entry");
     }
     writer.finish().expect("finish");
@@ -304,6 +302,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
                 }),
                 fec: None,
                 sparse: false,
+                ..Default::default()
             },
             CompressionSettings {
                 algo_id: 0x01,
@@ -313,10 +312,10 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "enc".into(),
-                payload: b"secret-compressed-payload".to_vec(),
-            })
+            .add_entry(EntryInput::file(
+                "enc",
+                b"secret-compressed-payload".to_vec(),
+            ))
             .expect("entry");
         writer.finish().expect("finish");
     }
@@ -442,6 +441,7 @@ fn archive_writer_exposes_structural_stream_state_model() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
@@ -451,10 +451,7 @@ fn archive_writer_exposes_structural_stream_state_model() {
         sar_core::StreamWriteState::NeedLocalFileHeader
     );
     writer
-        .add_entry(EntryInput {
-            name: "x".into(),
-            payload: b"1".to_vec(),
-        })
+        .add_entry(EntryInput::file("x", b"1".to_vec()))
         .expect("entry");
     assert_eq!(
         writer.stream_state(),

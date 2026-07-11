@@ -24,6 +24,7 @@ fn writer_reader_deflate_roundtrip_no_index() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
         CompressionSettings {
             algo_id: COMP_ALGO_DEFLATE,
@@ -32,10 +33,7 @@ fn writer_reader_deflate_roundtrip_no_index() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "a.txt".into(),
-            payload: b"deflate payload".repeat(64),
-        })
+        .add_entry(EntryInput::file("a.txt", b"deflate payload".repeat(64)))
         .expect("entry");
     writer.finish().expect("finish");
 
@@ -53,6 +51,7 @@ fn writer_reader_zstd_roundtrip_indexed() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
         CompressionSettings {
             algo_id: COMP_ALGO_ZSTD,
@@ -61,10 +60,7 @@ fn writer_reader_zstd_roundtrip_indexed() {
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "b.txt".into(),
-            payload: b"zstd payload".repeat(64),
-        })
+        .add_entry(EntryInput::file("b.txt", b"zstd payload".repeat(64)))
         .expect("entry");
     writer.finish().expect("finish");
 

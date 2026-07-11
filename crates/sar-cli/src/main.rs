@@ -16,18 +16,16 @@ use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
     EncryptionSettings, EntryInput, ErasureInput, FecSettings, GlobalFlags, KeyProvider,
-    KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes,
-    fec::validate_recovery_tlv,
-    fragment::FragmentDescriptor,
-    fragment::FragmentEntry,
-    fragment::reconstruct_fragments,
-    fragment::validate_fragment_group,
-    inspect_recovery_metadata, plan_archive_repair, repair_archive,
-    sparse::{SparseExtent, validate_sparse_extents},
+    KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes, fec::validate_recovery_tlv,
+    inspect_recovery_metadata, plan_archive_repair, repair_archive, sparse::SparseExtent,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
 };
+use sar_fragmentation::{
+    FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
+};
+use sar_sparse::validate_sparse_extents;
 
 const SAR_SPEC_VERSION: &str = "1.0";
 const SAR_CD_VERSION: &str = "1";
@@ -632,6 +630,7 @@ fn create_archive(
                 encryption: Some(settings),
                 fec: fec_settings,
                 sparse: false,
+                ..Default::default()
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -646,6 +645,7 @@ fn create_archive(
                 encryption: None,
                 fec: fec_settings,
                 sparse: false,
+                ..Default::default()
             },
             CompressionSettings {
                 algo_id: compression.algo_id,
@@ -660,7 +660,7 @@ fn create_archive(
             .map(|s| s.to_string_lossy().into_owned())
             .ok_or(SarError::Malformed("input file name is missing"))?;
         let payload = fs::read(&input)?;
-        writer.add_entry(EntryInput { name, payload })?;
+        writer.add_entry(EntryInput::file(name, payload))?;
     } else if input.is_dir() {
         for entry in WalkDir::new(&input).into_iter().filter_map(Result::ok) {
             if !entry.file_type().is_file() {
@@ -672,7 +672,7 @@ fn create_archive(
                 .map_err(|_| SarError::Malformed("failed to compute relative path"))?;
             let name = rel.to_string_lossy().replace('\\', "/");
             let payload = fs::read(entry.path())?;
-            writer.add_entry(EntryInput { name, payload })?;
+            writer.add_entry(EntryInput::file(name, payload))?;
         }
     } else {
         return Err(SarError::Malformed(
@@ -773,7 +773,7 @@ fn write_sparse_payload_via_temp(
     limits: &ResourceLimits,
 ) -> Result<(), SarError> {
     limits.check_decoded_entry_size(logical_size)?;
-    validate_sparse_extents(extents, logical_size, limits)?;
+    validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
     if let Some(parent) = out_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -820,7 +820,7 @@ fn compute_sparse_crc32(
     limits: &ResourceLimits,
 ) -> Result<u32, SarError> {
     limits.check_decoded_entry_size(logical_size)?;
-    validate_sparse_extents(extents, logical_size, limits)?;
+    validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
     let mut hasher = crc32fast::Hasher::new();
     let zero_chunk = [0u8; ZERO_CHUNK_LEN];
     let mut payload_pos = 0usize;
@@ -1045,7 +1045,8 @@ fn extract_archive(
             })
             .collect();
 
-        let (raw, is_degraded) = reconstruct_fragments(frag_entries, assembled_size, &limits)?;
+        let (raw, is_degraded) =
+            reconstruct_fragments(frag_entries, assembled_size, &limits.fragment_limits())?;
         if is_degraded && !allow_lossy {
             return Err(SarError::FragmentGap(
                 "fragment group has gaps; use allow_lossy to permit degraded output",
@@ -1160,7 +1161,8 @@ fn verify_archive(
         let mut sparse_errors = 0u32;
         for entry in &entries {
             if entry.sparse_extents.as_ref().is_some_and(|ext| {
-                validate_sparse_extents(ext, entry.uncompressed_size, &limits).is_err()
+                validate_sparse_extents(ext, entry.uncompressed_size, &limits.sparse_limits())
+                    .is_err()
             }) {
                 eprintln!("recovery verify: sparse extent error in '{}'", entry.name);
                 sparse_errors += 1;
@@ -1205,7 +1207,9 @@ fn verify_archive(
                 Ok::<u64, SarError>(max_end.max(end))
             })?;
 
-            if let Err(err) = validate_fragment_group(&frag_entries, max_offset, &limits) {
+            if let Err(err) =
+                validate_fragment_group(&frag_entries, max_offset, &limits.fragment_limits())
+            {
                 eprintln!("recovery verify: fragment group {fid} error: {err}");
                 frag_errors += 1;
             }

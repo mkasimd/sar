@@ -8,9 +8,17 @@ It is a project-planning and implementation-guidance document, not the wire-form
 
 `docs/MACHINE_READABLE_API.json` tracks the current public API surface exposed by the implementation.
 
+`docs/CRATE_RESPONSIBILITIES.md` tracks intended Rust crate ownership boundaries.
+
+`docs/LIBRARY_LAYOUT.md` tracks intended future shared-library/profile layout for C ABI, Python/PyO3, and other foreign-language bindings.
+
 If this milestone document conflicts with `specification.md`, `specification.md` wins.
 
 If this milestone document appears to describe APIs differently from `docs/MACHINE_READABLE_API.json`, treat `docs/MACHINE_READABLE_API.json` as the current implementation inventory and update whichever document is stale as part of the relevant milestone.
+
+If this milestone document appears to describe crate ownership differently from `docs/CRATE_RESPONSIBILITIES.md`, treat the relevant implementation milestone as responsible for reconciling the two documents.
+
+If this milestone document appears to describe library/profile layout differently from `docs/LIBRARY_LAYOUT.md`, treat `docs/LIBRARY_LAYOUT.md` as the intended profile-layout design and update whichever document is stale as part of the relevant milestone.
 
 ---
 
@@ -33,11 +41,11 @@ core primitives, error model, flags, and checked parsing foundations
 
 ## M2:
 
-Global Header, LFH, Central Directory, and Footer parsing
+Global Header, LFH, Central Dictionary, and Footer parsing
 
 * Global Header parse/validate
 * LFH parse/validate
-* Central Directory parse/validate
+* Central Dictionary parse/validate
 * Footer parse/validate
 * field presence from Global Flags
 * LFH physical-field layout enforcement
@@ -328,7 +336,7 @@ M10 final alignment: TLS_EXPORTER/AAD coverage and crate responsibility guardrai
 * test that additional control-stream AAD uses associated session Global Header bytes
 * test that additional control-stream AAD uses physically present LFH bytes
 * test that LFH tampering causes AEAD failure
-* confirm CTL! remains removed and rejected
+* confirm `CTL!` remains removed and rejected
 * add `docs/CRATE_RESPONSIBILITIES.md`
 * document intended crate ownership boundaries
 * inventory marker crates:
@@ -358,16 +366,12 @@ additional-control-stream TLS_EXPORTER AEAD decrypt/auth completion
 * keep `CTL!` removed and rejected
 * full workspace validation
 
----
-
-# Current and future milestones
-
 ## M11a:
 
 LFH metadata API completeness
 
 * expand `EntryInput` beyond name + payload
-* expand `EntryMetadata` beyond the current partial metadata summary
+* expand `EntryMetadata` beyond the previous partial metadata summary
 * add `EntryMetadata` / `EntryInput` support for:
 
   * path
@@ -389,11 +393,12 @@ LFH metadata API completeness
 * preserve Global Flags vs Entry Mode semantics
 * distinguish physically present LFH fields from semantically active metadata
 * ensure unsupported metadata is not silently dropped
-* expose metadata in a way that is suitable for future C/Python bindings
-* avoid filesystem restoration behavior in this milestone
-* no CLI extraction policy changes yet
+* expose metadata in a way suitable for future C/Python bindings
+* avoid filesystem restoration behavior
+* no CLI extraction policy changes
 
-M11a.1:
+## M11a.1:
+
 64BIT_SIZE LFH layout audit, correction, and implementation default policy
 
 * audit Global Flag `64BIT_SIZE` support
@@ -408,9 +413,13 @@ M11a.1:
 * add or confirm direct tests proving 32-bit and 64-bit LFH layouts have different physical header sizes
 * add negative tests for overflow/truncation
 * define and document implementation writer default policy:
+
   * default writer behavior is `auto`
   * `auto` uses 32-bit LFH size fields when all per-entry Uncompressed Size and Payload Size values fit in `u32`
   * `auto` enables Global Flag `64BIT_SIZE` when any required LFH size value exceeds `u32::MAX`
+  * `auto` may promote to 64-bit only before the Global Header is emitted
+  * after the Global Header is emitted without `64BIT_SIZE`, entries requiring 64-bit LFH size fields must fail closed
+  * forward-only / non-rewindable writers must not rewrite or retroactively change Global Flags
   * API callers may explicitly force 64-bit LFH size fields
   * API callers may explicitly require 32-bit LFH size fields and receive a fail-closed error if any value exceeds `u32::MAX`
 * document this policy in `docs/API.md`
@@ -418,7 +427,6 @@ M11a.1:
 * do not make this policy normative in `specification.md`
 * preserve existing wire format
 * no new protocol features
-
 
 ## M11b:
 
@@ -431,40 +439,201 @@ filesystem metadata encode/decode behavior
 * HAS_SYMLINKS writer and reader support
 * IS_DIRECTORY writer and reader support
 * HIDDEN_ATTR writer and reader support
+* `FieldPresence` model for physically-present filesystem metadata
 * deterministic round-trip tests
-* zero/default handling when fields are physically present but semantically inactive
-* directory-entry payload rules
-* symlink-entry payload/target rules
+* zero/default handling when fields are physically present
+* directory-entry payload rule: directory payload must be zero bytes
+* symlink-entry payload/target rule: symlink target is UTF-8 payload
+* `EntryMetadata::symlink_target`
 * invalid path/symlink metadata validation
+* strict UTF-8 behavior for metadata strings where required
 * metadata interaction with encrypted/compressed entries
 * metadata interaction with `NO_INDEX` archives
 * metadata interaction with fragmented/sparse entries
-* no unsafe restoration defaults
+* side-effect-free library parsing:
+
+  * no chmod
+  * no chown
+  * no timestamp restoration
+  * no directory creation
+  * no symlink creation
+  * no device/FIFO/socket creation
+* filesystem mutation is reserved for explicit CLI/application/profile extraction behavior
 
 ## M11c:
 
 crate-boundary implementation cleanup
 
-* populate or deliberately defer marker crates:
-
-  * `sar-fragmentation`
-  * `sar-sparse`
-  * `sar-loss-tolerant`
-  * `sar-partition`
-* move or delegate semantic helper logic out of `sar-core` where appropriate
-* keep canonical wire-format structs and archive integration APIs in `sar-core`
-* preserve public high-level behavior
-* preserve archive format and status codes
+* complete the M11c corrective crate-boundary pass
+* finish `sar-fragmentation` ownership of fragment semantic helpers
+* finish `sar-sparse` ownership of sparse semantic helpers
+* add or integrate `sar-loss-tolerant` policy helpers, or document integration deferral honestly
+* keep `sar-partition` deliberately deferred unless partition behavior becomes specified
+* remove compatibility-only semantic re-exports from `sar-core`
+* keep physical wire-format parse/write helpers in `sar-core`
+* keep LFH/GH/CD/Footer/TLV/status/error ownership in `sar-core`
+* preserve SAR wire format and archive interoperability
+* preserve status/error semantics unless a current error is clearly wrong
 * preserve M8 sparse/fragment/loss-tolerant behavior
 * preserve M10 streaming/transport behavior
-* add focused crate-level tests for any moved logic
-* update workspace dependencies
-* update `docs/CRATE_RESPONSIBILITIES.md` only if final ownership changes
-* update `docs/API.md` and `docs/MACHINE_READABLE_API.json` only if public API changes during this milestone
+* fix fragment semantic validation gaps:
+
+  * payload length must match fragment descriptor size
+  * shorter payload must fail closed
+  * longer payload must fail closed
+  * duplicate fragment indexes must fail closed
+  * missing `LAST_FRAGMENT` behavior must be documented and tested
+* fix sparse semantic validation/docs consistency:
+
+  * zero-length sparse extents rejected unless explicitly allowed
+  * ordering and overlap checks preserved
+  * payload length agreement checked in the appropriate function
+  * documentation must not overclaim validation scope
+* fix 32-bit sparse-map write truncation:
+
+  * 32-bit sparse-map mode rejects offset/length values greater than `u32::MAX`
+  * 64-bit sparse-map mode preserves full `u64` values
+  * no silent truncation
+* verify `FragmentError` / `SparseError` conversions to `SarError`
+* update `docs/CRATE_RESPONSIBILITIES.md`
+* update `docs/API.md`
+* update `docs/MACHINE_READABLE_API.json`
+* update `docs/MILESTONES.md` only after milestone status is accurate
 * no new protocol features
-* no broad public API redesign unless required by M11a/M11b metadata model
+* full workspace validation
+* CodeQL/security scan where available
+
+## M11c.1:
+
+final fragment completeness and API/docs consistency correction
+
+* finish the final M11c review corrections before starting M11d
+* do not create `sar-archive`
+* do not start the archive API architecture split
+* do not change SAR wire format
+* do not add protocol features
+* preserve archive interoperability
+* fix fragment descriptor byte-range gap handling:
+
+  * descriptor byte-range gaps are missing data
+  * initial descriptor gaps are missing data
+  * tail descriptor gaps are missing data when `logical_size` exceeds the final descriptor end
+  * descriptor gaps without `LOSS_TOLERANT` fail closed
+  * descriptor gaps with `LOSS_TOLERANT` are bounded by `max_loss_tolerant_gap`
+  * descriptor gaps with `LOSS_TOLERANT` return degraded output
+  * descriptor gaps must never suppress payload-size mismatch, duplicate index, overlap, bounds, overflow, or limit errors
+* add tests for:
+
+  * descriptor gap without `LOSS_TOLERANT`
+  * descriptor gap with `LOSS_TOLERANT`
+  * initial descriptor gap without `LOSS_TOLERANT`
+  * tail descriptor gap without `LOSS_TOLERANT`
+  * descriptor gap exceeding `max_loss_tolerant_gap`
+  * valid complete contiguous fragment reconstruction
+* fix `docs/API.md` so fragment and sparse helper descriptions match actual ownership and behavior
+* fix `docs/CRATE_RESPONSIBILITIES.md` so `validate_fragment_group`, `reconstruct_fragments`, `validate_sparse_extents`, and `apply_sparse_reconstruction` are described accurately
+* fix `docs/MACHINE_READABLE_API.json` so moved/removed APIs and current signatures are accurate
+* document removed APIs as removed, not as changed return types:
+
+  * `sar_core::fragment::*`
+  * `sar_core::sparse::validate_sparse_extents`
+  * `sar_core::sparse::apply_sparse_reconstruction`
+* ensure milestone/API inventory text does not describe return-type changes for removed symbols; removed symbols must be listed only under removal notes
+* keep `sar_core::sparse::parse_sparse_map` and `sar_core::sparse::write_sparse_map` as physical LFH sparse-map helpers
+* keep `sar_core::sparse::SparseExtent` only if still required by those wire-format helper signatures
+* remove duplicate Cargo dev-dependencies if present and unnecessary
+* full workspace validation
+* CodeQL/security scan where available
+
+---
+
+# Current and future milestones
 
 ## M11d:
+
+archive API architecture split
+
+* separate canonical SAR wire-format ownership from high-level archive integration
+* introduce preferred new integration crate: `sar-archive`
+* keep `sar-core` focused on canonical wire-format, status/error, limits, and low-level parse/write helpers
+* move high-level archive reader/writer integration out of `sar-core` where appropriate
+* audit before moving code:
+
+  * all current public APIs in `sar-core`
+  * wire-format/status/limit APIs that must remain in `sar-core`
+  * high-level archive APIs that should move to `sar-archive`
+  * dependencies required by reader/writer logic
+  * impact on `sar-stream`
+  * impact on `sar-transport`
+  * impact on `sar-cli`
+  * circular dependency risk
+  * duplicate type risk
+* likely `sar-core` ownership:
+
+  * Global Header structs and parse/write helpers
+  * Local File Header structs and parse/write helpers
+  * Central Dictionary and Footer structs and parse/write helpers
+  * TLV parse/write helpers
+  * Global Flags
+  * Entry Mode
+  * SAR status/error model
+  * resource limits and checked-size helpers
+  * raw wire-format metadata structs
+  * canonical little-endian parsing/writing primitives
+  * low-level validation required to parse SAR wire data safely
+* likely `sar-archive` ownership:
+
+  * `ArchiveReader`
+  * `ArchiveWriter`
+  * archive verification
+  * `EntryInput`
+  * `EntryReader`
+  * `EntryMetadata`
+  * `EntryWritten`
+  * `LogicalFile`
+  * archive-level read/write options
+  * transform orchestration
+  * compression/encryption/FEC/CDC/delta integration
+  * sparse and fragment semantic integration
+  * loss-tolerant reconstruction policy integration
+  * indexed and `NO_INDEX` high-level archive flows
+  * high-level archive metadata reporting
+* prefer one `sar-archive` integration crate over immediate `sar-archive-reader` / `sar-archive-writer` split unless audit proves separate crates are cleaner
+* crate/archive split must stay inside the monorepo
+* preserve M11a.1 LFH size-field policy during the split:
+
+  * `Auto` may promote to 64-bit only before the Global Header is emitted
+  * after the Global Header is emitted without `64BIT_SIZE`, entries requiring 64-bit LFH size fields fail closed
+  * forward-only / non-rewindable writers must not attempt to rewrite Global Flags
+  * streaming writers must require explicit size policy or fail closed when size requirements cannot be known before header emission
+* preserve side-effect-free library parsing:
+
+  * parsing and metadata decoding must not chmod, chown, set timestamps, create directories, create symlinks, or create device/FIFO/socket nodes
+  * filesystem mutations remain explicit CLI/application/profile extraction behavior
+* preserve secret-handling boundaries during the crate split:
+
+  * exporter-derived key material must remain inside crypto/transport security boundaries
+  * ordinary public SAR metadata parsing is not treated as secret
+  * AEAD/tag verification remains the authenticity oracle
+  * authentication failures must not reveal which AAD/context component failed
+* update `sar-cli`, `sar-stream`, `sar-transport`, tests, and docs for new ownership
+* allow Rust API-breaking changes
+* do not keep compatibility re-exports merely to avoid breakage
+* preserve SAR wire format and archive interoperability
+* preserve transform ordering
+* preserve M10 streaming/transport behavior
+* preserve M11a/M11b metadata behavior
+* update `docs/CRATE_RESPONSIBILITIES.md`
+* update `docs/API.md`
+* update `docs/MACHINE_READABLE_API.json`
+* update `docs/LIBRARY_LAYOUT.md` if the crate split changes intended profile/library boundaries
+* no filesystem restoration
+* no CLI metadata behavior
+* no C ABI/Python/mobile bindings yet
+* full workspace validation
+* CodeQL/security scan where available
+
+## M11e:
 
 CLI metadata support
 
@@ -480,11 +649,37 @@ CLI metadata support
 * extraction does not restore setuid/setgid/sticky bits by default
 * symlink extraction is opt-in or policy-gated
 * directory permissions are applied after contents where applicable
+* safe extraction staging policy:
+
+  * create directories with restrictive temporary permissions, preferably `0700` on POSIX
+  * apply final directory permissions only after child entries are written
+  * reject absolute paths and path traversal by default
+  * prevent symlink-following during extraction where platform APIs allow it
+  * use directory-relative / `openat`-style operations where available
+  * symlink creation remains opt-in and policy-gated
+  * hardlink creation is rejected unless a future explicit profile allows it
+  * device/FIFO/socket creation is rejected
+  * UID/GID restoration is disabled by default
+  * setuid/setgid/sticky bits are disabled by default
+  * timestamps and permissions are applied only through explicit extraction policy
+  * document platform-specific limitations and best-effort behavior
 * platform-specific behavior documented
 * deterministic CLI round-trip tests
-* CLI metadata behavior uses library APIs rather than duplicating protocol logic
+* hostile extraction tests where practical:
 
-## M11e:
+  * path traversal attempts
+  * absolute path attempts
+  * symlink traversal attempts
+  * unsafe metadata combinations
+  * directory permission ordering
+  * path replacement attempts where the platform test environment supports them
+* CLI metadata behavior uses library APIs rather than duplicating protocol logic
+* library parsing remains side-effect-free; only explicit CLI extraction paths perform filesystem mutation
+* update `docs/API.md`
+* update `docs/SECURITY.md`
+* update `docs/MACHINE_READABLE_API.json` if CLI/API surface changes
+
+## M11f:
 
 API inventory, conformance profile, and security-doc refresh
 
@@ -493,12 +688,35 @@ API inventory, conformance profile, and security-doc refresh
 * `docs/CONFORMANCE.md` update
 * `docs/SECURITY.md` metadata behavior update
 * `docs/CRATE_RESPONSIBILITIES.md` consistency check
+* `docs/LIBRARY_LAYOUT.md` consistency check
 * `docs/SPEC_QUESTIONS.md` cleanup
 * profile conformance checker refreshed for M1-M11
 * metadata conformance profile added
 * crate-boundary audit result documented
+* archive API split result documented
+* CLI metadata behavior documented
+* side-channel and secret-handling boundaries documented:
+
+  * constant-time comparison is required for secret/authentication material where comparison is unavoidable
+  * public SAR metadata parsing is not treated as secret
+  * AEAD/tag verification is the authenticity oracle
+  * TLS_EXPORTER-derived key material must not be exposed or compared with ordinary equality
+  * authentication failures must not reveal which AAD/context component failed
+  * zeroization expectations for key/exporter-derived material documented where practical
+* transform DoS controls documented:
+
+  * transform initialization is resource-accounted
+  * algorithm switching is controlled by profile/resource limits, not treated as a core wire-format violation
+  * decompression, patching, sparse, fragment, FEC, CDC, and delta stages remain bounded
+  * profile-specific strict modes may reject excessive transform switching
+* cold-storage/tape structural-anchor risk documented without changing SAR v1.0 core wire format:
+
+  * ordinary SAR v1.0 archives must not gain duplicate Global Headers or duplicate Footer/CD blocks unless a future compatible profile/spec extension defines them
+  * recovery sidecars, external container parity, tape block parity, or profile-defined redundant manifests may be evaluated for cold-storage profiles
+  * any future redundancy mechanism must preserve interoperability with specification-compliant SAR readers or be explicitly profile-gated
 * no false Standard Compliance claims
 * binding-readiness notes updated for C/Python future work
+* document monorepo repository layout for C ABI, Python, future mobile bindings, profiles, vectors, fuzzing, and packaging paths
 * full workspace validation
 * CodeQL/security scan if available
 
@@ -518,6 +736,16 @@ conformance profile validator and official vectors
 * stream/session vectors
 * filesystem metadata vectors
 * negative/error vectors
+* profile-specific vectors for static archive, package, stream package, backup, telemetry, and live-media profiles where applicable
+* strict-profile rejection vectors for:
+
+  * unsupported/custom algorithms
+  * unsafe filesystem metadata
+  * lossy package data
+  * unauthenticated post-binding stream entries
+  * excessive resource declarations
+  * profile-disallowed transport/session behavior
+* cold-storage/tape profile vectors only if the profile uses interoperable SAR v1.0 behavior or an explicitly defined sidecar/container/profile mechanism
 
 ## M12b:
 
@@ -527,13 +755,38 @@ fuzzing and malicious corpus
 * LFH fuzzing
 * CD/footer fuzzing
 * TLV fuzzing
+* low-level `sar-core` parser corpus
+* high-level `sar-archive` orchestration corpus
 * transform pipeline fuzzing
+* transform-switching DoS corpus:
+
+  * many small entries with alternating compression algorithms
+  * alternating patch/compression/encryption combinations
+  * repeated decompressor initialization
+  * repeated patch-window initialization
+  * bounded rejection tests for strict profiles
 * crypto/auth ordering corpus
+* TLS_EXPORTER/AAD negative corpus:
+
+  * wrong Global Header AAD
+  * wrong LFH AAD
+  * wrong session binding
+  * bad tag/ciphertext
+  * generic authentication failure behavior
 * decompression bomb corpus
+* allocator-churn / repeated-initialization corpus
 * FEC/fragmentation corpus
 * CDC/delta corpus
 * stream/session corpus
 * metadata edge-case corpus
+* malformed filesystem metadata corpus
+* extraction-race malicious corpus where practical:
+
+  * path replacement attempts
+  * symlink traversal attempts
+  * unsafe directory permission ordering
+  * hostile metadata combinations
+* profile-specific rejection corpus
 
 ## M12c:
 
@@ -546,6 +799,10 @@ docs/API/security posture hardening
 * compatibility notes
 * spec-question cleanup
 * public claims audit
+* crate-boundary consistency audit
+* library-layout consistency audit
+* security-profile documentation draft if needed before M14a
+* document which hardening behavior is implementation/profile policy rather than SAR wire-format behavior
 
 ## M13a:
 
@@ -560,6 +817,35 @@ security audit
 * metadata restoration risks
 * path traversal / symlink hazards
 * UID/GID/permission restoration hazards
+* crate-boundary attack surface
+* profile/library layout attack surface
+* transport/session attack surface
+* FFI readiness risks
+* side-channel and secret-handling audit:
+
+  * TLS_EXPORTER SAR-AEAD key derivation
+  * AEAD tag failure behavior
+  * constant-time handling of secret comparisons where comparison is unavoidable
+  * zeroization of exporter-derived material where practical
+  * no secret material exposed through logs/errors/debug APIs
+* transform resource-accounting audit:
+
+  * decompressor setup limits
+  * patch setup limits
+  * algorithm-switching profile limits
+  * allocator churn / repeated initialization DoS
+  * profile-specific strict-mode rejection behavior
+* filesystem extraction TOCTOU audit:
+
+  * directory staging permissions
+  * symlink/hardlink/path replacement races
+  * final metadata application ordering
+  * platform-specific extraction safety
+* cold-storage/tape resilience audit:
+
+  * identify which structural anchor failures are unrecoverable in plain SAR v1.0
+  * evaluate interoperable sidecar/container/profile approaches
+  * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
 
 ## M13b:
 
@@ -569,34 +855,70 @@ refactoring/remediation from M13a
 * simplify risky abstractions
 * strengthen invariants
 * reduce attack surface
+* harden crate boundaries
+* harden profile/library boundaries
+* harden transform resource accounting
+* harden extraction staging and metadata restoration paths
+* harden secret-handling and error-reporting paths
 * prepare stable public API surface
+* prepare C ABI/Python architecture after security findings
+* preserve monorepo layout when preparing C ABI/Python architecture
 
 ## M14a:
 
 C ABI security profile and split-library design
 
 * define C ABI security profiles before freezing the ABI
+* align profile design with `docs/LIBRARY_LAYOUT.md`
 * define intended shared-library/profile layout:
 
-  * core
-  * static archive
-  * tape
-  * static package
-  * stream package over QUIC
-  * backup
-  * telemetry
-  * live media
-  * generic stream
-  * full/developer
+  * `libsar_core.so`
+  * `libsar_archive.so`
+  * `libsar_profile_static_archive.so`
+  * `libsar_profile_tape.so`
+  * `libsar_profile_static_package.so`
+  * `libsar_profile_stream_package_quic.so`
+  * `libsar_profile_backup.so`
+  * `libsar_profile_backup_quic.so`
+  * `libsar_profile_backup_tcp.so`
+  * `libsar_profile_telemetry.so`
+  * `libsar_profile_live_media_quic.so`
+  * `libsar_profile_stream_generic.so`
+  * `libsar_profile_full.so`
 * decide which APIs are available in each profile
 * define which features are excluded from privileged profiles
 * define profile constructors for C callers
 * define default-deny behavior for unsupported/custom features
+* define FFI-safe metadata ownership:
+
+  * do not expose Rust `String`, `Vec`, `Option<T>`, borrowed references, slices, or lifetime-bearing structs directly across C ABI
+  * expose metadata through opaque handles or C-compatible owned mirror structs
+  * provide explicit destructor functions for all heap-owned metadata/results
+  * define string/buffer lifetime rules
+  * define whether returned strings are UTF-8, nul-terminated, length-delimited, or both
+  * define allocator/freeing side for every returned allocation
 * define ownership and callback rules per profile
+* define cancellation behavior for long-running operations
+* define thread-safety expectations
 * define dependency/linking expectations per profile
+* define side-channel and secret-handling expectations for FFI-facing APIs:
+
+  * secret/authentication material is not exposed through C ABI
+  * authentication failures remain generic
+  * no raw exporter-derived key material is returned to callers
+  * debug/log APIs must not expose secret material
+* evaluate cold-storage/tape structural-anchor resilience as profile design, not default SAR v1.0 wire-format behavior:
+
+  * sidecar recovery index
+  * external container parity
+  * tape block parity
+  * profile-defined redundant manifest
+  * compatibility impact for specification-compliant readers
 * document that shared libraries do not provide process isolation
 * document helper-process model for high-risk/networked use
+* C ABI source, headers, examples, tests, and packaging metadata live under a monorepo path such as `ffi/c/`
 * update `SECURITY.md` / future `SECURITY_PROFILES.md`
+* no stable ABI freeze yet unless the design is complete and reviewed
 
 ## M14b:
 
@@ -606,11 +928,19 @@ stable C ABI
 * opaque handle model
 * archive reader/writer C API
 * profile constructors
+* metadata handle API
+* entry/result destructor API
 * error/status mapping
 * memory ownership rules
 * callback conventions
+* cancellation conventions
+* thread-safety conventions
 * no Rust panic across FFI
 * ABI versioning
+* ABI compatibility tests
+* no raw Rust type layout exposed across C ABI
+* C ABI errors do not reveal secret/AAD mismatch details
+* C ABI APIs do not expose raw key/exporter-derived material
 
 ## M14c:
 
@@ -618,26 +948,133 @@ C ABI examples/tests
 
 * C build examples
 * C archive read/write examples
+* C metadata examples
 * C streaming examples where supported
 * C profile-selection examples
 * C package-profile examples
+* C backup-profile examples where supported
 * C error-handling examples
 * C ABI integration tests
 * sanitizer-friendly FFI tests
+* ownership/destructor misuse tests where practical
+* no-panic-across-FFI tests
+* secret material non-exposure tests where practical
 
 ## M14d:
 
 Python module
 
 * Python bindings over stable API surface
+* align Python package shape with `docs/LIBRARY_LAYOUT.md`
+* do not mirror every Rust crate as a public Python module
+* preferred Python package shape:
+
+  * `sar.archive`
+  * `sar.metadata`
+  * `sar.verify`
+  * `sar.profiles`
+  * `sar.stream` where enabled
+  * `sar.transport` where enabled
 * archive read/write API
 * metadata access API
+* verification API
+* profile-selection API
 * streaming/session API where appropriate
 * Python exceptions mapped from SAR status codes
+* Python-owned metadata objects or safe opaque-handle wrappers
+* PyO3 ownership conversion rules
+* no borrowed views into temporary archive buffers unless owner lifetime is enforced by Python object references
+* optional extras/features for archive/package/quic/backup/full profiles where appropriate
+* default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
+* Python exceptions must not reveal secret/AAD mismatch details
+* Python APIs must not expose raw key/exporter-derived material
+* Python binding source, packaging metadata, tests, and examples live under a monorepo path such as `bindings/python/`
 * wheel/build documentation
 * Python examples/tests
 
 ## M15a:
+
+monorepo packaging and CI layout
+
+* keep all implementation, C ABI, Python, future mobile bindings, profiles, vectors, fuzzing harnesses, packaging metadata, and release scripts in one monorepo
+* do not introduce Git submodules
+* do not plan separate repositories for C ABI, Python, Swift/iOS, Kotlin/Java Android, conformance vectors, profile definitions, or release packaging
+* define repository paths for packaging and generated artifacts, such as:
+
+  * `ffi/c/`
+  * `bindings/python/`
+  * `bindings/swift/`
+  * `bindings/android/`
+  * `profiles/`
+  * `vectors/`
+  * `fuzz/`
+  * `ci/`
+  * `ci/scripts/`
+  * `.github/workflows/`
+* define CI job boundaries:
+
+  * Rust workspace validation
+  * CodeQL/security scan
+  * C ABI build/test
+  * Python wheel build/test
+  * conformance vector validation
+  * fuzz smoke tests
+  * documentation/API inventory validation
+* define which generated outputs are CI artifacts only and must not be committed:
+
+  * `.so`
+  * `.dll`
+  * `.dylib`
+  * `.a`
+  * `.lib`
+  * `.rlib`
+  * `.whl`
+  * generated binary archives
+  * coverage reports
+  * fuzz corpus build outputs
+* define which generated or semi-generated files may be committed once stable:
+
+  * canonical C headers
+  * machine-readable API inventory
+  * conformance vector manifests
+  * package metadata templates
+* document that package creation jobs may look only at their relevant subpaths but still operate inside the same monorepo
+* update `docs/LIBRARY_LAYOUT.md`
+* update `docs/SECURITY.md` or future `docs/SECURITY_PROFILES.md` if packaging profile behavior affects security posture
+
+## M15b:
+
+release artifact automation design
+
+* design GitHub Actions or equivalent CI/CD workflows for creating release artifacts from the monorepo
+* release automation is planned but not required for earlier milestones
+* define artifact matrix for:
+
+  * Rust crates
+  * CLI binaries
+  * C ABI shared libraries
+  * C ABI headers/packages
+  * Python wheels
+  * conformance vectors
+  * documentation bundles
+* define platform matrix where practical:
+
+  * Linux
+  * macOS
+  * Windows
+  * x86_64
+  * aarch64
+* define signing/checksum expectations for release artifacts
+* define SBOM/provenance expectations where practical
+* define versioning rules across Rust crates, C ABI, Python package, CLI, and conformance vectors
+* define release notes expectations
+* define how generated artifacts attach to GitHub Releases or equivalent release pages
+* ensure release automation does not require splitting the repository
+* ensure release automation does not commit generated binaries/modules back to source control
+* update packaging docs and CI docs
+* no requirement to publish packages automatically to external registries unless explicitly added by a later milestone
+
+## M16a:
 
 Swift/iOS package
 
@@ -646,9 +1083,14 @@ Swift/iOS package
 * archive read/write APIs
 * safe metadata handling
 * mobile storage constraints documented
+* profile selection documented
 * Swift examples/tests
+* keep Swift/iOS binding source, packaging metadata, tests, and examples inside this monorepo
+* use a monorepo path such as `bindings/swift/`
+* do not split Swift/iOS bindings into a separate Git repository
+* generated Apple framework/package artifacts are release/CI outputs and must not be committed to source control
 
-## M15b:
+## M16b:
 
 Kotlin/Java Android package
 
@@ -657,5 +1099,9 @@ Kotlin/Java Android package
 * archive read/write APIs
 * safe metadata handling
 * mobile storage constraints documented
+* profile selection documented
 * Android examples/tests
-
+* keep Android binding source, packaging metadata, tests, and examples inside this monorepo
+* use a monorepo path such as `bindings/android/`
+* do not split Android bindings into a separate Git repository
+* generated Android package artifacts are release/CI outputs and must not be committed to source control

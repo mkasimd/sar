@@ -22,11 +22,12 @@ use sar_core::{
     format::{
         GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
     },
-    fragment::{FragmentDescriptor, FragmentEntry, reconstruct_fragments},
-    sparse::{
-        SparseExtent, apply_sparse_reconstruction, validate_sparse_extents, write_sparse_map,
-    },
+    sparse::{SparseExtent, write_sparse_map},
 };
+use sar_fragmentation::{
+    FragmentDescriptor, FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments,
+};
+use sar_sparse::{SparseError, SparseLimits, apply_sparse_reconstruction, validate_sparse_extents};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,6 +35,14 @@ use sar_core::{
 
 fn unlimited() -> ResourceLimits {
     ResourceLimits::unlimited()
+}
+
+fn s(limits: &ResourceLimits) -> SparseLimits {
+    limits.sparse_limits()
+}
+
+fn f(limits: &ResourceLimits) -> FragmentLimits {
+    limits.fragment_limits()
 }
 
 /// Build a minimal no-index archive header.
@@ -76,16 +85,16 @@ fn sparse_expansion_bomb_reject() {
     }];
     let payload = &[0x42u8]; // one byte
 
-    let err = apply_sparse_reconstruction(payload, &extents, 1025, &limits)
+    let err = apply_sparse_reconstruction(payload, &extents, 1025, &s(&limits))
         .expect_err("must reject expansion bomb");
 
     assert!(
-        matches!(err, SarError::LimitExceeded(_)),
+        matches!(err, SparseError::LimitExceeded(_)),
         "expected LimitExceeded, got {err:?}"
     );
     // Confirm it is NOT InvalidMap; the sparse map is structurally valid
     assert!(
-        !matches!(err, SarError::InvalidMap(_)),
+        !matches!(err, SparseError::InvalidMap(_)),
         "must not be InvalidMap — the map is structurally valid but over the limit"
     );
 }
@@ -118,7 +127,7 @@ fn sparse_expansion_bomb_bounded_success() {
     }];
     let payload = &[0x42u8];
 
-    let output = apply_sparse_reconstruction(payload, &extents, 1024, &limits)
+    let output = apply_sparse_reconstruction(payload, &extents, 1024, &s(&limits))
         .expect("reconstruction must succeed when within limit");
 
     assert_eq!(
@@ -153,8 +162,8 @@ fn max_decoded_entry_size_rejects_oversized_logical_output() {
         length: 8,
     }];
     let err =
-        apply_sparse_reconstruction(&[0u8; 8], &extents, 1024, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        apply_sparse_reconstruction(&[0u8; 8], &extents, 1024, &s(&limits)).expect_err("must fail");
+    assert!(matches!(err, SparseError::LimitExceeded(_)), "{err:?}");
 }
 
 /// Allocation above `max_in_memory_buffer` fails before allocation.
@@ -172,8 +181,8 @@ fn max_in_memory_buffer_rejects_oversized_buffer() {
     }];
     // logical_size=1024 > max_in_memory_buffer=512
     let err =
-        apply_sparse_reconstruction(&[0u8; 8], &extents, 1024, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        apply_sparse_reconstruction(&[0u8; 8], &extents, 1024, &s(&limits)).expect_err("must fail");
+    assert!(matches!(err, SparseError::LimitExceeded(_)), "{err:?}");
 }
 
 /// Cumulative pipeline memory above `max_total_pipeline_memory` fails before allocation.
@@ -191,8 +200,8 @@ fn max_total_pipeline_memory_rejects_oversized_cumulative() {
     }];
     // logical_size=1024 > max_total_pipeline_memory=512
     let err =
-        apply_sparse_reconstruction(&[0u8; 8], &extents, 1024, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        apply_sparse_reconstruction(&[0u8; 8], &extents, 1024, &s(&limits)).expect_err("must fail");
+    assert!(matches!(err, SparseError::LimitExceeded(_)), "{err:?}");
 }
 
 /// Checked arithmetic catches overflow in offset + length.
@@ -204,8 +213,8 @@ fn offset_plus_length_overflow_is_caught() {
         offset: u64::MAX,
         length: 1,
     }];
-    let err = validate_sparse_extents(&extents, u64::MAX, &unlimited()).expect_err("must fail");
-    assert!(matches!(err, SarError::Overflow(_)), "{err:?}");
+    let err = validate_sparse_extents(&extents, u64::MAX, &s(&unlimited())).expect_err("must fail");
+    assert!(matches!(err, SparseError::Overflow(_)), "{err:?}");
 }
 
 /// Error is deterministic — the same input produces the same error variant, no panic.
@@ -221,8 +230,8 @@ fn limit_exceeded_error_is_deterministic() {
             length: 1,
         }];
         let err =
-            apply_sparse_reconstruction(&[1u8], &extents, 200, &limits).expect_err("must fail");
-        assert!(matches!(err, SarError::LimitExceeded(_)));
+            apply_sparse_reconstruction(&[1u8], &extents, 200, &s(&limits)).expect_err("must fail");
+        assert!(matches!(err, SparseError::LimitExceeded(_)));
     }
 }
 
@@ -243,7 +252,7 @@ fn sparse_trailing_hole_within_limit_succeeds() {
     }];
     let payload = b"HELLO";
     // logical_size=10 has a trailing hole [5..10)
-    let out = apply_sparse_reconstruction(payload, &extents, 10, &limits)
+    let out = apply_sparse_reconstruction(payload, &extents, 10, &s(&limits))
         .expect("within limit must succeed");
     assert_eq!(out.len(), 10);
     assert_eq!(&out[0..5], b"HELLO");
@@ -263,9 +272,10 @@ fn sparse_trailing_hole_above_limit_fails() {
     }];
     let payload = b"HELLO";
     // logical_size=10 > max_decoded_entry_size=9
-    let err = apply_sparse_reconstruction(payload, &extents, 10, &limits).expect_err("must fail");
+    let err =
+        apply_sparse_reconstruction(payload, &extents, 10, &s(&limits)).expect_err("must fail");
     assert!(
-        matches!(err, SarError::LimitExceeded(_)),
+        matches!(err, SparseError::LimitExceeded(_)),
         "expected LimitExceeded, got {err:?}"
     );
 }
@@ -283,10 +293,13 @@ fn huge_sparse_hole_does_not_allocate_huge_buffer() {
         offset: 0,
         length: 1,
     }];
-    let err = apply_sparse_reconstruction(&[0u8], &extents, huge_logical_size, &limits)
+    let err = apply_sparse_reconstruction(&[0u8], &extents, huge_logical_size, &s(&limits))
         .expect_err("must reject before allocating 4 GiB");
     assert!(
-        matches!(err, SarError::LimitExceeded(_) | SarError::Overflow(_)),
+        matches!(
+            err,
+            SparseError::LimitExceeded(_) | SparseError::Overflow(_)
+        ),
         "expected LimitExceeded or Overflow, got {err:?}"
     );
 }
@@ -299,10 +312,10 @@ fn payload_length_mismatch_returns_map_or_format_error() {
         length: 10,
     }];
     // payload is only 5 bytes but extents claim 10
-    let err =
-        apply_sparse_reconstruction(&[0u8; 5], &extents, 10, &unlimited()).expect_err("must fail");
+    let err = apply_sparse_reconstruction(&[0u8; 5], &extents, 10, &s(&unlimited()))
+        .expect_err("must fail");
     assert!(
-        matches!(err, SarError::Truncated(_)),
+        matches!(err, SparseError::Truncated(_)),
         "expected Truncated, got {err:?}"
     );
 }
@@ -329,7 +342,7 @@ fn excessive_sparse_map_size_fails_at_parse_stage() {
 /// Fragment descriptor end overflow is caught.
 #[test]
 fn fragment_descriptor_end_overflow_fails() {
-    use sar_core::fragment::validate_fragment_group;
+    use sar_fragmentation::validate_fragment_group;
     let fragments = vec![FragmentEntry {
         fragment_index: 0,
         is_last_fragment: true,
@@ -340,9 +353,9 @@ fn fragment_descriptor_end_overflow_fails() {
         },
         payload: vec![1],
     }];
-    let err = validate_fragment_group(&fragments, u64::MAX, &unlimited())
+    let err = validate_fragment_group(&fragments, u64::MAX, &f(&unlimited()))
         .expect_err("must fail with overflow");
-    assert!(matches!(err, SarError::Overflow(_)), "{err:?}");
+    assert!(matches!(err, FragmentError::Overflow(_)), "{err:?}");
 }
 
 /// Huge fragment group span fails before allocation.
@@ -375,8 +388,8 @@ fn huge_fragment_group_span_fails_before_allocation() {
         },
     ];
     // assembled_size = 2049 > max_fragment_group_span = 1024
-    let err = reconstruct_fragments(fragments, 2049, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+    let err = reconstruct_fragments(fragments, 2049, &f(&limits)).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)), "{err:?}");
 }
 
 /// Loss-tolerant huge gap fails due to resource limit.
@@ -409,8 +422,8 @@ fn loss_tolerant_huge_gap_fails_resource_limit() {
             payload: vec![0xBB],
         },
     ];
-    let err = reconstruct_fragments(fragments, 101, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+    let err = reconstruct_fragments(fragments, 101, &f(&limits)).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)), "{err:?}");
 }
 
 /// Fragmented sparse expansion bomb fails safely via `read_all_logical_files`.
@@ -429,7 +442,7 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
         offset: 1023,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
@@ -487,8 +500,8 @@ fn excessive_fragment_count_fails_deterministically() {
             payload: vec![i as u8],
         })
         .collect();
-    let err = reconstruct_fragments(fragments, 3, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+    let err = reconstruct_fragments(fragments, 3, &f(&limits)).expect_err("must fail");
+    assert!(matches!(err, FragmentError::LimitExceeded(_)), "{err:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -544,6 +557,7 @@ fn archive_reader_decompression_respects_entry_limit() {
                 encryption: None,
                 fec: None,
                 sparse: false,
+                ..Default::default()
             },
             sar_core::CompressionSettings {
                 algo_id: COMP_ALGO_DEFLATE,
@@ -553,10 +567,7 @@ fn archive_reader_decompression_respects_entry_limit() {
         .expect("writer");
         // 8 KiB of compressible data
         writer
-            .add_entry(EntryInput {
-                name: "big.bin".into(),
-                payload: b"AAAA".repeat(2048),
-            })
+            .add_entry(EntryInput::file("big.bin", b"AAAA".repeat(2048)))
             .expect("entry");
         writer.finish().expect("finish");
     }
@@ -701,7 +712,7 @@ fn read_all_logical_files_rejects_sparse_expansion_bomb() {
         offset: 1024,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
@@ -742,7 +753,7 @@ fn read_all_logical_files_sparse_bounded_success() {
         offset: 1023,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false);
+    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 

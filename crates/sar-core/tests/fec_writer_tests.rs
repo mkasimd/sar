@@ -33,10 +33,7 @@ fn write_and_read(
     {
         let mut writer = ArchiveWriter::new(Cursor::new(&mut buf), opts)?;
         for (name, payload) in payloads {
-            writer.add_entry(EntryInput {
-                name: name.to_string(),
-                payload: payload.clone(),
-            })?;
+            writer.add_entry(EntryInput::file(name.to_string(), payload.clone()))?;
         }
         writer.finish()?;
     }
@@ -66,6 +63,7 @@ fn xor_fec_roundtrip_no_index() {
         encryption: None,
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
     let results = write_and_read(opts, &[("hello.bin", payload.clone())]).expect("roundtrip");
 
@@ -91,6 +89,7 @@ fn xor_fec_roundtrip_indexed() {
         encryption: None,
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
     let results = write_and_read(opts, &[("data.txt", payload.clone())]).expect("roundtrip");
 
@@ -110,6 +109,7 @@ fn rs_fec_roundtrip_no_index() {
         encryption: None,
         fec: Some(FecSettings::default_rs()),
         sparse: false,
+        ..Default::default()
     };
     let results = write_and_read(opts, &[("data.bin", payload.clone())]).expect("roundtrip");
 
@@ -134,6 +134,7 @@ fn xor_fec_with_compression_roundtrip() {
         encryption: None,
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
     let mut buf = Vec::new();
     {
@@ -147,10 +148,7 @@ fn xor_fec_with_compression_roundtrip() {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "file.bin".to_string(),
-                payload: payload.clone(),
-            })
+            .add_entry(EntryInput::file("file.bin".to_string(), payload.clone()))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -215,6 +213,7 @@ fn xor_fec_with_aead_encryption_roundtrip() {
         }),
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
 
     let password = sar_crypto::SecretString::new("test-password".to_string());
@@ -232,10 +231,7 @@ fn xor_fec_with_aead_encryption_roundtrip() {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "secret.bin".to_string(),
-                payload: payload.clone(),
-            })
+            .add_entry(EntryInput::file("secret.bin".to_string(), payload.clone()))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -277,6 +273,7 @@ fn rs_fec_with_aead_encryption_roundtrip() {
         }),
         fec: Some(FecSettings::default_rs()),
         sparse: false,
+        ..Default::default()
     };
 
     let password = sar_crypto::SecretString::new("pass123".to_string());
@@ -294,10 +291,7 @@ fn rs_fec_with_aead_encryption_roundtrip() {
         )
         .expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "file.bin".to_string(),
-                payload: payload.clone(),
-            })
+            .add_entry(EntryInput::file("file.bin".to_string(), payload.clone()))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -324,6 +318,7 @@ fn verify_fec_archive_succeeds() {
         encryption: None,
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
     let payloads: &[(&str, Vec<u8>)] =
         &[("a.bin", make_payload(256)), ("b.bin", make_payload(512))];
@@ -332,10 +327,7 @@ fn verify_fec_archive_succeeds() {
         let mut writer = ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
         for (name, payload) in payloads {
             writer
-                .add_entry(EntryInput {
-                    name: name.to_string(),
-                    payload: payload.clone(),
-                })
+                .add_entry(EntryInput::file(name.to_string(), payload.clone()))
                 .expect("add");
         }
         writer.finish().expect("finish");
@@ -359,15 +351,13 @@ fn selective_fec_flag_is_set_in_global_header() {
         encryption: None,
         fec: Some(FecSettings::default_xor()),
         sparse: false,
+        ..Default::default()
     };
     let mut buf = Vec::new();
     {
         let mut writer = ArchiveWriter::new(Cursor::new(&mut buf), opts).expect("writer");
         writer
-            .add_entry(EntryInput {
-                name: "x".to_string(),
-                payload: vec![1u8, 2, 3],
-            })
+            .add_entry(EntryInput::file("x".to_string(), vec![1u8, 2, 3]))
             .expect("add");
         writer.finish().expect("finish");
     }
@@ -396,6 +386,7 @@ fn all_entries_receive_fec_metadata() {
         encryption: None,
         fec: Some(FecSettings::default_rs()),
         sparse: false,
+        ..Default::default()
     };
     let results = write_and_read(opts, &payloads).expect("roundtrip");
 
@@ -417,6 +408,7 @@ fn no_fec_when_option_is_none() {
         encryption: None,
         fec: None,
         sparse: false,
+        ..Default::default()
     };
     let results = write_and_read(opts, &[("file.bin", payload.clone())]).expect("roundtrip");
     assert_eq!(results[0].1, payload);

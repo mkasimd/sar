@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 10d source audit)
+# API Inventory (post–Milestone 11c source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -14,6 +14,10 @@ Current scope:
 - Milestone 10a: stateless forward-only SAR byte-stream parser/writer state model
 - Milestone 10d: SAR-over-TCP binding (`sar-transport::tcp`)
 - Milestone 10e: SAR-over-QUIC binding (`sar-transport::quic`, `quic` feature flag)
+- Milestone 11a: LFH Metadata API Completeness — expanded `EntryInput`, expanded `EntryMetadata`, `FieldPresence<T>`, all metadata structs, entry kind representation, complete metadata round-trip
+- Milestone 11b: Filesystem Metadata Encode/Decode — `FieldPresence`-typed path/permissions/owner/timestamps in `EntryMetadata`, directory payload validation, IS_SYMLINK→HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests
+- Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
+- Milestone 11c-cp: Crate-boundary corrective pass — `sar_core::fragment` module removed, semantic sparse re-exports removed, `sar-loss-tolerant` integrated into `sar-fragmentation`, fragment payload/duplicate validation added, zero-length sparse extent rejection added, `write_sparse_map` fail-closed truncation fix, error conversion bridges updated
 - Milestone 12: future FFI / C ABI only; not implemented yet
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
@@ -29,10 +33,10 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 | `sar-cli` | Human-facing CLI over `sar-core` | implemented with some command-surface gaps |
 | `sar-cdc` | Future CDC support placeholder | placeholder |
 | `sar-delta` | Patch algorithm registry, delta LFH field types and validation (M9b); `STORE_PATCH`, `VCDIFF`, and `BSDIFF` application implemented | implemented |
-| `sar-fragmentation` | Future fragmentation support placeholder | placeholder |
-| `sar-partition` | Future partition support placeholder | placeholder |
-| `sar-sparse` | Future sparse-file support placeholder | placeholder |
-| `sar-loss-tolerant` | Future loss-tolerant mode placeholder | placeholder |
+| `sar-fragmentation` | Fragment semantic validation and reassembly (moved from `sar-core` in M11c) | implemented |
+| `sar-partition` | Partition/multi-volume support (deliberately deferred in M11c) | deferred placeholder |
+| `sar-sparse` | Sparse extent validation and reconstruction (moved from `sar-core` in M11c) | implemented |
+| `sar-loss-tolerant` | Loss-tolerant policy helpers (added in M11c) | implemented |
 | `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
 | `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature) | implemented |
 
@@ -59,6 +63,7 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `format`
 - `fragment`  *(new in M8)*
 - `io`
+- `metadata`  *(new in M11a)*
 - `profile`
 - `recovery`  *(new in M8)*
 - `sparse`    *(new in M8)*
@@ -103,6 +108,14 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `sparse: bool` *(new in M8 final pass)* — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
   - `encryption: Option<EncryptionSettings>`
   - `fec: Option<FecSettings>`
+  - `lfh_size_field_policy: LfhSizeFieldPolicy` *(new in M11a.1)* — LFH size-field encoding policy (`Auto`, `Force32`, `Force64`)
+  - `with_path: bool` *(new in M11a)* — sets `HAS_PATH` global flag; allows `EntryInput::path`
+  - `with_permissions: bool` *(new in M11a)* — sets `HAS_PERMS` global flag; allows `EntryInput::permissions`
+  - `with_uid_gid: bool` *(new in M11a)* — sets `EXT_UID_GID` global flag; allows `EntryInput::uid_gid`
+  - `with_timestamps: bool` *(new in M11a)* — sets `EXT_TIME` global flag; allows `EntryInput::timestamps`
+  - `with_per_file_crc: bool` *(new in M11a)* — sets `PER_FILE_CRC` global flag; allows `EntryInput::file_crc32`
+  - `with_content_hash: bool` *(new in M11a)* — sets `DEDUPLICATION` global flag; allows `EntryInput::content_hash`
+  - `with_symlinks: bool` *(new in M11a)* — sets `HAS_SYMLINKS` global flag; allows `EntryInput::kind = Symlink`
 - `SparseWriteOptions` *(new in M8 final pass)*
   - `logical_size: u64` — full apparent file size including holes; written to LFH `Uncompressed Size`
   - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
@@ -147,7 +160,15 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `FecSettings`
   - `default_xor()`
   - `default_rs()`
+- `LfhSizeFieldPolicy` *(new in M11a.1)*
+  - `Auto` *(default)* — writer uses 32-bit LFH size fields when values fit `u32`; promotes to 64-bit before header emission when required
+  - `Force32` — writer emits 32-bit LFH size fields and fails closed if any required size exceeds `u32::MAX`
+  - `Force64` — writer emits 64-bit LFH size fields and sets global `SIZE_64BIT`
 - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
+  - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
+  - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
+  - `EntryMetadata` fields *(new in M11a/M11b)*: `kind: EntryKind`, `path: Option<String>`, `symlink_target: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
+  - *(new in M11b)* `EntryMetadata` adds `path_presence: FieldPresence<String>`, `permissions_presence: FieldPresence<EntryPermissionMetadata>`, `owner_presence: FieldPresence<EntryOwnerMetadata>`, `timestamps_presence: FieldPresence<EntryTimestampMetadata>` — these expose the three-state presence model for filesystem metadata fields
 - `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
 #### Format and parser APIs
@@ -161,6 +182,10 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `parse_central_dictionary(input, flags, limits)`, `write_central_dictionary`
   - `parse_footer`, `write_footer`
   - `global_header_flags_bytes`
+  - `parse_lfh` and `write_lfh` select LFH size width strictly from global `SIZE_64BIT` (`4+4` bytes when unset, `8+8` bytes when set)
+  - 32-bit LFH writes fail closed on values above `u32::MAX` (no truncation)
+  - `compute_lfh_size` includes the physical `4-byte` vs `8-byte` LFH size-field width selected by global `SIZE_64BIT`
+  - Reader paths accept either valid layout for indexed and `NO_INDEX` archives and enforce `ResourceLimits` before allocation
 - TLV helpers:
   - `Tlv`
   - `parse_tlvs(input, limits)`, `write_tlvs`
@@ -170,6 +195,9 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
 - `GlobalFlags`
 - `EntryMode`
   - `ENCRYPTED`, `COMPRESSED`, `FRAGMENT`, `LAST_FRAGMENT`, `LOSS_TOLERANT`
+  - `IS_SYMLINK` *(new in M11a)* — bit 0; entry is a symbolic link
+  - `IS_DIRECTORY` *(new in M11a)* — bit 1; entry is a directory
+  - `HIDDEN_ATTR` *(new in M11a)* — bit; entry is marked hidden
   - `from_bits(bits)`
   - `bits()`
   - `is_encrypted()`
@@ -177,6 +205,8 @@ Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  W
   - `is_fragment()`
   - `is_last_fragment()`
   - `is_loss_tolerant()`  *(new in M8)*
+  - `is_symlink()`  *(new in M11a)*
+  - `is_directory()`  *(new in M11a)*
 - `validate_global_flags()`
 - `validate_entry_mode_against_global()`
 - `SarStatus`, `SarStatusParseError`, `SarError`
@@ -230,7 +260,7 @@ use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 
 let file = File::create("archive.sar")?;
 let mut writer = ArchiveWriter::new(file, ArchiveWriterOptions::default())?;
-writer.add_entry(EntryInput { name: "hello.txt".into(), payload: b"hello".to_vec() })?;
+writer.add_entry(EntryInput::file("hello.txt", b"hello".to_vec()))?;
 writer.finish()?;
 
 let mut reader = ArchiveReader::new(BufReader::new(File::open("archive.sar")?))?;
@@ -268,6 +298,145 @@ Not implemented in this pass, even though some flags or structural fields alread
 - partition reassembly logic
 - transport-layer Stateful Streaming bindings and real network I/O
 - stable FFI / C ABI (Milestone 12)
+
+### M11a metadata API notes
+
+**New public module: `metadata`**
+
+`sar_core::metadata` exposes the following types (all re-exported at crate root):
+
+- `FieldPresence<T>` — three-state presence enum:
+  - `Absent` — Global Flag not set; field physically missing from the wire
+  - `PresentInactive(T)` — Global Flag set but Entry Mode bit unset; field present on wire but semantically inactive
+  - `PresentActive(T)` — Global Flag set and Entry Mode bit set; field present and active
+  - Helper: `is_absent()`, `is_present()`, `is_active()`, `value() -> Option<&T>`
+- `EntryKind` — `RegularFile`, `Directory`, `Symlink`, `EmptyArea`
+- `EntryPermissionMetadata { mode: u16 }`
+- `EntryOwnerMetadata { uid_gid: u32 }` (use `uid()` / `gid()` accessors; low 16 bits = UID, high 16 bits = GID)
+- `EntryTimestampMetadata { mtime: u64, atime: u64, ctime: u64 }`
+- `EntryCompressionMetadata { algo_id: u8 }`
+- `EntryEncryptionMetadata { algo_id: u8, iv_nonce: [u8; 24] }`
+- `EntryFecMetadata { algo_id: u8 }`
+- `EntryCdcMetadata { algo_id: u8 }`
+- `EntryDeltaMetadata { algo_id: u8, base_hash: [u8; 32] }`
+- `EntryFragmentMetadata { fragment_id: u32, fragment_index: u32, absolute_offset: u64, fragment_size: u32 }`
+- `EntrySparseMetadata { logical_size: u64, extents: Vec<SparseExtent> }`
+- `EntryHashMetadata { algo_id: u8, hash: [u8; 32] }`
+
+**Global Flags vs Entry Mode semantics**
+
+Global Flags determine which LFH fields are physically present on the wire.
+Entry Mode bits determine whether physically present fields are semantically active for a particular entry.
+
+When a Global Flag is set but the corresponding Entry Mode bit is unset, the field is *physically present but semantically inactive*.  The reader surfaces this as `FieldPresence::PresentInactive(T)`.
+
+The four `FieldPresence`-typed fields in `EntryMetadata` cover the LFH fields that have both a Global Flag and an Entry Mode toggle:
+
+| Field | Global Flag | Entry Mode bit |
+|---|---|---|
+| `compression_presence` | `COMPRESSED` | `IS_COMPRESSED` |
+| `encryption_presence` | `ENCRYPTED` | `IS_ENCRYPTED` |
+| `fec_presence` | `SELECTIVE_FEC` | n/a (uses `fec_algo_id != 0`) |
+| `fragment_presence` | `FILE_FRAGMENTATION` | `IS_FRAGMENT` |
+
+Fields with only a Global Flag (no Entry Mode toggle) use `Option<T>`: `cdc`, `delta`, `sparse`, `file_crc32`, `content_hash`.
+
+Fields that have a Global Flag but no per-entry Entry Mode toggle (always physically present if the flag is set) now use `FieldPresence<T>` to distinguish *absent* from *physically present*: `permissions_presence`, `owner_presence`, `timestamps_presence`.
+
+The `path_presence` field uses `FieldPresence<String>` and additionally surfaces `PresentInactive("")` for the case where `HAS_PATH` is set but the LFH path length is zero (field present on wire, no path for this entry).
+
+**Writer validation**
+
+The writer validates metadata against enabled Global Flags before writing.  Requesting metadata that requires a flag that is not set fails with `SarError::FlagConflict`.  No metadata is silently dropped.
+
+Examples of validated fields:
+- `EntryInput::path` requires `ArchiveWriterOptions::with_path = true`
+- `EntryInput::permissions` requires `ArchiveWriterOptions::with_permissions = true`
+- `EntryInput::uid_gid` requires `ArchiveWriterOptions::with_uid_gid = true`
+- `EntryInput::timestamps` requires `ArchiveWriterOptions::with_timestamps = true`
+- `EntryInput::file_crc32` requires `ArchiveWriterOptions::with_per_file_crc = true`
+- `EntryInput::content_hash` requires `ArchiveWriterOptions::with_content_hash = true`
+- `EntryInput::kind = Symlink` requires `ArchiveWriterOptions::with_symlinks = true`
+
+`LfhSizeFieldPolicy` is an implementation writer policy for this crate/API surface; it is not a new normative SAR wire-format rule. Readers continue to parse either valid LFH size layout based on the global `SIZE_64BIT` flag.
+
+**M11a writer limitations**
+
+- Fragment, sparse, FEC, CDC, and delta metadata passed in `EntryInput` are not yet wired to the corresponding LFH field writers.  These fields are accepted in the API but have no effect on the on-wire format for this milestone.
+- Encryption IV and FEC value derivation continue to be handled internally by the writer pipeline.
+- No filesystem restoration is performed.
+- No CLI metadata flags are added.
+- No UID/GID, permission, or timestamp restoration occurs.
+
+**M11a non-goals**
+
+The following are explicitly out of scope for M11a:
+- CLI metadata flags
+- Filesystem restoration (symlink extraction, UID/GID restoration, permission restoration, timestamp restoration)
+- Crate-boundary refactor
+- New conformance vector suite
+- C ABI or Python bindings
+- New transport behavior
+- New CDC/delta/FEC semantics
+
+### M11b filesystem metadata encode/decode notes
+
+**New `FieldPresence` fields on `EntryMetadata`**
+
+| Field | Global Flag | Semantics |
+|---|---|---|
+| `path_presence` | `HAS_PATH` | `Absent` = flag not set; `PresentInactive("")` = flag set, path_len=0; `PresentActive(s)` = flag set, non-empty path |
+| `permissions_presence` | `HAS_PERMS` | `Absent` = flag not set; `PresentActive(EntryPermissionMetadata)` = flag set |
+| `owner_presence` | `EXT_UID_GID` | `Absent` = flag not set; `PresentActive(EntryOwnerMetadata)` = flag set |
+| `timestamps_presence` | `EXT_TIME` | `Absent` = flag not set; `PresentActive(EntryTimestampMetadata)` = flag set |
+
+`PresentInactive` is not used for permissions, owner, or timestamps because these fields have no Entry Mode toggle — they are always active when the Global Flag is set.
+
+Zero values for permissions/UID/GID/timestamps are preserved and never collapsed to `Absent`.
+
+**Directory entry payload rule**
+
+When `EntryMode::IS_DIRECTORY` is set, the payload MUST be zero bytes.  The writer rejects directory entries with non-empty payload (`SarError::Malformed`).  The reader rejects LFH entries where `IS_DIRECTORY` is set and `payload_size != 0` (`SarError::Malformed`).
+
+**IS_SYMLINK → HAS_SYMLINKS validation**
+
+The reader calls `validate_entry_mode_against_global` for each LFH.  If `IS_SYMLINK` is set in Entry Mode but the `HAS_SYMLINKS` Global Flag is absent, parsing fails with `SarError::FlagConflict`.  The writer also validates `EntryInput` before writing and rejects symlink entries if `with_symlinks` is not set.
+
+**Symlink representation**
+
+Symlink entries use `EntryInput::kind = Some(EntryKind::Symlink)` and carry the symlink target as the entry payload (UTF-8 encoded path string).  `EntryMetadata::entry_kind` is `EntryKind::Symlink` on read-back and the decoded target is exposed as `EntryMetadata::symlink_target`.  The raw payload bytes remain available in `EntryReader::payload`.  No symlinks are created on the host filesystem, no target resolution is performed, and no path canonicalization is performed in M11b.
+
+**String encoding**
+
+Name and path strings MUST be valid UTF-8.  The reader strictly rejects invalid UTF-8 bytes with `SarError::Malformed` (changed from lossy conversion in M11b).  For symlink entries, the payload is also strictly validated as UTF-8 by both reader and writer; invalid payload bytes are rejected with `SarError::Malformed`.
+
+**Path and name length validation**
+
+The writer validates that path length and name length each fit in a `u16` LFH field (max 65535 bytes).  Oversized strings are rejected with `SarError::Overflow` before writing.
+
+**Writer fail-closed behavior**
+
+Providing metadata that requires a Global Flag that is not set → `SarError::FlagConflict`.  No metadata is silently dropped.  This applies to path (`HAS_PATH`), permissions (`HAS_PERMS`), UID/GID (`EXT_UID_GID`), timestamps (`EXT_TIME`), and symlink entries (`HAS_SYMLINKS`).
+
+**NO_INDEX archives**
+
+All filesystem metadata (path, permissions, UID/GID, timestamps, symlinks, directories, hidden) encodes and parses identically in `NO_INDEX` archives.  No Central Directory is required for LFH metadata interpretation.
+
+**Compressed/encrypted entries**
+
+LFH metadata fields are always in the LFH header before the payload transforms.  Metadata remains parseable without decompressing or decrypting the payload.  Metadata fields are not encrypted.  AEAD/authentication ordering is unchanged.
+
+**Fragment/sparse entries**
+
+Fragment descriptors and sparse map fields coexist with filesystem metadata fields in the LFH.  Field order follows the SAR specification exactly.  The `write_sparse_entry` helper does not accept `EntryInput` (writer limitation); sparse entries created via that path carry only the fields set by the sparse helper.
+
+**M11b non-goals**
+
+- No filesystem restoration (chmod, chown, utime, symlink creation, directory creation, hidden attribute setting).
+- No CLI metadata flags.
+- No new wire-format fields, magic bytes, or end markers.
+- No path canonicalization for extraction.
+- Extraction safety (path traversal prevention, symlink extraction policy) belongs to M11d.
 
 ### M10a stream model notes
 
@@ -465,7 +634,7 @@ Reads all entries, assembles fragment groups, applies sparse reconstruction, and
 
 ### `sar_core::sparse`
 
-Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
+Sparse file map parsing/writing helpers plus architectural `SparseExtent` re-export.
 
 #### Public types
 
@@ -475,12 +644,10 @@ Sparse file map parsing, writing, validation, and scatter-gather reconstruction.
 
 - `parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<Vec<SparseExtent>, SarError>`
   — decodes the raw sparse map from an LFH; 8 bytes per entry in 32-bit mode, 16 bytes in 64-bit mode; returns `SarError::InvalidLength` when byte count is not a multiple of entry size
-- `write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Vec<u8>`
-  — serializes extents back to the wire format
-- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>`
-  — checks that extents are sorted, non-overlapping, within `logical_size` bounds, and within configured sparse-descriptor limits; returns `SarError::InvalidMap` on violation, `SarError::Overflow` on arithmetic overflow
-- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &ResourceLimits) -> Result<Vec<u8>, SarError>`
-  — creates a zero-filled buffer of exactly `logical_size` bytes (the LFH `Uncompressed Size`) and writes each extent slice from `payload` at its declared offset; trailing holes beyond the final extent are filled with `0x00`; returns `SarError::InvalidMap` if an extent exceeds `logical_size` or if payload has excess bytes; returns `SarError::Truncated` if payload is too short for the declared extents
+- `write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>`
+  — serializes extents back to the wire format; in 32-bit mode, fails closed with `SarError::Overflow` if any extent offset or length exceeds `u32::MAX` (no silent truncation); in 64-bit mode, writes full `u64` values
+- `validate_sparse_extents` — **removed** from `sar_core::sparse`; import from `sar_sparse`
+- `apply_sparse_reconstruction` — **removed** from `sar_core::sparse`; import from `sar_sparse`
 
 **Transformation ordering:**
 
@@ -525,23 +692,18 @@ Applies compression/encryption/FEC inherited from the writer options identically
 
 ### `sar_core::fragment`
 
-Fragment group types and archival reassembly.
+**Removed in M11c-cp.** This module was a thin compatibility re-export of types from `sar-fragmentation` with no architectural justification. Callers must import fragment types directly from `sar-fragmentation`:
 
-#### Public types
+- `sar_fragmentation::FragmentError`
+- `sar_fragmentation::FragmentLimits`
+- `sar_fragmentation::FragmentDescriptor`
+- `sar_fragmentation::FragmentEntry`
+- `sar_fragmentation::validate_fragment_group`
+- `sar_fragmentation::reconstruct_fragments`
 
-- `FragmentDescriptor { absolute_offset: u64, fragment_size: u32 }`
-  — position of a fragment in the logical file (from the LFH Fragment Descriptor field)
-- `FragmentEntry { fragment_index: u32, is_last_fragment: bool, is_loss_tolerant: bool, descriptor: FragmentDescriptor, payload: Vec<u8> }`
-  — one fragment's decoded payload and metadata, ready for reassembly
+`sar-core` retains `From<FragmentError> for SarError` and `ResourceLimits::fragment_limits()` as the integration bridge.
 
-#### Public functions
-
-- `validate_fragment_group(fragments: &[FragmentEntry], logical_size: u64, limits: &ResourceLimits) -> Result<(), SarError>`
-  — checks bounds (each fragment fits within `logical_size`), fragment-level overlaps, and configured fragment-count/span limits
-- `reconstruct_fragments(fragments: Vec<FragmentEntry>, logical_size: u64, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>`
-  — sorts fragments by index, fills a `logical_size` zero buffer with each fragment's payload at `descriptor.absolute_offset`
-  — if a gap exists and `is_loss_tolerant` is set on any fragment, fills gap with zeros and returns `(data, true)` (degraded), subject to `max_loss_tolerant_gap`
-  — if a gap exists and no fragment has `is_loss_tolerant`, returns `SarError::FragmentGap`
+**Breaking change (M11c-cp):** `sar_core::fragment::*` is no longer available. Update imports to `sar_fragmentation::*`.
 
 ### `sar_core::recovery`
 
@@ -1574,3 +1736,155 @@ CDC chunk boundaries and recipe hashes are treated in this implementation as ope
 - Portable boundary-regeneration verification across writers
 - Streaming CDC chunking APIs
 - `sar create --cdc fastcdc` CLI flag for creating CDC-annotated archives
+
+---
+
+## `sar-fragmentation` (M11c / M11c-cp)
+
+### Purpose
+
+Fragment semantic validation and reassembly logic. Moved from `sar-core` in M11c.
+
+This crate depends on `sar-loss-tolerant` for gap degraded-output policy (integrated in M11c-cp).
+This crate has no dependency on `sar-core`. `sar-core` integrates it via `From<FragmentError>` and `ResourceLimits::fragment_limits()`.
+
+### Public API
+
+#### Types
+
+- `FragmentError` — error type for fragment operations:
+  - `FragmentError::InvalidMap(msg)` — structurally invalid fragment group
+  - `FragmentError::Bounds(msg)` — fragment descriptor out of bounds
+  - `FragmentError::FragmentGap(msg)` — missing fragment without LOSS_TOLERANT
+  - `FragmentError::LimitExceeded(msg)` — resource limit exceeded
+  - `FragmentError::Overflow(msg)` — arithmetic overflow in descriptor
+  - `FragmentError::PayloadSizeMismatch(msg)` — *(added M11c-cp)* payload `.len()` does not match `descriptor.fragment_size`; always fatal
+  - `FragmentError::DuplicateIndex(msg)` — *(added M11c-cp)* duplicate fragment index in group; always fatal even with LOSS_TOLERANT
+- `FragmentLimits` — resource limits for fragment operations:
+  - `max_fragment_count: usize`
+  - `max_fragment_group_span: u64`
+  - `max_decoded_entry_size: u64`
+  - `max_loss_tolerant_gap: u64`
+  - `max_allocation_bytes: u64`
+- `FragmentDescriptor { absolute_offset: u64, fragment_size: u32 }` — per-fragment extent
+- `FragmentEntry { fragment_index: u32, is_last_fragment: bool, is_loss_tolerant: bool, descriptor: FragmentDescriptor, payload: Vec<u8> }` — decoded fragment with payload
+
+#### Functions
+
+- `validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>` — validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap only
+- `reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>` — reassembles payloads; returns `(data, is_degraded)`; validates duplicate indexes, payload-size agreement, index gaps, missing `LAST_FRAGMENT`, descriptor byte-range gaps (initial/middle/tail), and loss-tolerant degraded-output policy
+
+### Error conversion bridge
+
+`From<FragmentError> for SarError` is implemented in `sar-core`:
+
+- `PayloadSizeMismatch` → `SarError::Malformed` (structural, always fatal)
+- `DuplicateIndex` → `SarError::InvalidMap` (structural, always fatal)
+- `InvalidMap` → `SarError::InvalidMap`
+- `Bounds` → `SarError::Bounds`
+- `FragmentGap` → `SarError::FragmentGap`
+- `LimitExceeded` → `SarError::LimitExceeded`
+- `Overflow` → `SarError::Overflow`
+
+### New `sar-core` methods (M11c)
+
+- `ResourceLimits::fragment_limits() -> FragmentLimits` — converts `ResourceLimits` to `FragmentLimits`
+
+### Breaking changes (M11c-cp)
+
+- **`sar_core::fragment` module removed.** All callers must import from `sar_fragmentation` directly.
+- `FragmentError::PayloadSizeMismatch` and `FragmentError::DuplicateIndex` added; match arms must handle them.
+
+---
+
+## `sar-sparse` (M11c / M11c-cp)
+
+### Purpose
+
+Sparse extent validation and reconstruction logic. Moved from `sar-core` in M11c.
+
+This crate has no dependency on `sar-core`. `sar-core` integrates it via `From<SparseError>` and `ResourceLimits::sparse_limits()`.
+
+Wire-format functions (`parse_sparse_map`, `write_sparse_map`) remain in `sar-core` to avoid a circular dependency.
+
+### Public API
+
+#### Types
+
+- `SparseError` — error type for sparse operations:
+  - `SparseError::InvalidMap(msg)` — invalid sparse extent map (includes zero-length extents, overlap, out-of-order, beyond logical size)
+  - `SparseError::Truncated(msg)` — payload too short for declared extents
+  - `SparseError::LimitExceeded(msg)` — resource limit exceeded
+  - `SparseError::Overflow(msg)` — arithmetic overflow in extent
+- `SparseLimits` — resource limits for sparse operations:
+  - `max_sparse_map_bytes: usize`
+  - `max_sparse_descriptors: usize`
+  - `max_decoded_entry_size: u64`
+  - `max_allocation_bytes: u64`
+- `SparseExtent { offset: u64, length: u64 }` — one sparse data region
+
+#### Functions
+
+- `validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>` — validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety; does not validate payload-length agreement
+- `apply_sparse_reconstruction(payload: &[u8], extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<Vec<u8>, SparseError>` — scatter/gather reconstruction of logical file; zero-fills holes and validates payload-length agreement because payload bytes are available
+
+### Re-exported from `sar-core`
+
+`sar_core::sparse` re-exports only `SparseExtent` (architectural: required to name the type returned by `parse_sparse_map` / accepted by `write_sparse_map` without adding a direct `sar-sparse` dependency).
+
+**Removed in M11c-cp:** `sar_core::SparseError`, `sar_core::SparseLimits`, `sar_core::sparse::validate_sparse_extents`, `sar_core::sparse::apply_sparse_reconstruction`. Update imports to `sar_sparse::*`.
+
+### New `sar-core` methods (M11c)
+
+- `ResourceLimits::sparse_limits() -> SparseLimits` — converts `ResourceLimits` to `SparseLimits`
+
+### Breaking changes (M11c)
+
+- Semantic fragment and sparse helpers were moved out of `sar-core` and now live in `sar-fragmentation` / `sar-sparse`.
+- `SparseError` / `FragmentError` implement `Into<SarError>` via `From`; use `?` at call sites to propagate through `sar-core` APIs.
+
+### Breaking changes (M11c-cp)
+
+- **`sar_core::sparse` semantic re-exports removed** (`SparseError`, `SparseLimits`, `validate_sparse_extents`, `apply_sparse_reconstruction`). Update imports to `sar_sparse::*`.
+- **`sar_core::write_sparse_map` now returns `Result<Vec<u8>, SarError>`** (previously `Vec<u8>`). Update all call sites to use `?` or `.expect()`. In 32-bit mode, fails closed with `SarError::Overflow` instead of silently truncating `u64` to `u32`.
+- **`validate_sparse_extents` now rejects zero-length extents** with `SparseError::InvalidMap`.
+
+---
+
+## `sar-loss-tolerant` (M11c)
+
+### Purpose
+
+Pure policy helpers for LOSS_TOLERANT degraded reconstruction. Added in M11c.
+
+No dependency on `sar-core`. `sar-core` does not depend on `sar-loss-tolerant`; the archive reader uses its own `is_degraded` flag internally.
+
+### Public API
+
+#### Types
+
+- `RecoveryStatus` — reconstruction outcome:
+  - `RecoveryStatus::Complete` — all data present
+  - `RecoveryStatus::Degraded` — some data missing but output produced under LOSS_TOLERANT
+  - `RecoveryStatus::Failed` — reconstruction failed
+
+#### Functions
+
+- `gap_degraded_output_permitted(is_loss_tolerant: bool) -> bool` — returns `is_loss_tolerant`; codifies that gap tolerance requires the LOSS_TOLERANT flag
+- `classify_recovery(has_gap: bool, failed: bool) -> RecoveryStatus` — maps gap/failure booleans to `RecoveryStatus`
+
+### Invariant (documented in source)
+
+LOSS_TOLERANT never suppresses: AEAD/authentication failures, signature failures, decompression failures, patch failures, malformed structure, invalid sparse maps, invalid fragment metadata, or deterministic reconstruction failures.
+
+---
+
+## `sar-partition` (M11c)
+
+### Purpose
+
+Partition/multi-volume archive support. Deliberately deferred in M11c.
+
+No new API. `PartitionDescriptor` and `PARTITIONED_ARCHIVE` remain in `sar-core`.
+
+See `docs/CRATE_RESPONSIBILITIES.md` for deferral rationale.

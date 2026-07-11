@@ -559,40 +559,15 @@ impl StreamArchiveParser {
             }
         }
 
-        let metadata = EntryMetadata {
-            lfh_offset: pending
-                .payload_offset
-                .checked_sub(u64::from(lfh.header_size))
-                .ok_or(SarError::Overflow("LFH offset underflow"))?,
-            name: String::from_utf8_lossy(&lfh.name).into_owned(),
-            path: if lfh.path.is_empty() {
-                None
-            } else {
-                Some(String::from_utf8_lossy(&lfh.path).into_owned())
-            },
-            payload_size: lfh.payload_size,
-            uncompressed_size: lfh.uncompressed_size,
-            compression_algo_id: effective_comp_algo_id,
-            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
-            is_compressed: is_effectively_compressed,
-            fec: if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
-                let algo_id = lfh.fec_algo_id.unwrap_or(0);
-                crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
-            } else {
-                None
-            },
-            fragment_id: lfh.fragment_id,
-            fragment_index: lfh.fragment_index,
-            fragment_descriptor: lfh.fragment_descriptor.as_ref().map(|fd| {
-                crate::fragment::FragmentDescriptor {
-                    absolute_offset: fd.absolute_offset,
-                    fragment_size: fd.fragment_size,
-                }
-            }),
-            is_fragment: lfh.entry_mode.is_fragment(),
-            is_last_fragment: lfh.entry_mode.is_last_fragment(),
-            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
-            sparse_extents: if archive.header.flags.contains(GlobalFlags::SPARSE_FILES)
+        let fec = if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
+            let algo_id = lfh.fec_algo_id.unwrap_or(0);
+            crate::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
+        } else {
+            None
+        };
+
+        let sparse_extents: Option<Vec<crate::sparse::SparseExtent>> =
+            if archive.header.flags.contains(GlobalFlags::SPARSE_FILES)
                 && !lfh.sparse_map.is_empty()
             {
                 let is_64bit = archive.header.flags.contains(GlobalFlags::SIZE_64BIT);
@@ -603,16 +578,173 @@ impl StreamArchiveParser {
                 )?)
             } else {
                 None
+            };
+
+        let cdc_algo_id_opt: Option<u8> = if archive.header.flags.contains(GlobalFlags::CDC_SUPPORT)
+        {
+            let algo_id = lfh.cdc_algo_id.unwrap_or(0);
+            crate::cdc::validate_cdc_algo_id(algo_id)?;
+            Some(algo_id)
+        } else {
+            None
+        };
+
+        let name_str = String::from_utf8(lfh.name.clone())
+            .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
+
+        // Validate directory entry payload rule.
+        if lfh.entry_mode.is_directory() && lfh.payload_size != 0 {
+            return Err(SarError::Malformed(
+                "IS_DIRECTORY entry must have zero Payload Size",
+            ));
+        }
+
+        let entry_kind =
+            crate::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
+        let symlink_target = if matches!(entry_kind, crate::metadata::EntryKind::Symlink) {
+            Some(
+                std::str::from_utf8(&decoded)
+                    .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+
+        let compression_presence = if archive.header.flags.contains(GlobalFlags::COMPRESSED) {
+            let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
+            let cm = crate::metadata::EntryCompressionMetadata {
+                algo_id: raw_algo_id,
+                algorithm_name: compression_algorithm_name(raw_algo_id),
+            };
+            if is_effectively_compressed {
+                crate::metadata::FieldPresence::PresentActive(cm)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(cm)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        let encryption_presence = if archive.header.flags.contains(GlobalFlags::ENCRYPTED) {
+            let algo_id = lfh.encr_algo_id.unwrap_or(0);
+            let iv_nonce = lfh.iv_nonce.unwrap_or([0u8; 24]);
+            let em = crate::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
+            if is_encrypted {
+                crate::metadata::FieldPresence::PresentActive(em)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(em)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        let fec_presence = if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
+            let algo_id = lfh.fec_algo_id.unwrap_or(0);
+            let fm = crate::metadata::EntryFecMetadata {
+                algo_id,
+                summary: fec.clone(),
+            };
+            if algo_id != 0 {
+                crate::metadata::FieldPresence::PresentActive(fm)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(fm)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        let frag_desc_new =
+            lfh.fragment_descriptor
+                .as_ref()
+                .map(|fd| sar_fragmentation::FragmentDescriptor {
+                    absolute_offset: fd.absolute_offset,
+                    fragment_size: fd.fragment_size,
+                });
+
+        let fragment_presence = if archive
+            .header
+            .flags
+            .contains(GlobalFlags::FILE_FRAGMENTATION)
+        {
+            let frag_id = lfh.fragment_id.unwrap_or(0);
+            let frag_idx = lfh.fragment_index.unwrap_or(0);
+            let fm = crate::metadata::EntryFragmentMetadata {
+                fragment_id: frag_id,
+                fragment_index: frag_idx,
+                descriptor: frag_desc_new.clone(),
+                is_last: lfh.entry_mode.is_last_fragment(),
+                is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            };
+            if lfh.entry_mode.is_fragment() {
+                crate::metadata::FieldPresence::PresentActive(fm)
+            } else {
+                crate::metadata::FieldPresence::PresentInactive(fm)
+            }
+        } else {
+            crate::metadata::FieldPresence::Absent
+        };
+
+        let cdc: Option<crate::metadata::EntryCdcMetadata> =
+            cdc_algo_id_opt.map(|algo_id| crate::metadata::EntryCdcMetadata { algo_id });
+
+        let delta: Option<crate::metadata::EntryDeltaMetadata> = if is_has_delta {
+            Some(crate::metadata::EntryDeltaMetadata {
+                patch_algo_id: patch_raw_id,
+                base_hash: lfh.delta_base_hash.unwrap_or([0u8; 32]),
+            })
+        } else {
+            None
+        };
+
+        let sparse: Option<crate::metadata::EntrySparseMetadata> =
+            sparse_extents
+                .as_ref()
+                .map(|extents| crate::metadata::EntrySparseMetadata {
+                    extents: extents.clone(),
+                });
+
+        let has_crc = archive.header.flags.contains(GlobalFlags::PER_FILE_CRC);
+        let has_hash = archive.header.flags.contains(GlobalFlags::DEDUPLICATION);
+        let hash: Option<crate::metadata::EntryHashMetadata> = if has_crc || has_hash {
+            Some(crate::metadata::EntryHashMetadata {
+                crc32: if has_crc { lfh.file_crc32 } else { None },
+                content_hash: if has_hash { lfh.content_hash } else { None },
+            })
+        } else {
+            None
+        };
+
+        let metadata = EntryMetadata {
+            lfh_offset: pending
+                .payload_offset
+                .checked_sub(u64::from(lfh.header_size))
+                .ok_or(SarError::Overflow("LFH offset underflow"))?,
+            name: name_str,
+            path: if lfh.path.is_empty() {
+                None
+            } else {
+                let p = String::from_utf8(lfh.path.clone())
+                    .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                Some(p)
             },
+            symlink_target,
+            payload_size: lfh.payload_size,
+            uncompressed_size: lfh.uncompressed_size,
+            compression_algo_id: effective_comp_algo_id,
+            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
+            is_compressed: is_effectively_compressed,
+            fec,
+            fragment_id: lfh.fragment_id,
+            fragment_index: lfh.fragment_index,
+            fragment_descriptor: frag_desc_new,
+            is_fragment: lfh.entry_mode.is_fragment(),
+            is_last_fragment: lfh.entry_mode.is_last_fragment(),
+            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            sparse_extents,
             file_crc32: lfh.file_crc32,
             content_hash: lfh.content_hash,
-            cdc_algo_id: if archive.header.flags.contains(GlobalFlags::CDC_SUPPORT) {
-                let algo_id = lfh.cdc_algo_id.unwrap_or(0);
-                crate::cdc::validate_cdc_algo_id(algo_id)?;
-                Some(algo_id)
-            } else {
-                None
-            },
+            cdc_algo_id: cdc_algo_id_opt,
             patch_algo_id: if is_has_delta {
                 Some(patch_raw_id)
             } else {
@@ -623,6 +755,72 @@ impl StreamArchiveParser {
             } else {
                 None
             },
+            entry_kind,
+            entry_mode_raw: lfh.entry_mode.bits(),
+            stream_id: lfh.stream_id,
+            sequence_no: lfh.sequence_no,
+            is_hidden: lfh.entry_mode.is_hidden_attr(),
+            permissions: lfh
+                .permissions
+                .map(|mode| crate::metadata::EntryPermissionMetadata { mode }),
+            owner: lfh
+                .uid_gid
+                .map(|uid_gid| crate::metadata::EntryOwnerMetadata { uid_gid }),
+            timestamps: lfh
+                .timestamps
+                .map(|ts| crate::metadata::EntryTimestampMetadata {
+                    mtime: ts[0],
+                    atime: ts[1],
+                    ctime: ts[2],
+                }),
+            // M11b filesystem metadata presence model.
+            path_presence: if archive.header.flags.contains(GlobalFlags::HAS_PATH) {
+                if lfh.path.is_empty() {
+                    crate::metadata::FieldPresence::PresentInactive(String::new())
+                } else {
+                    let p = String::from_utf8(lfh.path.clone())
+                        .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
+                    crate::metadata::FieldPresence::PresentActive(p)
+                }
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            permissions_presence: if archive.header.flags.contains(GlobalFlags::HAS_PERMS) {
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryPermissionMetadata {
+                        mode: lfh.permissions.unwrap_or(0),
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            owner_presence: if archive.header.flags.contains(GlobalFlags::EXT_UID_GID) {
+                crate::metadata::FieldPresence::PresentActive(crate::metadata::EntryOwnerMetadata {
+                    uid_gid: lfh.uid_gid.unwrap_or(0),
+                })
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            timestamps_presence: if archive.header.flags.contains(GlobalFlags::EXT_TIME) {
+                let ts = lfh.timestamps.unwrap_or([0u64; 3]);
+                crate::metadata::FieldPresence::PresentActive(
+                    crate::metadata::EntryTimestampMetadata {
+                        mtime: ts[0],
+                        atime: ts[1],
+                        ctime: ts[2],
+                    },
+                )
+            } else {
+                crate::metadata::FieldPresence::Absent
+            },
+            compression_presence,
+            encryption_presence,
+            fec_presence,
+            fragment_presence,
+            cdc,
+            delta,
+            sparse,
+            hash,
         };
 
         archive.entry_count = archive

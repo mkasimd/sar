@@ -114,15 +114,13 @@ fn archive_writer_auto_sets_cdc_support_for_cdc_metadata() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
         cd_metadata,
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "one.bin".into(),
-            payload: b"abc".to_vec(),
-        })
+        .add_entry(EntryInput::file("one.bin", b"abc".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
@@ -152,6 +150,7 @@ fn archive_writer_rejects_cd_metadata_for_no_index_archives() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
         cd_metadata,
     )

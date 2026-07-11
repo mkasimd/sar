@@ -49,14 +49,12 @@ fn build_archive_no_ec() -> Vec<u8> {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "a.txt".into(),
-            payload: b"hello".to_vec(),
-        })
+        .add_entry(EntryInput::file("a.txt", b"hello".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
     out
@@ -188,14 +186,12 @@ fn plan_repair_unavailable_for_no_index_archive() {
             encryption: None,
             fec: None,
             sparse: false,
+            ..Default::default()
         },
     )
     .expect("writer");
     writer
-        .add_entry(EntryInput {
-            name: "x".into(),
-            payload: b"x".to_vec(),
-        })
+        .add_entry(EntryInput::file("x", b"x".to_vec()))
         .expect("entry");
     writer.finish().expect("finish");
 
