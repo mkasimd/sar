@@ -13,7 +13,8 @@ use sar_core::{
     },
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, KmsContext, KmsParams, SarCryptoError, SecretBytes, SecretString,
+    ENCR_AES256_GCM, KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes,
+    SecretString,
     kms::types::Pbkdf2Params,
 };
 use sar_delta::PATCH_ALGO_STORE_PATCH;
@@ -279,7 +280,7 @@ struct TestKeyProvider {
     password: SecretString,
 }
 
-impl sar_core::KeyProvider for TestKeyProvider {
+impl KeyProvider for TestKeyProvider {
     fn password_for(&self, _ctx: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(Some(self.password.clone()))
     }
@@ -302,7 +303,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
     let password = SecretString::new("m10a-pass".to_string());
     let mut archive = Vec::new();
     {
-        let writer_key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
+        let writer_key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
             password: password.clone(),
         });
         let mut writer = sar_archive::ArchiveWriter::new_with_compression_and_key_provider(
@@ -350,7 +351,7 @@ fn transform_order_and_aead_auth_before_plaintext_are_preserved() {
     let payload_start = header_len + usize::try_from(lfh.header_size).expect("usize");
     archive[payload_start] ^= 0x01; // tamper ciphertext
 
-    let reader_key_provider: Box<dyn sar_core::KeyProvider> =
+    let reader_key_provider: Box<dyn KeyProvider> =
         Box::new(TestKeyProvider { password });
     let mut parser = sar_archive::StreamArchiveParser::new().with_key_provider(reader_key_provider);
     parser.push_bytes(&archive).expect("push");

@@ -1,14 +1,13 @@
 #![allow(dead_code)]
 
 use sar_core::{
-    EntryMode, GlobalFlags, GlobalHeader, KmsContext, KmsData, LocalFileHeader, ResourceLimits,
-    SarCryptoError, SarStatus, SecretBytes, global_header_flags_bytes, write_global_header,
-    write_lfh,
+    EntryMode, GlobalFlags, GlobalHeader, KmsData, LocalFileHeader, ResourceLimits, SarStatus,
+    global_header_flags_bytes, write_global_header, write_lfh,
 };
 use sar_crypto::{
-    AEAD_TAG_SIZE, ENCR_AES256_GCM, KMS_TLS_EXPORTER, SecretString, TLS_EXPORTER_CONTEXT_VERSION_1,
-    TLS_EXPORTER_KDF_DIRECT, TlsExporterParams, aad::build_aead_aad, aead::aead_encrypt,
-    serialize_tls_exporter_kms_payload,
+    AEAD_TAG_SIZE, ENCR_AES256_GCM, KMS_TLS_EXPORTER, KmsContext, KeyProvider, SarCryptoError,
+    SecretBytes, SecretString, TLS_EXPORTER_CONTEXT_VERSION_1, TLS_EXPORTER_KDF_DIRECT,
+    TlsExporterParams, aad::build_aead_aad, aead::aead_encrypt, serialize_tls_exporter_kms_payload,
 };
 use sar_stream::{
     AckFlags, CapabilityFlags, SessionAckFrame, SessionCapabilitiesFrame, SessionFlags,
@@ -23,7 +22,7 @@ use zeroize::Zeroizing;
 /// [`MockTlsExporterKeyProvider`] and the encrypt helpers.
 pub const TEST_KEY: [u8; 32] = [0x42u8; 32];
 
-/// A [`sar_core::KeyProvider`] that returns a fixed test key via
+/// A [`sar_crypto::KeyProvider`] that returns a fixed test key via
 /// `external_key`, bypassing the TLS_EXPORTER derivation path in
 /// `sar-crypto`'s `resolve_cek`.
 ///
@@ -34,7 +33,7 @@ pub struct MockTlsExporterKeyProvider {
     pub key: [u8; 32],
 }
 
-impl sar_core::KeyProvider for MockTlsExporterKeyProvider {
+impl KeyProvider for MockTlsExporterKeyProvider {
     fn password_for(&self, _ctx: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(None)
     }

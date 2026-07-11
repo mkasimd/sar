@@ -9,12 +9,12 @@ use sar_archive::{
     },
 };
 use sar_core::{
-    GlobalFlags, KmsContext, KmsParams, LocalFileHeader, SarCryptoError, SarError,
-    fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad, parse_global_header,
-    parse_lfh, write_lfh,
+    GlobalFlags, LocalFileHeader, SarError, fec_size_field_offset, global_header_flags_bytes,
+    lfh_bytes_for_aad, parse_global_header, parse_lfh, write_lfh,
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretBytes, SecretString,
+    ENCR_AES256_GCM, KeyProvider, KmsContext, KmsParams, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params,
+    SarCryptoError, SecretBytes, SecretString,
 };
 use sar_fec::FEC_ALGO_XOR;
 use zeroize::Zeroizing;
@@ -138,7 +138,7 @@ struct TestKeyProvider {
     password: SecretString,
 }
 
-impl sar_core::KeyProvider for TestKeyProvider {
+impl KeyProvider for TestKeyProvider {
     fn password_for(&self, _ctx: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(Some(self.password.clone()))
     }
@@ -176,7 +176,7 @@ fn write_encrypted_selective_fec_archive() -> (Vec<u8>, SecretString, Vec<u8>) {
     };
 
     let mut archive = Vec::new();
-    let key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
+    let key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
         password: password.clone(),
     });
     {
@@ -238,7 +238,7 @@ fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
 
     assert_eq!(writer_aad, reader_aad);
 
-    let key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider { password });
+    let key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider { password });
     let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&archive))
         .expect("reader")
         .with_key_provider(key_provider);

@@ -74,6 +74,7 @@ Should not contain:
 * real TCP/QUIC transport implementation;
 * CLI behavior;
 * language bindings.
+* public convenience re-exports of `sar-crypto` APIs (`KeyProvider`, `KmsContext`, `KmsParams`, `SarCryptoError`, `SecretBytes`).
 
 Expected final shape:
 
@@ -187,6 +188,7 @@ Should contain:
   * unsupported assigned algorithms.
 * KMS mode registry.
 * KMS payload parsing/serialization.
+* owning public KMS/key-provider/secret buffer APIs (`KmsContext`, `KmsParams`, `KeyProvider`, `SecretBytes`, `SarCryptoError`).
 * KMS validation:
 
   * no raw content-encryption keys in archive metadata;

@@ -54,5 +54,4 @@ pub use metadata::{
 };
 pub use sar_cdc::CDC_MAP_RECORD_LEN;
 pub use sar_cdc::CdcMap;
-pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
 pub use sparse::{SparseExtent, parse_sparse_map, write_sparse_map};

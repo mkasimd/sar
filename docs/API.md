@@ -19,7 +19,7 @@ Current scope:
 - Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to `sar-fragmentation`, sparse semantic logic moved to `sar-sparse`, loss-tolerant policy helpers added to `sar-loss-tolerant`, partition deliberately deferred
 - Milestone 11c-cp: Crate-boundary corrective pass — `sar_core::fragment` module removed, semantic sparse re-exports removed, `sar-loss-tolerant` integrated into `sar-fragmentation`, fragment payload/duplicate validation added, zero-length sparse extent rejection added, `write_sparse_map` fail-closed truncation fix, error conversion bridges updated
 - Milestone 11d: archive API architecture split — high-level archive integration moved from `sar-core` to new `sar-archive`
-- Milestone 12: future FFI / C ABI only; not implemented yet
+- Milestone 12: conformance/fuzz/docs closeout; C ABI remains future work
 
 Feature flags: the `sar-transport` crate exposes a `quic` Cargo feature flag.  When enabled, it adds `sar-transport::quic` with real QUIC/TLS networking via `quinn 0.11`, `rustls 0.23`, and `tokio 1`.  All other crates define no feature flags.
 
@@ -35,6 +35,8 @@ After M11d:
   - `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
   - `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`, `SparseWriteOptions`
   - `StreamArchiveParser`, `StreamEvent`, `StreamStep`, `StreamParseState`, `StreamArchiveSummary`, `StreamWriteState`
+- Crypto/KMS/key-provider APIs are imported from `sar-crypto`:
+  - `KeyProvider`, `KmsContext`, `KmsParams`, `SarCryptoError`, `SecretBytes`
 - `sar-core` now owns canonical wire/status/limits and low-level parse/write helpers (GH/LFH/CD/Footer/TLV, flags, status/error, resource limits, checked parsing/writing primitives, low-level sparse-map wire helpers).
 - SAR v1.0 wire format and interoperability are unchanged by this split.
 - No C ABI, Python bindings, or mobile bindings were started in M11d.
@@ -842,7 +844,7 @@ See `sar_archive::recovery` section above in "M8 APIs".
 
 ### Purpose
 
-`sar-crypto` contains hash functions, AEAD helpers, KMS parameter types/parsers, and the `KeyProvider` abstraction used by `sar-core` and `sar-cli`.
+`sar-crypto` contains hash functions, AEAD helpers, KMS parameter types/parsers, and the `KeyProvider` abstraction consumed directly by archive/CLI/transport crates.
 
 ### Implemented milestone coverage
 

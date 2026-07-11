@@ -19,11 +19,11 @@ use sar_archive::{
 };
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
-    GlobalFlags, KeyProvider, KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes,
-    fec::validate_recovery_tlv, sparse::SparseExtent,
+    GlobalFlags, ResourceLimits, SarError, fec::validate_recovery_tlv, sparse::SparseExtent,
 };
 use sar_crypto::{
-    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
+    ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsContext, KmsParams, KeyProvider,
+    PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SarCryptoError, SecretBytes, SecretString,
 };
 use sar_delta::{PATCH_ALGO_STORE_PATCH, patch_algo_name};
 use sar_fragmentation::{
@@ -165,7 +165,7 @@ impl KeyProvider for CliKeyProvider {
     fn password_for(
         &self,
         _context: &KmsContext,
-    ) -> Result<Option<SecretString>, sar_core::SarCryptoError> {
+    ) -> Result<Option<SecretString>, SarCryptoError> {
         Ok(self.password.clone())
     }
 
@@ -173,14 +173,14 @@ impl KeyProvider for CliKeyProvider {
         &self,
         _context: &KmsContext,
         _wrapped_key: &[u8],
-    ) -> Result<Option<SecretBytes>, sar_core::SarCryptoError> {
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 
     fn external_key(
         &self,
         _context: &KmsContext,
-    ) -> Result<Option<SecretBytes>, sar_core::SarCryptoError> {
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 }

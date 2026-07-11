@@ -14,7 +14,10 @@ use sar_archive::{
     EntryInput, FecSettings,
 };
 use sar_core::{GlobalFlags, SarError, fec::FecSummary};
-use sar_crypto::{ENCR_AES256_GCM, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params};
+use sar_crypto::{
+    ENCR_AES256_GCM, KeyProvider, KmsContext, KmsParams, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params,
+    SarCryptoError, SecretBytes,
+};
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
 
 // ---------------------------------------------------------------------------
@@ -179,26 +182,26 @@ struct TestKeyProvider {
     password: sar_crypto::SecretString,
 }
 
-impl sar_core::KeyProvider for TestKeyProvider {
+impl KeyProvider for TestKeyProvider {
     fn password_for(
         &self,
-        _ctx: &sar_core::KmsContext,
-    ) -> Result<Option<sar_crypto::SecretString>, sar_core::SarCryptoError> {
+        _ctx: &KmsContext,
+    ) -> Result<Option<sar_crypto::SecretString>, SarCryptoError> {
         Ok(Some(self.password.clone()))
     }
 
     fn unwrap_key(
         &self,
-        _ctx: &sar_core::KmsContext,
+        _ctx: &KmsContext,
         _wrapped: &[u8],
-    ) -> Result<Option<sar_core::SecretBytes>, sar_core::SarCryptoError> {
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 
     fn external_key(
         &self,
-        _ctx: &sar_core::KmsContext,
-    ) -> Result<Option<sar_core::SecretBytes>, sar_core::SarCryptoError> {
+        _ctx: &KmsContext,
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
         Ok(None)
     }
 }
@@ -207,7 +210,7 @@ impl sar_core::KeyProvider for TestKeyProvider {
 fn xor_fec_with_aead_encryption_roundtrip() {
     let payload = make_payload(512);
     let salt = [0x42u8; 32];
-    let kms_params = sar_core::KmsParams::Pbkdf2(Pbkdf2Params {
+    let kms_params = KmsParams::Pbkdf2(Pbkdf2Params {
         prf_algo_id: PBKDF2_PRF_HMAC_SHA256,
         salt: salt.to_vec(),
         iterations: 100_000,
@@ -225,7 +228,7 @@ fn xor_fec_with_aead_encryption_roundtrip() {
     };
 
     let password = sar_crypto::SecretString::new("test-password".to_string());
-    let key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
+    let key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
         password: password.clone(),
     });
 
@@ -252,7 +255,7 @@ fn xor_fec_with_aead_encryption_roundtrip() {
     assert!(hdr.flags.contains(GlobalFlags::SELECTIVE_FEC));
     assert!(hdr.flags.contains(GlobalFlags::ENCRYPTED));
 
-    let key_provider2: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
+    let key_provider2: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
         password: password.clone(),
     });
     let reader = reader.with_key_provider(key_provider2);
@@ -270,7 +273,7 @@ fn xor_fec_with_aead_encryption_roundtrip() {
 fn rs_fec_with_aead_encryption_roundtrip() {
     let payload = make_payload(1024);
     let salt = [0x33u8; 32];
-    let kms_params = sar_core::KmsParams::Pbkdf2(Pbkdf2Params {
+    let kms_params = KmsParams::Pbkdf2(Pbkdf2Params {
         prf_algo_id: PBKDF2_PRF_HMAC_SHA256,
         salt: salt.to_vec(),
         iterations: 100_000,
@@ -288,7 +291,7 @@ fn rs_fec_with_aead_encryption_roundtrip() {
     };
 
     let password = sar_crypto::SecretString::new("pass123".to_string());
-    let key_provider: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
+    let key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
         password: password.clone(),
     });
 
@@ -312,7 +315,7 @@ fn rs_fec_with_aead_encryption_roundtrip() {
 
     let mut reader = sar_archive::ArchiveReader::new(Cursor::new(&buf)).expect("reader");
     let _ = reader.read_global_header().expect("header");
-    let key_provider2: Box<dyn sar_core::KeyProvider> = Box::new(TestKeyProvider {
+    let key_provider2: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
         password: password.clone(),
     });
     let mut reader = reader.with_key_provider(key_provider2);
