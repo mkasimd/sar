@@ -16,6 +16,7 @@ use sar_crypto::{
     ENCR_AES256_GCM, KmsContext, KmsParams, SarCryptoError, SecretBytes, SecretString,
     kms::types::Pbkdf2Params,
 };
+use sar_delta::PATCH_ALGO_STORE_PATCH;
 
 fn no_index_archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -431,7 +432,7 @@ fn compressed_store_patch_requires_decompress_before_patch() {
     );
     lfh.entry_mode = EntryMode::from_bits(EntryMode::COMPRESSED);
     lfh.comp_algo_id = Some(0x01);
-    lfh.patch_algo_id = Some(sar_core::PATCH_ALGO_STORE_PATCH);
+    lfh.patch_algo_id = Some(PATCH_ALGO_STORE_PATCH);
     lfh.delta_base_hash = Some([0u8; 32]);
     lfh.uncompressed_size = u64::try_from(payload.len()).expect("payload len");
 

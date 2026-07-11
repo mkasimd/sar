@@ -25,6 +25,7 @@ use sar_core::{
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,
 };
+use sar_delta::{PATCH_ALGO_STORE_PATCH, patch_algo_name};
 use sar_fragmentation::{
     FragmentDescriptor, FragmentEntry, reconstruct_fragments, validate_fragment_group,
 };
@@ -1394,7 +1395,7 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                     if let Some(algo_id) = entry.patch_algo_id {
                         obj.insert(
                             "patch_algorithm".to_string(),
-                            json!(sar_core::patch_algo_name(algo_id)),
+                            json!(patch_algo_name(algo_id)),
                         );
                     }
                 }
@@ -1512,8 +1513,8 @@ fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), SarError> {
                 );
             }
             if let Some(algo_id) = entry.patch_algo_id {
-                let name = sar_core::patch_algo_name(algo_id);
-                let status = if algo_id == sar_core::PATCH_ALGO_STORE_PATCH {
+                let name = patch_algo_name(algo_id);
+                let status = if algo_id == PATCH_ALGO_STORE_PATCH {
                     "applied"
                 } else {
                     "not_implemented"

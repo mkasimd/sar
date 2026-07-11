@@ -48,7 +48,6 @@ Should contain:
   * `sar-crypto`: `From<SarCryptoError>` error bridge in `SarError`.
   * `sar-fec`: FEC TLV classification and validation helpers.
   * `sar-cdc`: CDC LFH metadata parsing.
-  * `sar-delta`: delta LFH metadata parsing.
   * `sar-fragmentation`: fragment descriptor metadata typing.
   * `sar-sparse`: sparse-map wire helper signatures.
 Should keep as core APIs:

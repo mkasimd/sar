@@ -16,6 +16,7 @@ sar-archive = { path = "../sar-archive" }
 sar-compression = { path = "../sar-compression" }
 sar-crypto = { path = "../sar-crypto" }
 sar-cdc = { path = "../sar-cdc" }
+sar-delta = { path = "../sar-delta" }
 sar-fragmentation = { path = "../sar-fragmentation" }
 sar-sparse = { path = "../sar-sparse" }
 
