@@ -171,7 +171,10 @@ fn inspect_recovery_metadata_rejects_malformed_recovery_tlv() {
     let archive = build_archive_with_malformed_recovery_tlv();
     let err = inspect_recovery_metadata(&archive, &unlimited_limits()).expect_err("must fail");
     assert!(
-        matches!(err, SarError::Truncated(_) | SarError::Malformed(_) | SarError::InvalidLength(_)),
+        matches!(
+            err,
+            SarError::Truncated(_) | SarError::Malformed(_) | SarError::InvalidLength(_)
+        ),
         "expected malformed RECOVERY TLV failure, got {err:?}"
     );
 }

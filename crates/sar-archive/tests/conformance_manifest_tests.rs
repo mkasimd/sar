@@ -1050,7 +1050,10 @@ fn archive_recovery_vectors_use_recovery_taxonomy_and_paths() {
         let rel_manifest = manifest_path
             .strip_prefix(&root)
             .unwrap_or_else(|_| panic!("{} is not under vectors root", manifest_path.display()));
-        let rel_manifest_dir = rel_manifest.parent().expect("manifest parent").to_string_lossy();
+        let rel_manifest_dir = rel_manifest
+            .parent()
+            .expect("manifest parent")
+            .to_string_lossy();
 
         let has_archive_recovery = manifest.features.iter().any(|f| f == "recovery:archive");
         let has_fec_feature = manifest.features.iter().any(|f| f.starts_with("fec:"));
@@ -1065,19 +1068,22 @@ fn archive_recovery_vectors_use_recovery_taxonomy_and_paths() {
             if manifest.deferred {
                 failures.push(format!(
                     "[{}] {}: archive-level recovery manifest must not be deferred",
-                    manifest.id, rel_manifest.display()
+                    manifest.id,
+                    rel_manifest.display()
                 ));
             }
             if !rel_manifest_dir.starts_with("valid/recovery/") {
                 failures.push(format!(
                     "[{}] {}: archive-level recovery vectors must live under valid/recovery/",
-                    manifest.id, rel_manifest.display()
+                    manifest.id,
+                    rel_manifest.display()
                 ));
             }
             if has_fec_feature {
                 failures.push(format!(
                     "[{}] {}: archive-level recovery vectors must not use fec:* tags",
-                    manifest.id, rel_manifest.display()
+                    manifest.id,
+                    rel_manifest.display()
                 ));
             }
             if !has_recovery_algo_feature {
@@ -1111,13 +1117,15 @@ fn archive_recovery_vectors_use_recovery_taxonomy_and_paths() {
             if !rel_manifest_dir.starts_with("valid/fec/") {
                 failures.push(format!(
                     "[{}] {}: LFH Selective FEC vectors must live under valid/fec/",
-                    manifest.id, rel_manifest.display()
+                    manifest.id,
+                    rel_manifest.display()
                 ));
             }
             if has_recovery_feature {
                 failures.push(format!(
                     "[{}] {}: LFH Selective FEC vectors must not use recovery:* tags",
-                    manifest.id, rel_manifest.display()
+                    manifest.id,
+                    rel_manifest.display()
                 ));
             }
         }
