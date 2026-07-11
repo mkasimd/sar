@@ -430,9 +430,9 @@ fn unsafe_u64_to_usize_conversion_fails_safely() {
 #[test]
 fn repair_working_set_limit_fails() {
     let archive = build_archive_with_global_ec();
-    let plan = sar_core::plan_archive_repair(
+    let plan = sar_archive::recovery::plan_archive_repair(
         &archive,
-        sar_core::ErasureInput {
+        sar_archive::recovery::ErasureInput {
             entries: Vec::new(),
             archive_ranges: Vec::new(),
         },
@@ -444,6 +444,7 @@ fn repair_working_set_limit_fails() {
         ..base_limits()
     };
 
-    let err = sar_core::repair_archive(&archive, &plan, &limits).expect_err("must fail");
+    let err =
+        sar_archive::recovery::repair_archive(&archive, &plan, &limits).expect_err("must fail");
     assert!(matches!(err, SarError::LimitExceeded(_)));
 }

@@ -215,16 +215,11 @@ fn store_patch_with_compression_decodes_correctly() {
 // STORE_PATCH + encryption
 // ---------------------------------------------------------------------------
 
-/// Verifies that STORE_PATCH works correctly in the full decode pipeline when
-/// the entry is encrypted (AEAD decrypt → decompress → STORE_PATCH identity).
-///
-/// Rather than building a full archive with a key provider (which depends on
-/// password-based KMS setup), this test exercises the same transformation
-/// order by running the encrypt/decrypt pipeline functions directly and then
-/// confirming that `apply_store_patch` succeeds on the decrypted output.
+/// Verifies that the AEAD decrypt → STORE_PATCH pipeline ordering is correct:
+/// the payload must be decrypted before `apply_store_patch` is called.
 #[test]
 fn store_patch_with_encryption_decodes_correctly() {
-    use sar_core::{
+    use sar_archive::transform::{
         DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
     };
     use sar_crypto::aad::build_aead_aad;
@@ -237,7 +232,6 @@ fn store_patch_with_encryption_decodes_correctly() {
     nonce[..12].copy_from_slice(b"nonce-store!");
     let aad = build_aead_aad(b"global-flags", b"lfh-bytes");
 
-    // Encode: encrypt (no compression).
     let encoded = encode_payload_v2(
         &target,
         EncodingPlanV2 {
@@ -254,7 +248,6 @@ fn store_patch_with_encryption_decodes_correctly() {
     )
     .expect("encrypt");
 
-    // Decode: decrypt (same transformation order as archive reader).
     let decoded = decode_payload_v2(
         &encoded,
         DecodingPlanV2 {
@@ -273,7 +266,7 @@ fn store_patch_with_encryption_decodes_correctly() {
     .expect("decrypt");
 
     // STORE_PATCH: the decrypted payload IS the target.
-    let result = sar_core::apply_store_patch(&decoded, target.len() as u64)
+    let result = sar_delta::apply_store_patch(&decoded, target.len() as u64)
         .expect("STORE_PATCH must succeed on decrypted payload");
     assert_eq!(result, target.as_slice());
 }

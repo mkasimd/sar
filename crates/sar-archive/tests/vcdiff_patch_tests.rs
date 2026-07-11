@@ -241,7 +241,7 @@ fn vcdiff_with_compression_decodes_correctly() {
 
 #[test]
 fn vcdiff_with_encryption_decodes_correctly() {
-    use sar_core::{
+    use sar_archive::transform::{
         DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
     };
     use sar_crypto::aad::build_aead_aad;

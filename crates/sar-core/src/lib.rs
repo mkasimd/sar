@@ -19,8 +19,6 @@ pub mod io;
 pub mod limits;
 /// Expanded LFH metadata types (M11a).
 pub mod metadata;
-/// Archive-level Data Recovery TLV inspection, planning, and repair.
-pub mod recovery;
 /// Sparse-file map parsing/writing.
 ///
 /// Wire-format parse/write lives here (`parse_sparse_map`, `write_sparse_map`).
@@ -29,8 +27,6 @@ pub mod recovery;
 pub mod sparse;
 /// Metadata TLV parser/writer.
 pub mod tlv;
-/// Transform pipeline primitives.
-pub mod transform;
 
 pub use cdc::{
     CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
@@ -56,10 +52,6 @@ pub use metadata::{
     EntryFecMetadata, EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
     EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FieldPresence,
 };
-pub use recovery::{
-    EntryErasure, ErasureInput, ErasureRange, ProtectedRange, RecoveryMetadata, RecoveryPlan,
-    RepairReport, inspect_recovery_metadata, plan_archive_repair, repair_archive,
-};
 pub use sar_cdc::CDC_MAP_RECORD_LEN;
 pub use sar_cdc::CdcMap;
 pub use sar_crypto::{KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes};
@@ -70,8 +62,3 @@ pub use sar_delta::{
     vcdiff::VcdiffLimits,
 };
 pub use sparse::{SparseExtent, parse_sparse_map, write_sparse_map};
-pub use transform::{
-    CompressionDecoderTransform, CompressionEncoderTransform, DecoderTransform, DecodingPlan,
-    DecodingPlanV2, EncoderTransform, EncodingPlan, EncodingPlanV2, EntryCryptoContext,
-    decode_payload, decode_payload_v2, encode_payload, encode_payload_v2,
-};

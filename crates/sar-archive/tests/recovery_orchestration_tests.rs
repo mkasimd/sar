@@ -1,7 +1,10 @@
 #![allow(unused_imports)]
 //! Tests for archive-level recovery orchestration (inspect, plan, repair).
 
-use sar_archive::{ArchiveWriter, ArchiveWriterOptions, EntryInput};
+use sar_archive::{
+    ArchiveWriter, ArchiveWriterOptions, EntryInput,
+    recovery::{ErasureInput, ErasureRange, inspect_recovery_metadata, plan_archive_repair},
+};
 use sar_core::{
     GlobalFlags, SarError,
     error::SarStatus,
@@ -9,7 +12,6 @@ use sar_core::{
         CentralDictionary, Footer, GlobalHeader, write_central_dictionary, write_footer,
         write_global_header,
     },
-    recovery::{ErasureInput, ErasureRange, inspect_recovery_metadata, plan_archive_repair},
     tlv::Tlv,
 };
 
@@ -277,8 +279,8 @@ fn archive_level_repair_unavailable_when_spec_incomplete() {
 
 #[test]
 fn repair_archive_fails_without_tlv() {
-    use sar_core::recovery::repair_archive;
-    use sar_core::recovery::{ProtectedRange, RecoveryPlan};
+    use sar_archive::recovery::repair_archive;
+    use sar_archive::recovery::{ProtectedRange, RecoveryPlan};
 
     let archive = build_archive_no_ec();
     // Craft a plan manually (this would never be returned by plan_archive_repair

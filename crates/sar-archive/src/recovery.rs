@@ -12,8 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::SarError,
+use sar_core::{
+    SarError,
     fec::{FecSummary, validate_recovery_tlv},
     flags::GlobalFlags,
     format::{parse_central_dictionary, parse_footer, parse_global_header},

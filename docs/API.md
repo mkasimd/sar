@@ -1,4 +1,4 @@
-# API Inventory (post–Milestone 11c source audit)
+# API Inventory (post–Milestone 11d source audit)
 
 This document is derived from the current Rust workspace source. `specification.md` is used only for terminology and conformance context.
 
@@ -44,7 +44,7 @@ After M11d:
 | Crate | Purpose | Status |
 | --- | --- | --- |
 | `sar-core` | Canonical wire format, status/error, limits, low-level parse/write helpers | implemented |
-| `sar-archive` | High-level archive reader/writer/verify/list/integration APIs | implemented |
+| `sar-archive` | High-level archive reader/writer/verify/list/transform orchestration/recovery/repair APIs | implemented |
 | `sar-compression` | Compression registry and bounded encode/decode helpers | implemented |
 | `sar-crypto` | Hashing, AEAD, KMS types/parsing, key-provider abstraction | implemented with some planned algorithms |
 | `sar-fec` | XOR and Reed-Solomon FEC codecs and metadata parsing | implemented |
@@ -55,93 +55,41 @@ After M11d:
 | `sar-partition` | Partition/multi-volume support (deliberately deferred in M11c) | deferred placeholder |
 | `sar-sparse` | Sparse extent validation and reconstruction (moved from `sar-core` in M11c) | implemented |
 | `sar-loss-tolerant` | Loss-tolerant policy helpers (added in M11c) | implemented |
-| `sar-stream` | In-memory Stateful Streaming Mode session layer over `sar-core` structural parsing | implemented |
+| `sar-stream` | Stateful Streaming Mode session layer; no `sar-archive` dependency as of M11d | implemented |
 | `sar-transport` | Transport abstraction + deterministic in-memory TCP-like/QUIC-like harness over `sar-stream`; SAR-over-TCP binding (M10d); SAR-over-QUIC binding (M10e, `quic` feature) | implemented |
 
 ## `sar-core`
 
 ### Purpose
 
-`sar-core` is the main Rust API surface for reading, writing, verifying, and structurally validating SAR archives. It owns the on-wire format structs, status/error mapping, global/LFH flag rules, TLV handling, archive reader/writer flows, and transform integration with compression, crypto, and FEC crates.
+`sar-core` is the canonical wire-format, status/error, limits, and low-level parse/write helper crate. It owns the on-wire format structs, status/error mapping, global/LFH flag rules, TLV handling, and low-level structural helpers. High-level archive reader/writer integration, transform orchestration, archive stream parsing, profile validation, and recovery/repair orchestration are all owned by `sar-archive` as of M11d.
 
 ### Implemented milestone coverage
 
-- Milestones 1–3: global header, LFH, central dictionary, footer, TLV parsing/writing, archive read/write
-- Milestone 4: compression-aware transform plans and archive integration
-- Milestone 5: AEAD + KMS integration, AAD construction hooks, key-provider integration
-- Milestones 6–7: Selective FEC metadata validation and writer integration
-- Milestone 8: sparse file map module, fragment reassembly module, archive-level recovery module
+- Milestones 1–3: global header, LFH, central dictionary, footer, TLV parsing/writing
+- Milestones 6–7: Selective FEC metadata field parsing and validation
+- Milestone 8: sparse file map wire helpers, FEC TLV validation helpers
 
 ### Public modules
 
-- `archive`
+- `cdc`
 - `error`
 - `fec`
 - `flags`
 - `format`
-- `fragment`  *(new in M8)*
 - `io`
+- `limits`
 - `metadata`  *(new in M11a)*
-- `profile`
-- `recovery`  *(new in M8)*
-- `sparse`    *(new in M8)*
-- `stream`    *(new in M10a)*
+- `sparse`    *(wire helpers only)*
 - `tlv`
-- `transform`
+
+*Moved out in M11d:* `archive`, `stream`, `profile`, `recovery`, `transform` — these modules now live in `sar-archive`. `fragment` was removed in M11c-cp.
 
 ### Main public APIs
 
-#### High-level archive APIs
+#### `ResourceLimits`
 
-- `ArchiveReader<R>`
-  - `new(reader)`
-  - `with_options(reader, ArchiveReaderOptions)`
-  - `with_key_provider(Box<dyn KeyProvider>)`
-  - `read_global_header()`
-  - `next_entry()`
-  - `verify()`
-  - `metadata()`
-- `ArchiveWriter<W>`
-  - `new(writer, ArchiveWriterOptions)`
-  - `new_with_cd_metadata(writer, ArchiveWriterOptions, Vec<Tlv>)`
-  - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
-  - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
-  - `add_entry(EntryInput)`
-  - `write_sparse_entry(name, gathered_payload, SparseWriteOptions)` *(new in M8 final pass)*
-  - `finish()`
-- `StreamArchiveParser`
-  - `new()`
-  - `with_options(ArchiveReaderOptions)`
-  - `with_key_provider(Box<dyn KeyProvider>)`
-  - `push_bytes(&[u8])`
-  - `finalize_input()`
-  - `step() -> Result<StreamStep<StreamEvent>, SarError>`
-- `StreamParseState`, `StreamStep<T>`, `StreamEvent`, `StreamArchiveSummary`
-- `StreamWriteState` + `ArchiveWriter::stream_state()`
-
-#### Important public types
-
-- `ArchiveWriterOptions`
-  - `no_index: bool`
-  - `sparse: bool` *(new in M8 final pass)* — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
-  - `encryption: Option<EncryptionSettings>`
-  - `fec: Option<FecSettings>`
-  - `lfh_size_field_policy: LfhSizeFieldPolicy` *(new in M11a.1)* — LFH size-field encoding policy (`Auto`, `Force32`, `Force64`)
-  - `with_path: bool` *(new in M11a)* — sets `HAS_PATH` global flag; allows `EntryInput::path`
-  - `with_permissions: bool` *(new in M11a)* — sets `HAS_PERMS` global flag; allows `EntryInput::permissions`
-  - `with_uid_gid: bool` *(new in M11a)* — sets `EXT_UID_GID` global flag; allows `EntryInput::uid_gid`
-  - `with_timestamps: bool` *(new in M11a)* — sets `EXT_TIME` global flag; allows `EntryInput::timestamps`
-  - `with_per_file_crc: bool` *(new in M11a)* — sets `PER_FILE_CRC` global flag; allows `EntryInput::file_crc32`
-  - `with_content_hash: bool` *(new in M11a)* — sets `DEDUPLICATION` global flag; allows `EntryInput::content_hash`
-  - `with_symlinks: bool` *(new in M11a)* — sets `HAS_SYMLINKS` global flag; allows `EntryInput::kind = Symlink`
-- `SparseWriteOptions` *(new in M8 final pass)*
-  - `logical_size: u64` — full apparent file size including holes; written to LFH `Uncompressed Size`
-  - `extents: Vec<SparseExtent>` — ordered, non-overlapping sparse extents
-- `ArchiveReaderOptions`
-  - `limits: ResourceLimits`
-  - `delta_base: Option<Vec<u8>>` — explicit base bytes for BSDIFF/VCDIFF patch application; no automatic discovery
-- `ResourceLimits`
-  - `max_archive_size`
+- `max_archive_size`
   - `max_entry_count`
   - `max_lfh_header_bytes`
   - `max_path_bytes`
@@ -170,24 +118,6 @@ After M11d:
   - `max_vcdiff_instruction_count` — maximum number of VCDIFF instructions per window (default: 10 000 000)
   - `max_vcdiff_output_size` — maximum total VCDIFF reconstructed output size; 0 = defer to `max_decoded_entry_size` (default: 0)
   - CLI defaults currently rely on `ResourceLimits::default()` unless the caller or CLI flags override them; the most relevant Stage 4 defaults are `max_archive_size = 16 GiB`, `max_decoded_entry_size = 1 GiB`, `max_in_memory_buffer = 1 GiB`, `max_fragment_group_span = 1 GiB`, and `max_repair_working_set = 2 GiB`
-- `CompressionSettings`
-  - `store()` helper
-- `EncryptionSettings`
-  - `algo_id`
-  - `kms_params: KmsParams`
-- `FecSettings`
-  - `default_xor()`
-  - `default_rs()`
-- `LfhSizeFieldPolicy` *(new in M11a.1)*
-  - `Auto` *(default)* — writer uses 32-bit LFH size fields when values fit `u32`; promotes to 64-bit before header emission when required
-  - `Force32` — writer emits 32-bit LFH size fields and fails closed if any required size exceeds `u32::MAX`
-  - `Force64` — writer emits 64-bit LFH size fields and sets global `SIZE_64BIT`
-- `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`
-  - `EntryInput::file(name, payload)` *(new in M11a)* — ergonomic constructor for a regular file entry
-  - `EntryInput` fields *(new in M11a)*: `kind: Option<EntryKind>`, `path: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `stream_id: Option<u16>`, `sequence_no: Option<u16>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`
-  - `EntryMetadata` fields *(new in M11a/M11b)*: `kind: EntryKind`, `path: Option<String>`, `symlink_target: Option<String>`, `permissions: Option<u16>`, `uid_gid: Option<u32>`, `timestamps: Option<EntryTimestampMetadata>`, `is_hidden: bool`, `compression_presence: FieldPresence<EntryCompressionMetadata>`, `encryption_presence: FieldPresence<EntryEncryptionMetadata>`, `fec_presence: FieldPresence<EntryFecMetadata>`, `fragment_presence: FieldPresence<EntryFragmentMetadata>`, `cdc: Option<EntryCdcMetadata>`, `delta: Option<EntryDeltaMetadata>`, `sparse: Option<EntrySparseMetadata>`, `file_crc32: Option<u32>`, `content_hash: Option<EntryHashMetadata>`, `raw_entry_mode: u16`
-  - *(new in M11b)* `EntryMetadata` adds `path_presence: FieldPresence<String>`, `permissions_presence: FieldPresence<EntryPermissionMetadata>`, `owner_presence: FieldPresence<EntryOwnerMetadata>`, `timestamps_presence: FieldPresence<EntryTimestampMetadata>` — these expose the three-state presence model for filesystem metadata fields
-- `ArchiveSummary`, `VerificationReport`, `ArchiveMetadata`
 
 #### Format and parser APIs
 
@@ -231,19 +161,6 @@ After M11d:
 - `SarStatus::code()`, `SarStatus::name()`
 - `SarError::status()`
 
-#### Transform pipeline APIs
-
-- Traits: `EncoderTransform`, `DecoderTransform`
-- Concrete compression transforms:
-  - `CompressionEncoderTransform`
-  - `CompressionDecoderTransform`
-- Plans and helpers:
-  - `EncodingPlan`, `DecodingPlan`
-  - `EncodingPlanV2`, `DecodingPlanV2`
-  - `EntryCryptoContext`
-  - `encode_payload`, `decode_payload`
-  - `encode_payload_v2`, `decode_payload_v2`
-
 #### FEC-facing public APIs in `sar-core`
 
 - `FecSummary`
@@ -258,8 +175,6 @@ These items are public today, but they are better treated as integration helpers
 
 - `io::ParseCursor<'a>`
 - `io::BinaryWriter`
-- `profile::validate_archive_profile()` and `ComplianceProfile`
-- direct transform plan structs used by `ArchiveReader` / `ArchiveWriter`
 
 ### Error behavior
 
@@ -269,12 +184,24 @@ These items are public today, but they are better treated as integration helpers
 - Encrypted archives require a `KeyProvider`; missing credentials return `SAR_ERR_KEY_MISSING`.
 - Wrong passwords or invalid tags fail before plaintext is released and surface as `SAR_ERR_AUTH_FAILED` / `SAR_ERR_DECRYPT_FAILED` depending on path.
 
-### Example — low-level iteration
+### Example — low-level LFH parse
+
+```rust
+use sar_core::{format::{parse_global_header, parse_lfh}, ResourceLimits};
+
+let limits = ResourceLimits::default();
+let (gh, rest) = parse_global_header(&bytes, &limits)?;
+let (lfh, _rest) = parse_lfh(&rest, gh.flags, &limits)?;
+println!("entry: {}", lfh.name);
+# Ok::<(), sar_core::SarError>(())
+```
+
+### Example — high-level archive write and read (using `sar-archive`)
 
 ```rust
 use std::fs::File;
 use std::io::BufReader;
-use sar_core::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
+use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput};
 
 let file = File::create("archive.sar")?;
 let mut writer = ArchiveWriter::new(file, ArchiveWriterOptions::default())?;
@@ -294,7 +221,7 @@ while let Some(entry) = reader.next_entry()? {
 ```rust
 use std::fs::File;
 use std::io::BufReader;
-use sar_core::ArchiveReader;
+use sar_archive::ArchiveReader;
 
 let mut reader = ArchiveReader::new(BufReader::new(File::open("archive.sar")?))?;
 // read_all_logical_files: assembles fragment groups, applies sparse zero-fill.
@@ -613,9 +540,11 @@ Establishes a QUIC connection to a `QuicSarListener`.
 
 ---
 
-## M8 APIs in `sar-core`
+## M8 APIs — moved to `sar-archive` in M11d
 
-### `sar_core::archive` — high-level extraction types
+### `sar_archive::archive` — high-level extraction types
+
+**Moved from `sar_core::archive` to `sar_archive` in M11d.** Import these types from `sar_archive`, not `sar_core`.
 
 #### `LogicalFile`
 
@@ -682,7 +611,7 @@ The Sparse Map describes the layout of the **fully reconstructed logical payload
 
 When both `SPARSE_FILES` and `FILE_FRAGMENTATION` are enabled, the Sparse Map MUST appear only in the entry with `Fragment Index == 0`. Presence on any other fragment index returns `SarError::InvalidMap` immediately and is **never** suppressed by `allow_lossy`.
 
-#### `ArchiveWriter::write_sparse_entry` *(new in M8 final pass)*
+#### `ArchiveWriter::write_sparse_entry` *(moved to `sar-archive` in M11d)*
 
 ```rust
 pub fn write_sparse_entry(
@@ -725,6 +654,18 @@ Applies compression/encryption/FEC inherited from the writer options identically
 
 ### `sar_core::recovery`
 
+**Moved to `sar_archive::recovery` in M11d.** Import recovery types and functions from `sar_archive::recovery`, not `sar_core`.
+
+**Breaking change (M11d):** `sar_core::recovery::*` is no longer available. Update imports to `sar_archive::recovery::*`.
+
+### `sar_core::transform`
+
+**Moved to `sar_archive::transform` in M11d.** Import transform types and functions from `sar_archive::transform`, not `sar_core`.
+
+**Breaking change (M11d):** `sar_core::transform::*` is no longer available. Update imports to `sar_archive::transform::*`.
+
+### `sar_archive::recovery` — archive-level recovery/repair (M11d)
+
 Archive-level Data Recovery TLV inspection, planning, and repair.
 
 #### Public types
@@ -756,18 +697,104 @@ Archive-level Data Recovery TLV inspection, planning, and repair.
 - LOSS_TOLERANT does not bypass AEAD authentication
 - FEC repair is applied to ciphertext bytes before AEAD authentication
 
-### FFI / C ABI notes for `sar-core`
+### FFI / C ABI notes
 
-- Good future FFI candidates:
-  - archive open/read/close wrappers built around `ArchiveReader`
-  - archive create/add_entry/finish wrappers built around `ArchiveWriter`
-  - archive verify / inspect summary wrappers
-  - `SarStatus`-based status mapping
-- Not FFI-ready as-is:
-  - `ArchiveReader<R>` / `ArchiveWriter<W>` generics
-  - `Box<dyn KeyProvider>` callbacks
-  - `EncoderTransform` / `DecoderTransform` trait objects
-  - helper structs exposing owned Rust collections directly
+- No C ABI has been started. M11d corrective pass does not add C ABI, Python bindings, or mobile bindings.
+- `SarStatus`-based status mapping remains a good future FFI candidate.
+
+---
+
+## `sar-archive`
+
+### Purpose
+
+`sar-archive` is the high-level archive reader/writer, verification, stream parser, transform orchestration, profile validation, and archive-level recovery/repair crate. As of M11d, all high-level archive APIs live here.
+
+Import high-level archive APIs from `sar_archive`, not `sar_core`.
+
+### Implemented milestone coverage
+
+- Milestones 1–3: high-level archive read/write, indexed and `NO_INDEX` flows
+- Milestone 4: compression-aware transform pipeline
+- Milestone 5: AEAD + KMS integration, key-provider integration
+- Milestones 6–7: Selective FEC writer integration
+- Milestone 8: archive-level recovery/repair orchestration, `read_all_logical_files`
+- Milestone 10a: stream archive parser orchestration
+- Milestone 11a/11b: expanded `EntryInput`, `EntryMetadata`, filesystem metadata round-trip
+- Milestone 11d: crate split — moved from `sar-core`
+
+### Public modules
+
+- `archive` (re-exported at crate root)
+- `recovery` — archive-level recovery/repair
+- `transform` — encode/decode pipeline
+
+### Main public APIs
+
+#### High-level archive APIs
+
+- `ArchiveReader<R>`
+  - `new(reader)`
+  - `with_options(reader, ArchiveReaderOptions)`
+  - `with_key_provider(Box<dyn KeyProvider>)`
+  - `read_global_header()`
+  - `next_entry()`
+  - `verify()`
+  - `metadata()`
+  - `read_all_logical_files(allow_lossy: bool)`
+- `ArchiveWriter<W>`
+  - `new(writer, ArchiveWriterOptions)`
+  - `new_with_cd_metadata(writer, ArchiveWriterOptions, Vec<Tlv>)`
+  - `new_with_compression(writer, ArchiveWriterOptions, CompressionSettings)`
+  - `new_with_compression_and_key_provider(writer, ArchiveWriterOptions, CompressionSettings, Option<Box<dyn KeyProvider>>)`
+  - `add_entry(EntryInput)`
+  - `write_sparse_entry(name, gathered_payload, SparseWriteOptions)`
+  - `finish()`
+- `StreamArchiveParser`
+  - `new()`
+  - `with_options(ArchiveReaderOptions)`
+  - `with_key_provider(Box<dyn KeyProvider>)`
+  - `push_bytes(&[u8])`
+  - `finalize_input()`
+  - `step() -> Result<StreamStep<StreamEvent>, SarError>`
+- `StreamParseState`, `StreamStep<T>`, `StreamEvent`, `StreamArchiveSummary`
+- `StreamWriteState` + `ArchiveWriter::stream_state()`
+
+#### Important public types
+
+- `ArchiveWriterOptions`
+  - `no_index: bool`
+  - `sparse: bool` — set `SPARSE_FILES` global flag; required before calling `write_sparse_entry`
+  - `encryption: Option<EncryptionSettings>`
+  - `fec: Option<FecSettings>`
+  - `lfh_size_field_policy: LfhSizeFieldPolicy`
+  - `with_path: bool`, `with_permissions: bool`, `with_uid_gid: bool`, `with_timestamps: bool`, `with_per_file_crc: bool`, `with_content_hash: bool`, `with_symlinks: bool`
+- `ArchiveReaderOptions`
+  - `limits: ResourceLimits`
+  - `delta_base: Option<Vec<u8>>`
+- `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`
+- `SparseWriteOptions { logical_size: u64, extents: Vec<SparseExtent> }`
+- `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`, `LogicalFile`
+- `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
+
+#### Profile validation APIs
+
+- `validate_archive_profile(archive_bytes: &[u8], profile: ComplianceProfile, limits: &ResourceLimits) -> Result<(), SarError>`
+- `ComplianceProfile`
+
+#### Recovery/repair APIs — `sar_archive::recovery`
+
+See `sar_archive::recovery` section above in "M8 APIs".
+
+#### Transform pipeline APIs — `sar_archive::transform`
+
+- Traits: `EncoderTransform`, `DecoderTransform`
+- Concrete transforms: `CompressionEncoderTransform`, `CompressionDecoderTransform`
+- Plans: `EncodingPlan`, `DecodingPlan`, `EncodingPlanV2`, `DecodingPlanV2`
+- Context: `EntryCryptoContext`
+- Functions: `encode_payload`, `decode_payload`, `encode_payload_v2`, `decode_payload_v2`
+
+---
 
 ## `sar-compression`
 

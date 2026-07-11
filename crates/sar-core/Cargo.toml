@@ -10,7 +10,6 @@ crc32fast.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 zeroize.workspace = true
-sar-compression = { path = "../sar-compression" }
 sar-crypto = { path = "../sar-crypto" }
 sar-fec = { path = "../sar-fec" }
 sar-cdc = { path = "../sar-cdc" }

@@ -1447,7 +1447,6 @@ dependencies = [
  "bitflags",
  "crc32fast",
  "sar-cdc",
- "sar-compression",
  "sar-crypto",
  "sar-delta",
  "sar-fec",
@@ -1515,7 +1514,6 @@ dependencies = [
 name = "sar-stream"
 version = "0.1.0"
 dependencies = [
- "sar-archive",
  "sar-core",
 ]
 

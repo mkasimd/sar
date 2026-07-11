@@ -405,9 +405,9 @@ fn incomplete_data_is_not_corruption_until_finalized() {
 fn compressed_store_patch_requires_decompress_before_patch() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED | GlobalFlags::HAS_DELTA;
     let payload = b"logical-target";
-    let encoded = sar_core::encode_payload_v2(
+    let encoded = sar_archive::transform::encode_payload_v2(
         payload,
-        sar_core::EncodingPlanV2 {
+        sar_archive::transform::EncodingPlanV2 {
             is_compressed: true,
             comp_algo_id: 0x01,
             compression_level: Some(3),

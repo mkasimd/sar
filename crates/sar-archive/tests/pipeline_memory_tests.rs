@@ -643,9 +643,9 @@ fn repair_working_set_above_limit_fails_before_execution() {
     let flags = GlobalFlags::HAS_GLOBAL_EC;
     let archive = build_archive_with_global_ec(flags);
 
-    let plan = sar_core::plan_archive_repair(
+    let plan = sar_archive::recovery::plan_archive_repair(
         &archive,
-        sar_core::ErasureInput {
+        sar_archive::recovery::ErasureInput {
             entries: Vec::new(),
             archive_ranges: Vec::new(),
         },
@@ -657,7 +657,8 @@ fn repair_working_set_above_limit_fails_before_execution() {
         max_repair_working_set: 1,
         ..unlimited()
     };
-    let err = sar_core::repair_archive(&archive, &plan, &limits).expect_err("must fail");
+    let err =
+        sar_archive::recovery::repair_archive(&archive, &plan, &limits).expect_err("must fail");
     assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
 }
 
@@ -669,11 +670,11 @@ fn failed_repair_does_not_produce_partial_output() {
 
     // Build a repair plan that specifies erasures outside the protected range
     // (this makes plan_archive_repair fail deterministically).
-    let err = sar_core::plan_archive_repair(
+    let err = sar_archive::recovery::plan_archive_repair(
         &archive,
-        sar_core::ErasureInput {
+        sar_archive::recovery::ErasureInput {
             entries: Vec::new(),
-            archive_ranges: vec![sar_core::ErasureRange {
+            archive_ranges: vec![sar_archive::recovery::ErasureRange {
                 offset: 0,
                 length: 8,
             }],

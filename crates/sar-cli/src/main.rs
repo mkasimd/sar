@@ -15,12 +15,12 @@ use walkdir::WalkDir;
 use sar_archive::{
     ArchiveReader, ArchiveReaderOptions, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
     EncryptionSettings, EntryInput, FecSettings,
+    recovery::{ErasureInput, inspect_recovery_metadata, plan_archive_repair, repair_archive},
 };
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
-    ErasureInput, GlobalFlags, KeyProvider, KmsContext, KmsParams, ResourceLimits, SarError,
-    SecretBytes, fec::validate_recovery_tlv, inspect_recovery_metadata, plan_archive_repair,
-    repair_archive, sparse::SparseExtent,
+    GlobalFlags, KeyProvider, KmsContext, KmsParams, ResourceLimits, SarError, SecretBytes,
+    fec::validate_recovery_tlv, sparse::SparseExtent,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, PBKDF2_PRF_HMAC_SHA256, Pbkdf2Params, SecretString,

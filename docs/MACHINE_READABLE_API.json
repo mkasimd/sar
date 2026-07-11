@@ -2818,280 +2818,6 @@
           ]
         },
         {
-          "name": "transform",
-          "path": "src/transform.rs",
-          "items": [
-            {
-              "name": "CompressionDecoderTransform",
-              "kind": "struct",
-              "signature": "pub struct CompressionDecoderTransform { pub algo_id: u8, pub max_output_size: u64 }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Compression decoder transform used by archive decoding.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Concrete transform can be wrapped more easily than traits."
-            },
-            {
-              "name": "CompressionEncoderTransform",
-              "kind": "struct",
-              "signature": "pub struct CompressionEncoderTransform { pub algo_id: u8, pub level: Option<u8> }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Compression encoder transform used by archive encoding.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Concrete transform can be wrapped more easily than traits."
-            },
-            {
-              "name": "DecoderTransform",
-              "kind": "trait",
-              "signature": "pub trait DecoderTransform { fn algorithm_id(&self) -> u8; fn decode_stream(...) -> Result<(), SarError>; }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Streaming decoder transform abstraction.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "unstable",
-              "ffi_notes": "Trait-object surface is not C-ABI-ready."
-            },
-            {
-              "name": "DecodingPlan",
-              "kind": "struct",
-              "signature": "pub struct DecodingPlan { pub is_compressed: bool, pub comp_algo_id: u8, pub expected_output_size: u64, pub max_output_size: u64 }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Compression-only decoding plan.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Could map to a flat C config struct."
-            },
-            {
-              "name": "DecodingPlanV2",
-              "kind": "struct",
-              "signature": "pub struct DecodingPlanV2 { pub is_compressed: bool, pub comp_algo_id: u8, pub expected_output_size: u64, pub max_output_size: u64, pub crypto: Option<EntryCryptoContext> }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Extended decoding plan with optional crypto.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "5",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "unstable",
-              "ffi_notes": "Ownership of embedded crypto context still needs wrapper design."
-            },
-            {
-              "name": "EncoderTransform",
-              "kind": "trait",
-              "signature": "pub trait EncoderTransform { fn algorithm_id(&self) -> u8; fn encode_stream(...) -> Result<(), SarError>; }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Streaming encoder transform abstraction.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "unstable",
-              "ffi_notes": "Trait-object surface is not C-ABI-ready."
-            },
-            {
-              "name": "EncodingPlan",
-              "kind": "struct",
-              "signature": "pub struct EncodingPlan { pub is_compressed: bool, pub comp_algo_id: u8, pub compression_level: Option<u8> }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Compression-only encoding plan.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Could map to a flat C config struct."
-            },
-            {
-              "name": "EncodingPlanV2",
-              "kind": "struct",
-              "signature": "pub struct EncodingPlanV2 { pub is_compressed: bool, pub comp_algo_id: u8, pub compression_level: Option<u8>, pub crypto: Option<EntryCryptoContext> }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Extended encoding plan with optional crypto.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "5",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "unstable",
-              "ffi_notes": "Embedded crypto context still needs wrapper design."
-            },
-            {
-              "name": "EntryCryptoContext",
-              "kind": "struct",
-              "signature": "pub struct EntryCryptoContext { pub algo_id: u8, pub iv_nonce: [u8; 24], pub aad: Vec<u8>, pub key: SecretBytes }",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Per-entry crypto context used by transform helpers.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "5",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "unstable",
-              "ffi_notes": "Contains secret material and Rust-owned buffers; requires careful FFI redesign."
-            },
-            {
-              "name": "decode_payload",
-              "kind": "function",
-              "signature": "pub fn decode_payload(encoded_payload: &[u8], plan: DecodingPlan) -> Result<Vec<u8>, SarError>",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Decode payload bytes with compression/STORE logic.",
-              "parameters": [],
-              "returns": "Result<Vec<u8>, SarError>",
-              "errors": [
-                "SarError"
-              ],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Good one-shot wrapper candidate."
-            },
-            {
-              "name": "decode_payload_v2",
-              "kind": "function",
-              "signature": "pub fn decode_payload_v2(encoded_payload: &[u8], plan: DecodingPlanV2) -> Result<Vec<u8>, SarError>",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Decode payload bytes with optional AEAD and compression.",
-              "parameters": [],
-              "returns": "Result<Vec<u8>, SarError>",
-              "errors": [
-                "SarError"
-              ],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "5",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Useful one-shot wrapper once crypto context ownership is flattened."
-            },
-            {
-              "name": "encode_payload",
-              "kind": "function",
-              "signature": "pub fn encode_payload(logical_payload: &[u8], plan: EncodingPlan) -> Result<Vec<u8>, SarError>",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Encode payload bytes with compression/STORE logic.",
-              "parameters": [],
-              "returns": "Result<Vec<u8>, SarError>",
-              "errors": [
-                "SarError"
-              ],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "4",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Good one-shot wrapper candidate."
-            },
-            {
-              "name": "encode_payload_v2",
-              "kind": "function",
-              "signature": "pub fn encode_payload_v2(logical_payload: &[u8], plan: EncodingPlanV2) -> Result<Vec<u8>, SarError>",
-              "visibility": "public",
-              "stability": "experimental",
-              "description": "Encode payload bytes with compression and optional AEAD.",
-              "parameters": [],
-              "returns": "Result<Vec<u8>, SarError>",
-              "errors": [
-                "SarError"
-              ],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "5",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": "Good one-shot wrapper candidate once crypto context is flattened."
-            }
-          ]
-        },
-        {
           "name": "limits",
           "path": "src/limits.rs",
           "items": [
@@ -3305,91 +3031,32 @@
               "ffi_notes": ""
             }
           ]
+        }
+      ],
+      "moved_or_removed_notes": [
+        {
+          "module": "transform",
+          "status": "moved",
+          "destination": "sar-archive::transform",
+          "milestone": "M11d"
         },
         {
-          "name": "recovery",
-          "path": "src/recovery.rs",
-          "items": [
-            {
-              "name": "RecoveryMetadata",
-              "kind": "struct",
-              "signature": "pub struct RecoveryMetadata { pub protected_range_start: u64, pub protected_range_end: u64, pub tlv_summaries: Vec<RecoveryTlvSummary> }",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Parsed archive-level Data Recovery TLV metadata and protected byte range.",
-              "parameters": [],
-              "returns": "",
-              "errors": [],
-              "safety_notes": [],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            },
-            {
-              "name": "inspect_recovery_metadata",
-              "kind": "function",
-              "signature": "pub fn inspect_recovery_metadata(archive_bytes: &[u8], limits: &ResourceLimits) -> Result<RecoveryMetadata, SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Parses CD for RECOVERY TLVs, computes protected range, enforces limits.",
-              "parameters": [],
-              "returns": "Result<RecoveryMetadata, SarError>",
-              "errors": [
-                "SarError::LimitExceeded",
-                "SarError::Truncated",
-                "SarError::Unsupported"
-              ],
-              "safety_notes": [
-                "max_recovery_protected_range enforced before parsing."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            },
-            {
-              "name": "repair_archive",
-              "kind": "function",
-              "signature": "pub fn repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan, limits: &ResourceLimits) -> Result<RepairReport, SarError>",
-              "visibility": "public",
-              "stability": "stable",
-              "description": "Applies XOR or RS erasure repair over the protected range for block-aligned erasures. Returns RecoveryUnavailable for non-block-aligned erasures (spec gap).",
-              "parameters": [],
-              "returns": "Result<RepairReport, SarError>",
-              "errors": [
-                "SarError::LimitExceeded",
-                "SarError::RecoveryUnavailable"
-              ],
-              "safety_notes": [
-                "max_repair_working_set enforced before repair buffer allocation.",
-                "Arbitrary byte-erasure archive repair unavailable due to spec gap."
-              ],
-              "examples": [],
-              "feature_flags": [],
-              "since_milestone": "8",
-              "related_spec_sections": [],
-              "implemented": true,
-              "ffi_candidate": true,
-              "ffi_readiness": "candidate",
-              "ffi_notes": ""
-            }
-          ]
+          "module": "recovery",
+          "status": "moved",
+          "destination": "sar-archive::recovery",
+          "milestone": "M11d"
         },
         {
-          "name": "fragment",
-          "path": "REMOVED",
-          "description": "Removed in M11c-cp. Was a pure compatibility re-export of sar-fragmentation types. Import from sar_fragmentation directly.",
-          "items": [],
-          "removed_in": "11c-cp"
+          "module": "profile",
+          "status": "moved",
+          "destination": "sar-archive",
+          "milestone": "M11d"
+        },
+        {
+          "module": "fragment",
+          "status": "removed",
+          "destination": "sar-fragmentation",
+          "milestone": "M11c-cp"
         }
       ]
     },
@@ -4530,6 +4197,47 @@
               "ffi_readiness": "not_ready",
               "ffi_notes": ""
             }
+          ]
+        },
+        {
+          "name": "recovery",
+          "status": "active",
+          "description": "Archive-level recovery/repair orchestration (moved from sar-core in M11d)",
+          "public_types": [
+            "EntryErasure",
+            "ErasureInput",
+            "ErasureRange",
+            "ProtectedRange",
+            "RecoveryMetadata",
+            "RecoveryPlan",
+            "RepairReport"
+          ],
+          "public_functions": [
+            "inspect_recovery_metadata",
+            "plan_archive_repair",
+            "repair_archive"
+          ]
+        },
+        {
+          "name": "transform",
+          "status": "active",
+          "description": "Transform pipeline orchestration (moved from sar-core in M11d)",
+          "public_types": [
+            "EncoderTransform",
+            "DecoderTransform",
+            "CompressionEncoderTransform",
+            "CompressionDecoderTransform",
+            "EncodingPlan",
+            "DecodingPlan",
+            "EncodingPlanV2",
+            "DecodingPlanV2",
+            "EntryCryptoContext"
+          ],
+          "public_functions": [
+            "encode_payload",
+            "decode_payload",
+            "encode_payload_v2",
+            "decode_payload_v2"
           ]
         }
       ]

@@ -1316,18 +1316,24 @@ impl InMemoryTransport {
                                      unencrypted SAR entry rejected post-binding",
                                 ))
                             } else {
+                                let sar_archive::EntryReader {
+                                    header, payload, ..
+                                } = *entry;
                                 let result = context
                                     .manager
-                                    .process_entry(&SessionEntry::from_entry_reader(*entry));
+                                    .process_entry(&SessionEntry::new(header, payload, false));
                                 LoopEvent::SessionResult {
                                     sequence_no,
                                     result,
                                 }
                             }
                         } else {
+                            let sar_archive::EntryReader {
+                                header, payload, ..
+                            } = *entry;
                             let result = context
                                 .manager
-                                .process_entry(&SessionEntry::from_entry_reader(*entry));
+                                .process_entry(&SessionEntry::new(header, payload, false));
                             LoopEvent::SessionResult {
                                 sequence_no,
                                 result,
