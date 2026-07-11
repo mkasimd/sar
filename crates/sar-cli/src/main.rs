@@ -37,6 +37,8 @@ const SAR_SPEC_VERSION: &str = "1.0";
 const SAR_CD_VERSION: &str = "1";
 const PASSWORD_ENV: &str = "SAR_PASSWORD";
 const ZERO_CHUNK_LEN: usize = 8192;
+const UID_MASK: u32 = 0xFFFF;
+const GID_SHIFT: u32 = 16;
 
 #[derive(Parser)]
 #[command(name = "sar", version)]
@@ -866,7 +868,7 @@ fn create_archive(
     Ok(())
 }
 
-fn validate_create_metadata_support(_metadata: CreateMetadataOptions) -> Result<(), SarError> {
+fn validate_create_metadata_support(metadata: CreateMetadataOptions) -> Result<(), SarError> {
     #[cfg(not(unix))]
     {
         if metadata.preserve_permissions {
@@ -885,6 +887,9 @@ fn validate_create_metadata_support(_metadata: CreateMetadataOptions) -> Result<
             ));
         }
     }
+
+    #[cfg(unix)]
+    let _ = metadata;
 
     Ok(())
 }
@@ -1147,7 +1152,7 @@ fn entry_owner(fs_metadata: &fs::Metadata) -> Result<u32, SarError> {
         .map_err(|_| SarError::Overflow("UID does not fit into SAR metadata"))?;
     let gid = u16::try_from(fs_metadata.gid())
         .map_err(|_| SarError::Overflow("GID does not fit into SAR metadata"))?;
-    Ok(u32::from(uid) | (u32::from(gid) << 16))
+    Ok(u32::from(uid) | (u32::from(gid) << GID_SHIFT))
 }
 
 #[cfg(not(unix))]
@@ -1657,7 +1662,7 @@ fn extract_archive(
     Ok(())
 }
 
-fn validate_extract_metadata_support(_metadata: ExtractMetadataOptions) -> Result<(), SarError> {
+fn validate_extract_metadata_support(metadata: ExtractMetadataOptions) -> Result<(), SarError> {
     #[cfg(not(unix))]
     {
         if metadata.preserve_permissions {
@@ -1676,6 +1681,9 @@ fn validate_extract_metadata_support(_metadata: ExtractMetadataOptions) -> Resul
             ));
         }
     }
+
+    #[cfg(unix)]
+    let _ = metadata;
 
     Ok(())
 }
@@ -1945,8 +1953,8 @@ fn apply_owner(
 
     #[cfg(unix)]
     {
-        let uid = rustix::process::Uid::from_raw(owner & 0xFFFF);
-        let gid = rustix::process::Gid::from_raw((owner >> 16) & 0xFFFF);
+        let uid = rustix::process::Uid::from_raw(owner & UID_MASK);
+        let gid = rustix::process::Gid::from_raw((owner >> GID_SHIFT) & UID_MASK);
         rustix::fs::chown(path, Some(uid), Some(gid))
             .map_err(std::io::Error::from)
             .map_err(SarError::Io)?;
@@ -1974,14 +1982,14 @@ fn apply_timestamps(
         return Ok(());
     };
 
-    let atime = i64::try_from(atime)
+    let atime_i64 = i64::try_from(atime)
         .map_err(|_| SarError::Overflow("atime does not fit host timestamp range"))?;
-    let mtime = i64::try_from(mtime)
+    let mtime_i64 = i64::try_from(mtime)
         .map_err(|_| SarError::Overflow("mtime does not fit host timestamp range"))?;
     set_file_times(
         path,
-        FileTime::from_unix_time(atime, 0),
-        FileTime::from_unix_time(mtime, 0),
+        FileTime::from_unix_time(atime_i64, 0),
+        FileTime::from_unix_time(mtime_i64, 0),
     )
     .map_err(SarError::Io)
 }
