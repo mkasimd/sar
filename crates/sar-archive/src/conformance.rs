@@ -826,12 +826,18 @@ pub fn run_conformance_check(
     } else {
         None
     };
+    let is_stream_transcript = manifest
+        .features
+        .iter()
+        .any(|f| f == "stream:transcript");
     let parse_result = if manifest
         .features
         .iter()
         .any(|feature| feature == "recovery:repair-beyond-parity")
     {
         attempt_archive_repair_beyond_parity(&bytes, &limits)
+    } else if is_stream_transcript {
+        attempt_stream_transcript_parse(&bytes, &limits)
     } else {
         attempt_full_parse(&bytes, &limits, delta_base)
     };
@@ -975,6 +981,61 @@ fn attempt_archive_repair_beyond_parity(
     };
     let plan = plan_archive_repair(bytes, erasures, limits)?;
     crate::recovery::repair_archive(bytes, &plan, limits).map(|_| ())
+}
+
+/// Parses a serialized SAR stream transcript through the in-memory session layer.
+///
+/// A stream transcript is a NO_INDEX byte sequence shaped like a primary SAR stream:
+/// Global Header followed by sequential LFH + payload entries (no CD/Footer).
+/// Each entry is fed to the [`sar_stream::SessionManager`] to validate session
+/// lifecycle semantics (SESSION_INIT, sequence continuity, heartbeat constraints, etc.).
+///
+/// Distinct from ordinary archive parsing in that:
+/// - Session-control opcode semantics are fully enforced.
+/// - Filesystem entries without a prior SESSION_INIT are rejected.
+/// - Sequence number continuity is enforced per active session.
+///
+/// This function does **not** require a live TCP/QUIC transport connection.
+fn attempt_stream_transcript_parse(
+    bytes: &[u8],
+    limits: &sar_core::limits::ResourceLimits,
+) -> Result<(), sar_core::error::SarError> {
+    use sar_core::format::{parse_global_header, parse_lfh};
+    use sar_stream::{SessionEntry, SessionManager, SessionManagerConfig};
+
+    let (header, header_len) = parse_global_header(bytes, limits)?;
+    let global_flags = header.flags;
+
+    let config = SessionManagerConfig {
+        limits: *limits,
+        ..SessionManagerConfig::default()
+    };
+    let mut manager = SessionManager::new(config);
+    manager.observe_global_header(&header)?;
+
+    let mut pos = header_len;
+    while pos < bytes.len() {
+        let (lfh, lfh_len) = parse_lfh(&bytes[pos..], &global_flags, limits)?;
+        pos += lfh_len;
+
+        let payload_size = lfh.payload_size;
+        let payload_len = usize::try_from(payload_size)
+            .map_err(|_| sar_core::error::SarError::Overflow("stream transcript payload size"))?;
+        limits.check_allocation_bytes(payload_size)?;
+
+        if pos + payload_len > bytes.len() {
+            return Err(sar_core::error::SarError::Truncated(
+                "stream transcript payload truncated",
+            ));
+        }
+        let payload = bytes[pos..pos + payload_len].to_vec();
+        pos += payload_len;
+
+        let entry = SessionEntry::new(lfh, payload, false);
+        manager.process_entry(&entry)?;
+    }
+
+    Ok(())
 }
 
 /// Discovers all `manifest.json` files under a root directory.

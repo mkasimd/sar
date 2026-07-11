@@ -42,17 +42,10 @@ fn activation_requires_no_index_nonzero_stream_id_and_session_init() {
     );
     assert_eq!(manager.active_stream_count(), 0);
 
-    let result = manager
+    let err = manager
         .process_entry(&fs_entry(9, 0, 0x0, 0, b"payload".to_vec()))
-        .expect("filesystem inactive");
-    assert_eq!(
-        result.events,
-        vec![SessionEvent::StatefulInactive {
-            stream_id: 9,
-            op_code: 0,
-            session_control: false,
-        }]
-    );
+        .expect_err("filesystem without session must fail in stateful context");
+    assert_eq!(err.status(), SarStatus::ErrStreamState);
     assert_eq!(manager.active_stream_count(), 0);
 }
 

@@ -1404,6 +1404,7 @@ dependencies = [
  "sar-fec",
  "sar-fragmentation",
  "sar-sparse",
+ "sar-stream",
  "serde",
  "serde_json",
  "tempfile",

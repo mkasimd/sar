@@ -1,7 +1,31 @@
-# SAR Conformance Test Vectors (M12a)
+# SAR Conformance Test Vectors (M12a-stream-cp)
 
 This directory contains the official conformance vector set for the SAR Protocol v1.0
 reference implementation.
+
+## Serialized SAR stream transcripts (M12a-stream-cp)
+
+Vectors under `valid/stream-session/` and `invalid/stream-session/` are
+**serialized SAR stream transcripts** — deterministic byte sequences shaped like a primary
+SAR stream:
+
+```
+Global Header (NO_INDEX flag set)
+SESSION_INIT / SESSION_CAPABILITIES / SESSION_CONTROL entries
+optional ordinary stream entries (sequence-numbered LFH + payload)
+```
+
+These fixtures have `.sar` extension but are **not** ordinary static archives.
+
+Key properties:
+- **No live transport required.** These bytes are parsed in-memory by `sar-stream`. They do not require TCP or QUIC connectivity.
+- **Additional QUIC control streams are not covered** by this pass. Those streams don't begin with SAR magic and are transport-specific.
+- **Same bytes, different profiles.** A stream transcript may be valid in stream-session context and rejected by a static-archive profile (see `profiles/static-archive/reject-session-control/`).
+- **This is not M12b fuzzing.** M12a-stream-cp is a deterministic conformance-vector pass.
+
+The conformance runner routes vectors with `stream:transcript` in their `features` array
+through `attempt_stream_transcript_parse()`, which exercises session lifecycle semantics
+(init → active → data flow) that ordinary archive parsing would bypass.
 
 ## What are conformance vectors?
 
@@ -36,7 +60,7 @@ test-vectors/
     sparse/                  — real sparse reconstruction fixtures plus deferred sparse+delta reference
     cdc/                     — real CDC literal-mode fixture plus deferred FASTCDC CDC_MAP reference
     delta/                   — real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
-    stream-session/          — SESSION_INIT / SESSION_CLOSE stream vectors
+    stream-session/          — serialized SAR stream transcript fixtures (SESSION_INIT, SESSION_CAPABILITIES, ordered-data, heartbeat, sequence-wrap)
     filesystem-metadata/     — permissions, owner, timestamps, symlink, directory vectors
   invalid/
     structure/               — truncated GH/LFH/CD/Footer cases
@@ -48,7 +72,7 @@ test-vectors/
     sparse/                  — sparse extent overlap, zero-length, excessive size
     cdc/                     — malformed CDC metadata, reserved CDC IDs
     delta/                   — deterministic patch-algo/base-hash/truncation/limit fixtures
-    stream-session/          — invalid session sequence, duplicate stream ID
+    stream-session/          — invalid session sequence, duplicate stream ID, heartbeat-with-payload, reserved opcode
     filesystem-metadata/     — absolute path, traversal, unsafe symlink, setuid bits
     resource-limits/         — excessive declared sizes, excessive TLV count
 ```
@@ -245,6 +269,7 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - archive-level Recovery TLV (`valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`)
 - deterministic invalid recovery fixtures under `invalid/recovery/`
 - deterministic invalid delta fixtures under `invalid/delta/`
+- serialized SAR stream transcript fixtures under `valid/stream-session/` and `invalid/stream-session/` (M12a-stream-cp)
 
 ### Deferred/reference-only manifests in this tree
 

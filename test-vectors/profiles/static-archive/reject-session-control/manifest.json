@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "id": "profile-static-archive-reject-session-control",
+  "title": "Profile (static-archive): reject stream session-control transcript",
+  "description": "A serialized SAR stream transcript (valid in stream-session context) must be rejected by the static-archive profile. The static-archive profile requires indexed, forward-access archives and does not support SESSION_CONTROL content or NO_INDEX streams. The binary file is shared with valid/stream-session/session-init/.",
+  "kind": "profile",
+  "file": "../../../valid/stream-session/session-init/stream_session_init.sar",
+  "profiles": [
+    "static-archive"
+  ],
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:profile-rejection"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "stream-package": "accept",
+    "telemetry": "accept"
+  },
+  "compression": false,
+  "crypto": false,
+  "notes": [
+    "The binary file is shared with valid/stream-session/session-init/.",
+    "In stream-session conformance mode, the bytes are valid (SAR_OK).",
+    "In static-archive profile mode, the bytes must be rejected: the static-archive profile does not accept NO_INDEX archives or SESSION_CONTROL content.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

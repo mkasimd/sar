@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-duplicate-session-init",
+  "title": "Stream transcript (invalid): duplicate SESSION_INIT for the same Stream ID",
+  "description": "Serialized SAR stream transcript with two SESSION_INIT entries for the same Stream ID without an intervening SESSION_CLOSE. The session layer must reject a second SESSION_INIT that would reuse an already-active Stream ID. Must be rejected with SAR_ERR_STREAM_STATE.",
+  "kind": "invalid",
+  "file": "duplicate_session_init.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_STREAM_STATE",
+    "error": "StreamState",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "A SESSION_CLOSE must precede any SESSION_INIT reuse of the same Stream ID.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

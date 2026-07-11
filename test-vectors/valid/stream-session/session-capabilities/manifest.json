@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-valid-session-capabilities",
+  "title": "Stream transcript (valid): SESSION_INIT followed by SESSION_CAPABILITIES",
+  "description": "Serialized SAR stream transcript with a SESSION_INIT entry followed by a SESSION_CAPABILITIES entry advertising SESSION_ACK support. Validates capability advertisement after session establishment. Does not require live TCP/QUIC transport.",
+  "kind": "valid",
+  "file": "stream_session_capabilities.sar",
+  "profiles": [
+    "stream-package",
+    "telemetry",
+    "live-media"
+  ],
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:session-capabilities"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "SESSION_CAPABILITIES payload is 2 bytes of capability flags (CAP_SESSION_ACK = 0x0001).",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

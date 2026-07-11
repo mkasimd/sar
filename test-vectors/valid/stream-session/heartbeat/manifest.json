@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-valid-heartbeat",
+  "title": "Stream transcript (valid): SESSION_HEARTBEAT with empty payload",
+  "description": "Serialized SAR stream transcript with SESSION_INIT followed by a SESSION_HEARTBEAT entry carrying an empty (zero-length) payload. Validates that heartbeat keep-alive frames are accepted when correctly formed. Does not require live TCP/QUIC transport.",
+  "kind": "valid",
+  "file": "stream_heartbeat.sar",
+  "profiles": [
+    "stream-package",
+    "telemetry",
+    "live-media"
+  ],
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:heartbeat"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "SESSION_HEARTBEAT requires zero payload size per spec.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

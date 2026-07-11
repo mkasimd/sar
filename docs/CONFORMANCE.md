@@ -1,8 +1,87 @@
-# Conformance Profile (M1–M12a)
+# Conformance Profile (M1–M12a-stream-cp)
 
-This document describes **reference implementation coverage** and **known gaps** after M12a.
+This document describes **reference implementation coverage** and **known gaps** after M12a-stream-cp.
 
 This is an **implemented profile** report, not a claim of full standard conformance.
+
+## M12a-stream-cp: Serialized SAR stream transcript conformance vectors
+
+### What is a serialized SAR stream transcript?
+
+A **serialized SAR stream transcript** is a deterministic byte sequence shaped like a primary SAR stream:
+
+```
+Global Header (with NO_INDEX flag)
+optional KMS extension
+SESSION_INIT / SESSION_CAPABILITIES / SESSION_CONTROL entries
+ordinary stream entries where applicable (sequence-numbered LFH + payload)
+```
+
+These fixtures use `.sar` file extension but must be called **serialized SAR stream transcripts**
+(not ordinary static archives) in documentation and manifests.
+
+Key properties:
+- They do **not** require live TCP/QUIC transport; they are parsed in-memory by `sar-stream`.
+- Additional QUIC control streams (which do not begin with SAR magic) are not covered by this pass.
+- The same bytes can be **valid** in stream-session context and **rejected** by a static-archive profile.
+- This pass is M12a-stream-cp — **M12b fuzzing is not started by this pass**.
+
+### Stream transcript vector directory structure
+
+```
+test-vectors/
+  valid/stream-session/
+    session-init/            — minimal transcript: Global Header + SESSION_INIT
+    session-capabilities/    — SESSION_INIT + SESSION_CAPABILITIES entry
+    ordered-data/            — SESSION_INIT + two DATA_WRITE entries
+    heartbeat/               — SESSION_INIT + SESSION_HEARTBEAT (zero payload)
+    sequence-wrap/           — sequence number wraps from 0xFFFF to 0x0000
+  invalid/stream-session/
+    data-before-session-init/         — DATA_WRITE before SESSION_INIT → SAR_ERR_STREAM_STATE
+    duplicate-session-init/           — two SESSION_INIT for same stream → SAR_ERR_STREAM_STATE
+    bad-session-init-payload-length/  — SESSION_INIT with truncated payload → SAR_ERR_INVALID_LENGTH
+    reserved-session-init-flags/      — SESSION_INIT with reserved flag bits set → SAR_ERR_RESERVED_VALUE
+    sequence-gap/                     — sequence jump by 2 → SAR_ERR_STREAM_STATE
+    sequence-replay/                  — same sequence number twice → SAR_ERR_STREAM_STATE
+    wrong-stream-id/                  — entry stream_id ≠ session stream_id → SAR_ERR_STREAM_STATE
+    heartbeat-with-payload/           — SESSION_HEARTBEAT with nonzero payload → SAR_ERR_INVALID_LENGTH
+    reserved-session-opcode/          — opcode in 0x8..=0xF range → SAR_ERR_RESERVED_VALUE
+    session-control-without-no-index/ — (deferred: implementation returns inactive OK)
+    zero-stream-id/                   — (deferred: implementation returns inactive OK)
+  profiles/static-archive/
+    reject-session-control/  — same session-init fixture, rejected by static-archive profile
+```
+
+### Conformance runner routing
+
+Vectors with `stream:transcript` in their `features` array are routed through
+`attempt_stream_transcript_parse()` instead of `attempt_full_parse()`.  This function:
+
+1. Parses the SAR Global Header and checks `NO_INDEX` is set.
+2. Reads sequential LFH + payload entries using low-level `parse_lfh`.
+3. Feeds each entry to `sar_stream::SessionManager::process_entry()`.
+4. Returns `SAR_OK` only if all entries are accepted by the session state machine.
+
+This preserves session lifecycle semantics (init → active → data flow → close) that
+ordinary archive parsing would bypass.
+
+### Profile rejection manifest
+
+`test-vectors/profiles/static-archive/reject-session-control/` references the same binary
+fixture as `valid/stream-session/session-init/`.  The manifest `kind` is `"profile"` and
+`profile_expectations.static-archive` is `"reject"`.
+
+This demonstrates that stream transcript bytes are **structurally valid SAR** but
+**profile-invalid** for a static-archive consumer.
+
+### Deferred stream transcript cases
+
+| Case | Reason deferred |
+|------|-----------------|
+| `session-control-without-no-index` | Implementation treats SESSION_CONTROL without NO_INDEX as inactive (returns `SAR_OK`); spec behavior is ambiguous for this case in current milestone |
+| `zero-stream-id` | Implementation returns `inactive_result` for stream_id=0; the deferred note captures this gap |
+
+---
 
 ## M12a: Conformance vector foundation
 
@@ -24,7 +103,7 @@ test-vectors/
     sparse/                    — sparse map fixture plus deferred sparse+delta reference
     cdc/                       — CDC literal mode fixture plus deferred FASTCDC reference
     delta/                     — real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
-    stream-session/            — (deferred: structure requires network context)
+    stream-session/            — stream transcript fixtures (session-init, capabilities, ordered-data, heartbeat, sequence-wrap)
     filesystem-metadata/       — permissions, owner, timestamps, symlink, directory,
                                   combined, field-presence-inactive
   invalid/
@@ -38,7 +117,7 @@ test-vectors/
     sparse/                    — (deferred: sparse overlap/extent vectors)
     cdc/                       — (deferred)
     delta/                     — deterministic patch-algo/base-hash/truncation/limit fixtures
-    stream-session/            — (deferred)
+    stream-session/            — deterministic invalid stream transcript fixtures (see M12a-stream-cp section)
     filesystem-metadata/       — (deferred: unsafe path/symlink vectors)
     resource-limits/           — (deferred)
   profiles/
@@ -108,6 +187,10 @@ cargo test -p sar-archive --test conformance_manifest_tests
 - `raw_manifest_shapes_match_schema_contract` — raw JSON manifests match the schema contract for top-level fields and shapes
 - `invalid_recovery_vectors_are_real_and_recovery_tagged` — invalid recovery fixtures must be real and tagged with `recovery:*`
 - `invalid_delta_vectors_are_real_and_delta_tagged` — invalid delta fixtures must be real and tagged with `delta:*`
+- `stream_transcript_vectors_use_stream_tags_and_correct_paths` — stream transcript vectors live under `valid/stream-session/` or `invalid/stream-session/` and use `stream:*` feature tags
+- `stream_transcript_profile_rejection_manifests_are_not_byte_invalid` — profile rejection manifests do not claim bytes are structurally invalid
+- `minimum_required_valid_stream_transcript_vectors_present` — the four minimum valid stream transcript vectors are present and non-deferred
+- `minimum_required_invalid_stream_transcript_vectors_present` — the eight minimum invalid stream transcript vectors are present and non-deferred
 
 ### Regenerating binary fixtures
 
@@ -117,14 +200,15 @@ cargo run --example generate_vectors -p sar-archive
 
 All fixtures are deterministic (fixed salts, iteration counts, payloads).
 
-### Known gaps in M12a
+### Known gaps in M12a / M12a-stream-cp
 
-- Stream/session binary vectors deferred (require network/transport context).
 - Fragmentation reassembly and LOSS_TOLERANT fragment-gap fixtures remain deferred/reference-only until real fragment binaries exist.
 - Sparse+delta combined fixture remains deferred/reference-only.
 - FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
 - Archive-level Recovery TLV coverage is now backed by real generated indexed fixtures (`test-vectors/valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `test-vectors/valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`).
 - Deterministic invalid recovery and delta vectors are now backed by real fixtures (`test-vectors/invalid/recovery/*`, `test-vectors/invalid/delta/*`) with authoritative `expected.status`.
+- Stream transcript vectors are now present (`test-vectors/valid/stream-session/*`, `test-vectors/invalid/stream-session/*`) with real binary fixtures for all non-deferred cases.
+- Two stream transcript cases are deferred (`session-control-without-no-index`, `zero-stream-id`) — see M12a-stream-cp section above.
 - Some invalid vectors remain deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
 - Cold-storage/tape profile vectors deferred (no SAR v1.0 interoperable mechanism yet).
@@ -195,6 +279,7 @@ Writer-side generated VCDIFF/SAR BSDIFF v1 fixtures are now present after
 ### Streaming/session and transport
 - Streaming parser/state model and session semantics (`sar-stream`).
 - SAR-over-TCP and SAR-over-QUIC transport bindings (`sar-transport`) in current implemented profile.
+- Deterministic stream transcript fixtures and session lifecycle conformance vectors (M12a-stream-cp).
 
 ### Metadata API and filesystem metadata
 - LFH metadata API completeness from M11a/M11b.
