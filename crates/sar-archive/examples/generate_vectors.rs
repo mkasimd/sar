@@ -129,6 +129,10 @@ fn write_fixture(relative_path: &str, bytes: &[u8]) {
     println!("wrote {}", path.display());
 }
 
+fn skip_deferred_vector(relative_path: &str, reason: &str) {
+    println!("skipped {} ({reason})", vectors_root().join(relative_path).display());
+}
+
 // ---------------------------------------------------------------------------
 // Generator helpers
 // ---------------------------------------------------------------------------
@@ -408,43 +412,27 @@ fn main() {
     let rs_bytes = write_fec_archive(FecSettings::default_rs(), &fec_payload);
     write_fixture("valid/fec/rs/rs_fec_entry.sar", &rs_bytes);
 
-    // FEC + Data Recovery TLV: use the XOR FEC archive (it already has
-    // SELECTIVE_FEC metadata; a full archive-level recovery TLV requires
-    // additional plumbing left to future work).
-    write_fixture("valid/fec/metadata/recovery_tlv_archive.sar", &xor_bytes);
+    // The metadata manifest now reuses the real XOR selective-FEC fixture via a
+    // relative path. Do not emit a misleading archive-level RECOVERY TLV file.
+    skip_deferred_vector(
+        "valid/fec/metadata/recovery_tlv_archive.sar",
+        "metadata manifest reuses valid/fec/xor/xor_fec_entry.sar and does not claim RECOVERY TLV coverage",
+    );
 
     // -----------------------------------------------------------------------
     // Valid: fragmentation — valid contiguous two-fragment group
     // -----------------------------------------------------------------------
 
-    // Fragmentation requires the streaming writer interface for proper
-    // IS_FRAGMENT / LAST_FRAGMENT / descriptor construction.
-    // For M12a, write a structural two-entry archive as a fragmentation
-    // placeholder and document that full fragment assembly vectors require
-    // the streaming writer path (deferred to M12b/future work).
-    {
-        let fallback = write_store_archive(
-            false,
-            &[
-                ("fragmented.bin.part0", &make_payload(64)),
-                ("fragmented.bin.part1", &make_payload(64)),
-            ],
-        );
-        write_fixture(
-            "valid/fragmentation/valid-reassembly/fragmented_two_parts.sar",
-            &fallback,
-        );
-    }
-
-    // Loss-tolerant gap vector is deferred (requires LOSS_TOLERANT fragment assembly).
-    // Write a placeholder archive so the file path is valid.
-    {
-        let lt_archive = write_store_archive(true, &[("telemetry.bin", &make_payload(32))]);
-        write_fixture(
-            "valid/fragmentation/loss-tolerant-gap/fragmented_loss_tolerant_gap.sar",
-            &lt_archive,
-        );
-    }
+    // Fragmentation vectors remain deferred in this corrective pass. Do not
+    // emit placeholder STORE archives that overclaim fragment metadata.
+    skip_deferred_vector(
+        "valid/fragmentation/valid-reassembly/fragmented_two_parts.sar",
+        "real fragment-group fixtures require the streaming writer path",
+    );
+    skip_deferred_vector(
+        "valid/fragmentation/loss-tolerant-gap/fragmented_loss_tolerant_gap.sar",
+        "real LOSS_TOLERANT fragment-gap fixtures require fragment metadata and degraded reassembly behavior",
+    );
 
     // -----------------------------------------------------------------------
     // Valid: sparse
@@ -483,21 +471,12 @@ fn main() {
         write_fixture("valid/sparse/simple/sparse_simple.sar", &buf);
     }
 
-    // Sparse + STORE_PATCH ordering vector:
-    // Write a STORE_PATCH entry + sparse (the SAR transform ordering invariant
-    // requires patch BEFORE sparse reconstruction). This vector documents the
-    // ordering. The payload after STORE_PATCH is the full logical target.
-    {
-        // STORE_PATCH with zero base hash (no base required) + sparse.
-        let patched_target = make_payload(64);
-        // Write as regular STORE_PATCH (not sparse) for now, as the combined
-        // path requires more complex writer setup. Document deferral.
-        let delta_fallback = write_store_archive(false, &[("patched_sparse.bin", &patched_target)]);
-        write_fixture(
-            "valid/sparse/with-delta/sparse_with_store_patch.sar",
-            &delta_fallback,
-        );
-    }
+    // Sparse + delta ordering remains reference-only in this corrective pass.
+    // Do not emit a STORE fallback that lacks combined sparse + patch metadata.
+    skip_deferred_vector(
+        "valid/sparse/with-delta/sparse_with_store_patch.sar",
+        "real sparse-plus-delta fixtures require combined patch and sparse metadata on one logical entry",
+    );
 
     // -----------------------------------------------------------------------
     // Valid: CDC
@@ -534,11 +513,11 @@ fn main() {
         write_fixture("valid/cdc/literal-mode/cdc_literal_entry.sar", &archive);
     }
 
-    // FASTCDC metadata vector — deferred in this release; reuse literal-mode
-    // archive as a structural placeholder.
-    write_fixture(
+    // FASTCDC CDC_MAP remains deferred in this corrective pass. Do not reuse the
+    // literal-mode archive as a placeholder.
+    skip_deferred_vector(
         "valid/cdc/fastcdc-metadata/cdc_fastcdc_map.sar",
-        &read_fixture("valid/cdc/literal-mode/cdc_literal_entry.sar"),
+        "real FASTCDC CDC_MAP fixtures require explicit CDC metadata rather than literal-mode fallback bytes",
     );
 
     // -----------------------------------------------------------------------
@@ -575,21 +554,25 @@ fn main() {
         );
     }
 
-    // VCDIFF and BSDIFF: generate test archives using sar-archive's delta
-    // writer path if available, otherwise write minimal structural vectors.
+    // VCDIFF and BSDIFF writer-side patch generation is deferred to the
+    // M12a-M9b-cp corrective pass. Do not emit STORE fallback archives.
     {
-        let base = make_payload(64);
-        let target = make_payload(64); // for VCDIFF/BSDIFF we need a proper diff
-        // Use apply_store_patch semantics: payload IS the full target.
-        // The actual VCDIFF/BSDIFF test vectors require proper diff generation
-        // and base file. Write them as store-patch archives for now and
-        // document that proper VCDIFF/BSDIFF vectors need separate generation.
-        let vcdiff_archive = write_store_archive(false, &[("vcdiff_target.bin", &target)]);
-        let bsdiff_archive = write_store_archive(false, &[("bsdiff_target.bin", &target)]);
-        write_fixture("valid/delta/vcdiff/vcdiff_patch_entry.sar", &vcdiff_archive);
-        write_fixture("valid/delta/vcdiff/base_file.bin", &base);
-        write_fixture("valid/delta/bsdiff/bsdiff_patch_entry.sar", &bsdiff_archive);
-        write_fixture("valid/delta/bsdiff/base_file.bin", &base);
+        skip_deferred_vector(
+            "valid/delta/vcdiff/vcdiff_patch_entry.sar",
+            "writer-side VCDIFF patch generation is scheduled for M12a-M9b-cp",
+        );
+        skip_deferred_vector(
+            "valid/delta/vcdiff/base_file.bin",
+            "reference-only delta manifest now carries its base-file descriptor without committing fallback bytes",
+        );
+        skip_deferred_vector(
+            "valid/delta/bsdiff/bsdiff_patch_entry.sar",
+            "writer-side SAR BSDIFF v1 patch generation is scheduled for M12a-M9b-cp",
+        );
+        skip_deferred_vector(
+            "valid/delta/bsdiff/base_file.bin",
+            "reference-only delta manifest now carries its base-file descriptor without committing fallback bytes",
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -912,10 +895,5 @@ fn main() {
     }
 
     println!("\nGeneration complete.");
-    println!("Run 'cargo test -p sar-archive --test conformance_tests' to validate.");
-}
-
-fn read_fixture(relative_path: &str) -> Vec<u8> {
-    let root = vectors_root();
-    std::fs::read(root.join(relative_path)).unwrap_or_default()
+    println!("Run targeted M12a conformance tests to validate.");
 }

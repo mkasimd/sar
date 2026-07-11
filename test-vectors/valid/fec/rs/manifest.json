@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "fec-reed-solomon",
   "title": "FEC: Reed-Solomon parity",
-  "description": "SAR archive with one entry using Reed-Solomon FEC (algorithm ID 0x20). Validates RS FEC metadata parsing and shard layout.",
+  "description": "SAR archive with one entry using Reed-Solomon FEC (algorithm ID 0x11). Validates RS selective FEC metadata parsing and shard layout.",
   "kind": "valid",
   "file": "rs_fec_entry.sar",
   "profiles": [

@@ -19,11 +19,11 @@ test-vectors/
     indexed/                   — indexed archive
     compression/               — STORE, DEFLATE, ZSTD compression
     crypto/                    — AES-256-GCM, XChaCha20-Poly1305 (requires key provider)
-    fec/                       — XOR FEC, Reed-Solomon FEC, FEC metadata
-    fragmentation/             — valid fragment reassembly, loss-tolerant gap
-    sparse/                    — sparse map, sparse+delta ordering
-    cdc/                       — CDC literal mode, FastCDC metadata
-    delta/                     — STORE_PATCH, VCDIFF, BSDIFF
+    fec/                       — real XOR/Reed-Solomon selective FEC fixtures and shared metadata fixture
+    fragmentation/             — deferred/reference-only fragment manifests
+    sparse/                    — sparse map fixture plus deferred sparse+delta reference
+    cdc/                       — CDC literal mode fixture plus deferred FASTCDC reference
+    delta/                     — STORE_PATCH fixture plus deferred VCDIFF/BSDIFF references
     stream-session/            — (deferred: structure requires network context)
     filesystem-metadata/       — permissions, owner, timestamps, symlink, directory,
                                   combined, field-presence-inactive
@@ -53,9 +53,9 @@ test-vectors/
 ### Manifest format
 
 Every vector has a `manifest.json` with schema version 1. Required fields:
-`schema_version`, `id`, `title`, `description`, `kind`, `expected`.
-Optional: `file`, `profiles`, `features`, `profile_expectations`, `limits`, `notes`,
-`deferred`, `requires_key_provider`, `generated_by`.
+`schema_version`, `id`, `title`, `description`, `kind`, `expected`, `compression`, `crypto`.
+Optional: `file`, `profiles`, `features`, `entries`, `base_files`, `profile_expectations`,
+`limits`, `notes`, `deferred`, `requires_key_provider`, `generated_by`.
 
 Stable status identifiers:
 `SAR_OK`, `SAR_ERR_MALFORMED`, `SAR_ERR_TRUNCATED`, `SAR_ERR_UNSUPPORTED`,
@@ -81,9 +81,10 @@ Stable status identifiers:
 
 ```bash
 cargo test -p sar-archive --test conformance_tests
+cargo test -p sar-archive --test conformance_manifest_tests
 ```
 
-9 test functions:
+`conformance_tests.rs` currently provides 9 end-to-end checks:
 - `all_manifests_parse_and_schema_validates` — all manifests parse and pass schema checks
 - `valid_non_deferred_vectors_parse_ok` — all valid non-deferred vectors parse successfully
 - `invalid_non_deferred_vectors_are_rejected` — all invalid non-deferred vectors are rejected
@@ -93,6 +94,12 @@ cargo test -p sar-archive --test conformance_tests
 - `conformance_summary` — summary report
 - `bad_aead_tag_auth_failure` — AEAD auth failure with key provider
 - `crypto_vectors_parse_structurally_with_key_provider` — crypto vectors with key material
+
+`conformance_manifest_tests.rs` adds targeted manifest-audit checks, including:
+- `non_deferred_valid_vectors_must_not_be_placeholders` — canonical valid vectors must not use placeholder language
+- `deferred_vectors_do_not_reference_binary_fixtures` — deferred manifests must omit binary file references
+- `known_deferred_feature_tags_are_not_canonical_unless_real` — deferred/generated-later feature tags must not remain canonical
+- `raw_manifest_shapes_match_schema_contract` — raw JSON manifests match the schema contract for top-level fields and shapes
 
 ### Regenerating binary fixtures
 
@@ -105,6 +112,11 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 ### Known gaps in M12a
 
 - Stream/session binary vectors deferred (require network/transport context).
+- Fragmentation reassembly and LOSS_TOLERANT fragment-gap fixtures remain deferred/reference-only until real fragment binaries exist.
+- Sparse+delta combined fixture remains deferred/reference-only.
+- FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
+- Generated VCDIFF and SAR BSDIFF v1 fixtures remain deferred/reference-only until `M12a-M9b-cp`.
+- Archive-level Recovery TLV coverage is not claimed by the committed FEC metadata fixture.
 - Many invalid vectors deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
 - Cold-storage/tape profile vectors deferred (no SAR v1.0 interoperable mechanism yet).
@@ -112,6 +124,7 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 - No standalone conformance CLI (not in scope for M12a).
 - The validator checks global-flag-level and structural correctness; entry-level profile
   enforcement gaps are documented in profile manifests.
+- Crypto manifests intentionally include test-only passwords/salts for public conformance testing; no real secrets are committed.
 
 ### Relationship to M12b fuzzing
 
@@ -156,9 +169,17 @@ by M12b fuzzing infrastructure without changing the M12a schema.
 - `LOSS_TOLERANT` degraded-output behavior for missing-fragment cases only.
 - Authentication/structural failures are never bypassed by lossy flags.
 
+The committed M12a fixture set currently includes a real sparse reconstruction binary and
+real LFH selective-FEC binaries, but does not claim real fragment-group or archive-level
+Recovery TLV fixture coverage beyond those binaries.
+
 ### CDC and delta
 - CDC metadata/TLV structures and current CDC map handling.
 - Delta metadata parsing and patch application for implemented algorithms (`STORE_PATCH`, `VCDIFF`, SAR BSDIFF v1).
+
+Writer-side generated VCDIFF/SAR BSDIFF v1 fixtures are deferred to
+`M12a-M9b-cp: Delta patch generation corrective pass`; the current official fixtures only
+claim real binary coverage for `STORE_PATCH`.
 
 ### Streaming/session and transport
 - Streaming parser/state model and session semantics (`sar-stream`).

@@ -11,11 +11,15 @@
 //! cargo test -p sar-archive --test conformance_manifest_tests
 //! ```
 
-use std::path::Path;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use sar_archive::conformance::{
     TransformExpectation, VectorKind, discover_manifests, validate_manifest_schema,
 };
+use serde_json::{Map, Value};
 
 // ---------------------------------------------------------------------------
 // Helper: locate test-vectors root relative to CARGO_MANIFEST_DIR
@@ -29,6 +33,206 @@ fn vectors_root() -> std::path::PathBuf {
         .parent()
         .expect("workspace root");
     workspace.join("test-vectors")
+}
+
+fn manifest_paths() -> Vec<PathBuf> {
+    discover_manifests(&vectors_root())
+        .expect("discover manifests")
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+fn raw_manifest_json(path: &Path) -> Value {
+    serde_json::from_str(&fs::read_to_string(path).expect("read manifest")).expect("parse manifest")
+}
+
+fn object_keys<'a>(obj: &'a Map<String, Value>) -> impl Iterator<Item = &'a str> {
+    obj.keys().map(String::as_str)
+}
+
+fn value_is_string_or_null(value: &Value) -> bool {
+    value.is_null() || value.is_string()
+}
+
+fn validate_payload_generation_shape(
+    value: &Value,
+    label: &str,
+    failures: &mut Vec<String>,
+) {
+    let Some(object) = value.as_object() else {
+        failures.push(format!("{label}: payload_generation must be an object or null"));
+        return;
+    };
+    let allowed = ["kind", "byte_hex", "pattern_hex", "length", "path"];
+    let required = ["kind"];
+    for key in object_keys(object) {
+        if !allowed.contains(&key) {
+            failures.push(format!("{label}: payload_generation has unexpected key '{key}'"));
+        }
+    }
+    for key in required {
+        if !object.contains_key(key) {
+            failures.push(format!("{label}: payload_generation missing required key '{key}'"));
+        }
+    }
+}
+
+fn validate_entries_shape(entries: &Value, label: &str, failures: &mut Vec<String>) {
+    let Some(array) = entries.as_array() else {
+        failures.push(format!("{label}: entries must be an array"));
+        return;
+    };
+    let allowed = [
+        "name",
+        "kind",
+        "payload_utf8",
+        "payload_hex",
+        "payload_sha256",
+        "size",
+        "logical_size",
+        "payload_generation",
+        "symlink_target",
+        "permissions",
+        "uid",
+        "gid",
+        "mtime",
+        "atime",
+        "ctime",
+        "extents",
+    ];
+    for (index, entry) in array.iter().enumerate() {
+        let Some(object) = entry.as_object() else {
+            failures.push(format!("{label}[{index}]: entry must be an object"));
+            continue;
+        };
+        for key in object_keys(object) {
+            if !allowed.contains(&key) {
+                failures.push(format!("{label}[{index}]: unexpected entry key '{key}'"));
+            }
+        }
+        for key in ["name", "kind"] {
+            if !object.contains_key(key) {
+                failures.push(format!("{label}[{index}]: missing required key '{key}'"));
+            }
+        }
+        if let Some(value) = object.get("payload_generation") {
+            if !value.is_null() {
+                validate_payload_generation_shape(value, &format!("{label}[{index}]"), failures);
+            }
+        }
+        if let Some(extents) = object.get("extents") {
+            let Some(extents) = extents.as_array() else {
+                failures.push(format!("{label}[{index}]: extents must be an array"));
+                continue;
+            };
+            for (extent_index, extent) in extents.iter().enumerate() {
+                let Some(extent) = extent.as_object() else {
+                    failures.push(format!(
+                        "{label}[{index}].extents[{extent_index}]: extent must be an object"
+                    ));
+                    continue;
+                };
+                for key in object_keys(extent) {
+                    if !["offset", "length"].contains(&key) {
+                        failures.push(format!(
+                            "{label}[{index}].extents[{extent_index}]: unexpected key '{key}'"
+                        ));
+                    }
+                }
+                for key in ["offset", "length"] {
+                    if !extent.contains_key(key) {
+                        failures.push(format!(
+                            "{label}[{index}].extents[{extent_index}]: missing required key '{key}'"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn validate_base_files_shape(base_files: &Value, label: &str, failures: &mut Vec<String>) {
+    let Some(array) = base_files.as_array() else {
+        failures.push(format!("{label}: base_files must be an array"));
+        return;
+    };
+    let allowed = [
+        "path",
+        "payload_utf8",
+        "payload_hex",
+        "payload_sha256",
+        "size",
+        "payload_generation",
+    ];
+    for (index, base_file) in array.iter().enumerate() {
+        let Some(object) = base_file.as_object() else {
+            failures.push(format!("{label}[{index}]: base file must be an object"));
+            continue;
+        };
+        for key in object_keys(object) {
+            if !allowed.contains(&key) {
+                failures.push(format!("{label}[{index}]: unexpected base_files key '{key}'"));
+            }
+        }
+        if !object.contains_key("path") {
+            failures.push(format!("{label}[{index}]: missing required key 'path'"));
+        }
+        if let Some(value) = object.get("payload_generation") {
+            if !value.is_null() {
+                validate_payload_generation_shape(value, &format!("{label}[{index}]"), failures);
+            }
+        }
+    }
+}
+
+fn validate_transform_shape(
+    value: &Value,
+    label: &str,
+    allow_crypto_fields: bool,
+    failures: &mut Vec<String>,
+) {
+    if let Some(boolean) = value.as_bool() {
+        if boolean {
+            failures.push(format!("{label}: boolean form must be false, not true"));
+        }
+        return;
+    }
+
+    let Some(object) = value.as_object() else {
+        failures.push(format!("{label}: must be false or an object"));
+        return;
+    };
+    let allowed: &[&str] = if allow_crypto_fields {
+        &["algorithm", "id", "password", "kms"]
+    } else {
+        &["algorithm", "id"]
+    };
+    for key in object_keys(object) {
+        if !allowed.contains(&key) {
+            failures.push(format!("{label}: unexpected key '{key}'"));
+        }
+    }
+    for key in ["algorithm", "id"] {
+        if !object.contains_key(key) {
+            failures.push(format!("{label}: missing required key '{key}'"));
+        }
+    }
+    if allow_crypto_fields {
+        if let Some(kms) = object.get("kms") {
+            if !kms.is_null() {
+                let Some(kms) = kms.as_object() else {
+                    failures.push(format!("{label}.kms: must be an object or null"));
+                    return;
+                };
+                for key in object_keys(kms) {
+                    if !["mode", "salt_hex", "kdf", "iterations"].contains(&key) {
+                        failures.push(format!("{label}.kms: unexpected key '{key}'"));
+                    }
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -448,4 +652,229 @@ fn all_manifests_pass_extended_schema_validation() {
         "All {} manifests pass extended schema validation.",
         manifests.iter().filter(|(_, r)| r.is_ok()).count()
     );
+}
+
+#[test]
+fn non_deferred_valid_vectors_must_not_be_placeholders() {
+    let manifests = discover_manifests(&vectors_root()).expect("discover manifests");
+    let banned = [
+        "deferred",
+        "placeholder",
+        "fallback",
+        "requires more complex writer setup",
+        "future work",
+        "not yet generated",
+        "will be added later",
+    ];
+    let mut failures = Vec::new();
+
+    for (path, result) in &manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if manifest.kind != VectorKind::Valid || manifest.deferred {
+            continue;
+        }
+        let combined = format!(
+            "{}\n{}\n{}",
+            manifest.title,
+            manifest.description,
+            manifest.notes.join("\n")
+        )
+        .to_ascii_lowercase();
+        for phrase in banned {
+            if combined.contains(phrase) {
+                failures.push(format!(
+                    "[{}] {}: contains placeholder language '{}'",
+                    manifest.id,
+                    path.display(),
+                    phrase
+                ));
+            }
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} canonical valid vector(s) contain placeholder language:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn deferred_vectors_do_not_reference_binary_fixtures() {
+    let manifests = manifest_paths();
+    let mut failures = Vec::new();
+
+    for path in manifests {
+        let raw = raw_manifest_json(&path);
+        let Some(object) = raw.as_object() else {
+            failures.push(format!("{}: manifest root must be an object", path.display()));
+            continue;
+        };
+        let deferred = object.get("deferred").and_then(Value::as_bool).unwrap_or(false);
+        if !deferred {
+            continue;
+        }
+        match object.get("file") {
+            None | Some(Value::Null) => {}
+            Some(value) => failures.push(format!(
+                "{}: deferred manifest must omit 'file' or set it to null, found {}",
+                path.display(),
+                value
+            )),
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} deferred manifest(s) still reference binaries:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn known_deferred_feature_tags_are_not_canonical_unless_real() {
+    let manifests = discover_manifests(&vectors_root()).expect("discover manifests");
+    let deferred_tags = [
+        "delta:vcdiff",
+        "delta:bsdiff",
+        "cdc:fastcdc",
+        "cdc-map",
+        "sparse+delta",
+        "loss-tolerant-gap",
+        "fragmentation",
+        "recovery-tlv",
+    ];
+    let mut failures = Vec::new();
+
+    for (path, result) in &manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if manifest.kind != VectorKind::Valid || manifest.deferred {
+            continue;
+        }
+        let matches: Vec<_> = manifest
+            .features
+            .iter()
+            .filter(|feature| deferred_tags.contains(&feature.as_str()))
+            .cloned()
+            .collect();
+        if !matches.is_empty() {
+            failures.push(format!(
+                "[{}] {}: canonical manifest still claims deferred feature tags {:?}",
+                manifest.id,
+                path.display(),
+                matches
+            ));
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} canonical valid manifest(s) still claim deferred feature tags:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+#[test]
+fn raw_manifest_shapes_match_schema_contract() {
+    let required = [
+        "schema_version",
+        "id",
+        "title",
+        "description",
+        "kind",
+        "expected",
+        "compression",
+        "crypto",
+    ];
+    let allowed = [
+        "schema_version",
+        "id",
+        "title",
+        "description",
+        "kind",
+        "file",
+        "profiles",
+        "features",
+        "compression",
+        "crypto",
+        "requires_key_provider",
+        "entries",
+        "base_files",
+        "expected",
+        "profile_expectations",
+        "limits",
+        "notes",
+        "deferred",
+        "generated_by",
+    ];
+    let mut failures = Vec::new();
+
+    for path in manifest_paths() {
+        let raw = raw_manifest_json(&path);
+        let Some(object) = raw.as_object() else {
+            failures.push(format!("{}: manifest root must be an object", path.display()));
+            continue;
+        };
+        for key in object_keys(object) {
+            if !allowed.contains(&key) {
+                failures.push(format!("{}: unexpected top-level key '{}'", path.display(), key));
+            }
+        }
+        for key in required {
+            if !object.contains_key(key) {
+                failures.push(format!("{}: missing required top-level key '{}'", path.display(), key));
+            }
+        }
+        if let Some(file) = object.get("file") {
+            if !value_is_string_or_null(file) {
+                failures.push(format!("{}: file must be a string or null", path.display()));
+            }
+        }
+        if let Some(compression) = object.get("compression") {
+            validate_transform_shape(
+                compression,
+                &format!("{}: compression", path.display()),
+                false,
+                &mut failures,
+            );
+        }
+        if let Some(crypto) = object.get("crypto") {
+            validate_transform_shape(
+                crypto,
+                &format!("{}: crypto", path.display()),
+                true,
+                &mut failures,
+            );
+        }
+        if let Some(entries) = object.get("entries") {
+            validate_entries_shape(entries, &format!("{}: entries", path.display()), &mut failures);
+        }
+        if let Some(base_files) = object.get("base_files") {
+            validate_base_files_shape(
+                base_files,
+                &format!("{}: base_files", path.display()),
+                &mut failures,
+            );
+        }
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} raw manifest shape error(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
 }

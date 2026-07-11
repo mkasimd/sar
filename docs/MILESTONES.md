@@ -655,13 +655,22 @@ If this milestone document appears to describe library/profile layout differentl
 * `sar_archive::conformance` module with `ConformanceManifest`, `validate_manifest_schema()`, `run_conformance_check()`, `discover_manifests()`
 * `sar_archive::profile::ComplianceProfile` extended with 6 profile variants and `canonical_name()` / `from_canonical_name()` methods
 * `crates/sar-archive/tests/conformance_tests.rs` integration test suite (9 tests, all passing)
-* canonical valid vectors: minimal, indexed, NO_INDEX, compression (STORE/DEFLATE/ZSTD), crypto (AES-256-GCM, XChaCha20-Poly1305), FEC (XOR, RS, metadata), fragmentation, sparse, CDC, delta (STORE_PATCH, VCDIFF, BSDIFF), filesystem metadata (permissions, owner, timestamps, symlink, directory, combined, field-presence-inactive), size layout (32-bit, 64-bit)
+* canonical valid vectors: minimal, indexed, NO_INDEX, compression (STORE/DEFLATE/ZSTD), crypto (AES-256-GCM, XChaCha20-Poly1305), LFH selective FEC (XOR, RS), sparse reconstruction, CDC literal mode, delta `STORE_PATCH`, filesystem metadata (permissions, owner, timestamps, symlink, directory, combined, field-presence-inactive), size layout (32-bit, 64-bit)
 * invalid vectors: truncated GH/LFH, invalid magic, unknown global flag, unsupported compression/crypto algo, bad AEAD tag
 * profile-specific vectors: static-archive, stream-package acceptance/rejection; cold-storage/tape deferred with documented placeholder
-* cross-feature vectors: sparse+delta ordering, fragment descriptor gaps (partial), size layout boundaries, metadata field-presence
+* deferred/reference-only manifests document future fragment reassembly, LOSS_TOLERANT fragment gaps, sparse+delta ordering, FASTCDC `CDC_MAP`, generated VCDIFF, and generated SAR BSDIFF v1 without overclaiming fallback binaries
 * known gaps documented in manifests (stream/session, unsafe metadata, resource limits, many invalid cases deferred)
 * `docs/CONFORMANCE.md` updated with M12a vector structure, validator status, and known gaps
 * no wire-format changes; no CLI behavior changes; no M12b work started
+
+---
+
+## M12a-M9b-cp: Delta patch generation corrective pass
+
+* restore canonical generated-fixture coverage for VCDIFF and SAR BSDIFF v1
+* implement or harden writer-side patch generation from base + target bytes
+* replace deferred/reference-only VCDIFF/BSDIFF manifests with real generated fixtures
+* keep M12a vector claims auditable while this corrective pass remains pending
 
 ---
 

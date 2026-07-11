@@ -258,7 +258,7 @@
             "type": ["string", "null"],
             "description": "Base file content as hex string (for small binary content)."
           },
-          "sha256": {
+          "payload_sha256": {
             "type": ["string", "null"],
             "description": "SHA-256 hex digest of the base file content."
           },

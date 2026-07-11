@@ -281,7 +281,7 @@ pub struct ExpectedBaseFile {
     pub payload_hex: Option<String>,
     /// SHA-256 hex digest of the base file content.
     #[serde(default)]
-    pub sha256: Option<String>,
+    pub payload_sha256: Option<String>,
     /// Base file size in bytes.
     #[serde(default)]
     pub size: Option<u64>,
@@ -444,6 +444,7 @@ pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchem
 
     // Entry-level rules.
     validate_entries(manifest, &mut errors);
+    validate_base_files(manifest, &mut errors);
 
     ManifestSchemaResult {
         manifest_id: manifest.id.clone(),
@@ -581,6 +582,51 @@ fn validate_entries(manifest: &ConformanceManifest, errors: &mut Vec<String>) {
             if has_generation && !has_sha256 {
                 errors.push(format!(
                     "{}: entry with payload_generation must include payload_sha256",
+                    label
+                ));
+            }
+        }
+    }
+
+    /// Validates expected base files for correctness.
+    fn validate_base_files(manifest: &ConformanceManifest, errors: &mut Vec<String>) {
+        for (i, base_file) in manifest.base_files.iter().enumerate() {
+            let label = format!("base_files[{}] (path='{}')", i, base_file.path);
+
+            if base_file.path.is_empty() {
+                errors.push(format!("{}: base file path must not be empty", label));
+            }
+
+            let size = base_file.size.unwrap_or(0);
+            let has_utf8 = base_file.payload_utf8.is_some();
+            let has_hex = base_file.payload_hex.is_some();
+            let has_sha256 = base_file.payload_sha256.is_some();
+            let has_generation = base_file.payload_generation.is_some();
+
+            if size > 60 {
+                if !has_sha256 {
+                    errors.push(format!(
+                        "{}: base file with size > 60 must include payload_sha256",
+                        label
+                    ));
+                }
+                if !has_generation {
+                    errors.push(format!(
+                        "{}: base file with size > 60 must include payload_generation",
+                        label
+                    ));
+                }
+            } else if size > 0 && !has_utf8 && !has_hex && !has_sha256 {
+                errors.push(format!(
+                    "{}: base file with size <= 60 must include at least one of payload_utf8, \
+                     payload_hex, or payload_sha256",
+                    label
+                ));
+            }
+
+            if has_generation && !has_sha256 {
+                errors.push(format!(
+                    "{}: base file with payload_generation must include payload_sha256",
                     label
                 ));
             }

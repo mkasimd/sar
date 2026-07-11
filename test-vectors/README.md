@@ -31,11 +31,11 @@ test-vectors/
     no-index/                — NO_INDEX forward-only archives
     compression/             — STORE / DEFLATE / ZSTD compression variants
     crypto/                  — AES-256-GCM and XChaCha20-Poly1305 encrypted archives
-    fec/                     — XOR FEC and Reed-Solomon FEC archives
-    fragmentation/           — fragmentation reassembly vectors
-    sparse/                  — sparse file reconstruction vectors
-    cdc/                     — CDC metadata vectors
-    delta/                   — STORE_PATCH, VCDIFF, BSDIFF delta vectors
+    fec/                     — real XOR/Reed-Solomon selective FEC archives and shared metadata fixture
+    fragmentation/           — deferred/reference-only fragment fixtures until real fragment binaries exist
+    sparse/                  — real sparse reconstruction fixtures plus deferred sparse+delta reference
+    cdc/                     — real CDC literal-mode fixture plus deferred FASTCDC CDC_MAP reference
+    delta/                   — real STORE_PATCH fixture plus deferred VCDIFF/BSDIFF references
     stream-session/          — SESSION_INIT / SESSION_CLOSE stream vectors
     filesystem-metadata/     — permissions, owner, timestamps, symlink, directory vectors
   invalid/
@@ -68,9 +68,6 @@ All manifests must include:
   "title": "Human-readable title",
   "description": "What this vector proves",
   "kind": "valid",
-  "file": "relative/path/to/vector.sar",
-  "profiles": ["static-archive"],
-  "features": ["indexed", "compression:zstd"],
   "compression": false,
   "crypto": false,
   "expected": {
@@ -83,6 +80,10 @@ All manifests must include:
   "notes": []
 }
 ```
+
+`file`, `profiles`, `features`, `entries`, `base_files`, `notes`, and other metadata are
+optional unless the manifest specifically needs them. Deferred/reference-only vectors use
+`"file": null`.
 
 ### `compression` field
 
@@ -219,12 +220,46 @@ Delta vectors include `base_files` describing input files required for patching:
 "base_files": [
   {
     "path": "base_file.bin",
-    "sha256": "...",
+    "payload_sha256": "...",
     "size": 64,
     "payload_generation": { "kind": "repeated_pattern", ... }
   }
 ]
 ```
+
+## Real fixtures vs deferred/reference-only manifests
+
+M12a intentionally prefers a smaller honest fixture set over inflated coverage claims.
+
+### Real binary fixtures in this tree
+
+- minimal, indexed, and `NO_INDEX` archives
+- compression (`STORE`, `DEFLATE`, `ZSTD`)
+- crypto (`AES-256-GCM`, `XChaCha20-Poly1305`) with test-only secrets
+- LFH selective FEC (`fec:xor`, `fec:reed-solomon`)
+- sparse reconstruction (`valid/sparse/simple`)
+- CDC literal mode (`valid/cdc/literal-mode`)
+- delta `STORE_PATCH`
+- filesystem metadata fixtures
+- 32-bit and 64-bit LFH size-layout fixtures
+
+### Deferred/reference-only manifests in this tree
+
+- fragmentation reassembly
+- LOSS_TOLERANT fragment-gap coverage
+- sparse+delta combined ordering
+- FASTCDC `CDC_MAP`
+- generated VCDIFF
+- generated SAR BSDIFF v1
+- archive-level Recovery TLV coverage
+
+The FEC metadata manifest is intentionally backed by the real XOR selective-FEC archive and
+does **not** claim archive-level Recovery TLV coverage.
+
+Real generated VCDIFF/BSDIFF fixtures will be restored after
+`M12a-M9b-cp: Delta patch generation corrective pass`.
+
+TODO: add top-level fixture digests/provenance fields in a later M12a hardening pass.
 
 ### Feature consistency rules
 
