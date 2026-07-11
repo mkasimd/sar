@@ -385,6 +385,7 @@ pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchem
         let known_statuses = [
             "SAR_OK",
             "SAR_ERR_GENERIC",
+            "SAR_ERR_NOT_FOUND",
             "SAR_ERR_MALFORMED",
             "SAR_ERR_TRUNCATED",
             "SAR_ERR_UNSUPPORTED",
@@ -392,16 +393,26 @@ pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchem
             "SAR_ERR_FLAG_CONFLICT",
             "SAR_ERR_INVALID_MAGIC",
             "SAR_ERR_AUTH_FAILED",
+            "SAR_ERR_PATCH_FAILED",
+            "SAR_ERR_BASE_MISSING",
             "SAR_ERR_LIMIT_EXCEEDED",
             "SAR_ERR_BOUNDS",
             "SAR_ERR_OVERFLOW",
+            "SAR_ERR_EC_FAILED",
             "SAR_ERR_FRAGMENT_GAP",
             "SAR_ERR_INVALID_MAP",
+            "SAR_ERR_INVALID_ALIGNMENT",
             "SAR_ERR_INVALID_LENGTH",
             "SAR_ERR_STREAM_STATE",
             "SAR_ERR_DECRYPT_FAILED",
             "SAR_ERR_HASH_MISMATCH",
             "SAR_ERR_CRC_MISMATCH",
+            "SAR_ERR_INVALID_VERSION",
+            "SAR_ERR_KEY_MISSING",
+            "SAR_ERR_METADATA_MISSING",
+            "SAR_ERR_METADATA_CONFLICT",
+            "SAR_ERR_RECOVERY_UNAVAILABLE",
+            "SAR_ERR_RECOVERY_CORRUPTED",
             "SAR_ERR_IO",
         ];
         if !known_statuses.contains(&status.as_str()) {
@@ -658,6 +669,7 @@ pub fn sar_error_matches_expected_status(
             error,
             SarError::Malformed(_) | SarError::InvalidLength(_) | SarError::ReservedValue(_)
         ),
+        "SAR_ERR_NOT_FOUND" => matches!(error, SarError::NotFound(_)),
         "SAR_ERR_TRUNCATED" => matches!(error, SarError::Truncated(_) | SarError::Io(_)),
         "SAR_ERR_UNSUPPORTED" => matches!(error, SarError::Unsupported(_)),
         "SAR_ERR_RESERVED_VALUE" => {
@@ -671,11 +683,15 @@ pub fn sar_error_matches_expected_status(
                 SarError::AuthFailed(_) | SarError::DecryptFailed(_) | SarError::HashMismatch(_)
             )
         }
+        "SAR_ERR_PATCH_FAILED" => matches!(error, SarError::PatchFailed(_)),
+        "SAR_ERR_BASE_MISSING" => matches!(error, SarError::BaseMissing(_)),
         "SAR_ERR_LIMIT_EXCEEDED" => matches!(error, SarError::LimitExceeded(_)),
         "SAR_ERR_BOUNDS" => matches!(error, SarError::Bounds(_)),
         "SAR_ERR_OVERFLOW" => matches!(error, SarError::Overflow(_)),
+        "SAR_ERR_EC_FAILED" => matches!(error, SarError::EcFailed(_)),
         "SAR_ERR_FRAGMENT_GAP" => matches!(error, SarError::FragmentGap(_)),
         "SAR_ERR_INVALID_MAP" => matches!(error, SarError::InvalidMap(_)),
+        "SAR_ERR_INVALID_ALIGNMENT" => matches!(error, SarError::InvalidAlignment(_)),
         "SAR_ERR_INVALID_LENGTH" => {
             matches!(error, SarError::InvalidLength(_) | SarError::Malformed(_))
         }
@@ -685,6 +701,12 @@ pub fn sar_error_matches_expected_status(
         }
         "SAR_ERR_HASH_MISMATCH" => matches!(error, SarError::HashMismatch(_)),
         "SAR_ERR_CRC_MISMATCH" => matches!(error, SarError::CrcMismatch(_)),
+        "SAR_ERR_INVALID_VERSION" => matches!(error, SarError::InvalidVersion(_)),
+        "SAR_ERR_KEY_MISSING" => matches!(error, SarError::KeyMissing(_)),
+        "SAR_ERR_METADATA_MISSING" => matches!(error, SarError::MetadataMissing(_)),
+        "SAR_ERR_METADATA_CONFLICT" => matches!(error, SarError::MetadataConflict(_)),
+        "SAR_ERR_RECOVERY_UNAVAILABLE" => matches!(error, SarError::RecoveryUnavailable(_)),
+        "SAR_ERR_RECOVERY_CORRUPTED" => matches!(error, SarError::RecoveryCorrupted(_)),
         "SAR_ERR_IO" => matches!(error, SarError::Io(_)),
         "SAR_ERR_GENERIC" => matches!(error, SarError::Generic),
         _ => false,
@@ -782,6 +804,18 @@ pub fn run_conformance_check(
     if let Some(&v) = manifest.limits.get("max_loss_tolerant_gap") {
         limits.max_loss_tolerant_gap = v;
     }
+    if let Some(&v) = manifest.limits.get("max_in_memory_buffer") {
+        limits.max_in_memory_buffer = v;
+    }
+    if let Some(&v) = manifest.limits.get("max_bsdiff_control_bytes") {
+        limits.max_bsdiff_control_bytes = v;
+    }
+    if let Some(&v) = manifest.limits.get("max_bsdiff_control_triples") {
+        limits.max_bsdiff_control_triples = usize::try_from(v).unwrap_or(usize::MAX);
+    }
+    if let Some(&v) = manifest.limits.get("max_vcdiff_output_size") {
+        limits.max_vcdiff_output_size = v;
+    }
 
     // Attempt to parse the archive.
     // If the manifest declares base_files, load the first one from disk and
@@ -792,7 +826,15 @@ pub fn run_conformance_check(
     } else {
         None
     };
-    let parse_result = attempt_full_parse(&bytes, &limits, delta_base);
+    let parse_result = if manifest
+        .features
+        .iter()
+        .any(|feature| feature == "recovery:repair-beyond-parity")
+    {
+        attempt_archive_repair_beyond_parity(&bytes, &limits)
+    } else {
+        attempt_full_parse(&bytes, &limits, delta_base)
+    };
 
     // If this vector requires a key provider, a KeyMissing error is expected
     // and should be treated as a structural-level skip rather than a failure.
@@ -894,6 +936,45 @@ fn attempt_full_parse(
         }
     }
     Ok(())
+}
+
+fn attempt_archive_repair_beyond_parity(
+    bytes: &[u8],
+    limits: &sar_core::limits::ResourceLimits,
+) -> Result<(), sar_core::error::SarError> {
+    use crate::recovery::{
+        ErasureInput, ErasureRange, inspect_recovery_metadata, plan_archive_repair,
+    };
+
+    let meta = inspect_recovery_metadata(bytes, limits)?;
+    let protected = meta
+        .protected_range
+        .ok_or(sar_core::error::SarError::RecoveryUnavailable(
+            "archive-level repair requires a protected range",
+        ))?;
+    let summary =
+        meta.recovery_tlvs
+            .first()
+            .ok_or(sar_core::error::SarError::RecoveryUnavailable(
+                "archive-level repair requires RECOVERY TLV metadata",
+            ))?;
+    let block_size = match summary {
+        sar_core::fec::FecSummary::Xor { block_size, .. } => u64::from(*block_size),
+        sar_core::fec::FecSummary::ReedSolomon { symbol_size, .. } => u64::from(*symbol_size),
+    };
+    let erasures = ErasureInput {
+        entries: Vec::new(),
+        archive_ranges: vec![ErasureRange {
+            offset: protected.offset,
+            length: block_size
+                .checked_mul(2)
+                .ok_or(sar_core::error::SarError::Overflow(
+                    "repair erasure length overflow",
+                ))?,
+        }],
+    };
+    let plan = plan_archive_repair(bytes, erasures, limits)?;
+    crate::recovery::repair_archive(bytes, &plan, limits).map(|_| ())
 }
 
 /// Discovers all `manifest.json` files under a root directory.

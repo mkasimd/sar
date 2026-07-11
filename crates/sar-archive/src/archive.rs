@@ -821,6 +821,27 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     "CD alignment padding must be all zero",
                 ));
             }
+
+            let has_recovery_tlv = cd
+                .metadata
+                .iter()
+                .any(|tlv| (0x10..=0x1F).contains(&tlv.type_id));
+            if has_recovery_tlv && !header.flags.contains(GlobalFlags::HAS_GLOBAL_EC) {
+                return Err(SarError::FlagConflict(
+                    "RECOVERY TLV metadata requires HAS_GLOBAL_EC global flag",
+                ));
+            }
+            if header.flags.contains(GlobalFlags::HAS_GLOBAL_EC) {
+                for tlv in &cd.metadata {
+                    if (0x10..=0x1F).contains(&tlv.type_id) {
+                        sar_core::fec::validate_recovery_tlv(
+                            tlv.type_id,
+                            &tlv.value,
+                            &self.options.limits,
+                        )?;
+                    }
+                }
+            }
             (cd_offset, Some(cd))
         };
 

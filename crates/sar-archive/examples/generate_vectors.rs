@@ -38,14 +38,22 @@ use sar_archive::{
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
     CDC_ALGO_LITERAL, EntryKind, GlobalFlags, SparseExtent,
-    format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
+    format::{
+        CentralDictionary, Footer, GlobalHeader, LocalFileHeader, parse_central_dictionary,
+        parse_footer, parse_global_header, parse_lfh, write_central_dictionary, write_footer,
+        write_global_header, write_lfh,
+    },
+    tlv::Tlv,
 };
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KmsContext, KmsParams, PBKDF2_PRF_HMAC_SHA256,
     SecretBytes, SecretString, error::SarCryptoError, kms::types::Pbkdf2Params,
     provider::KeyProvider,
 };
-use sar_delta::{PATCH_ALGO_STORE_PATCH, PatchAlgoId};
+use sar_delta::{
+    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
+    PatchAlgoId,
+};
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR};
 
 // ---------------------------------------------------------------------------
@@ -256,6 +264,236 @@ fn write_archive_recovery_archive(recovery: ArchiveRecoverySettings, payload: &[
         .unwrap();
     writer.finish().unwrap();
     buf
+}
+
+fn mutate_global_flags(archive: &[u8], mutate: impl FnOnce(GlobalFlags) -> GlobalFlags) -> Vec<u8> {
+    let mut out = archive.to_vec();
+    let flags_size = usize::from(u16::from_le_bytes([out[6], out[7]]));
+    let flags_start = 8usize;
+    let flags_end = flags_start + flags_size;
+    let mut low = [0u8; 4];
+    low.copy_from_slice(&out[flags_start..flags_start + 4]);
+    let flags = GlobalFlags::from_bits_truncate(u32::from_le_bytes(low));
+    let updated = mutate(flags).bits().to_le_bytes();
+    out[flags_start..flags_start + 4].copy_from_slice(&updated);
+    debug_assert!(flags_end <= out.len());
+    out
+}
+
+fn mutate_first_lfh(
+    archive: &[u8],
+    mutate: impl FnOnce(&mut LocalFileHeader),
+) -> Result<Vec<u8>, String> {
+    let limits = sar_core::ResourceLimits::default();
+    let (gh, gh_len) = parse_global_header(archive, &limits)
+        .map_err(|err| format!("parse global header: {err}"))?;
+    let (mut lfh, lfh_len) = parse_lfh(&archive[gh_len..], &gh.flags, &limits)
+        .map_err(|err| format!("parse lfh: {err}"))?;
+    mutate(&mut lfh);
+    let new_lfh = write_lfh(&gh.flags, &lfh).map_err(|err| format!("write lfh: {err}"))?;
+    if new_lfh.len() != lfh_len {
+        return Err("mutated LFH length changed unexpectedly".to_string());
+    }
+    let mut out = Vec::with_capacity(archive.len());
+    out.extend_from_slice(&archive[..gh_len]);
+    out.extend_from_slice(&new_lfh);
+    out.extend_from_slice(&archive[gh_len + lfh_len..]);
+    Ok(out)
+}
+
+fn mutate_indexed_recovery_tlvs(
+    archive: &[u8],
+    mutate: impl FnOnce(&mut Vec<Tlv>),
+) -> Result<Vec<u8>, String> {
+    let limits = sar_core::ResourceLimits::default();
+    let (gh, _) = parse_global_header(archive, &limits)
+        .map_err(|err| format!("parse global header: {err}"))?;
+    if gh.flags.contains(GlobalFlags::NO_INDEX) {
+        return Err("expected indexed archive".to_string());
+    }
+    if archive.len() < 8 {
+        return Err("indexed archive too short for footer".to_string());
+    }
+    let footer =
+        parse_footer(&archive[archive.len() - 8..]).map_err(|err| format!("footer: {err}"))?;
+    let cd_start = usize::try_from(footer.cd_offset).map_err(|_| "cd offset usize".to_string())?;
+    let cd_end = archive.len() - 8;
+    if cd_start >= cd_end {
+        return Err("cd offset out of range".to_string());
+    }
+    let (mut cd, _) = parse_central_dictionary(&archive[cd_start..cd_end], gh.flags, &limits)
+        .map_err(|err| format!("parse central dictionary: {err}"))?;
+    mutate(&mut cd.metadata);
+    let rebuilt_cd = write_central_dictionary(
+        &CentralDictionary {
+            version: cd.version,
+            file_count: cd.file_count,
+            partition_info: cd.partition_info,
+            global_crc32: cd.global_crc32,
+            metadata: cd.metadata,
+            offsets: cd.offsets,
+        },
+        gh.flags,
+    )
+    .map_err(|err| format!("write central dictionary: {err}"))?;
+    let mut out = Vec::with_capacity(cd_start + rebuilt_cd.len() + 8);
+    out.extend_from_slice(&archive[..cd_start]);
+    out.extend_from_slice(&rebuilt_cd);
+    out.extend_from_slice(&write_footer(Footer {
+        cd_offset: footer.cd_offset,
+    }));
+    Ok(out)
+}
+
+fn mutate_first_recovery_tlv_type_raw(archive: &[u8], new_type_id: u8) -> Result<Vec<u8>, String> {
+    let limits = sar_core::ResourceLimits::default();
+    let (gh, _) = parse_global_header(archive, &limits)
+        .map_err(|err| format!("parse global header: {err}"))?;
+    if gh.flags.contains(GlobalFlags::NO_INDEX) {
+        return Err("expected indexed archive".to_string());
+    }
+    if !gh.flags.contains(GlobalFlags::OPT_PRESENT) {
+        return Err("expected OPT_PRESENT metadata".to_string());
+    }
+    if archive.len() < 8 {
+        return Err("indexed archive too short for footer".to_string());
+    }
+    let footer =
+        parse_footer(&archive[archive.len() - 8..]).map_err(|err| format!("footer: {err}"))?;
+    let cd_start = usize::try_from(footer.cd_offset).map_err(|_| "cd offset usize".to_string())?;
+    let cd_end = archive.len() - 8;
+    let mut out = archive.to_vec();
+    let mut cursor = cd_start + 8; // CD version + reserved
+    cursor += if gh.flags.contains(GlobalFlags::SIZE_64BIT) {
+        8
+    } else {
+        4
+    };
+    if gh.flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
+        cursor += 4;
+    }
+    if gh.flags.contains(GlobalFlags::HAS_GLOBAL_CRC32) {
+        cursor += 4;
+    }
+    if cursor + 4 > cd_end {
+        return Err("central dictionary metadata length field out of range".to_string());
+    }
+    let meta_size = u32::from_le_bytes(
+        out[cursor..cursor + 4]
+            .try_into()
+            .map_err(|_| "metadata length decode".to_string())?,
+    ) as usize;
+    let meta_start = cursor + 4;
+    if meta_size == 0 || meta_start >= cd_end {
+        return Err("central dictionary metadata is empty".to_string());
+    }
+    out[meta_start] = new_type_id;
+    Ok(out)
+}
+
+fn encode_varint(mut value: u64) -> Vec<u8> {
+    if value == 0 {
+        return vec![0x00];
+    }
+    let mut buf = Vec::new();
+    while value > 0 {
+        buf.push((value & 0x7F) as u8);
+        value >>= 7;
+    }
+    buf.reverse();
+    let last = buf.len() - 1;
+    for byte in &mut buf[..last] {
+        *byte |= 0x80;
+    }
+    buf
+}
+
+fn vcdiff_add_only_patch(add_data: &[u8]) -> Vec<u8> {
+    let mut inst = Vec::new();
+    inst.push(0x01);
+    inst.extend_from_slice(&encode_varint(
+        u64::try_from(add_data.len()).expect("add len"),
+    ));
+
+    let twl = encode_varint(u64::try_from(add_data.len()).expect("target len"));
+    let mut body = Vec::new();
+    body.extend_from_slice(&twl);
+    body.push(0x00);
+    body.extend_from_slice(&encode_varint(
+        u64::try_from(add_data.len()).expect("add_run len"),
+    ));
+    body.extend_from_slice(&encode_varint(u64::try_from(inst.len()).expect("inst len")));
+    body.extend_from_slice(&encode_varint(0));
+    body.extend_from_slice(add_data);
+    body.extend_from_slice(&inst);
+
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"\xD6\xC3\xC4\x00");
+    patch.push(0x00);
+    patch.push(0x00);
+    patch.extend_from_slice(&encode_varint(u64::try_from(body.len()).expect("body len")));
+    patch.extend_from_slice(&body);
+    patch
+}
+
+fn encode_bsdiff_int(value: i64) -> [u8; 8] {
+    let magnitude = value.unsigned_abs();
+    let sign_bit: u8 = if value < 0 { 0x80 } else { 0x00 };
+    let mut bytes = magnitude.to_le_bytes();
+    bytes[7] = (bytes[7] & 0x7F) | sign_bit;
+    bytes
+}
+
+fn bsdiff_single_triple_patch(base: &[u8], target: &[u8]) -> Vec<u8> {
+    let diff: Vec<u8> = (0..target.len())
+        .map(|i| target[i].wrapping_sub(base.get(i).copied().unwrap_or(0)))
+        .collect();
+    let ctrl = [
+        encode_bsdiff_int(i64::try_from(target.len()).expect("target len")),
+        encode_bsdiff_int(0),
+        encode_bsdiff_int(0),
+    ]
+    .concat();
+    let mut patch = Vec::new();
+    patch.extend_from_slice(b"SARBSD01");
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(ctrl.len()).expect("ctrl len"),
+    ));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(diff.len()).expect("diff len"),
+    ));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(target.len()).expect("new size"),
+    ));
+    patch.extend_from_slice(&ctrl);
+    patch.extend_from_slice(&diff);
+    patch
+}
+
+fn write_manual_delta_archive(
+    name: &str,
+    patch_algo_id: u8,
+    delta_base_hash: [u8; 32],
+    declared_uncompressed_size: u64,
+    patch_payload: &[u8],
+) -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
+    let gh = GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    let mut archive = write_global_header(&gh).expect("write global header");
+    let mut lfh =
+        LocalFileHeader::minimal_store(name.as_bytes().to_vec(), declared_uncompressed_size);
+    lfh.patch_algo_id = Some(patch_algo_id);
+    lfh.delta_base_hash = Some(delta_base_hash);
+    lfh.payload_size = u64::try_from(patch_payload.len()).expect("patch payload len");
+    archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("write lfh"));
+    archive.extend_from_slice(patch_payload);
+    archive
 }
 
 // ---------------------------------------------------------------------------
@@ -971,6 +1209,227 @@ fn main() {
         write_fixture(
             "invalid/algorithms/unsupported-crypto/unsupported_crypto.sar",
             &archive,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Invalid: archive-level recovery metadata and flag states
+    // -----------------------------------------------------------------------
+
+    {
+        let baseline_xor = write_archive_recovery_archive(
+            ArchiveRecoverySettings {
+                algo_id: FEC_ALGO_XOR,
+                config0: 1,
+                config1: 0,
+                symbol_size: 0,
+            },
+            &make_payload(1024),
+        );
+
+        let has_global_ec_without_opt_present = mutate_global_flags(&baseline_xor, |flags| {
+            (flags | GlobalFlags::HAS_GLOBAL_EC) & !GlobalFlags::OPT_PRESENT
+        });
+        write_fixture(
+            "invalid/recovery/has-global-ec-without-opt-present/has_global_ec_without_opt_present.sar",
+            &has_global_ec_without_opt_present,
+        );
+
+        let no_index_with_global_ec =
+            mutate_global_flags(&baseline_xor, |flags| flags | GlobalFlags::NO_INDEX);
+        write_fixture(
+            "invalid/recovery/no-index-with-global-ec/no_index_with_global_ec.sar",
+            &no_index_with_global_ec,
+        );
+
+        let recovery_tlv_without_global_ec = mutate_global_flags(&baseline_xor, |flags| {
+            (flags | GlobalFlags::OPT_PRESENT) & !GlobalFlags::HAS_GLOBAL_EC
+        });
+        write_fixture(
+            "invalid/recovery/recovery-tlv-without-global-ec/recovery_tlv_without_global_ec.sar",
+            &recovery_tlv_without_global_ec,
+        );
+
+        let truncated_recovery_tlv = mutate_indexed_recovery_tlvs(&baseline_xor, |metadata| {
+            for tlv in metadata {
+                if tlv.type_id == FEC_ALGO_XOR && !tlv.value.is_empty() {
+                    tlv.value.pop();
+                    break;
+                }
+            }
+        })
+        .expect("truncate recovery tlv");
+        write_fixture(
+            "invalid/recovery/truncated-recovery-tlv/truncated_recovery_tlv.sar",
+            &truncated_recovery_tlv,
+        );
+
+        let reserved_recovery_algo = mutate_first_recovery_tlv_type_raw(&baseline_xor, 0x10)
+            .expect("reserved recovery algo");
+        write_fixture(
+            "invalid/recovery/reserved-recovery-algo/reserved_recovery_algo.sar",
+            &reserved_recovery_algo,
+        );
+
+        let malformed_xor_recovery = mutate_indexed_recovery_tlvs(&baseline_xor, |metadata| {
+            for tlv in metadata {
+                if tlv.type_id == FEC_ALGO_XOR && !tlv.value.is_empty() {
+                    tlv.value[0] = 0x00;
+                    break;
+                }
+            }
+        })
+        .expect("malformed xor recovery");
+        write_fixture(
+            "invalid/recovery/zero-block-size/zero_block_size_recovery.sar",
+            &malformed_xor_recovery,
+        );
+    }
+
+    {
+        let baseline_rs = write_archive_recovery_archive(
+            ArchiveRecoverySettings {
+                algo_id: FEC_ALGO_REED_SOLOMON,
+                config0: 4,
+                config1: 2,
+                symbol_size: 256,
+            },
+            &make_payload(1024),
+        );
+
+        let unsupported_recovery_algo = mutate_first_recovery_tlv_type_raw(&baseline_rs, 0x12)
+            .expect("unsupported recovery algo");
+        write_fixture(
+            "invalid/recovery/unsupported-recovery-algo/unsupported_recovery_algo.sar",
+            &unsupported_recovery_algo,
+        );
+
+        let malformed_rs_recovery = mutate_indexed_recovery_tlvs(&baseline_rs, |metadata| {
+            for tlv in metadata {
+                if tlv.type_id == FEC_ALGO_REED_SOLOMON && tlv.value.len() >= 2 {
+                    tlv.value[1] = 0x00;
+                    break;
+                }
+            }
+        })
+        .expect("malformed rs recovery");
+        write_fixture(
+            "invalid/recovery/inconsistent-shard-count/inconsistent_shard_count_recovery.sar",
+            &malformed_rs_recovery,
+        );
+    }
+
+    {
+        let beyond_parity_source = write_archive_recovery_archive(
+            ArchiveRecoverySettings {
+                algo_id: FEC_ALGO_XOR,
+                config0: 2,
+                config1: 0,
+                symbol_size: 0,
+            },
+            &make_payload(2048),
+        );
+        write_fixture(
+            "invalid/recovery/corrupt-beyond-repair/corrupt_beyond_repair.sar",
+            &beyond_parity_source,
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Invalid: delta malformed/unsupported/limit vectors
+    // -----------------------------------------------------------------------
+
+    {
+        let base = make_payload(DELTA_VECTOR_PAYLOAD_LEN);
+        let target: Vec<u8> = make_payload(DELTA_VECTOR_PAYLOAD_LEN)
+            .into_iter()
+            .map(|b| b.wrapping_add(1))
+            .collect();
+        let base_hash = make_promoted_delta_base_hash();
+
+        let vcdiff_patch = vcdiff_add_only_patch(&target);
+        let vcdiff_archive = write_manual_delta_archive(
+            "vcdiff_invalid.bin",
+            PATCH_ALGO_VCDIFF,
+            base_hash,
+            u64::try_from(target.len()).expect("target len"),
+            &vcdiff_patch,
+        );
+        write_fixture(
+            "invalid/delta/vcdiff-output-too-large/vcdiff_output_too_large.sar",
+            &vcdiff_archive,
+        );
+        write_fixture("invalid/delta/vcdiff-output-too-large/base_file.bin", &base);
+
+        let mut zero_hash_vcdiff = vcdiff_archive.clone();
+        zero_hash_vcdiff = mutate_first_lfh(&zero_hash_vcdiff, |lfh| {
+            lfh.delta_base_hash = Some(ZERO_DELTA_BASE_HASH);
+        })
+        .expect("zero hash vcdiff");
+        write_fixture(
+            "invalid/delta/all-zero-base-hash-for-vcdiff/all_zero_base_hash_vcdiff.sar",
+            &zero_hash_vcdiff,
+        );
+
+        let mut reserved_patch_algo = vcdiff_archive.clone();
+        reserved_patch_algo = mutate_first_lfh(&reserved_patch_algo, |lfh| {
+            lfh.patch_algo_id = Some(0x04);
+        })
+        .expect("reserved patch algo");
+        write_fixture(
+            "invalid/delta/reserved-patch-algo/reserved_patch_algo.sar",
+            &reserved_patch_algo,
+        );
+
+        let mut unsupported_patch_algo = vcdiff_archive.clone();
+        unsupported_patch_algo = mutate_first_lfh(&unsupported_patch_algo, |lfh| {
+            lfh.patch_algo_id = Some(PATCH_ALGO_CUSTOM_MIN);
+        })
+        .expect("unsupported patch algo");
+        write_fixture(
+            "invalid/delta/unknown-patch-algo/unsupported_patch_algo.sar",
+            &unsupported_patch_algo,
+        );
+
+        let mut truncated_vcdiff = vcdiff_archive.clone();
+        truncated_vcdiff.pop();
+        write_fixture(
+            "invalid/delta/vcdiff-truncated/vcdiff_truncated_patch.sar",
+            &truncated_vcdiff,
+        );
+
+        let bsdiff_patch = bsdiff_single_triple_patch(&base, &target);
+        let bsdiff_archive = write_manual_delta_archive(
+            "bsdiff_invalid.bin",
+            PATCH_ALGO_BSDIFF,
+            base_hash,
+            u64::try_from(target.len()).expect("target len"),
+            &bsdiff_patch,
+        );
+        write_fixture(
+            "invalid/delta/bsdiff-control-too-large/bsdiff_control_too_large.sar",
+            &bsdiff_archive,
+        );
+        write_fixture(
+            "invalid/delta/bsdiff-control-too-large/base_file.bin",
+            &base,
+        );
+
+        let mut zero_hash_bsdiff = bsdiff_archive.clone();
+        zero_hash_bsdiff = mutate_first_lfh(&zero_hash_bsdiff, |lfh| {
+            lfh.delta_base_hash = Some(ZERO_DELTA_BASE_HASH);
+        })
+        .expect("zero hash bsdiff");
+        write_fixture(
+            "invalid/delta/all-zero-base-hash-for-bsdiff/all_zero_base_hash_bsdiff.sar",
+            &zero_hash_bsdiff,
+        );
+
+        let mut truncated_bsdiff = bsdiff_archive.clone();
+        truncated_bsdiff.pop();
+        write_fixture(
+            "invalid/delta/bsdiff-truncated/bsdiff_truncated_patch.sar",
+            &truncated_bsdiff,
         );
     }
 

@@ -47,7 +47,7 @@ test-vectors/
     fragmentation/           — gap, overlap, duplicate index, missing LAST_FRAGMENT
     sparse/                  — sparse extent overlap, zero-length, excessive size
     cdc/                     — malformed CDC metadata, reserved CDC IDs
-    delta/                   — malformed delta metadata, unsupported patch algorithms
+    delta/                   — deterministic patch-algo/base-hash/truncation/limit fixtures
     stream-session/          — invalid session sequence, duplicate stream ID
     filesystem-metadata/     — absolute path, traversal, unsafe symlink, setuid bits
     resource-limits/         — excessive declared sizes, excessive TLV count
@@ -243,6 +243,8 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - filesystem metadata fixtures
 - 32-bit and 64-bit LFH size-layout fixtures
 - archive-level Recovery TLV (`valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`)
+- deterministic invalid recovery fixtures under `invalid/recovery/`
+- deterministic invalid delta fixtures under `invalid/delta/`
 
 ### Deferred/reference-only manifests in this tree
 
@@ -303,7 +305,7 @@ For invalid vectors the `expected` block uses the relevant SAR error status:
 validators must not require exact `expected.error` string matching.
 
 Invalid vectors may omit `entries` — there is no valid logical archive to describe.
-Deferred invalid vectors may set `file` to `null`.
+Non-deferred invalid vectors should reference real generated `.sar` fixtures; deferred invalid vectors may set `file` to `null`.
 
 Stable SAR status identifiers (from `SarStatus` in `sar-core`):
 
@@ -318,6 +320,9 @@ Stable SAR status identifiers (from `SarStatus` in `sar-core`):
 | `SAR_ERR_INVALID_MAGIC` | Header magic mismatch                        |
 | `SAR_ERR_AUTH_FAILED`   | Authentication failure                       |
 | `SAR_ERR_LIMIT_EXCEEDED`| Implementation resource limit exceeded       |
+| `SAR_ERR_PATCH_FAILED`  | Delta patch application failed               |
+| `SAR_ERR_BASE_MISSING`  | Required delta base identity/data missing    |
+| `SAR_ERR_EC_FAILED`     | Error-correction decode failed               |
 | `SAR_ERR_BOUNDS`        | Bounds violation                             |
 | `SAR_ERR_OVERFLOW`      | Arithmetic overflow                          |
 | `SAR_ERR_FRAGMENT_GAP`  | Fragment gap without LOSS_TOLERANT           |
@@ -446,3 +451,4 @@ documented in `docs/CONFORMANCE.md`.
 ## Cold-storage/tape status
 
 Cold-storage/tape vectors are deferred. See `profiles/README.md` for details.
+    recovery/                — archive-level Recovery TLV flag/metadata/repair-negative fixtures

@@ -32,11 +32,12 @@ test-vectors/
     flags/                     — unknown global flag bits, flag conflicts (partial)
     algorithms/                — unsupported compression, unsupported crypto
     crypto/                    — bad AEAD tag (requires key provider)
+    recovery/                  — deterministic archive-level Recovery TLV negative fixtures
     fec/                       — (deferred)
     fragmentation/             — (deferred: fragment gap vectors)
     sparse/                    — (deferred: sparse overlap/extent vectors)
     cdc/                       — (deferred)
-    delta/                     — (deferred)
+    delta/                     — deterministic patch-algo/base-hash/truncation/limit fixtures
     stream-session/            — (deferred)
     filesystem-metadata/       — (deferred: unsafe path/symlink vectors)
     resource-limits/           — (deferred)
@@ -60,10 +61,14 @@ Optional: `file`, `profiles`, `features`, `entries`, `base_files`, `profile_expe
 Stable status identifiers:
 `SAR_OK`, `SAR_ERR_MALFORMED`, `SAR_ERR_TRUNCATED`, `SAR_ERR_UNSUPPORTED`,
 `SAR_ERR_RESERVED_VALUE`, `SAR_ERR_FLAG_CONFLICT`, `SAR_ERR_INVALID_MAGIC`,
-`SAR_ERR_AUTH_FAILED`, `SAR_ERR_LIMIT_EXCEEDED`, `SAR_ERR_BOUNDS`,
-`SAR_ERR_OVERFLOW`, `SAR_ERR_FRAGMENT_GAP`, `SAR_ERR_INVALID_MAP`,
-`SAR_ERR_INVALID_LENGTH`, `SAR_ERR_STREAM_STATE`, `SAR_ERR_DECRYPT_FAILED`,
-`SAR_ERR_HASH_MISMATCH`, `SAR_ERR_CRC_MISMATCH`, `SAR_ERR_IO`.
+`SAR_ERR_AUTH_FAILED`, `SAR_ERR_PATCH_FAILED`, `SAR_ERR_BASE_MISSING`,
+`SAR_ERR_LIMIT_EXCEEDED`, `SAR_ERR_BOUNDS`, `SAR_ERR_OVERFLOW`,
+`SAR_ERR_EC_FAILED`, `SAR_ERR_FRAGMENT_GAP`, `SAR_ERR_INVALID_MAP`,
+`SAR_ERR_INVALID_ALIGNMENT`, `SAR_ERR_INVALID_LENGTH`, `SAR_ERR_STREAM_STATE`,
+`SAR_ERR_DECRYPT_FAILED`, `SAR_ERR_HASH_MISMATCH`, `SAR_ERR_CRC_MISMATCH`,
+`SAR_ERR_INVALID_VERSION`, `SAR_ERR_KEY_MISSING`, `SAR_ERR_METADATA_MISSING`,
+`SAR_ERR_METADATA_CONFLICT`, `SAR_ERR_RECOVERY_UNAVAILABLE`,
+`SAR_ERR_RECOVERY_CORRUPTED`, `SAR_ERR_IO`.
 
 ### Implemented profile validator
 
@@ -97,9 +102,12 @@ cargo test -p sar-archive --test conformance_manifest_tests
 
 `conformance_manifest_tests.rs` adds targeted manifest-audit checks, including:
 - `non_deferred_valid_vectors_must_not_be_placeholders` — canonical valid vectors must not use placeholder language
+- `non_deferred_invalid_vectors_must_not_be_placeholders` — non-deferred invalid vectors must not use placeholder language
 - `deferred_vectors_do_not_reference_binary_fixtures` — deferred manifests must omit binary file references
 - `known_deferred_feature_tags_are_not_canonical_unless_real` — deferred/generated-later feature tags must not remain canonical
 - `raw_manifest_shapes_match_schema_contract` — raw JSON manifests match the schema contract for top-level fields and shapes
+- `invalid_recovery_vectors_are_real_and_recovery_tagged` — invalid recovery fixtures must be real and tagged with `recovery:*`
+- `invalid_delta_vectors_are_real_and_delta_tagged` — invalid delta fixtures must be real and tagged with `delta:*`
 
 ### Regenerating binary fixtures
 
@@ -116,7 +124,8 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 - Sparse+delta combined fixture remains deferred/reference-only.
 - FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
 - Archive-level Recovery TLV coverage is now backed by real generated indexed fixtures (`test-vectors/valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `test-vectors/valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`).
-- Many invalid vectors deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
+- Deterministic invalid recovery and delta vectors are now backed by real fixtures (`test-vectors/invalid/recovery/*`, `test-vectors/invalid/delta/*`) with authoritative `expected.status`.
+- Some invalid vectors remain deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
 - Cold-storage/tape profile vectors deferred (no SAR v1.0 interoperable mechanism yet).
 - Full signature implementation/audit posture remains future work.
