@@ -665,16 +665,31 @@ If this milestone document appears to describe library/profile layout differentl
 
 ---
 
+# Current and future milestones
+
 ## M12a-M9b-cp: Delta patch generation corrective pass
 
 * restore canonical generated-fixture coverage for VCDIFF and SAR BSDIFF v1
-* implement or harden writer-side patch generation from base + target bytes
+* implement or harden writer-side VCDIFF patch generation from base + target bytes
+* implement or harden writer-side SAR BSDIFF v1 patch generation from base + target bytes
+* require deterministic, bounded, interoperable patch generation; optimal/minimal patch size is not required
+* integrate generated patches with archive writer delta output where configured
+* add positive apply/round-trip tests for generated VCDIFF and SAR BSDIFF v1 patches
 * replace deferred/reference-only VCDIFF/BSDIFF manifests with real generated fixtures
 * keep M12a vector claims auditable while this corrective pass remains pending
 
----
+## M12a-M8-cp: Archive-level Recovery TLV corrective pass
 
-# Current and future milestones
+* restore canonical generated-fixture coverage for archive-level Recovery TLV / `HAS_GLOBAL_EC`
+* implement or harden writer-side archive-level Recovery TLV generation
+* keep archive-level Recovery TLV indexed-only; reject `NO_INDEX` when archive-level recovery is requested
+* require and emit `OPT_PRESENT` and `HAS_GLOBAL_EC` from the start of writing
+* compute Recovery TLV payload at archive finalization after protected bytes are known
+* emit Central Dictionary RECOVERY TLV metadata for supported archive-level recovery algorithms
+* add positive inspect/verify/repair tests for at least one simple block-aligned repair case
+* replace deferred/reference-only archive-level Recovery TLV manifests with real generated fixtures
+* preserve LFH Selective FEC as a separate already-implemented feature
+* keep M12a vector claims auditable while this corrective pass remains pending
 
 ## M12b: fuzzing and malicious corpus
 
