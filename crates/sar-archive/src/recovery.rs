@@ -16,7 +16,9 @@ use sar_core::{
     SarError,
     fec::{FecSummary, validate_recovery_tlv},
     flags::GlobalFlags,
-    format::{parse_central_dictionary, parse_footer, parse_global_header},
+    format::{
+        GLOBAL_HEADER_FLAGS_OFFSET, parse_central_dictionary, parse_footer, parse_global_header,
+    },
     limits::ResourceLimits,
 };
 
@@ -113,10 +115,6 @@ pub struct RepairReport {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Byte offset of the first global-flags byte within any SAR archive.
-/// Layout: magic[4] + version[1] + reserved[1] + flags_size[2] = 8 bytes.
-const GLOBAL_FLAGS_OFFSET: u64 = 8;
-
 /// Parsed archive layout positions needed for recovery operations.
 struct ArchiveLayout {
     global_flags: GlobalFlags,
@@ -203,7 +201,7 @@ pub fn inspect_recovery_metadata(
     // Compute protected range when CD exists
     let (protected_range, recovery_tlvs) = if let Some(cd_off) = layout.cd_offset {
         let prot_len = cd_off
-            .checked_sub(GLOBAL_FLAGS_OFFSET)
+            .checked_sub(GLOBAL_HEADER_FLAGS_OFFSET)
             .ok_or(SarError::Bounds("CD offset lies before Global Flags"))?;
         limits.check_recovery_protected_range(prot_len)?;
 
@@ -232,7 +230,7 @@ pub fn inspect_recovery_metadata(
 
         let pr = if prot_len > 0 {
             Some(ProtectedRange {
-                offset: GLOBAL_FLAGS_OFFSET,
+                offset: GLOBAL_HEADER_FLAGS_OFFSET,
                 length: prot_len,
                 algo_id: first_algo,
             })

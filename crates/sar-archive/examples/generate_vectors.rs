@@ -32,8 +32,8 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use sar_archive::{
-    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, DeltaWriteOptions,
-    EncryptionSettings, EntryInput, FecSettings,
+    ArchiveRecoverySettings, ArchiveWriter, ArchiveWriterOptions, CompressionSettings,
+    DeltaWriteOptions, EncryptionSettings, EntryInput, FecSettings,
 };
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
@@ -239,6 +239,24 @@ fn write_fec_archive(fec: FecSettings, payload: &[u8]) -> Vec<u8> {
     buf
 }
 
+fn write_archive_recovery_archive(recovery: ArchiveRecoverySettings, payload: &[u8]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    let mut writer = ArchiveWriter::new(
+        &mut buf,
+        ArchiveWriterOptions {
+            no_index: false,
+            archive_recovery: Some(recovery),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    writer
+        .add_entry(EntryInput::file("data.bin", payload.to_vec()))
+        .unwrap();
+    writer.finish().unwrap();
+    buf
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -409,11 +427,18 @@ fn main() {
     let rs_bytes = write_fec_archive(FecSettings::default_rs(), &fec_payload);
     write_fixture("valid/fec/rs/rs_fec_entry.sar", &rs_bytes);
 
-    // The metadata manifest now reuses the real XOR selective-FEC fixture via a
-    // relative path. Do not emit a misleading archive-level RECOVERY TLV file.
-    skip_deferred_vector(
+    let archive_recovery_bytes = write_archive_recovery_archive(
+        ArchiveRecoverySettings {
+            algo_id: FEC_ALGO_XOR,
+            config0: 1,
+            config1: 0,
+            symbol_size: 0,
+        },
+        &make_payload(1024),
+    );
+    write_fixture(
         "valid/fec/metadata/recovery_tlv_archive.sar",
-        "metadata manifest reuses valid/fec/xor/xor_fec_entry.sar and does not claim RECOVERY TLV coverage",
+        &archive_recovery_bytes,
     );
 
     // -----------------------------------------------------------------------

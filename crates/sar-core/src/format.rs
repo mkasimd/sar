@@ -10,6 +10,8 @@ const MAGIC: [u8; 4] = *b"SAR!";
 const SUPPORTED_GLOBAL_VERSION: u8 = 0x01;
 /// Central Dictionary format version supported in Milestones 1–3.
 pub const SUPPORTED_CD_VERSION: u8 = 0x01;
+/// Byte offset of the first Global Flags byte within the encoded Global Header.
+pub const GLOBAL_HEADER_FLAGS_OFFSET: u64 = 8;
 
 /// Parsed KMS extension data.
 #[derive(Debug, Clone, PartialEq, Eq)]

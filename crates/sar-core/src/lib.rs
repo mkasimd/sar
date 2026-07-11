@@ -41,10 +41,11 @@ pub use flags::{
     EntryMode, GlobalFlags, validate_entry_mode_against_global, validate_global_flags,
 };
 pub use format::{
-    CentralDictionary, Footer, GlobalHeader, KmsData, LfhFragmentDescriptor, LocalFileHeader,
-    PartitionDescriptor, compute_lfh_size, fec_size_field_offset, global_header_flags_bytes,
-    lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header,
-    parse_lfh, write_central_dictionary, write_footer, write_global_header, write_lfh,
+    CentralDictionary, Footer, GLOBAL_HEADER_FLAGS_OFFSET, GlobalHeader, KmsData,
+    LfhFragmentDescriptor, LocalFileHeader, PartitionDescriptor, compute_lfh_size,
+    fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes,
+    parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
+    write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
 pub use limits::ResourceLimits;
 pub use metadata::{
