@@ -55,6 +55,16 @@ fn value_is_string_or_null(value: &Value) -> bool {
     value.is_null() || value.is_string()
 }
 
+fn value_is_octal_permissions_or_null(value: &Value) -> bool {
+    value.is_null()
+        || value
+            .as_str()
+            .is_some_and(|s| s.len() >= 4 && s.len() <= 5 && s.starts_with('0'))
+            && value
+                .as_str()
+                .is_some_and(|s| s.chars().all(|ch| ('0'..='7').contains(&ch)))
+}
+
 fn validate_payload_generation_shape(value: &Value, label: &str, failures: &mut Vec<String>) {
     let Some(object) = value.as_object() else {
         failures.push(format!(
@@ -149,6 +159,13 @@ fn validate_entries_shape(entries: &Value, label: &str, failures: &mut Vec<Strin
                         ));
                     }
                 }
+            }
+            if let Some(permissions) = object.get("permissions")
+                && !value_is_octal_permissions_or_null(permissions)
+            {
+                failures.push(format!(
+                    "{label}[{index}]: permissions must be null or an octal string with leading zero (e.g. '0644', '0755', '04755')"
+                ));
             }
         }
     }

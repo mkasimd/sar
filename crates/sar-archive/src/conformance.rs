@@ -189,9 +189,9 @@ pub struct ExpectedEntry {
     /// Symlink target path (required for symlink entries).
     #[serde(default)]
     pub symlink_target: Option<String>,
-    /// Unix permissions bits.
+    /// Unix permissions bits as an octal string with leading zero (e.g. "0644").
     #[serde(default)]
-    pub permissions: Option<u32>,
+    pub permissions: Option<String>,
     /// Unix UID.
     #[serde(default)]
     pub uid: Option<u32>,
@@ -309,7 +309,10 @@ pub struct ExpectedOutcome {
     pub valid: bool,
     /// Stable SAR status identifier (`SAR_OK`, `SAR_ERR_MALFORMED`, …).
     pub status: String,
-    /// Optional short error class description.
+    /// Optional advisory human-readable debugging text.
+    ///
+    /// `status` is the authoritative machine-readable oracle. Validators must
+    /// not require exact `error` string matching.
     #[serde(default)]
     pub error: Option<String>,
     /// Expected warning identifiers.

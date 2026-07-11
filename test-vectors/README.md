@@ -300,6 +300,10 @@ For invalid vectors the `expected` block uses the relevant SAR error status:
 }
 ```
 
+`expected.status` is the authoritative machine-readable validation oracle.
+`expected.error` is advisory human-readable debugging text only. Cross-implementation
+validators must not require exact `expected.error` string matching.
+
 Invalid vectors may omit `entries` — there is no valid logical archive to describe.
 Deferred invalid vectors may set `file` to `null`.
 
@@ -323,7 +327,7 @@ Stable SAR status identifiers (from `SarStatus` in `sar-core`):
 | `SAR_ERR_INVALID_LENGTH`| Invalid declared length                      |
 
 Do **not** over-specify exact human-readable error message strings — only stable
-status/error identifiers are durable across implementation revisions.
+`expected.status` identifiers are durable across implementation revisions.
 
 ## Deferred vectors
 

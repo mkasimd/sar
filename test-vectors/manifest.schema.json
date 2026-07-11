@@ -197,8 +197,9 @@
             "description": "Symlink target path. Required for symlink entries."
           },
           "permissions": {
-            "type": ["integer", "null"],
-            "description": "Unix permissions bits (octal), if present."
+            "type": ["string", "null"],
+            "pattern": "^0[0-7]{3,4}$",
+            "description": "Unix permissions bits as an octal string with a leading zero, e.g. '0644', '0755', or '04755'."
           },
           "uid": {
             "type": ["integer", "null"],
@@ -297,7 +298,7 @@
         },
         "status": {
           "type": "string",
-          "description": "Expected stable SAR status identifier. Use SAR_OK for success, or the relevant SAR_ERR_* identifier for failures.",
+          "description": "Expected stable SAR status identifier. This is the authoritative machine-readable validation oracle. Use SAR_OK for success, or the relevant SAR_ERR_* identifier for failures.",
           "examples": [
             "SAR_OK",
             "SAR_ERR_MALFORMED",
@@ -314,7 +315,7 @@
         },
         "error": {
           "type": ["string", "null"],
-          "description": "Optional short error class description. Do not over-specify exact human-readable message strings. Prefer stable status identifiers."
+          "description": "Optional advisory human-readable debugging text. `expected.status` is authoritative; validators must not require exact `expected.error` string matching."
         },
         "warnings": {
           "type": "array",
