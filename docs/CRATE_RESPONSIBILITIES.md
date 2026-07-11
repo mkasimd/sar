@@ -464,7 +464,7 @@ Final role: sparse extent model, sparse map semantic validation, and sparse reco
 ### What remains in `sar-core`
 
 * `parse_sparse_map` / `write_sparse_map` — wire-format binary parse/write of the LFH sparse map blob; remain in `sar-core` because moving them would require `sar-sparse` to depend on `sar-core` (creating a cycle).
-* `SparseExtent` — re-exported from `sar_core::sparse` because `parse_sparse_map` and `write_sparse_map` return/accept it; callers of those wire-format functions must not need a direct `sar-sparse` dependency to name the type.  This re-export is **architectural**, not a compatibility shim.
+* `SparseExtent` — re-exported from `sar_core::sparse` because `parse_sparse_map` and `write_sparse_map` return/accept it; callers of those wire-format functions must not need a direct `sar-sparse` dependency to name the type. This re-export is **architectural**, not a compatibility shim.
 * `SPARSE_FILES` flag.
 * `archive reader/writer sparse integration` — calls into `sar-sparse` via `limits.sparse_limits()`.
 * `From<SparseError> for SarError` — error propagation bridge.
