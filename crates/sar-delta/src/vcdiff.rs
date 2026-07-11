@@ -27,6 +27,25 @@ const S_NEAR: usize = 4;
 const S_SAME: usize = 3;
 const N_MODES: usize = 2 + S_NEAR + S_SAME; // = 9
 
+// ── Stream/header constants ────────────────────────────────────────────────────
+
+const VCDIFF_MAGIC: [u8; 3] = [0xD6, 0xC3, 0xC4];
+const VCDIFF_VERSION: u8 = 0x00;
+const VCDIFF_STREAM_HEADER: [u8; 4] = [
+    VCDIFF_MAGIC[0],
+    VCDIFF_MAGIC[1],
+    VCDIFF_MAGIC[2],
+    VCDIFF_VERSION,
+];
+const VCDIFF_HEADER_INDICATOR_NONE: u8 = 0x00;
+const VCDIFF_WINDOW_INDICATOR_NONE: u8 = 0x00;
+const VCDIFF_WINDOW_INDICATOR_KNOWN_MASK: u8 = VCD_SOURCE | VCD_TARGET;
+const VCDIFF_DELTA_INDICATOR_NONE: u8 = 0x00;
+const VCDIFF_DELTA_INDICATOR_SECONDARY_MASK: u8 = 0x07;
+const VCDIFF_ADD_VARINT_CODE: u8 = 0x01;
+const ADD_ONLY_WINDOW_COUNT: usize = 1;
+const ADD_ONLY_INSTRUCTION_COUNT: usize = 1;
+
 // ── Header indicator bits ─────────────────────────────────────────────────────
 
 const VCD_DECOMPRESS: u8 = 0x01;
@@ -424,7 +443,11 @@ pub fn generate_vcdiff_patch(
     // Empty target: a valid VCDIFF stream with no windows reconstructs the
     // empty byte sequence.  The header alone is sufficient.
     if target.is_empty() {
-        let patch = b"\xD6\xC3\xC4\x00\x00";
+        let mut patch = Vec::with_capacity(
+            VCDIFF_STREAM_HEADER.len() + usize::from(ADD_ONLY_WINDOW_COUNT as u8),
+        );
+        patch.extend_from_slice(&VCDIFF_STREAM_HEADER);
+        patch.push(VCDIFF_HEADER_INDICATOR_NONE);
         let patch_len = u64::try_from(patch.len())
             .map_err(|_| PatchError::LimitExceeded("VCDIFF generate: patch length exceeds u64"))?;
         if patch_len > limits.max_patch_size {
@@ -432,22 +455,22 @@ pub fn generate_vcdiff_patch(
                 "VCDIFF generate: total patch size exceeds max_patch_size limit",
             ));
         }
-        return Ok(patch.to_vec());
+        return Ok(patch);
     }
 
-    if limits.max_window_count < 1 {
+    if limits.max_window_count < ADD_ONLY_WINDOW_COUNT {
         return Err(PatchError::LimitExceeded(
             "VCDIFF generate: window count exceeds max_window_count limit",
         ));
     }
-    if limits.max_instruction_count < 1 {
+    if limits.max_instruction_count < ADD_ONLY_INSTRUCTION_COUNT {
         return Err(PatchError::LimitExceeded(
             "VCDIFF generate: instruction count exceeds max_instruction_count limit",
         ));
     }
 
     // ADD instruction: code 1 = ADD(size=0), varint-size follows.
-    let mut inst: Vec<u8> = vec![0x01u8];
+    let mut inst: Vec<u8> = vec![VCDIFF_ADD_VARINT_CODE];
     inst.extend_from_slice(&encode_varint(target_len));
 
     let inst_len = u64::try_from(inst.len())
@@ -457,13 +480,13 @@ pub fn generate_vcdiff_patch(
     let twl_bytes = encode_varint(target_len); // target_window_length
     let lar_bytes = encode_varint(target_len); // len_add_run = target.len()
     let li_bytes = encode_varint(inst_len); // len_inst
-    let la_bytes = encode_varint(0u64); // len_addr = 0
+    let la_bytes = encode_varint(u64::from(VCDIFF_WINDOW_INDICATOR_NONE)); // len_addr = 0
 
     // delta_encoding_length: bytes from delta_start through the end of addr_bytes.
     // Covers: twl + delta_indicator(1) + lar + li + la + add_run_data + inst_bytes.
     let delta_enc_len: usize = twl_bytes
         .len()
-        .checked_add(1) // delta_indicator
+        .checked_add(usize::from(ADD_ONLY_INSTRUCTION_COUNT as u8)) // delta_indicator
         .and_then(|n| n.checked_add(lar_bytes.len()))
         .and_then(|n| n.checked_add(li_bytes.len()))
         .and_then(|n| n.checked_add(la_bytes.len()))
@@ -478,10 +501,12 @@ pub fn generate_vcdiff_patch(
     })?;
     let del_enc_len_bytes = encode_varint(del_enc_len_u64);
 
-    // Total patch: magic(4) + hdr_indicator(1) + win_indicator(1) + del_enc_len_bytes + delta body.
-    let patch_size: usize = 4usize
-        .checked_add(1) // hdr_indicator
-        .and_then(|n| n.checked_add(1)) // win_indicator
+    // Total patch: magic+version(4) + hdr_indicator(1) + win_indicator(1)
+    // + del_enc_len_bytes + delta body.
+    let patch_size: usize = VCDIFF_STREAM_HEADER
+        .len()
+        .checked_add(usize::from(ADD_ONLY_WINDOW_COUNT as u8)) // hdr_indicator
+        .and_then(|n| n.checked_add(usize::from(ADD_ONLY_INSTRUCTION_COUNT as u8))) // win_indicator
         .and_then(|n| n.checked_add(del_enc_len_bytes.len()))
         .and_then(|n| n.checked_add(delta_enc_len))
         .ok_or(PatchError::LimitExceeded(
@@ -498,15 +523,15 @@ pub fn generate_vcdiff_patch(
     let mut patch = Vec::with_capacity(patch_size);
 
     // VCDIFF global header.
-    patch.extend_from_slice(b"\xD6\xC3\xC4\x00");
-    patch.push(0x00u8); // hdr_indicator: no secondary compressor, default code table
+    patch.extend_from_slice(&VCDIFF_STREAM_HEADER);
+    patch.push(VCDIFF_HEADER_INDICATOR_NONE); // no secondary compressor, default code table
 
     // Window.
-    patch.push(0x00u8); // win_indicator: no source segment (ADD-only)
+    patch.push(VCDIFF_WINDOW_INDICATOR_NONE); // no source segment (ADD-only)
     patch.extend_from_slice(&del_enc_len_bytes);
     // — delta body start (counted from here for delta_encoding_length) —
     patch.extend_from_slice(&twl_bytes); // target_window_length
-    patch.push(0x00u8); // delta_indicator
+    patch.push(VCDIFF_DELTA_INDICATOR_NONE);
     patch.extend_from_slice(&lar_bytes); // len_add_run
     patch.extend_from_slice(&li_bytes); // len_inst
     patch.extend_from_slice(&la_bytes); // len_addr
@@ -551,7 +576,7 @@ pub fn apply_vcdiff(
     let mut reader = ByteReader::new(patch);
 
     // Header magic: 0xD6 0xC3 0xC4 0x00
-    reader.expect_bytes(b"\xD6\xC3\xC4\x00")?;
+    reader.expect_bytes(&VCDIFF_STREAM_HEADER)?;
 
     // hdr_indicator
     let hdr_indicator = reader.read_u8()?;
@@ -628,7 +653,7 @@ fn decode_window(
             "VCDIFF: VCD_SOURCE and VCD_TARGET both set in Win_Indicator",
         ));
     }
-    if win_indicator & !0x03u8 != 0 {
+    if win_indicator & !VCDIFF_WINDOW_INDICATOR_KNOWN_MASK != 0 {
         return Err(PatchError::PatchFailed(
             "VCDIFF: reserved bits set in Win_Indicator",
         ));
@@ -696,7 +721,7 @@ fn decode_window(
     }
 
     let delta_indicator = reader.read_u8()?;
-    if delta_indicator & 0x07 != 0 {
+    if delta_indicator & VCDIFF_DELTA_INDICATOR_SECONDARY_MASK != 0 {
         // Bits 0..2 are VCD_DATACOMP / VCD_INSTCOMP / VCD_ADDRCOMP
         return Err(PatchError::Unsupported(
             "VCDIFF: secondary compression in delta sections not supported",

@@ -946,13 +946,13 @@ fn read_first_entry_patch_algo_id(fixture_path: &Path) -> Option<u8> {
 }
 
 #[test]
-fn promoted_vcdiff_vector_uses_algo_id_0x01() {
+fn promoted_vcdiff_vector_uses_vcdiff_algo_id() {
     let fixture = vectors_root().join("valid/delta/vcdiff/vcdiff_patch_entry.sar");
     let algo_id = read_first_entry_patch_algo_id(&fixture)
         .unwrap_or_else(|| panic!("could not read patch_algo_id from {}", fixture.display()));
     assert_eq!(
         algo_id, PATCH_ALGO_VCDIFF,
-        "VCDIFF vector must use patch algorithm ID 0x01, got 0x{algo_id:02x}"
+        "VCDIFF vector must use patch algorithm ID {PATCH_ALGO_VCDIFF:#04x}, got {algo_id:#04x}"
     );
     assert_ne!(
         algo_id, PATCH_ALGO_STORE_PATCH,
@@ -961,13 +961,13 @@ fn promoted_vcdiff_vector_uses_algo_id_0x01() {
 }
 
 #[test]
-fn promoted_bsdiff_vector_uses_algo_id_0x02() {
+fn promoted_bsdiff_vector_uses_bsdiff_algo_id() {
     let fixture = vectors_root().join("valid/delta/bsdiff/bsdiff_patch_entry.sar");
     let algo_id = read_first_entry_patch_algo_id(&fixture)
         .unwrap_or_else(|| panic!("could not read patch_algo_id from {}", fixture.display()));
     assert_eq!(
         algo_id, PATCH_ALGO_BSDIFF,
-        "BSDIFF vector must use patch algorithm ID 0x02, got 0x{algo_id:02x}"
+        "BSDIFF vector must use patch algorithm ID {PATCH_ALGO_BSDIFF:#04x}, got {algo_id:#04x}"
     );
     assert_ne!(
         algo_id, PATCH_ALGO_STORE_PATCH,

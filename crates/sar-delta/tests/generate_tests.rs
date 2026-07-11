@@ -18,6 +18,10 @@ use sar_delta::{
     generate_store_patch, generate_vcdiff_patch,
 };
 
+const VCDIFF_STREAM_HEADER: [u8; 4] = [0xD6, 0xC3, 0xC4, 0x00];
+const SAR_BSDIFF_MAGIC: &[u8; 8] = b"SARBSD01";
+const BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES: u64 = 24;
+
 // ---------------------------------------------------------------------------
 // VCDIFF generation round-trips
 // ---------------------------------------------------------------------------
@@ -77,9 +81,8 @@ fn generate_vcdiff_output_is_not_store_patch() {
 
     let patch = generate_vcdiff_patch(b"", target, &limits).expect("generate");
 
-    // VCDIFF magic: 0xD6 0xC3 0xC4 0x00
     assert!(
-        patch.starts_with(b"\xD6\xC3\xC4\x00"),
+        patch.starts_with(&VCDIFF_STREAM_HEADER),
         "VCDIFF patch must start with VCDIFF magic"
     );
     // Must not equal the target bytes (STORE_PATCH would just be target bytes)
@@ -266,9 +269,8 @@ fn generate_bsdiff_output_is_not_store_patch() {
 
     let patch = generate_bsdiff_patch(b"", target, &limits).expect("generate");
 
-    // SAR BSDIFF v1 magic
     assert!(
-        patch.starts_with(b"SARBSD01"),
+        patch.starts_with(SAR_BSDIFF_MAGIC),
         "BSDIFF patch must start with SARBSD01 magic"
     );
     // Must not equal the target bytes (STORE_PATCH would just be target bytes)
@@ -330,14 +332,14 @@ fn generate_bsdiff_limit_exceeded_max_control_triples() {
 #[test]
 fn generate_bsdiff_limit_exceeded_max_control_bytes() {
     let limits = BsdiffLimits {
-        max_control_bytes: 23,
+        max_control_bytes: BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES - 1,
         ..BsdiffLimits::default()
     };
 
     let result = generate_bsdiff_patch(b"", b"x", &limits);
     assert!(
         matches!(result, Err(PatchError::LimitExceeded(_))),
-        "expected LimitExceeded when max_control_bytes<24, got {:?}",
+        "expected LimitExceeded when max_control_bytes is below one control triple, got {:?}",
         result
     );
 }

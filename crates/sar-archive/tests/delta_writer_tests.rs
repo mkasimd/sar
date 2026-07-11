@@ -1,10 +1,10 @@
 //! Writer/reader round-trip tests for VCDIFF and SAR BSDIFF v1 delta entries.
 //!
 //! Tests verify:
-//! * Writer emits a VCDIFF delta entry with `HAS_DELTA` + `Patch Algo ID = 0x01`.
+//! * Writer emits a VCDIFF delta entry with `HAS_DELTA` + `Patch Algo ID = VCDIFF`.
 //! * Reader applies VCDIFF using explicit `ArchiveReaderOptions::delta_base`
 //!   and reconstructs the exact logical target bytes.
-//! * Writer emits a SAR BSDIFF v1 delta entry with `Patch Algo ID = 0x02`.
+//! * Writer emits a SAR BSDIFF v1 delta entry with `Patch Algo ID = BSDIFF`.
 //! * Reader applies BSDIFF and reconstructs the exact logical target bytes.
 //! * Missing base bytes for VCDIFF/BSDIFF return `SAR_ERR_BASE_MISSING`.
 //! * All-zero `Delta Base Hash` for VCDIFF/BSDIFF returns `SAR_ERR_BASE_MISSING`.
@@ -29,6 +29,7 @@ const NON_ZERO_HASH: [u8; 32] = {
     h[31] = 0xAA;
     h
 };
+const ZERO_DELTA_BASE_HASH: [u8; 32] = [0u8; 32];
 
 fn make_target(n: usize) -> Vec<u8> {
     (0..n).map(|i| (i & 0xFF) as u8).collect()
@@ -151,7 +152,7 @@ fn vcdiff_writer_emits_vcdiff_algo_id() {
     assert_eq!(
         lfh.patch_algo_id,
         Some(PATCH_ALGO_VCDIFF),
-        "LFH patch_algo_id must be VCDIFF (0x01)"
+        "LFH patch_algo_id must be VCDIFF"
     );
 }
 
@@ -220,7 +221,7 @@ fn bsdiff_writer_emits_bsdiff_algo_id() {
     assert_eq!(
         lfh.patch_algo_id,
         Some(PATCH_ALGO_BSDIFF),
-        "LFH patch_algo_id must be BSDIFF (0x02)"
+        "LFH patch_algo_id must be BSDIFF"
     );
 }
 
@@ -258,7 +259,7 @@ fn vcdiff_zero_delta_base_hash_rejected_by_writer() {
     entry.delta = Some(DeltaWriteOptions {
         algorithm: PatchAlgoId::Vcdiff,
         base: b"base".to_vec(),
-        delta_base_hash: [0u8; 32], // all-zero hash
+        delta_base_hash: ZERO_DELTA_BASE_HASH, // all-zero hash
     });
     let result = writer.add_entry(entry);
     assert!(
@@ -284,7 +285,7 @@ fn bsdiff_zero_delta_base_hash_rejected_by_writer() {
     entry.delta = Some(DeltaWriteOptions {
         algorithm: PatchAlgoId::Bsdiff,
         base: b"base".to_vec(),
-        delta_base_hash: [0u8; 32], // all-zero hash
+        delta_base_hash: ZERO_DELTA_BASE_HASH, // all-zero hash
     });
     let result = writer.add_entry(entry);
     assert!(
@@ -358,5 +359,5 @@ fn has_delta_active_entry_without_delta_uses_store_patch() {
     let flags = gh.flags;
     let (lfh, _) = parse_lfh(&buf[after_gh..], &flags, &limits).expect("LFH");
     assert_eq!(lfh.patch_algo_id, Some(PATCH_ALGO_STORE_PATCH));
-    assert_eq!(lfh.delta_base_hash, Some([0u8; 32]));
+    assert_eq!(lfh.delta_base_hash, Some(ZERO_DELTA_BASE_HASH));
 }

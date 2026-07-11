@@ -30,6 +30,14 @@
 
 use crate::algo::PatchError;
 
+const SAR_BSDIFF_MAGIC: &[u8; 8] = b"SARBSD01";
+const BSDIFF_HEADER_SIZE: usize = 32;
+const BSDIFF_CONTROL_TRIPLE_COUNT: usize = 1;
+const BSDIFF_CONTROL_ENTRY_COUNT: u64 = 3;
+const BSDIFF_CONTROL_VALUE_SIZE: u64 = 8;
+const BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES: u64 =
+    BSDIFF_CONTROL_ENTRY_COUNT * BSDIFF_CONTROL_VALUE_SIZE;
+
 /// Resource limits for BSDIFF patch application.
 ///
 /// These are consumed directly by [`apply_bsdiff`] and populated by `sar-core`
@@ -109,20 +117,25 @@ pub fn apply_bsdiff(
         ));
     }
 
-    if patch.len() < 32 {
+    if patch.len() < BSDIFF_HEADER_SIZE {
         return Err(PatchError::PatchFailed(
             "BSDIFF: patch too short for header",
         ));
     }
-    if &patch[..8] != b"SARBSD01" {
+    if &patch[..SAR_BSDIFF_MAGIC.len()] != SAR_BSDIFF_MAGIC {
         return Err(PatchError::PatchFailed(
             "BSDIFF: invalid magic (expected SARBSD01)",
         ));
     }
 
-    let ctrl_len_raw = decode_bsdiff_int(&patch[8..16])?;
-    let diff_len_raw = decode_bsdiff_int(&patch[16..24])?;
-    let new_size_raw = decode_bsdiff_int(&patch[24..32])?;
+    let ctrl_len_start = SAR_BSDIFF_MAGIC.len();
+    let diff_len_start = ctrl_len_start + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+    let new_size_start = diff_len_start + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+    let header_end = new_size_start + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+
+    let ctrl_len_raw = decode_bsdiff_int(&patch[ctrl_len_start..diff_len_start])?;
+    let diff_len_raw = decode_bsdiff_int(&patch[diff_len_start..new_size_start])?;
+    let new_size_raw = decode_bsdiff_int(&patch[new_size_start..header_end])?;
 
     if ctrl_len_raw < 0 {
         return Err(PatchError::PatchFailed(
@@ -167,7 +180,8 @@ pub fn apply_bsdiff(
         ));
     }
 
-    let ctrl_start: u64 = 32;
+    let ctrl_start = u64::try_from(BSDIFF_HEADER_SIZE)
+        .map_err(|_| PatchError::PatchFailed("BSDIFF: header size exceeds u64"))?;
     let diff_start = ctrl_start
         .checked_add(ctrl_len)
         .ok_or(PatchError::PatchFailed("BSDIFF: block offset overflow"))?;
@@ -190,13 +204,13 @@ pub fn apply_bsdiff(
         ));
     }
 
-    if ctrl_len % 24 != 0 {
+    if ctrl_len % BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES != 0 {
         return Err(PatchError::PatchFailed(
             "BSDIFF: Control Block length not a multiple of 24",
         ));
     }
 
-    let triple_count_u64 = ctrl_len / 24;
+    let triple_count_u64 = ctrl_len / BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES;
     let n_triples = usize::try_from(triple_count_u64)
         .map_err(|_| PatchError::LimitExceeded("BSDIFF: control triple count exceeds usize"))?;
     if n_triples > limits.max_control_triples {
@@ -226,11 +240,13 @@ pub fn apply_bsdiff(
     let mut extra_pos: u64 = 0;
 
     for triple_idx in 0..n_triples {
-        let triple_offset = triple_idx.checked_mul(24).ok_or(PatchError::PatchFailed(
+        let triple_offset = triple_idx
+            .checked_mul(usize::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).unwrap())
+            .ok_or(PatchError::PatchFailed(
             "BSDIFF: control triple offset overflow",
         ))?;
         let triple_end = triple_offset
-            .checked_add(24)
+            .checked_add(usize::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).unwrap())
             .ok_or(PatchError::PatchFailed(
                 "BSDIFF: control triple end overflow",
             ))?;
@@ -241,9 +257,13 @@ pub fn apply_bsdiff(
         }
         let triple = &ctrl_data[triple_offset..triple_end];
 
-        let d_len_raw = decode_bsdiff_int(&triple[0..8])?;
-        let e_len_raw = decode_bsdiff_int(&triple[8..16])?;
-        let seek_adj = decode_bsdiff_int(&triple[16..24])?;
+        let diff_len_end = usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+        let extra_len_end = diff_len_end + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+        let seek_adjust_end = extra_len_end + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+
+        let d_len_raw = decode_bsdiff_int(&triple[..diff_len_end])?;
+        let e_len_raw = decode_bsdiff_int(&triple[diff_len_end..extra_len_end])?;
+        let seek_adj = decode_bsdiff_int(&triple[extra_len_end..seek_adjust_end])?;
 
         if d_len_raw < 0 {
             return Err(PatchError::PatchFailed(
@@ -458,21 +478,20 @@ pub fn generate_bsdiff_patch(
             "BSDIFF generate: extra block exceeds max_extra_bytes limit",
         ));
     }
-    // One triple = 24 control bytes.
-    if limits.max_control_triples < 1 {
+    if limits.max_control_triples < BSDIFF_CONTROL_TRIPLE_COUNT {
         return Err(PatchError::LimitExceeded(
             "BSDIFF generate: control triple count exceeds max_control_triples limit",
         ));
     }
-    if limits.max_control_bytes < 24 {
+    if limits.max_control_bytes < BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES {
         return Err(PatchError::LimitExceeded(
             "BSDIFF generate: control block exceeds max_control_bytes limit",
         ));
     }
 
-    // Total patch size: header(32) + ctrl(24) + diff_step + extra_step.
-    let patch_size: usize = 32usize
-        .checked_add(24)
+    // Total patch size: header + one control triple + diff_step + extra_step.
+    let patch_size: usize = BSDIFF_HEADER_SIZE
+        .checked_add(usize::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).unwrap())
         .and_then(|n| n.checked_add(diff_step))
         .and_then(|n| n.checked_add(extra_step))
         .ok_or(PatchError::LimitExceeded(
@@ -495,17 +514,17 @@ pub fn generate_bsdiff_patch(
 
     let mut patch = Vec::with_capacity(patch_size);
 
-    // Header (32 bytes).
-    patch.extend_from_slice(b"SARBSD01");
+    // Header.
+    patch.extend_from_slice(SAR_BSDIFF_MAGIC);
     patch.extend_from_slice(&encode_bsdiff_int(
-        i64::try_from(24usize).expect("24 fits i64"),
+        i64::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).expect("control bytes fit i64"),
     ));
     patch.extend_from_slice(&encode_bsdiff_int(diff_step_i64));
     patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(target.len()).map_err(
         |_| PatchError::LimitExceeded("BSDIFF generate: target length exceeds i64"),
     )?));
 
-    // Control block (24 bytes: one triple).
+    // Control block (one triple).
     patch.extend_from_slice(&encode_bsdiff_int(diff_step_i64));
     patch.extend_from_slice(&encode_bsdiff_int(extra_step_i64));
     patch.extend_from_slice(&encode_bsdiff_int(0i64)); // seek_adjust = 0

@@ -40,6 +40,9 @@ use crate::transform::{
     DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
 };
 
+const ZERO_DELTA_BASE_HASH: [u8; 32] = [0u8; 32];
+const ZERO_CONTENT_HASH: [u8; 32] = [0u8; 32];
+
 /// Metadata summary for profile/verification checks.
 #[derive(Debug, Clone)]
 pub struct ArchiveMetadata {
@@ -966,8 +969,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     }
                 }
                 PATCH_ALGO_VCDIFF => {
-                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
-                    if hash == [0u8; 32] {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
                         return Err(SarError::BaseMissing(
                             "VCDIFF: all-zero Delta Base Hash indicates missing base",
                         ));
@@ -984,8 +987,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         .map_err(map_patch_error)?
                 }
                 PATCH_ALGO_BSDIFF => {
-                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
-                    if hash == [0u8; 32] {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
                         return Err(SarError::BaseMissing(
                             "BSDIFF: all-zero Delta Base Hash indicates missing base",
                         ));
@@ -1189,7 +1192,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let delta: Option<sar_core::metadata::EntryDeltaMetadata> = if is_has_delta {
             Some(sar_core::metadata::EntryDeltaMetadata {
                 patch_algo_id: patch_raw_id,
-                base_hash: lfh.delta_base_hash.unwrap_or([0u8; 32]),
+                base_hash: lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH),
             })
         } else {
             None
@@ -1254,7 +1257,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 None
             },
             delta_base_hash: if is_has_delta {
-                Some(lfh.delta_base_hash.unwrap_or([0u8; 32]))
+                Some(lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH))
             } else {
                 None
             },
@@ -2435,7 +2438,7 @@ impl<W: Write> ArchiveWriter<W> {
             // VCDIFF and BSDIFF require non-zero reconstruction identity.
             let algo = delta_opts.algorithm;
             if matches!(algo, PatchAlgoId::Vcdiff | PatchAlgoId::Bsdiff)
-                && delta_opts.delta_base_hash == [0u8; 32]
+                && delta_opts.delta_base_hash == ZERO_DELTA_BASE_HASH
             {
                 return Err(SarError::BaseMissing(
                     "VCDIFF/BSDIFF delta_base_hash must be non-zero (all-zero means missing identity)",
@@ -2513,7 +2516,7 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         if self.flags.contains(GlobalFlags::DEDUPLICATION) {
-            lfh.content_hash = entry.content_hash.or(Some([0u8; 32]));
+            lfh.content_hash = entry.content_hash.or(Some(ZERO_CONTENT_HASH));
         }
 
         // When HAS_DELTA is globally active, every LFH must carry Patch Algo ID
@@ -2526,7 +2529,7 @@ impl<W: Write> ArchiveWriter<W> {
             } else {
                 // No per-entry delta: default to STORE_PATCH with all-zero hash.
                 lfh.patch_algo_id = Some(PATCH_ALGO_STORE_PATCH);
-                lfh.delta_base_hash = Some([0u8; 32]);
+                lfh.delta_base_hash = Some(ZERO_DELTA_BASE_HASH);
             }
         }
 
