@@ -32,8 +32,8 @@ use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use sar_archive::{
-    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, EncryptionSettings, EntryInput,
-    FecSettings,
+    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, DeltaWriteOptions,
+    EncryptionSettings, EntryInput, FecSettings,
 };
 use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD};
 use sar_core::{
@@ -45,6 +45,7 @@ use sar_crypto::{
     SecretBytes, SecretString, error::SarCryptoError, kms::types::Pbkdf2Params,
     provider::KeyProvider,
 };
+use sar_delta::PatchAlgoId;
 
 // ---------------------------------------------------------------------------
 // Test password / key material (TEST-ONLY — do not use for real data)
@@ -537,25 +538,76 @@ fn main() {
         write_fixture("valid/delta/store-patch/store_patch_entry.sar", &archive);
     }
 
-    // VCDIFF and BSDIFF writer-side patch generation is deferred to the
-    // M12a-M9b-cp corrective pass. Do not emit STORE fallback archives.
+    // -----------------------------------------------------------------------
+    // Valid: delta — VCDIFF
+    // -----------------------------------------------------------------------
+
     {
-        skip_deferred_vector(
-            "valid/delta/vcdiff/vcdiff_patch_entry.sar",
-            "writer-side VCDIFF patch generation is scheduled for M12a-M9b-cp",
-        );
-        skip_deferred_vector(
-            "valid/delta/vcdiff/base_file.bin",
-            "reference-only delta manifest now carries its base-file descriptor without committing fallback bytes",
-        );
-        skip_deferred_vector(
-            "valid/delta/bsdiff/bsdiff_patch_entry.sar",
-            "writer-side SAR BSDIFF v1 patch generation is scheduled for M12a-M9b-cp",
-        );
-        skip_deferred_vector(
-            "valid/delta/bsdiff/base_file.bin",
-            "reference-only delta manifest now carries its base-file descriptor without committing fallback bytes",
-        );
+        let base = make_payload(64);
+        let target = make_payload(64);
+
+        // Delta base hash: non-zero opaque identity (SHA-256 of the base bytes
+        // used by the reader to locate the base object; treated as opaque here).
+        let mut base_hash = [0u8; 32];
+        base_hash[..8].copy_from_slice(&0x_bdaa_cafe_dead_beef_u64.to_le_bytes());
+        base_hash[8..16].copy_from_slice(&0x_1234_5678_9abc_def0_u64.to_le_bytes());
+
+        let mut buf = Vec::new();
+        let mut writer = ArchiveWriter::new(
+            &mut buf,
+            ArchiveWriterOptions {
+                no_index: true,
+                with_delta: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut entry = EntryInput::file("vcdiff_target.bin", target);
+        entry.delta = Some(DeltaWriteOptions {
+            algorithm: PatchAlgoId::Vcdiff,
+            base: base.clone(),
+            delta_base_hash: base_hash,
+        });
+        writer.add_entry(entry).unwrap();
+        writer.finish().unwrap();
+
+        write_fixture("valid/delta/vcdiff/vcdiff_patch_entry.sar", &buf);
+        write_fixture("valid/delta/vcdiff/base_file.bin", &base);
+    }
+
+    // -----------------------------------------------------------------------
+    // Valid: delta — BSDIFF
+    // -----------------------------------------------------------------------
+
+    {
+        let base = make_payload(64);
+        let target = make_payload(64);
+
+        let mut base_hash = [0u8; 32];
+        base_hash[..8].copy_from_slice(&0x_bdaa_cafe_dead_beef_u64.to_le_bytes());
+        base_hash[8..16].copy_from_slice(&0x_1234_5678_9abc_def0_u64.to_le_bytes());
+
+        let mut buf = Vec::new();
+        let mut writer = ArchiveWriter::new(
+            &mut buf,
+            ArchiveWriterOptions {
+                no_index: true,
+                with_delta: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut entry = EntryInput::file("bsdiff_target.bin", target);
+        entry.delta = Some(DeltaWriteOptions {
+            algorithm: PatchAlgoId::Bsdiff,
+            base: base.clone(),
+            delta_base_hash: base_hash,
+        });
+        writer.add_entry(entry).unwrap();
+        writer.finish().unwrap();
+
+        write_fixture("valid/delta/bsdiff/bsdiff_patch_entry.sar", &buf);
+        write_fixture("valid/delta/bsdiff/base_file.bin", &base);
     }
 
     // -----------------------------------------------------------------------

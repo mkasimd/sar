@@ -443,12 +443,10 @@ pub fn generate_bsdiff_patch(
             "BSDIFF generate: extra_step underflow",
         ))?;
 
-    let diff_step_u64 = u64::try_from(diff_step).map_err(|_| {
-        PatchError::LimitExceeded("BSDIFF generate: diff_step exceeds u64")
-    })?;
-    let extra_step_u64 = u64::try_from(extra_step).map_err(|_| {
-        PatchError::LimitExceeded("BSDIFF generate: extra_step exceeds u64")
-    })?;
+    let diff_step_u64 = u64::try_from(diff_step)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF generate: diff_step exceeds u64"))?;
+    let extra_step_u64 = u64::try_from(extra_step)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF generate: extra_step exceeds u64"))?;
 
     if diff_step_u64 > limits.max_diff_bytes {
         return Err(PatchError::LimitExceeded(
@@ -476,9 +474,8 @@ pub fn generate_bsdiff_patch(
             "BSDIFF generate: total patch size overflow",
         ))?;
 
-    let patch_size_u64 = u64::try_from(patch_size).map_err(|_| {
-        PatchError::LimitExceeded("BSDIFF generate: total patch size exceeds u64")
-    })?;
+    let patch_size_u64 = u64::try_from(patch_size)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF generate: total patch size exceeds u64"))?;
     if patch_size_u64 > limits.max_patch_size {
         return Err(PatchError::LimitExceeded(
             "BSDIFF generate: total patch size exceeds max_patch_size limit",
@@ -486,22 +483,22 @@ pub fn generate_bsdiff_patch(
     }
 
     // 1 control triple: (diff_step, extra_step, 0)
-    let diff_step_i64 = i64::try_from(diff_step).map_err(|_| {
-        PatchError::LimitExceeded("BSDIFF generate: diff_step exceeds i64")
-    })?;
-    let extra_step_i64 = i64::try_from(extra_step).map_err(|_| {
-        PatchError::LimitExceeded("BSDIFF generate: extra_step exceeds i64")
-    })?;
+    let diff_step_i64 = i64::try_from(diff_step)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF generate: diff_step exceeds i64"))?;
+    let extra_step_i64 = i64::try_from(extra_step)
+        .map_err(|_| PatchError::LimitExceeded("BSDIFF generate: extra_step exceeds i64"))?;
 
     let mut patch = Vec::with_capacity(patch_size);
 
     // Header (32 bytes).
     patch.extend_from_slice(b"SARBSD01");
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(24usize).expect("24 fits i64")));
+    patch.extend_from_slice(&encode_bsdiff_int(
+        i64::try_from(24usize).expect("24 fits i64"),
+    ));
     patch.extend_from_slice(&encode_bsdiff_int(diff_step_i64));
-    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(target.len()).map_err(|_| {
-        PatchError::LimitExceeded("BSDIFF generate: target length exceeds i64")
-    })?));
+    patch.extend_from_slice(&encode_bsdiff_int(i64::try_from(target.len()).map_err(
+        |_| PatchError::LimitExceeded("BSDIFF generate: target length exceeds i64"),
+    )?));
 
     // Control block (24 bytes: one triple).
     patch.extend_from_slice(&encode_bsdiff_int(diff_step_i64));

@@ -15,8 +15,7 @@ use sar_crypto::{
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
     PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, apply_bsdiff, apply_store_patch, apply_vcdiff,
-    bsdiff::BsdiffLimits, generate_bsdiff_patch, generate_vcdiff_patch,
-    vcdiff::VcdiffLimits,
+    bsdiff::BsdiffLimits, generate_bsdiff_patch, generate_vcdiff_patch, vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
 use sar_fragmentation::FragmentDescriptor;
@@ -321,7 +320,6 @@ pub struct DeltaWriteOptions {
     /// `Delta Base Hash` field.  Must be non-zero for `VCDIFF` and `BSDIFF`.
     pub delta_base_hash: [u8; 32],
 }
-
 
 /// All metadata fields are optional and default to `None`/`false`/`0`.
 /// Fields that require a corresponding global flag in
@@ -1854,13 +1852,11 @@ fn generate_entry_patch(
         }
         PatchAlgoId::Vcdiff => {
             let limits = VcdiffLimits::default();
-            generate_vcdiff_patch(&delta_opts.base, target, &limits)
-                .map_err(map_patch_error)
+            generate_vcdiff_patch(&delta_opts.base, target, &limits).map_err(map_patch_error)
         }
         PatchAlgoId::Bsdiff => {
             let limits = BsdiffLimits::default();
-            generate_bsdiff_patch(&delta_opts.base, target, &limits)
-                .map_err(map_patch_error)
+            generate_bsdiff_patch(&delta_opts.base, target, &limits).map_err(map_patch_error)
         }
         PatchAlgoId::ZstdPatch => Err(SarError::Unsupported(
             "ZSTD_PATCH: patch generation not implemented",

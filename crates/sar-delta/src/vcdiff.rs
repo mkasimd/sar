@@ -437,8 +437,8 @@ pub fn generate_vcdiff_patch(
     // Delta body components (order matches the decoder).
     let twl_bytes = encode_varint(target_len); // target_window_length
     let lar_bytes = encode_varint(target_len); // len_add_run = target.len()
-    let li_bytes = encode_varint(inst_len);    // len_inst
-    let la_bytes = encode_varint(0u64);        // len_addr = 0
+    let li_bytes = encode_varint(inst_len); // len_inst
+    let la_bytes = encode_varint(0u64); // len_addr = 0
 
     // delta_encoding_length: bytes from delta_start through the end of addr_bytes.
     // Covers: twl + delta_indicator(1) + lar + li + la + add_run_data + inst_bytes.

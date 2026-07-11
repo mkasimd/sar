@@ -788,10 +788,7 @@ pub fn run_conformance_check(
     // supply it as delta_base so VCDIFF/BSDIFF patches can be applied.
     let delta_base: Option<Vec<u8>> = if let Some(base_file) = manifest.base_files.first() {
         let base_path = base_dir.join(&base_file.path);
-        match std::fs::read(&base_path) {
-            Ok(bytes) => Some(bytes),
-            Err(_) => None, // missing base file is not a fatal conformance error here
-        }
+        std::fs::read(&base_path).ok() // missing base file is not a fatal conformance error here
     } else {
         None
     };
@@ -878,7 +875,6 @@ fn attempt_full_parse(
     let opts = crate::archive::ArchiveReaderOptions {
         limits: *limits,
         delta_base,
-        ..Default::default()
     };
     let mut reader = crate::archive::ArchiveReader::with_options(cursor, opts)?;
     reader.read_global_header()?;

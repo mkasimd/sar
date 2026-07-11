@@ -17,7 +17,7 @@ use sar_archive::{
     EntryInput,
 };
 use sar_core::SarError;
-use sar_delta::{PatchAlgoId, PATCH_ALGO_BSDIFF, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF};
+use sar_delta::{PATCH_ALGO_BSDIFF, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF, PatchAlgoId};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -109,7 +109,10 @@ fn vcdiff_writer_reader_round_trip_small() {
     let archive = write_vcdiff_archive(base.clone(), target.clone());
     let reconstructed = read_first_entry(&archive, Some(base)).expect("read");
 
-    assert_eq!(reconstructed, target, "reconstructed bytes must equal target");
+    assert_eq!(
+        reconstructed, target,
+        "reconstructed bytes must equal target"
+    );
 }
 
 #[test]
@@ -125,27 +128,26 @@ fn vcdiff_writer_reader_round_trip_empty_base() {
 
 #[test]
 fn vcdiff_writer_emits_vcdiff_algo_id() {
-    use sar_core::format::{parse_global_header, parse_lfh};
     use sar_core::GlobalFlags;
+    use sar_core::format::{parse_global_header, parse_lfh};
 
     let base = make_base(16);
     let target = make_target(32);
     let archive = write_vcdiff_archive(base, target);
 
-    // Parse the global header manually.
+    // Parse the global header.
+    // Global header format: magic[4] + version[1] + reserved[1] + flags_size[2] + flags[...]
+    // Flags start at byte 8; use the already-parsed header flags, not a raw byte slice.
     let limits = sar_core::ResourceLimits::default();
-    let (_gh, after_gh) = parse_global_header(&archive, &limits).expect("global header");
-    let gh_flags = GlobalFlags::from_bits_truncate(
-        u32::from_le_bytes(archive[4..8].try_into().unwrap()) as u32,
-    );
+    let (gh, after_gh) = parse_global_header(&archive, &limits).expect("global header");
+    let gh_flags = gh.flags;
 
     assert!(
         gh_flags.contains(GlobalFlags::HAS_DELTA),
         "global header must have HAS_DELTA set"
     );
 
-    let flags = gh_flags;
-    let (lfh, _) = parse_lfh(&archive[after_gh..], &flags, &limits).expect("parse LFH");
+    let (lfh, _) = parse_lfh(&archive[after_gh..], &gh_flags, &limits).expect("parse LFH");
     assert_eq!(
         lfh.patch_algo_id,
         Some(PATCH_ALGO_VCDIFF),
@@ -179,7 +181,10 @@ fn bsdiff_writer_reader_round_trip_small() {
     let archive = write_bsdiff_archive(base.clone(), target.clone());
     let reconstructed = read_first_entry(&archive, Some(base)).expect("read");
 
-    assert_eq!(reconstructed, target, "reconstructed bytes must equal target");
+    assert_eq!(
+        reconstructed, target,
+        "reconstructed bytes must equal target"
+    );
 }
 
 #[test]
@@ -195,26 +200,23 @@ fn bsdiff_writer_reader_round_trip_empty_base() {
 
 #[test]
 fn bsdiff_writer_emits_bsdiff_algo_id() {
-    use sar_core::format::{parse_global_header, parse_lfh};
     use sar_core::GlobalFlags;
+    use sar_core::format::{parse_global_header, parse_lfh};
 
     let base = make_base(16);
     let target = make_target(32);
     let archive = write_bsdiff_archive(base.clone(), target);
 
     let limits = sar_core::ResourceLimits::default();
-    let (_gh, after_gh) = parse_global_header(&archive, &limits).expect("global header");
-    let gh_flags = GlobalFlags::from_bits_truncate(
-        u32::from_le_bytes(archive[4..8].try_into().unwrap()) as u32,
-    );
+    let (gh, after_gh) = parse_global_header(&archive, &limits).expect("global header");
+    let gh_flags = gh.flags;
 
     assert!(
         gh_flags.contains(GlobalFlags::HAS_DELTA),
         "global header must have HAS_DELTA set"
     );
 
-    let (lfh, _) =
-        parse_lfh(&archive[after_gh..], &gh_flags, &limits).expect("parse LFH");
+    let (lfh, _) = parse_lfh(&archive[after_gh..], &gh_flags, &limits).expect("parse LFH");
     assert_eq!(
         lfh.patch_algo_id,
         Some(PATCH_ALGO_BSDIFF),
@@ -352,10 +354,8 @@ fn has_delta_active_entry_without_delta_uses_store_patch() {
     // Verify algo ID is STORE_PATCH.
     use sar_core::format::{parse_global_header, parse_lfh};
     let limits = sar_core::ResourceLimits::default();
-    let (_gh, after_gh) = parse_global_header(&buf, &limits).expect("global header");
-    let flags = sar_core::GlobalFlags::from_bits_truncate(
-        u32::from_le_bytes(buf[4..8].try_into().unwrap()) as u32,
-    );
+    let (gh, after_gh) = parse_global_header(&buf, &limits).expect("global header");
+    let flags = gh.flags;
     let (lfh, _) = parse_lfh(&buf[after_gh..], &flags, &limits).expect("LFH");
     assert_eq!(lfh.patch_algo_id, Some(PATCH_ALGO_STORE_PATCH));
     assert_eq!(lfh.delta_base_hash, Some([0u8; 32]));

@@ -29,8 +29,7 @@ fn generate_vcdiff_round_trip_empty_base_small_target() {
     let limits = VcdiffLimits::default();
 
     let patch = generate_vcdiff_patch(&base, target, &limits).expect("generate");
-    let reconstructed =
-        apply_vcdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_vcdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -42,8 +41,7 @@ fn generate_vcdiff_round_trip_with_base() {
     let limits = VcdiffLimits::default();
 
     let patch = generate_vcdiff_patch(&base, &target, &limits).expect("generate");
-    let reconstructed =
-        apply_vcdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_vcdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -55,8 +53,7 @@ fn generate_vcdiff_round_trip_empty_target() {
     let limits = VcdiffLimits::default();
 
     let patch = generate_vcdiff_patch(base, target, &limits).expect("generate");
-    let reconstructed =
-        apply_vcdiff(base, &patch, 0, &limits).expect("apply empty target");
+    let reconstructed = apply_vcdiff(base, &patch, 0, &limits).expect("apply empty target");
 
     assert!(reconstructed.is_empty());
 }
@@ -68,8 +65,7 @@ fn generate_vcdiff_round_trip_binary_data() {
     let limits = VcdiffLimits::default();
 
     let patch = generate_vcdiff_patch(&base, &target, &limits).expect("generate");
-    let reconstructed =
-        apply_vcdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_vcdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -135,8 +131,7 @@ fn generate_bsdiff_round_trip_empty_base_small_target() {
     let limits = BsdiffLimits::default();
 
     let patch = generate_bsdiff_patch(base, target, &limits).expect("generate");
-    let reconstructed =
-        apply_bsdiff(base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_bsdiff(base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -148,8 +143,7 @@ fn generate_bsdiff_round_trip_with_base() {
     let limits = BsdiffLimits::default();
 
     let patch = generate_bsdiff_patch(&base, &target, &limits).expect("generate");
-    let reconstructed =
-        apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -161,8 +155,7 @@ fn generate_bsdiff_round_trip_empty_target() {
     let limits = BsdiffLimits::default();
 
     let patch = generate_bsdiff_patch(base, target, &limits).expect("generate");
-    let reconstructed =
-        apply_bsdiff(base, &patch, 0, &limits).expect("apply empty target");
+    let reconstructed = apply_bsdiff(base, &patch, 0, &limits).expect("apply empty target");
 
     assert!(reconstructed.is_empty());
 }
@@ -174,8 +167,7 @@ fn generate_bsdiff_round_trip_target_longer_than_base() {
     let limits = BsdiffLimits::default();
 
     let patch = generate_bsdiff_patch(&base, &target, &limits).expect("generate");
-    let reconstructed =
-        apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -187,8 +179,7 @@ fn generate_bsdiff_round_trip_target_shorter_than_base() {
     let limits = BsdiffLimits::default();
 
     let patch = generate_bsdiff_patch(&base, &target, &limits).expect("generate");
-    let reconstructed =
-        apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }
@@ -200,8 +191,7 @@ fn generate_bsdiff_round_trip_binary_data() {
     let limits = BsdiffLimits::default();
 
     let patch = generate_bsdiff_patch(&base, &target, &limits).expect("generate");
-    let reconstructed =
-        apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
+    let reconstructed = apply_bsdiff(&base, &patch, target.len() as u64, &limits).expect("apply");
 
     assert_eq!(reconstructed, target);
 }

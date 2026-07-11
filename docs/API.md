@@ -1925,3 +1925,39 @@ Partition/multi-volume archive support. Deliberately deferred in M11c.
 No new API. `PartitionDescriptor` and `PARTITIONED_ARCHIVE` remain in `sar-core`.
 
 See `docs/CRATE_RESPONSIBILITIES.md` for deferral rationale.
+
+---
+
+## M12a-M9b-cp APIs — Delta Patch Generation (VCDIFF and SAR BSDIFF v1)
+
+Corrective pass adding writer-side patch generation to complete M9b delta support.
+
+### `sar-delta`: New Generation APIs
+
+**VCDIFF generation:**
+
+- `generate_vcdiff_patch(base: &[u8], target: &[u8], limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>` — produces a valid RFC 3284 VCDIFF ADD-only stream from `target`; `base` accepted for API symmetry; no COPY optimisation; O(target.len()) memory; fails closed on limit violations
+
+**SAR BSDIFF v1 generation:**
+
+- `generate_bsdiff_patch(base: &[u8], target: &[u8], limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>` — produces a valid `SARBSD01` patch using a single control triple; O(target.len()) memory; fails closed on limit violations
+
+Both functions are deterministic, bounded, and interoperable: `apply_vcdiff(base, patch, target.len() as u64, limits)` and `apply_bsdiff(base, patch, target.len() as u64, limits)` reconstruct `target` exactly.
+
+### `sar-archive`: New Writer-side Delta APIs
+
+- `DeltaWriteOptions { algorithm: PatchAlgoId, base: Vec<u8>, delta_base_hash: [u8; 32] }` — per-entry delta options; attach to `EntryInput.delta`
+- `ArchiveWriterOptions.with_delta: bool` — enables `HAS_DELTA` global flag; required when any entry carries `DeltaWriteOptions`
+- `ArchiveWriter.add_entry()` behaviour with `with_delta = true`:
+  - Generates patch bytes from `DeltaWriteOptions` before compression/encryption
+  - Emits `Patch Algo ID` and `Delta Base Hash` in each LFH
+  - Defaults to `STORE_PATCH` + all-zero base hash for entries without `DeltaWriteOptions`
+  - Rejects `VCDIFF`/`BSDIFF` entries with all-zero `delta_base_hash` (`SAR_ERR_BASE_MISSING`)
+  - Returns `SAR_ERR_FLAG_CONFLICT` when `delta` is set but `with_delta = false`
+
+### Invariants
+
+- No silent fallback from `VCDIFF`/`BSDIFF` to `STORE_PATCH`
+- All-zero `Delta Base Hash` for `VCDIFF`/`BSDIFF` rejected at write time and read time
+- Generated patches do not add hidden compression inside VCDIFF or SARBSD01 payloads
+- `ZSTD_PATCH` and custom algorithms remain unsupported at write time (`SAR_ERR_UNSUPPORTED`)

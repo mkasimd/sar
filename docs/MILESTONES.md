@@ -667,17 +667,18 @@ If this milestone document appears to describe library/profile layout differentl
 
 # Current and future milestones
 
-## M12a-M9b-cp: Delta patch generation corrective pass
+## M12a-M9b-cp: Delta patch generation corrective pass (complete)
 
-* restore canonical generated-fixture coverage for VCDIFF and SAR BSDIFF v1
-* implement or harden writer-side VCDIFF patch generation from base + target bytes
-* implement or harden writer-side SAR BSDIFF v1 patch generation from base + target bytes
-* require deterministic, bounded, interoperable patch generation; optimal/minimal patch size is not required
-* integrate generated patches with archive writer delta output where configured
-* add positive apply/round-trip tests for generated VCDIFF and SAR BSDIFF v1 patches
-* replace deferred/reference-only VCDIFF/BSDIFF manifests with real generated fixtures
-* keep M12a vector claims auditable while this corrective pass remains pending
-
+* `sar-delta`: `generate_vcdiff_patch` and `generate_bsdiff_patch` public APIs implemented (RFC 3284 ADD-only VCDIFF stream; SARBSD01 single-control-triple BSDIFF)
+* `sar-delta`: all generation functions use checked arithmetic; O(target.len()) memory only; no suffix arrays, BWT, or quadratic structures
+* `sar-archive`: writer integrates VCDIFF and BSDIFF generation via `DeltaWriteOptions`; sets `HAS_DELTA`, `Patch Algo ID`, and `Delta Base Hash` in each LFH
+* `sar-archive`: `DeltaWriteOptions` requires non-zero `delta_base_hash` for VCDIFF/BSDIFF (all-zero rejected as missing identity)
+* `crates/sar-archive/tests/delta_writer_tests.rs`: 12 tests covering VCDIFF/BSDIFF round-trips, algo-ID wire checks, missing-base rejection, zero-hash rejection, flag-conflict rejection, STORE_PATCH default for no-delta entries
+* `crates/sar-delta/tests/generate_tests.rs`: generation and apply/round-trip tests for VCDIFF and BSDIFF
+* VCDIFF and BSDIFF manifests promoted from deferred/reference-only to real generated fixtures (`test-vectors/valid/delta/vcdiff/`, `test-vectors/valid/delta/bsdiff/`)
+* `conformance_manifest_tests`: two new tests asserting promoted VCDIFF vector uses algo ID `0x01` and promoted BSDIFF vector uses algo ID `0x02`
+* `conformance_manifest_tests`: `delta:vcdiff` and `delta:bsdiff` removed from deferred feature tag guard (no longer deferred)
+* all targeted tests passing; workspace Clippy clean
 ## M12a-M8-cp: Archive-level Recovery TLV corrective pass
 
 * restore canonical generated-fixture coverage for archive-level Recovery TLV / `HAS_GLOBAL_EC`
