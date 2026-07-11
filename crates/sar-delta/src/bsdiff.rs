@@ -243,12 +243,12 @@ pub fn apply_bsdiff(
 
     for triple_idx in 0..n_triples {
         let triple_offset = triple_idx
-                .checked_mul(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
+            .checked_mul(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
             .ok_or(PatchError::PatchFailed(
                 "BSDIFF: control triple offset overflow",
             ))?;
         let triple_end = triple_offset
-                .checked_add(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
+            .checked_add(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
             .ok_or(PatchError::PatchFailed(
                 "BSDIFF: control triple end overflow",
             ))?;
@@ -482,7 +482,7 @@ pub fn generate_bsdiff_patch(
     }
     if limits.max_control_triples < BSDIFF_CONTROL_TRIPLE_COUNT {
         return Err(PatchError::LimitExceeded(
-            "BSDIFF generate: control triple count exceeds max_control_triples limit",
+            "BSDIFF generate: max_control_triples limit is too low (requires at least 1)",
         ));
     }
     if limits.max_control_bytes < BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES {

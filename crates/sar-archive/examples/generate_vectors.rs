@@ -131,7 +131,7 @@ fn skip_deferred_vector(relative_path: &str, reason: &str) {
 fn make_promoted_delta_base_hash() -> [u8; 32] {
     let mut base_hash = ZERO_DELTA_BASE_HASH;
     let first_word_end = std::mem::size_of::<u64>();
-    let second_word_end = first_word_end * 2;
+    let second_word_end = first_word_end + std::mem::size_of::<u64>();
     base_hash[..first_word_end].copy_from_slice(&PROMOTED_DELTA_BASE_HASH_WORD_0.to_le_bytes());
     base_hash[first_word_end..second_word_end]
         .copy_from_slice(&PROMOTED_DELTA_BASE_HASH_WORD_1.to_le_bytes());

@@ -31,12 +31,7 @@ const N_MODES: usize = 2 + S_NEAR + S_SAME; // = 9
 
 const VCDIFF_MAGIC: [u8; 3] = [0xD6, 0xC3, 0xC4];
 const VCDIFF_VERSION: u8 = 0x00;
-const VCDIFF_STREAM_HEADER: [u8; 4] = [
-    VCDIFF_MAGIC[0],
-    VCDIFF_MAGIC[1],
-    VCDIFF_MAGIC[2],
-    VCDIFF_VERSION,
-];
+const VCDIFF_STREAM_HEADER: [u8; 4] = [0xD6, 0xC3, 0xC4, VCDIFF_VERSION];
 const VCDIFF_HEADER_INDICATOR_NONE: u8 = 0x00;
 const VCDIFF_WINDOW_INDICATOR_NONE: u8 = 0x00;
 const VCDIFF_WINDOW_INDICATOR_KNOWN_MASK: u8 = VCD_SOURCE | VCD_TARGET;
@@ -460,12 +455,12 @@ pub fn generate_vcdiff_patch(
 
     if limits.max_window_count < ADD_ONLY_WINDOW_COUNT {
         return Err(PatchError::LimitExceeded(
-            "VCDIFF generate: window count exceeds max_window_count limit",
+            "VCDIFF generate: max_window_count limit is too low (requires at least 1)",
         ));
     }
     if limits.max_instruction_count < ADD_ONLY_INSTRUCTION_COUNT {
         return Err(PatchError::LimitExceeded(
-            "VCDIFF generate: instruction count exceeds max_instruction_count limit",
+            "VCDIFF generate: max_instruction_count limit is too low (requires at least 1)",
         ));
     }
 
