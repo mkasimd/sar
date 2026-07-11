@@ -787,18 +787,16 @@ pub fn run_conformance_check(
     // and should be treated as a structural-level skip rather than a failure.
     // The archive can be validated structurally but full decryption requires
     // key material that is only available to tests with explicit key providers.
-    if manifest.requires_key_provider {
-        if let Err(ref e) = parse_result {
-            if matches!(e, sar_core::error::SarError::KeyMissing(_)) {
-                return ConformanceCheckResult {
-                    manifest_id: manifest.id.clone(),
-                    passed: true,
-                    reason: "skipped: key provider required for full decryption validation"
-                        .to_string(),
-                    skipped: true,
-                };
-            }
-        }
+    if manifest.requires_key_provider
+        && let Err(ref e) = parse_result
+        && matches!(e, sar_core::error::SarError::KeyMissing(_))
+    {
+        return ConformanceCheckResult {
+            manifest_id: manifest.id.clone(),
+            passed: true,
+            reason: "skipped: key provider required for full decryption validation".to_string(),
+            skipped: true,
+        };
     }
 
     match (manifest.expected.valid, parse_result) {
@@ -913,8 +911,7 @@ fn discover_manifests_inner(
         if path.is_dir() {
             discover_manifests_inner(&path, out)?;
         } else if path.file_name() == Some(std::ffi::OsStr::new("manifest.json")) {
-            let raw = std::fs::read_to_string(&path)
-                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            let raw = std::fs::read_to_string(&path).map_err(std::io::Error::other)?;
             let result = serde_json::from_str::<ConformanceManifest>(&raw)
                 .map_err(|e| format!("JSON parse error in {}: {}", path.display(), e));
             out.push((path, result));
