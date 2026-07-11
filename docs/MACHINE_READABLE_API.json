@@ -310,7 +310,7 @@
     {
       "name": "sar-cli",
       "path": "crates/sar-cli",
-      "purpose": "Command-line interface over sar-core for archive create/extract/list/verify/inspect/version workflows.",
+      "purpose": "User-facing command-line interface over sar-archive, sar-core low-level APIs, and specialized feature crates for archive create/extract/list/verify/inspect/repair/version workflows, including metadata preservation/restoration controls and safe extraction policy.",
       "status": "partial",
       "milestones": [
         "3",
@@ -322,8 +322,13 @@
         "stage-2",
         "stage-3",
         "stage-4",
-        "9a"
-      ],
+        "9a",
+        "9b",
+        "10d",
+        "10e",
+        "11d",
+        "11e"
+      ]
       "features": [],
       "modules": [
         {
