@@ -164,6 +164,26 @@ pub fn patch_algo_name(id: u8) -> &'static str {
     }
 }
 
+/// Generates a `STORE_PATCH` (`0x00`) payload from `target`.
+///
+/// For `STORE_PATCH` the patch payload **is** the complete target byte
+/// sequence.  This function validates `target.len()` against `expected_len`
+/// and returns a clone of `target` on success.
+///
+/// # Errors
+///
+/// Returns [`PatchError::PatchFailed`] when
+/// `target.len() as u64 != expected_len`.
+pub fn generate_store_patch(target: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError> {
+    let actual_len = target.len() as u64;
+    if actual_len != expected_len {
+        return Err(PatchError::PatchFailed(
+            "STORE_PATCH generate: target length does not match expected_len",
+        ));
+    }
+    Ok(target.to_vec())
+}
+
 /// Applies `STORE_PATCH` (`0x00`) to `patch_payload`.
 ///
 /// For `STORE_PATCH`, the decoded patch payload **is** the complete

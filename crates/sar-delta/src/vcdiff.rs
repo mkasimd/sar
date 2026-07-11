@@ -362,6 +362,136 @@ impl AddrCache {
     }
 }
 
+// ── VCDIFF varint encoder (big-endian base-128, RFC 3284 §2) ─────────────────
+
+fn encode_varint(v: u64) -> Vec<u8> {
+    if v == 0 {
+        return vec![0x00];
+    }
+    let mut buf = Vec::new();
+    let mut n = v;
+    while n > 0 {
+        buf.push((n & 0x7F) as u8);
+        n >>= 7;
+    }
+    buf.reverse();
+    let last = buf.len() - 1;
+    for b in &mut buf[..last] {
+        *b |= 0x80;
+    }
+    buf
+}
+
+// ── VCDIFF patch generator ────────────────────────────────────────────────────
+
+/// Generates a minimal RFC 3284 VCDIFF patch from `base` and `target`.
+///
+/// The produced stream is accepted by
+/// [`apply_vcdiff`]`(base, patch, target.len() as u64, limits)` and
+/// reconstructs `target` exactly.
+///
+/// # Strategy
+///
+/// Emits a single window using only an ADD instruction (literal copy of the
+/// `target` bytes).  The `base` argument is accepted for API symmetry but is
+/// not referenced by this minimal implementation.  All arithmetic is checked;
+/// the function fails closed on limit violations rather than panicking.
+///
+/// # Memory bound
+///
+/// Allocates O(`target.len()`) memory only.  No quadratic diff matrix,
+/// suffix array, BWT, or unbounded table is constructed.
+///
+/// # Errors
+///
+/// Returns [`PatchError::LimitExceeded`] when `target.len()` exceeds
+/// `limits.max_output_size`, or when any intermediate arithmetic overflows a
+/// configured limit.
+pub fn generate_vcdiff_patch(
+    _base: &[u8],
+    target: &[u8],
+    limits: &VcdiffLimits,
+) -> Result<Vec<u8>, PatchError> {
+    // Limit: output size.
+    let target_len = u64::try_from(target.len())
+        .map_err(|_| PatchError::LimitExceeded("VCDIFF generate: target length exceeds u64"))?;
+    if target_len > limits.max_output_size {
+        return Err(PatchError::LimitExceeded(
+            "VCDIFF generate: target length exceeds max_output_size limit",
+        ));
+    }
+
+    // Empty target: a valid VCDIFF stream with no windows reconstructs the
+    // empty byte sequence.  The header alone is sufficient.
+    if target.is_empty() {
+        return Ok(b"\xD6\xC3\xC4\x00\x00".to_vec());
+    }
+
+    // ADD instruction: code 1 = ADD(size=0), varint-size follows.
+    let mut inst: Vec<u8> = vec![0x01u8];
+    inst.extend_from_slice(&encode_varint(target_len));
+
+    let inst_len = u64::try_from(inst.len())
+        .map_err(|_| PatchError::LimitExceeded("VCDIFF generate: inst length overflow"))?;
+
+    // Delta body components (order matches the decoder).
+    let twl_bytes = encode_varint(target_len); // target_window_length
+    let lar_bytes = encode_varint(target_len); // len_add_run = target.len()
+    let li_bytes = encode_varint(inst_len);    // len_inst
+    let la_bytes = encode_varint(0u64);        // len_addr = 0
+
+    // delta_encoding_length: bytes from delta_start through the end of addr_bytes.
+    // Covers: twl + delta_indicator(1) + lar + li + la + add_run_data + inst_bytes.
+    let delta_enc_len: usize = twl_bytes
+        .len()
+        .checked_add(1) // delta_indicator
+        .and_then(|n| n.checked_add(lar_bytes.len()))
+        .and_then(|n| n.checked_add(li_bytes.len()))
+        .and_then(|n| n.checked_add(la_bytes.len()))
+        .and_then(|n| n.checked_add(target.len()))
+        .and_then(|n| n.checked_add(inst.len()))
+        .ok_or(PatchError::LimitExceeded(
+            "VCDIFF generate: delta_encoding_length overflow",
+        ))?;
+
+    let del_enc_len_u64 = u64::try_from(delta_enc_len).map_err(|_| {
+        PatchError::LimitExceeded("VCDIFF generate: delta_encoding_length exceeds u64")
+    })?;
+    let del_enc_len_bytes = encode_varint(del_enc_len_u64);
+
+    // Total patch: magic(4) + hdr_indicator(1) + win_indicator(1) + del_enc_len_bytes + delta body.
+    let patch_size: usize = 4usize
+        .checked_add(1) // hdr_indicator
+        .and_then(|n| n.checked_add(1)) // win_indicator
+        .and_then(|n| n.checked_add(del_enc_len_bytes.len()))
+        .and_then(|n| n.checked_add(delta_enc_len))
+        .ok_or(PatchError::LimitExceeded(
+            "VCDIFF generate: total patch size overflow",
+        ))?;
+
+    let mut patch = Vec::with_capacity(patch_size);
+
+    // VCDIFF global header.
+    patch.extend_from_slice(b"\xD6\xC3\xC4\x00");
+    patch.push(0x00u8); // hdr_indicator: no secondary compressor, default code table
+
+    // Window.
+    patch.push(0x00u8); // win_indicator: no source segment (ADD-only)
+    patch.extend_from_slice(&del_enc_len_bytes);
+    // — delta body start (counted from here for delta_encoding_length) —
+    patch.extend_from_slice(&twl_bytes); // target_window_length
+    patch.push(0x00u8); // delta_indicator
+    patch.extend_from_slice(&lar_bytes); // len_add_run
+    patch.extend_from_slice(&li_bytes); // len_inst
+    patch.extend_from_slice(&la_bytes); // len_addr
+    patch.extend_from_slice(target); // add_run_data (ADD payload bytes)
+    patch.extend_from_slice(&inst); // inst_bytes
+    // addr_bytes: empty (no COPY instructions)
+    // — delta body end —
+
+    Ok(patch)
+}
+
 // ── Main VCDIFF apply function ────────────────────────────────────────────────
 
 /// Applies a VCDIFF patch (RFC 3284) to `base`, returning the reconstructed target.
