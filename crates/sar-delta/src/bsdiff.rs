@@ -459,12 +459,12 @@ pub fn generate_bsdiff_patch(
         ));
     }
     // One triple = 24 control bytes.
-    if 1 > limits.max_control_triples {
+    if limits.max_control_triples < 1 {
         return Err(PatchError::LimitExceeded(
             "BSDIFF generate: control triple count exceeds max_control_triples limit",
         ));
     }
-    if 24 > limits.max_control_bytes {
+    if limits.max_control_bytes < 24 {
         return Err(PatchError::LimitExceeded(
             "BSDIFF generate: control block exceeds max_control_bytes limit",
         ));

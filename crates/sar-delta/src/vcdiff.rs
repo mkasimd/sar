@@ -435,12 +435,12 @@ pub fn generate_vcdiff_patch(
         return Ok(patch.to_vec());
     }
 
-    if 1 > limits.max_window_count {
+    if limits.max_window_count < 1 {
         return Err(PatchError::LimitExceeded(
             "VCDIFF generate: window count exceeds max_window_count limit",
         ));
     }
-    if 1 > limits.max_instruction_count {
+    if limits.max_instruction_count < 1 {
         return Err(PatchError::LimitExceeded(
             "VCDIFF generate: instruction count exceeds max_instruction_count limit",
         ));
