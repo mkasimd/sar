@@ -35,8 +35,10 @@ const BSDIFF_HEADER_SIZE: usize = 32;
 const BSDIFF_CONTROL_TRIPLE_COUNT: usize = 1;
 const BSDIFF_CONTROL_ENTRY_COUNT: u64 = 3;
 const BSDIFF_CONTROL_VALUE_SIZE: u64 = 8;
+const BSDIFF_CONTROL_VALUE_SIZE_USIZE: usize = 8;
 const BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES: u64 =
     BSDIFF_CONTROL_ENTRY_COUNT * BSDIFF_CONTROL_VALUE_SIZE;
+const BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE: usize = 24;
 
 /// Resource limits for BSDIFF patch application.
 ///
@@ -129,9 +131,9 @@ pub fn apply_bsdiff(
     }
 
     let ctrl_len_start = SAR_BSDIFF_MAGIC.len();
-    let diff_len_start = ctrl_len_start + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
-    let new_size_start = diff_len_start + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
-    let header_end = new_size_start + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+    let diff_len_start = ctrl_len_start + BSDIFF_CONTROL_VALUE_SIZE_USIZE;
+    let new_size_start = diff_len_start + BSDIFF_CONTROL_VALUE_SIZE_USIZE;
+    let header_end = new_size_start + BSDIFF_CONTROL_VALUE_SIZE_USIZE;
 
     let ctrl_len_raw = decode_bsdiff_int(&patch[ctrl_len_start..diff_len_start])?;
     let diff_len_raw = decode_bsdiff_int(&patch[diff_len_start..new_size_start])?;
@@ -241,12 +243,12 @@ pub fn apply_bsdiff(
 
     for triple_idx in 0..n_triples {
         let triple_offset = triple_idx
-            .checked_mul(usize::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).unwrap())
+                .checked_mul(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
             .ok_or(PatchError::PatchFailed(
-            "BSDIFF: control triple offset overflow",
-        ))?;
+                "BSDIFF: control triple offset overflow",
+            ))?;
         let triple_end = triple_offset
-            .checked_add(usize::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).unwrap())
+                .checked_add(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
             .ok_or(PatchError::PatchFailed(
                 "BSDIFF: control triple end overflow",
             ))?;
@@ -257,9 +259,9 @@ pub fn apply_bsdiff(
         }
         let triple = &ctrl_data[triple_offset..triple_end];
 
-        let diff_len_end = usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
-        let extra_len_end = diff_len_end + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
-        let seek_adjust_end = extra_len_end + usize::try_from(BSDIFF_CONTROL_VALUE_SIZE).unwrap();
+        let diff_len_end = BSDIFF_CONTROL_VALUE_SIZE_USIZE;
+        let extra_len_end = diff_len_end + BSDIFF_CONTROL_VALUE_SIZE_USIZE;
+        let seek_adjust_end = extra_len_end + BSDIFF_CONTROL_VALUE_SIZE_USIZE;
 
         let d_len_raw = decode_bsdiff_int(&triple[..diff_len_end])?;
         let e_len_raw = decode_bsdiff_int(&triple[diff_len_end..extra_len_end])?;
@@ -491,7 +493,7 @@ pub fn generate_bsdiff_patch(
 
     // Total patch size: header + one control triple + diff_step + extra_step.
     let patch_size: usize = BSDIFF_HEADER_SIZE
-        .checked_add(usize::try_from(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES).unwrap())
+        .checked_add(BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE)
         .and_then(|n| n.checked_add(diff_step))
         .and_then(|n| n.checked_add(extra_step))
         .ok_or(PatchError::LimitExceeded(
