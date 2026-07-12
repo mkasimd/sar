@@ -1,4 +1,4 @@
-# Conformance Profile (M1–M12a-stream-cp)
+# Conformance Profile (M1–M12a-audit-cp)
 
 This document describes **reference implementation coverage** and **known gaps** after M12a-audit-cp.
 
