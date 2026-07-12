@@ -2,9 +2,9 @@
   "schema_version": 1,
   "id": "stream-transcript-invalid-session-control-without-no-index",
   "title": "Stream transcript (invalid): SESSION_CONTROL in non-NO_INDEX archive",
-  "description": "Serialized SAR stream transcript where a SESSION_CONTROL entry appears in a non-NO_INDEX archive. Stateful Streaming Mode requires NO_INDEX to be set. Whether this should be an error or silently inactive is pending spec clarification.",
+  "description": "Serialized SAR stream transcript where a SESSION_CONTROL entry appears in a non-NO_INDEX archive. Strict stream transcript validation requires NO_INDEX to be set before Stateful Streaming Mode can be active.",
   "kind": "invalid",
-  "file": null,
+  "file": "session_control_without_no_index.sar",
   "features": [
     "stream:transcript",
     "stream:session",
@@ -12,16 +12,15 @@
   ],
   "expected": {
     "valid": false,
-    "status": "SAR_ERR_STREAM_STATE",
-    "error": "StreamState",
+    "status": "SAR_ERR_FLAG_CONFLICT",
+    "error": "FlagConflict",
     "warnings": []
   },
-  "deferred": true,
+  "deferred": false,
   "compression": false,
   "crypto": false,
   "notes": [
-    "DEFERRED: current implementation treats SESSION_CONTROL in non-NO_INDEX archives as StatefulInactive (SAR_OK), not SAR_ERR_STREAM_STATE.",
-    "Deferred pending spec clarification on whether strict rejection is required.",
+    "Strict stream transcript conformance rejects SESSION_CONTROL when NO_INDEX is not set.",
     "This is a serialized SAR stream transcript, not an ordinary static archive.",
     "This is not M12b fuzzing."
   ]

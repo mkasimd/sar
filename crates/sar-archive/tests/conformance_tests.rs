@@ -107,6 +107,10 @@ fn valid_non_deferred_vectors_parse_ok() {
         if manifest.deferred || manifest.file.is_none() {
             continue;
         }
+        if manifest.features.iter().any(|f| f == "stream:transcript") {
+            println!("[SKIP] {} — stream transcript semantics run in sar-stream", manifest.id);
+            continue;
+        }
 
         let base_dir = path.parent().expect("manifest dir");
         let check = run_conformance_check(manifest, base_dir);
@@ -161,6 +165,10 @@ fn invalid_non_deferred_vectors_are_rejected() {
             continue;
         }
         if manifest.deferred || manifest.file.is_none() {
+            continue;
+        }
+        if manifest.features.iter().any(|f| f == "stream:transcript") {
+            println!("[SKIP] {} — stream transcript semantics run in sar-stream", manifest.id);
             continue;
         }
 

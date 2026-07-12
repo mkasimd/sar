@@ -1404,7 +1404,6 @@ dependencies = [
  "sar-fec",
  "sar-fragmentation",
  "sar-sparse",
- "sar-stream",
  "serde",
  "serde_json",
  "tempfile",
@@ -1528,6 +1527,8 @@ name = "sar-stream"
 version = "0.1.0"
 dependencies = [
  "sar-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

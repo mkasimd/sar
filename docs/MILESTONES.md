@@ -713,7 +713,7 @@ If this milestone document appears to describe library/profile layout differentl
 * `docs/CONFORMANCE.md` and `test-vectors/README.md` updated to describe deterministic invalid-vector expansion explicitly (not fuzzing)
 * this pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`
 
-## M12a-stream-cp: Serialized SAR stream transcript conformance vectors (complete)
+## M12a-stream-cp: Serialized SAR stream transcript conformance vectors (corrected)
 
 * Added deterministic valid stream transcript fixtures under `test-vectors/valid/stream-session/`:
   * `session-init` — minimal: Global Header + SESSION_INIT
@@ -731,19 +731,21 @@ If this milestone document appears to describe library/profile layout differentl
   * `wrong-stream-id` → `SAR_ERR_STREAM_STATE`
   * `heartbeat-with-payload` → `SAR_ERR_INVALID_LENGTH`
   * `reserved-session-opcode` → `SAR_ERR_RESERVED_VALUE`
-  * `session-control-without-no-index` — deferred (implementation returns inactive OK)
-  * `zero-stream-id` — deferred (implementation returns inactive OK)
+  * `session-control-without-no-index` → `SAR_ERR_FLAG_CONFLICT` (strict transcript mode)
+  * `zero-stream-id` → `SAR_ERR_STREAM_STATE` (strict transcript mode)
 * Added `test-vectors/profiles/static-archive/reject-session-control/`: references the same `session-init` fixture; asserts stream-session transcript bytes are structurally valid SAR and profile-rejected by static-archive
-* Extended `sar_archive::conformance::run_conformance_check()` with `attempt_stream_transcript_parse()`: routes vectors with `stream:transcript` feature tag through the `sar-stream` `SessionManager` instead of ordinary `ArchiveReader`; exercises session lifecycle semantics (init → active → data flow)
-* Added `sar-stream` as a dependency of `sar-archive` for stream transcript routing
-* Strengthened `sar-stream` session validation: `handle_filesystem()` now returns `Err(StreamState)` (not `Ok(inactive)`) when `NO_INDEX` + nonzero stream_id is set but no session has been initialized
+* Stream transcript semantic conformance now executes in `crates/sar-stream/tests/stream_transcript_conformance_tests.rs` (strict `NO_INDEX` + nonzero Stream ID + SESSION_INIT activation + sequence/session validation).
+* `sar-archive` no longer depends on `sar-stream` for production conformance execution.
+* Default `sar-archive` parsing rejects entries where `SESSION_CONTROL` is set or `OP_CODE` is nonzero (`SAR_ERR_UNSUPPORTED`), while preserving classic NO_INDEX archive parsing.
+* `sar-archive` conformance tests skip `stream:transcript` semantic checks and leave transcript semantics to `sar-stream`.
+* `sar-stream` default state manager behavior remains inert outside active stateful mode; strict transcript errors are enforced by transcript conformance tests.
 * Added 4 new manifest audit tests in `conformance_manifest_tests`:
   * `stream_transcript_vectors_use_stream_tags_and_correct_paths`
   * `stream_transcript_profile_rejection_manifests_are_not_byte_invalid`
   * `minimum_required_valid_stream_transcript_vectors_present`
   * `minimum_required_invalid_stream_transcript_vectors_present`
 * `valid_vectors_have_entries` exempts `stream:transcript` vectors (session transcripts have session frames, not traditional archive entries)
-* `docs/CONFORMANCE.md`, `test-vectors/README.md`, and `docs/MILESTONES.md` updated to describe serialized SAR stream transcript fixtures, no live transport requirement, profile-rejection behavior, and deferred cases
+* `docs/CONFORMANCE.md`, `test-vectors/README.md`, and `docs/MILESTONES.md` updated to describe serialized SAR stream transcript fixtures, no live transport requirement, profile-rejection behavior, and strict invalid coverage
 * These fixtures do not require live TCP/QUIC transport; they are parsed in-memory by `sar-stream`
 * Additional QUIC control streams are not covered by this pass
 * This pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`

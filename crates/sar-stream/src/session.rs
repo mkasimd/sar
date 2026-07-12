@@ -748,7 +748,7 @@ impl SessionManager {
         let session = match self.active_sessions.get_mut(&entry.header.stream_id) {
             Some(session) => session,
             None => {
-                return Err(SarError::StreamState("no active session for Stream ID"));
+                return Ok(self.inactive_result(entry.header.stream_id, false, op_code));
             }
         };
         validate_and_advance_sequence(session, entry.header.sequence_no)?;

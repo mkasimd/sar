@@ -16,7 +16,6 @@ sar-cdc = { path = "../sar-cdc" }
 sar-delta = { path = "../sar-delta" }
 sar-fragmentation = { path = "../sar-fragmentation" }
 sar-sparse = { path = "../sar-sparse" }
-sar-stream = { path = "../sar-stream" }
 
 [dev-dependencies]
 serde_json.workspace = true

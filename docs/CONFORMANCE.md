@@ -46,24 +46,20 @@ test-vectors/
     wrong-stream-id/                  — entry stream_id ≠ session stream_id → SAR_ERR_STREAM_STATE
     heartbeat-with-payload/           — SESSION_HEARTBEAT with nonzero payload → SAR_ERR_INVALID_LENGTH
     reserved-session-opcode/          — opcode in 0x8..=0xF range → SAR_ERR_RESERVED_VALUE
-    session-control-without-no-index/ — (deferred: implementation returns inactive OK)
-    zero-stream-id/                   — (deferred: implementation returns inactive OK)
+    session-control-without-no-index/ — SESSION_CONTROL without NO_INDEX
+    zero-stream-id/                   — SESSION_INIT with Stream ID 0
   profiles/static-archive/
     reject-session-control/  — same session-init fixture, rejected by static-archive profile
 ```
 
 ### Conformance runner routing
 
-Vectors with `stream:transcript` in their `features` array are routed through
-`attempt_stream_transcript_parse()` instead of `attempt_full_parse()`.  This function:
+Stream transcript semantic validation runs in
+`crates/sar-stream/tests/stream_transcript_conformance_tests.rs`.
 
-1. Parses the SAR Global Header and checks `NO_INDEX` is set.
-2. Reads sequential LFH + payload entries using low-level `parse_lfh`.
-3. Feeds each entry to `sar_stream::SessionManager::process_entry()`.
-4. Returns `SAR_OK` only if all entries are accepted by the session state machine.
-
-This preserves session lifecycle semantics (init → active → data flow → close) that
-ordinary archive parsing would bypass.
+`sar-archive` conformance tests skip `stream:transcript` semantic checks and keep
+archive-safe behavior: default archive parsing rejects entries with
+`SESSION_CONTROL` set or nonzero `OP_CODE`.
 
 ### Profile rejection manifest
 
@@ -74,12 +70,14 @@ fixture as `valid/stream-session/session-init/`.  The manifest `kind` is `"profi
 This demonstrates that stream transcript bytes are **structurally valid SAR** but
 **profile-invalid** for a static-archive consumer.
 
-### Deferred stream transcript cases
+### Stream transcript strict invalid coverage
 
-| Case | Reason deferred |
+The strict stream transcript conformance set now includes:
+
+| Case | Expected status |
 |------|-----------------|
-| `session-control-without-no-index` | Implementation treats SESSION_CONTROL without NO_INDEX as inactive (returns `SAR_OK`); spec behavior is ambiguous for this case in current milestone |
-| `zero-stream-id` | Implementation returns `inactive_result` for stream_id=0; the deferred note captures this gap |
+| `session-control-without-no-index` | `SAR_ERR_FLAG_CONFLICT` |
+| `zero-stream-id` | `SAR_ERR_STREAM_STATE` |
 
 ---
 
@@ -166,6 +164,7 @@ Stable status identifiers:
 ```bash
 cargo test -p sar-archive --test conformance_tests
 cargo test -p sar-archive --test conformance_manifest_tests
+cargo test -p sar-stream --test stream_transcript_conformance_tests
 ```
 
 `conformance_tests.rs` currently provides 9 end-to-end checks:
@@ -207,8 +206,7 @@ All fixtures are deterministic (fixed salts, iteration counts, payloads).
 - FASTCDC `CDC_MAP` fixture remains deferred/reference-only.
 - Archive-level Recovery TLV coverage is now backed by real generated indexed fixtures (`test-vectors/valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `test-vectors/valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`).
 - Deterministic invalid recovery and delta vectors are now backed by real fixtures (`test-vectors/invalid/recovery/*`, `test-vectors/invalid/delta/*`) with authoritative `expected.status`.
-- Stream transcript vectors are now present (`test-vectors/valid/stream-session/*`, `test-vectors/invalid/stream-session/*`) with real binary fixtures for all non-deferred cases.
-- Two stream transcript cases are deferred (`session-control-without-no-index`, `zero-stream-id`) — see M12a-stream-cp section above.
+- Stream transcript vectors are now present (`test-vectors/valid/stream-session/*`, `test-vectors/invalid/stream-session/*`) with strict semantic validation in `sar-stream` tests.
 - Some invalid vectors remain deferred (fragment gaps, sparse overlaps, unsafe metadata, resource limits).
 - Entry-level profile checks (per-entry algorithm gating, stream binding) not yet implemented.
 - Cold-storage/tape profile vectors deferred (no SAR v1.0 interoperable mechanism yet).

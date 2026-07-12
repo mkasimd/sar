@@ -943,27 +943,49 @@ fn generate_stream_transcript_vectors() {
     }
 
     // ------------------------------------------------------------------
-    // Deferred: session-control-without-no-index
-    // SESSION_INIT in an indexed archive — current implementation treats
-    // it as inactive (StatefulInactive), not an error.
+    // Invalid: session-control-without-no-index
+    // SESSION_INIT in an indexed archive; strict transcript validation
+    // requires NO_INDEX for stateful stream processing.
     // ------------------------------------------------------------------
-    skip_deferred_vector(
-        "invalid/stream-session/session-control-without-no-index/",
-        "current implementation treats SESSION_CONTROL in non-NO_INDEX archive as \
-         StatefulInactive (SAR_OK), not SAR_ERR_STREAM_STATE; deferred pending \
-         spec clarification on strict rejection",
-    );
+    {
+        let flags = GlobalFlags::empty();
+        let mut bytes = write_global_header(&GlobalHeader {
+            version: 1,
+            flags_bytes: flags.bits().to_le_bytes().to_vec(),
+            flags,
+            partition_descriptor: None,
+            kms: None,
+        })
+        .expect("header");
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        write_fixture(
+            "invalid/stream-session/session-control-without-no-index/session_control_without_no_index.sar",
+            &bytes,
+        );
+    }
 
     // ------------------------------------------------------------------
-    // Deferred: zero-stream-id
-    // SESSION_INIT with stream_id=0 — current implementation treats it as
-    // inactive (StatefulInactive), not an error.
+    // Invalid: zero-stream-id
+    // SESSION_INIT with stream_id=0 in strict transcript mode.
     // ------------------------------------------------------------------
-    skip_deferred_vector(
-        "invalid/stream-session/zero-stream-id/",
-        "current implementation treats stream_id=0 SESSION_INIT as StatefulInactive \
-         (SAR_OK), not SAR_ERR_STREAM_STATE; deferred pending spec clarification",
-    );
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            0,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        write_fixture(
+            "invalid/stream-session/zero-stream-id/zero_stream_id.sar",
+            &bytes,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

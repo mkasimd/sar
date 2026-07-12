@@ -23,9 +23,10 @@ Key properties:
 - **Same bytes, different profiles.** A stream transcript may be valid in stream-session context and rejected by a static-archive profile (see `profiles/static-archive/reject-session-control/`).
 - **This is not M12b fuzzing.** M12a-stream-cp is a deterministic conformance-vector pass.
 
-The conformance runner routes vectors with `stream:transcript` in their `features` array
-through `attempt_stream_transcript_parse()`, which exercises session lifecycle semantics
-(init → active → data flow) that ordinary archive parsing would bypass.
+Stream transcript semantic conformance is executed by
+`crates/sar-stream/tests/stream_transcript_conformance_tests.rs`.
+`sar-archive` conformance skips `stream:transcript` semantic checks and keeps default
+archive-safe behavior (reject `SESSION_CONTROL` and nonzero `OP_CODE` by default).
 
 ## What are conformance vectors?
 
@@ -412,6 +413,7 @@ vector at `test-vectors/valid/...` uses:
 ```bash
 cargo test -p sar-archive --test conformance_tests
 cargo test -p sar-archive --test conformance_manifest_tests
+cargo test -p sar-stream --test stream_transcript_conformance_tests
 ```
 
 To regenerate binary fixture files:

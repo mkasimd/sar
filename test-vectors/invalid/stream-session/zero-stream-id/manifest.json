@@ -2,9 +2,9 @@
   "schema_version": 1,
   "id": "stream-transcript-invalid-zero-stream-id",
   "title": "Stream transcript (invalid): SESSION_INIT with Stream ID zero",
-  "description": "Serialized SAR stream transcript where a SESSION_INIT entry carries Stream ID 0. Stateful Streaming Mode requires a nonzero Stream ID. Whether stream_id=0 should be a hard error or silently inactive is pending spec clarification.",
+  "description": "Serialized SAR stream transcript where a SESSION_INIT entry carries Stream ID 0. Strict stream transcript validation requires nonzero Stream ID for Stateful Streaming Mode.",
   "kind": "invalid",
-  "file": null,
+  "file": "zero_stream_id.sar",
   "features": [
     "stream:transcript",
     "stream:session",
@@ -16,12 +16,11 @@
     "error": "StreamState",
     "warnings": []
   },
-  "deferred": true,
+  "deferred": false,
   "compression": false,
   "crypto": false,
   "notes": [
-    "DEFERRED: current implementation treats stream_id=0 SESSION_INIT as StatefulInactive (SAR_OK), not SAR_ERR_STREAM_STATE.",
-    "Deferred pending spec clarification on whether strict rejection is required.",
+    "Strict stream transcript conformance rejects Stream ID 0.",
     "This is a serialized SAR stream transcript, not an ordinary static archive.",
     "This is not M12b fuzzing."
   ]
