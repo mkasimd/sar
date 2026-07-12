@@ -40,7 +40,21 @@ impl KeyProvider for TestKeyProvider {
 }
 
 fn make_no_index_archive_with_single_entry(entry_mode: EntryMode, payload: &[u8]) -> Vec<u8> {
-    let flags = GlobalFlags::NO_INDEX;
+    let mut lfh = LocalFileHeader::minimal_store(
+        b"entry".to_vec(),
+        u64::try_from(payload.len()).expect("payload length"),
+    );
+    lfh.entry_mode = entry_mode;
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    make_archive_with_single_lfh(GlobalFlags::NO_INDEX, lfh, payload)
+}
+
+fn make_archive_with_single_lfh(
+    flags: GlobalFlags,
+    lfh: LocalFileHeader,
+    payload: &[u8],
+) -> Vec<u8> {
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
         flags_bytes: flags.bits().to_le_bytes().to_vec(),
@@ -49,17 +63,46 @@ fn make_no_index_archive_with_single_entry(entry_mode: EntryMode, payload: &[u8]
         kms: None,
     })
     .expect("global header");
-
-    let mut lfh = LocalFileHeader::minimal_store(
-        b"entry".to_vec(),
-        u64::try_from(payload.len()).expect("payload length"),
-    );
-    lfh.entry_mode = entry_mode;
-    lfh.stream_id = 1;
-    lfh.sequence_no = 1;
     bytes.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     bytes.extend_from_slice(payload);
     bytes
+}
+
+fn parse_first_entry(bytes: &[u8]) -> Result<Option<sar_archive::EntryReader>, SarError> {
+    let mut reader = ArchiveReader::new(Cursor::new(bytes.to_vec())).expect("reader");
+    reader.read_global_header().expect("header");
+    reader.next_entry()
+}
+
+fn assert_require_decode_matches_next_entry(bytes: &[u8], expected_status: SarStatus) {
+    let ordinary_err = parse_first_entry(bytes).expect_err("ordinary archive read must fail");
+    assert_eq!(ordinary_err.status(), expected_status);
+
+    let mut audit_reader = ArchiveReader::new(Cursor::new(bytes.to_vec())).expect("reader");
+    let audit_err = audit_reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::Reject,
+            payload_policy: PayloadAuditPolicy::RequireDecode,
+            include_inert_payload_bytes: false,
+        })
+        .expect_err("require-decode audit must fail");
+    assert_eq!(audit_err.status(), ordinary_err.status());
+    assert_eq!(audit_err.to_string(), ordinary_err.to_string());
+
+    let mut best_effort_reader = ArchiveReader::new(Cursor::new(bytes.to_vec())).expect("reader");
+    let report = best_effort_reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::Reject,
+            payload_policy: PayloadAuditPolicy::DecodeWhenKeysAvailable,
+            include_inert_payload_bytes: false,
+        })
+        .expect("best-effort audit report");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Failed);
+    assert_eq!(
+        entry.payload_error_status.as_deref(),
+        Some(expected_status.name())
+    );
 }
 
 fn read_stream_fixture(name: &str) -> Vec<u8> {
@@ -178,13 +221,13 @@ fn inert_audit_reports_nonzero_opcode_entries_as_inert() {
         })
         .expect("audit");
     let entry = report.entries.first().expect("entry");
-    assert_eq!(entry.kind, ArchiveAuditEntryKind::InertFilesystemOp);
+    assert_eq!(entry.kind, ArchiveAuditEntryKind::InertOpcodeEntry);
     assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Skipped);
     assert!(entry.decoded_payload_size.is_none());
 }
 
 #[test]
-fn inert_audit_decodes_normal_data_write_entries() {
+fn inert_audit_decodes_ordinary_archive_entries() {
     let bytes = make_no_index_archive_with_single_entry(EntryMode::from_bits(0), b"abc");
     let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     let report = reader
@@ -195,7 +238,7 @@ fn inert_audit_decodes_normal_data_write_entries() {
         })
         .expect("audit");
     let entry = report.entries.first().expect("entry");
-    assert_eq!(entry.kind, ArchiveAuditEntryKind::DataWrite);
+    assert_eq!(entry.kind, ArchiveAuditEntryKind::OrdinaryEntry);
     assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Decoded);
     assert_eq!(entry.decoded_payload_size, Some(3));
 }
@@ -301,4 +344,82 @@ fn require_decode_with_valid_key_provider_succeeds() {
     let entry = report.entries.first().expect("entry");
     assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Decoded);
     assert_eq!(entry.payload_error_status, None);
+}
+
+#[test]
+fn require_decode_rejects_directory_with_payload() {
+    let mut lfh = LocalFileHeader::minimal_store(b"dir".to_vec(), 1);
+    lfh.entry_mode = EntryMode::from_bits(EntryMode::IS_DIRECTORY);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    let bytes = make_archive_with_single_lfh(GlobalFlags::NO_INDEX, lfh, b"x");
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrMalformed);
+}
+
+#[test]
+fn require_decode_rejects_invalid_symlink_target_utf8() {
+    let mut lfh = LocalFileHeader::minimal_store(b"lnk".to_vec(), 2);
+    lfh.entry_mode = EntryMode::from_bits(EntryMode::IS_SYMLINK);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    let bytes = make_archive_with_single_lfh(
+        GlobalFlags::NO_INDEX | GlobalFlags::HAS_SYMLINKS,
+        lfh,
+        &[0xFF, 0xFE],
+    );
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrMalformed);
+}
+
+#[test]
+fn require_decode_rejects_invalid_name_utf8() {
+    let mut lfh = LocalFileHeader::minimal_store(vec![0xFF], 0);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    let bytes = make_archive_with_single_lfh(GlobalFlags::NO_INDEX, lfh, b"");
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrMalformed);
+}
+
+#[test]
+fn require_decode_rejects_invalid_path_utf8() {
+    let mut lfh = LocalFileHeader::minimal_store(b"entry".to_vec(), 0);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    lfh.path = vec![0xFF];
+    let bytes =
+        make_archive_with_single_lfh(GlobalFlags::NO_INDEX | GlobalFlags::HAS_PATH, lfh, b"");
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrMalformed);
+}
+
+#[test]
+fn require_decode_rejects_invalid_cdc_algorithm_metadata() {
+    let mut lfh = LocalFileHeader::minimal_store(b"entry".to_vec(), 0);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    lfh.cdc_algo_id = Some(0x10);
+    let bytes =
+        make_archive_with_single_lfh(GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT, lfh, b"");
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrReservedValue);
+}
+
+#[test]
+fn require_decode_rejects_invalid_fec_value_metadata() {
+    let mut lfh = LocalFileHeader::minimal_store(b"entry".to_vec(), 0);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    lfh.fec_algo_id = Some(0x14);
+    let bytes =
+        make_archive_with_single_lfh(GlobalFlags::NO_INDEX | GlobalFlags::SELECTIVE_FEC, lfh, b"");
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrInvalidLength);
+}
+
+#[test]
+fn require_decode_rejects_invalid_sparse_map_metadata() {
+    let mut lfh = LocalFileHeader::minimal_store(b"entry".to_vec(), 0);
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    lfh.sparse_map = vec![0; 7];
+    lfh.uncompressed_size = 1;
+    let bytes =
+        make_archive_with_single_lfh(GlobalFlags::NO_INDEX | GlobalFlags::SPARSE_FILES, lfh, b"");
+    assert_require_decode_matches_next_entry(&bytes, SarStatus::ErrInvalidLength);
 }

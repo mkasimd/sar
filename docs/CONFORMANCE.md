@@ -9,7 +9,7 @@ This is an **implemented profile** report, not a claim of full standard conforma
 - `sar-archive` now exposes explicit archive-audit APIs for deterministic structural auditing and machine-readable reports.
 - Default archive behavior is unchanged: parsing still rejects `SESSION_CONTROL` and nonzero `OP_CODE` entries unless inert audit mode is explicitly enabled.
 - Inert archive audit mode reports `SESSION_CONTROL`/nonzero-`OP_CODE` entries structurally and does not execute stream-session semantics.
-- `sar-archive` payload audit policies support metadata-only inspection, decode-when-available behavior, and require-decode behavior for DATA_WRITE entries.
+- `sar-archive` payload audit policies support metadata-only inspection, decode-when-available behavior, and require-decode behavior for ordinary archive entries.
 - `sar-stream` owns strict stream transcript semantic validation and optional exact-byte transcript recording; recording is opt-in and does not weaken validation.
 - No `sar-audit` crate is introduced in this pass.
 

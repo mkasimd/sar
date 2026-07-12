@@ -760,7 +760,7 @@ If this milestone document appears to describe library/profile layout differentl
   * reject nonzero `OP_CODE` entries by default
   * continue accepting classic `NO_INDEX` archives without stream-session semantics
 * Inert archive audit mode (`ControlEntryPolicy::PreserveInert`) performs structural auditing without executing stream-session semantics.
-* DATA_WRITE payload auditing in `sar-archive` now supports metadata-only inspection and explicit decode policies while preserving key-provider/auth behavior.
+* Ordinary archive-entry payload auditing in `sar-archive` now supports metadata-only inspection and explicit decode policies while preserving key-provider/auth behavior.
 * Added strict transcript validation + optional exact-byte transcript recording APIs in `sar-stream`:
   * `validate_stream_transcript`
   * `validate_stream_transcript_with_options`
