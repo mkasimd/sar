@@ -31,7 +31,7 @@
     "The binary file is shared with valid/stream-session/session-init/.",
     "In stream-session conformance mode, the bytes are valid (SAR_OK).",
     "The same serialized SAR stream transcript bytes are valid in stream-transcript context but rejected by default sar-archive parsing because SESSION_CONTROL / nonzero OP_CODE is not accepted in safe archive mode.",
-    "The static-archive profile manifest documents the intended profile-rejection context. Full profile-conformance execution remains separate future profile work.",
+    "The static-archive profile manifest documents the intended profile-rejection context. Full profile-conformance execution remains separate, future profile-conformance work.",
     "In static-archive profile mode, the bytes must be rejected: the static-archive profile does not accept NO_INDEX archives or SESSION_CONTROL content.",
     "Additional QUIC control streams are not covered here (future transport-vector work).",
     "This is not M12b fuzzing."
