@@ -41,6 +41,7 @@ import argparse
 import json
 import sys
 import unicodedata
+import difflib
 from pathlib import Path
 from typing import Any
 
@@ -497,11 +498,22 @@ def main(argv: list[str]) -> int:
             print(f"error: generated file is missing: {args.output}", file=sys.stderr)
             return 1
 
-        if existing != generated:
+            if existing != generated:
             print(
                 f"error: {args.output} is stale; run `python tools/generate_api_md.py`",
                 file=sys.stderr,
             )
+            print(file=sys.stderr)
+            print("diff:", file=sys.stderr)
+
+            diff = difflib.unified_diff(
+                existing.splitlines(keepends=True),
+                generated.splitlines(keepends=True),
+                fromfile=str(args.output),
+                tofile=f"{args.output} (generated)",
+                n=3,
+            )
+            sys.stderr.writelines(diff)
             return 1
 
         print(f"ok: {args.output} is up to date")
