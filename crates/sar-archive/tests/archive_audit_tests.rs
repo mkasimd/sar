@@ -256,6 +256,31 @@ fn require_decode_fails_when_keys_missing() {
 }
 
 #[test]
+fn inert_payload_bytes_captured_when_requested() {
+    let payload = b"session-payload-data";
+    let bytes = make_no_index_archive_with_single_entry(
+        EntryMode::from_bits(EntryMode::SESSION_CONTROL),
+        payload,
+    );
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::PreserveInert,
+            payload_policy: PayloadAuditPolicy::MetadataOnly,
+            include_inert_payload_bytes: true,
+        })
+        .expect("audit");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.kind, ArchiveAuditEntryKind::InertSessionControl);
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Skipped);
+    let captured = entry
+        .inert_payload_bytes
+        .as_deref()
+        .expect("captured bytes");
+    assert_eq!(captured, payload);
+}
+
+#[test]
 fn require_decode_with_valid_key_provider_succeeds() {
     let password = SecretString::new("audit-pass".to_string());
     let bytes = encrypted_no_index_archive(&password);

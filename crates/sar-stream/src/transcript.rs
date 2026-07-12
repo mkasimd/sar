@@ -56,6 +56,10 @@ pub fn validate_stream_transcript(
 /// - `NO_INDEX` global flag
 /// - nonzero Stream ID on each entry
 /// - valid session control semantics (`SESSION_INIT`, sequence continuity, etc.)
+///
+/// When transcript recording is enabled, bytes are written to the configured
+/// path before semantic validation runs. Therefore, an invalid transcript may
+/// still be recorded exactly for audit/evidence purposes.
 pub fn validate_stream_transcript_with_options(
     bytes: &[u8],
     options: &StreamTranscriptValidationOptions,

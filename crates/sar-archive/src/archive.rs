@@ -816,7 +816,10 @@ pub struct ArchiveAuditReport {
     pub footer_present: bool,
     /// Central Dictionary presence.
     pub central_dictionary_present: bool,
-    /// CD/Footer validation status.
+    /// For indexed archives, indicates that the Central Dictionary and Footer
+    /// were present and structurally parseable during audit. For `NO_INDEX`
+    /// archives this is always `true`. This is not a separate cryptographic
+    /// or full semantic validity claim.
     pub cd_footer_valid: bool,
     /// Recovery TLV presence/summary.
     #[serde(skip_serializing_if = "Option::is_none")]
