@@ -44,7 +44,7 @@ fn activation_requires_no_index_nonzero_stream_id_and_session_init() {
 
     let result = manager
         .process_entry(&fs_entry(9, 0, 0x0, 0, b"payload".to_vec()))
-        .expect("filesystem inactive");
+        .expect("filesystem without session should be inactive by default");
     assert_eq!(
         result.events,
         vec![SessionEvent::StatefulInactive {

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-heartbeat-with-payload",
+  "title": "Stream transcript (invalid): SESSION_HEARTBEAT with non-empty payload",
+  "description": "Serialized SAR stream transcript with SESSION_INIT followed by a SESSION_HEARTBEAT carrying a 3-byte payload. SESSION_HEARTBEAT payload size must be zero. Must be rejected with SAR_ERR_INVALID_LENGTH.",
+  "kind": "invalid",
+  "file": "heartbeat_with_payload.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:heartbeat"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_LENGTH",
+    "error": "InvalidLength",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "SESSION_HEARTBEAT payload must be zero bytes per spec.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

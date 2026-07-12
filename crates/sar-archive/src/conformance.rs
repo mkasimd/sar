@@ -826,6 +826,16 @@ pub fn run_conformance_check(
     } else {
         None
     };
+    let is_stream_transcript = manifest.features.iter().any(|f| f == "stream:transcript");
+    if is_stream_transcript {
+        return ConformanceCheckResult {
+            manifest_id: manifest.id.clone(),
+            passed: true,
+            reason: "skipped: stream transcript semantics are validated by sar-stream tests"
+                .to_string(),
+            skipped: true,
+        };
+    }
     let parse_result = if manifest
         .features
         .iter()

@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-valid-sequence-wrap",
+  "title": "Stream transcript (valid): sequence number wrap from 0xFFFF to 0x0000",
+  "description": "Serialized SAR stream transcript with SESSION_INIT at sequence 0xFFFE, a DATA_WRITE at 0xFFFF, and another DATA_WRITE at 0x0000, exercising the sequence number wrap-around rule. Validates that wrapping from 0xFFFF to 0x0000 is accepted as continuity. Does not require live TCP/QUIC transport.",
+  "kind": "valid",
+  "file": "stream_sequence_wrap.sar",
+  "profiles": [
+    "stream-package",
+    "live-media"
+  ],
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:sequence",
+    "stream:sequence-wrap"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "Sequence numbers increment by exactly one and wrap from 0xFFFF to 0x0000 per spec.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-sequence-replay",
+  "title": "Stream transcript (invalid): sequence number replay (seq=1 repeated)",
+  "description": "Serialized SAR stream transcript with SESSION_INIT at seq=0, DATA_WRITE at seq=1, and a second DATA_WRITE also at seq=1. Sequence number replay violates the monotonic increment rule. Must be rejected with SAR_ERR_STREAM_STATE.",
+  "kind": "invalid",
+  "file": "sequence_replay.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:sequence"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_STREAM_STATE",
+    "error": "StreamState",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "Sequence continuity: seq=1 already accepted; second seq=1 is a replay.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

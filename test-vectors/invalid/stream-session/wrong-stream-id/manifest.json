@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-wrong-stream-id",
+  "title": "Stream transcript (invalid): DATA_WRITE for an uninitialised Stream ID",
+  "description": "Serialized SAR stream transcript with SESSION_INIT for Stream ID 0x0042, followed by a DATA_WRITE for Stream ID 0x0099. No session has been established for 0x0099, so the entry must be rejected with SAR_ERR_STREAM_STATE.",
+  "kind": "invalid",
+  "file": "wrong_stream_id.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_STREAM_STATE",
+    "error": "StreamState",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "Stream ID 0x0099 has no active session; data for it must be rejected.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

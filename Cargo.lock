@@ -1527,6 +1527,8 @@ name = "sar-stream"
 version = "0.1.0"
 dependencies = [
  "sar-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

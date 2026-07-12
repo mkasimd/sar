@@ -497,6 +497,495 @@ fn write_manual_delta_archive(
 }
 
 // ---------------------------------------------------------------------------
+// Stream transcript helpers and constants
+// ---------------------------------------------------------------------------
+
+/// Fixed Stream ID used in all stream transcript fixtures.
+const STREAM_ID_PRIMARY: u16 = 0x0042;
+
+/// Fixed session UUID used in all stream transcript fixtures.
+const SESSION_UUID_PRIMARY: [u8; 16] = [
+    0x42, 0xde, 0xad, 0xbe, 0xef, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+];
+
+/// Session flags with no bidirectional control/stream bits set.
+const SESSION_FLAGS_NONE: u16 = 0x0000;
+
+/// Session flags with reserved bits set — wire-invalid.
+const SESSION_FLAGS_RESERVED: u16 = 0xff00;
+
+/// Capability flags for a peer that advertises SESSION_ACK only.
+const CAP_FLAGS_SESSION_ACK: u16 = 0x0001;
+
+/// Stream transcript SESSION_INIT entry opcode index.
+const SESSION_OPCODE_INIT: u8 = 0x0;
+/// Stream transcript SESSION_HEARTBEAT entry opcode index.
+const SESSION_OPCODE_HEARTBEAT: u8 = 0x3;
+/// Stream transcript SESSION_CAPABILITIES entry opcode index.
+const SESSION_OPCODE_CAPABILITIES: u8 = 0x7;
+/// A reserved session opcode (must be 0x8..=0xF per spec).
+const SESSION_OPCODE_RESERVED: u8 = 0x08;
+
+/// Expected SESSION_INIT payload length in bytes.
+const SESSION_INIT_PAYLOAD_LEN: usize = 18;
+
+/// Intentionally wrong SESSION_INIT payload length used for the
+/// bad-session-init-payload-length fixture.
+const SESSION_INIT_BAD_PAYLOAD_LEN: usize = 5;
+
+/// Intentionally wrong stream ID used for the wrong-stream-id fixture.
+const STREAM_ID_WRONG: u16 = 0x0099;
+
+/// Sequence number used for the sequence-wrap fixture (wraps from 0xFFFF → 0x0000).
+const SEQUENCE_NO_WRAP_BEFORE_INIT: u16 = 0xFFFE;
+
+/// Small DATA_WRITE payload used in ordered-data and sequence-wrap fixtures.
+const DATA_PAYLOAD: &[u8] = b"test-data";
+
+/// Heartbeat payload used in the heartbeat-with-payload invalid fixture.
+const HEARTBEAT_BAD_PAYLOAD: &[u8] = b"bad";
+
+/// Entry mode bits for a DATA_WRITE filesystem entry: OP_CODE=0x0, no SESSION_CONTROL bit.
+const ENTRY_MODE_DATA_WRITE: u16 = 0x0000;
+
+/// Builds a SAR Global Header with NO_INDEX set (required for stream transcripts).
+fn make_stream_global_header() -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX;
+    let header = GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    };
+    write_global_header(&header).unwrap()
+}
+
+/// Serializes a SESSION_INIT payload (16-byte UUID + 2-byte flags LE).
+fn make_session_init_payload(uuid: [u8; 16], flags: u16) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(SESSION_INIT_PAYLOAD_LEN);
+    payload.extend_from_slice(&uuid);
+    payload.extend_from_slice(&flags.to_le_bytes());
+    payload
+}
+
+/// Serializes a SESSION_CAPABILITIES payload (2-byte flags LE).
+fn make_session_capabilities_payload(flags: u16) -> Vec<u8> {
+    flags.to_le_bytes().to_vec()
+}
+
+/// Builds one LFH + payload blob for a SESSION_CONTROL entry.
+/// `opcode` occupies bits [11:8] of entry_mode; SESSION_CONTROL bit 13 is always set.
+fn make_session_control_lfh_and_payload(
+    stream_id: u16,
+    sequence_no: u16,
+    opcode: u8,
+    payload: Vec<u8>,
+) -> Vec<u8> {
+    let global_flags = GlobalFlags::NO_INDEX;
+    let entry_mode_bits = (u16::from(opcode) << 8) | sar_core::EntryMode::SESSION_CONTROL;
+    let payload_len = payload.len() as u64;
+    let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), payload_len);
+    lfh.stream_id = stream_id;
+    lfh.sequence_no = sequence_no;
+    lfh.entry_mode = sar_core::EntryMode::from_bits(entry_mode_bits);
+    lfh.payload_size = payload_len;
+    lfh.uncompressed_size = payload_len;
+    let mut out = write_lfh(&global_flags, &lfh).unwrap();
+    out.extend_from_slice(&payload);
+    out
+}
+
+/// Builds one LFH + payload blob for a DATA_WRITE filesystem entry.
+fn make_fs_data_write_lfh_and_payload(stream_id: u16, sequence_no: u16, payload: &[u8]) -> Vec<u8> {
+    let global_flags = GlobalFlags::NO_INDEX;
+    let entry_mode_bits: u16 = ENTRY_MODE_DATA_WRITE;
+    let payload_len = payload.len() as u64;
+    let mut lfh = LocalFileHeader::minimal_store(b"data".to_vec(), payload_len);
+    lfh.stream_id = stream_id;
+    lfh.sequence_no = sequence_no;
+    lfh.entry_mode = sar_core::EntryMode::from_bits(entry_mode_bits);
+    lfh.payload_size = payload_len;
+    lfh.uncompressed_size = payload_len;
+    let mut out = write_lfh(&global_flags, &lfh).unwrap();
+    out.extend_from_slice(payload);
+    out
+}
+
+/// Generates all stream transcript conformance fixtures.
+fn generate_stream_transcript_vectors() {
+    // ------------------------------------------------------------------
+    // Valid: session-init
+    // A minimal transcript: Global Header + one SESSION_INIT entry.
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        write_fixture(
+            "valid/stream-session/session-init/stream_session_init.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Valid: session-capabilities
+    // SESSION_INIT followed by SESSION_CAPABILITIES.
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            SESSION_OPCODE_CAPABILITIES,
+            make_session_capabilities_payload(CAP_FLAGS_SESSION_ACK),
+        ));
+        write_fixture(
+            "valid/stream-session/session-capabilities/stream_session_capabilities.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Valid: ordered-data
+    // SESSION_INIT followed by two DATA_WRITE entries.
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            DATA_PAYLOAD,
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            2,
+            DATA_PAYLOAD,
+        ));
+        write_fixture(
+            "valid/stream-session/ordered-data/stream_ordered_data.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Valid: heartbeat
+    // SESSION_INIT followed by a SESSION_HEARTBEAT (zero-length payload).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            SESSION_OPCODE_HEARTBEAT,
+            Vec::new(),
+        ));
+        write_fixture(
+            "valid/stream-session/heartbeat/stream_heartbeat.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Valid: sequence-wrap
+    // SESSION_INIT at 0xFFFE, DATA at 0xFFFF, DATA at 0x0000 (wrap).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            SEQUENCE_NO_WRAP_BEFORE_INIT,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0xFFFF,
+            DATA_PAYLOAD,
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0x0000,
+            DATA_PAYLOAD,
+        ));
+        write_fixture(
+            "valid/stream-session/sequence-wrap/stream_sequence_wrap.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: data-before-session-init
+    // A DATA_WRITE entry before any SESSION_INIT — no active session.
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            DATA_PAYLOAD,
+        ));
+        write_fixture(
+            "invalid/stream-session/data-before-session-init/data_before_session_init.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: duplicate-session-init
+    // Two SESSION_INIT entries for the same Stream ID without SESSION_CLOSE.
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        write_fixture(
+            "invalid/stream-session/duplicate-session-init/duplicate_session_init.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: bad-session-init-payload-length
+    // A SESSION_INIT entry with a truncated 5-byte payload (must be 18).
+    // ------------------------------------------------------------------
+    {
+        let short_payload = vec![0x42u8; SESSION_INIT_BAD_PAYLOAD_LEN];
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            short_payload,
+        ));
+        write_fixture(
+            "invalid/stream-session/bad-session-init-payload-length/bad_session_init_payload_length.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: reserved-session-init-flags
+    // A SESSION_INIT entry with reserved flag bits set in the flags field.
+    // ------------------------------------------------------------------
+    {
+        let reserved_flags_payload =
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_RESERVED);
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            reserved_flags_payload,
+        ));
+        write_fixture(
+            "invalid/stream-session/reserved-session-init-flags/reserved_session_init_flags.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: sequence-gap
+    // SESSION_INIT at seq=0, DATA at seq=2 (skips seq=1).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            2, // gap: seq=1 was skipped
+            DATA_PAYLOAD,
+        ));
+        write_fixture(
+            "invalid/stream-session/sequence-gap/sequence_gap.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: sequence-replay
+    // SESSION_INIT at seq=0, DATA at seq=1, DATA at seq=1 again (replay).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            DATA_PAYLOAD,
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1, // replay of seq=1
+            DATA_PAYLOAD,
+        ));
+        write_fixture(
+            "invalid/stream-session/sequence-replay/sequence_replay.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: wrong-stream-id
+    // SESSION_INIT for STREAM_ID_PRIMARY, then DATA for STREAM_ID_WRONG
+    // (no session for that stream ID).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_fs_data_write_lfh_and_payload(
+            STREAM_ID_WRONG,
+            0, // no session for STREAM_ID_WRONG
+            DATA_PAYLOAD,
+        ));
+        write_fixture(
+            "invalid/stream-session/wrong-stream-id/wrong_stream_id.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: heartbeat-with-payload
+    // SESSION_HEARTBEAT with a non-empty payload (must be zero-length).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            SESSION_OPCODE_HEARTBEAT,
+            HEARTBEAT_BAD_PAYLOAD.to_vec(),
+        ));
+        write_fixture(
+            "invalid/stream-session/heartbeat-with-payload/heartbeat_with_payload.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: reserved-session-opcode
+    // SESSION_INIT followed by an entry with a reserved opcode (0x08..=0x0F).
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            1,
+            SESSION_OPCODE_RESERVED,
+            Vec::new(),
+        ));
+        write_fixture(
+            "invalid/stream-session/reserved-session-opcode/reserved_session_opcode.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: session-control-without-no-index
+    // SESSION_INIT in an indexed archive; strict transcript validation
+    // requires NO_INDEX for stateful stream processing.
+    // ------------------------------------------------------------------
+    {
+        let flags = GlobalFlags::empty();
+        let mut bytes = write_global_header(&GlobalHeader {
+            version: 1,
+            flags_bytes: flags.bits().to_le_bytes().to_vec(),
+            flags,
+            partition_descriptor: None,
+            kms: None,
+        })
+        .expect("header");
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            STREAM_ID_PRIMARY,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        write_fixture(
+            "invalid/stream-session/session-control-without-no-index/session_control_without_no_index.sar",
+            &bytes,
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Invalid: zero-stream-id
+    // SESSION_INIT with stream_id=0 in strict transcript mode.
+    // ------------------------------------------------------------------
+    {
+        let mut bytes = make_stream_global_header();
+        bytes.extend_from_slice(&make_session_control_lfh_and_payload(
+            0,
+            0,
+            SESSION_OPCODE_INIT,
+            make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
+        ));
+        write_fixture(
+            "invalid/stream-session/zero-stream-id/zero_stream_id.sar",
+            &bytes,
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
 
@@ -1432,6 +1921,12 @@ fn main() {
             &truncated_bsdiff,
         );
     }
+
+    // -----------------------------------------------------------------------
+    // Stream transcript vectors (M12a-stream-cp)
+    // -----------------------------------------------------------------------
+
+    generate_stream_transcript_vectors();
 
     println!("\nGeneration complete.");
     println!("Run targeted M12a conformance tests to validate.");

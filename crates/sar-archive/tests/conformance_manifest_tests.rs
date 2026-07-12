@@ -572,6 +572,12 @@ fn valid_vectors_have_entries() {
             continue;
         }
 
+        // Stream transcript vectors contain session frames rather than traditional
+        // archive entries; the entries field is not applicable to them.
+        if manifest.features.iter().any(|f| f == "stream:transcript") {
+            continue;
+        }
+
         if manifest.entries.is_empty() {
             missing.push(format!(
                 "[{}] {}: valid non-deferred vector has no entries",
@@ -1342,6 +1348,248 @@ fn invalid_delta_vectors_are_real_and_delta_tagged() {
             "{} invalid delta manifest audit failure(s):\n{}",
             failures.len(),
             failures.join("\n")
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stream transcript manifest audit tests (M12a-stream-cp)
+// ---------------------------------------------------------------------------
+
+/// Validates that all stream transcript vectors live under the correct paths
+/// and carry the required `stream:*` feature tags.
+#[test]
+fn stream_transcript_vectors_use_stream_tags_and_correct_paths() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+    let mut failures = Vec::new();
+    let mut seen = 0usize;
+
+    for (manifest_path, result) in &manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if !manifest.features.iter().any(|f| f == "stream:transcript") {
+            continue;
+        }
+        seen += 1;
+
+        let rel_manifest = manifest_path
+            .strip_prefix(&root)
+            .unwrap_or(manifest_path.as_path());
+        let rel_dir = rel_manifest
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default();
+
+        // Must live under valid/stream-session/, invalid/stream-session/, or profiles/
+        let under_valid = rel_dir.starts_with("valid/stream-session/");
+        let under_invalid = rel_dir.starts_with("invalid/stream-session/");
+        let under_profiles = rel_dir.starts_with("profiles/");
+        if !under_valid && !under_invalid && !under_profiles {
+            failures.push(format!(
+                "[{}] {}: stream:transcript vector must live under valid/stream-session/, \
+                 invalid/stream-session/, or profiles/; found '{}'",
+                manifest.id,
+                rel_manifest.display(),
+                rel_dir,
+            ));
+        }
+
+        // Must also have stream:session tag
+        if !manifest.features.iter().any(|f| f == "stream:session") {
+            failures.push(format!(
+                "[{}] {}: stream:transcript vector must include stream:session feature tag",
+                manifest.id,
+                rel_manifest.display(),
+            ));
+        }
+
+        // Non-deferred invalid stream transcript vectors must have a stable expected status
+        if manifest.kind == VectorKind::Invalid && !manifest.deferred {
+            let status = &manifest.expected.status;
+            if status == "SAR_OK" || status.is_empty() {
+                failures.push(format!(
+                    "[{}] {}: non-deferred invalid stream transcript must have a non-SAR_OK \
+                     expected status; got '{}'",
+                    manifest.id,
+                    rel_manifest.display(),
+                    status,
+                ));
+            }
+        }
+
+        // Non-deferred vectors must reference real files
+        if !manifest.deferred {
+            let Some(file_name) = manifest.file.as_ref() else {
+                failures.push(format!(
+                    "[{}] {}: non-deferred stream transcript vector must reference a fixture file",
+                    manifest.id,
+                    rel_manifest.display(),
+                ));
+                continue;
+            };
+            let fixture_path = manifest_path
+                .parent()
+                .expect("manifest parent")
+                .join(file_name);
+            if !fixture_path.exists() {
+                failures.push(format!(
+                    "[{}] {}: referenced fixture does not exist: {}",
+                    manifest.id,
+                    rel_manifest.display(),
+                    fixture_path.display(),
+                ));
+            }
+        }
+    }
+
+    assert!(
+        seen > 0,
+        "expected at least one stream:transcript vector; run generate_vectors first"
+    );
+    if !failures.is_empty() {
+        panic!(
+            "{} stream transcript manifest audit failure(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+/// Validates that profile rejection manifests for stream transcripts do not
+/// claim the bytes are structurally invalid (expected.valid must be true).
+#[test]
+fn stream_transcript_profile_rejection_manifests_are_not_byte_invalid() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+    let mut failures = Vec::new();
+    let mut seen = 0usize;
+
+    for (manifest_path, result) in &manifests {
+        let manifest = match result {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if !manifest
+            .features
+            .iter()
+            .any(|f| f == "stream:profile-rejection")
+        {
+            continue;
+        }
+        seen += 1;
+
+        let rel_manifest = manifest_path
+            .strip_prefix(&root)
+            .unwrap_or(manifest_path.as_path());
+
+        // Profile rejection manifests for stream transcripts must say the bytes
+        // are structurally valid SAR (expected.valid = true / status = SAR_OK).
+        if !manifest.expected.valid || manifest.expected.status != "SAR_OK" {
+            failures.push(format!(
+                "[{}] {}: stream:profile-rejection manifest must have expected.valid=true and \
+                 status=SAR_OK (the transcript is byte-valid; profile rejects it at the \
+                 semantic level); got valid={}, status={}",
+                manifest.id,
+                rel_manifest.display(),
+                manifest.expected.valid,
+                manifest.expected.status,
+            ));
+        }
+    }
+
+    if seen == 0 {
+        // Not a hard failure — profile rejection manifests may not yet exist.
+        println!("No stream:profile-rejection vectors found (OK if not yet generated).");
+        return;
+    }
+    if !failures.is_empty() {
+        panic!(
+            "{} stream transcript profile-rejection audit failure(s):\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
+
+/// Validates the minimum required valid stream transcript vectors exist and
+/// are not deferred.
+#[test]
+fn minimum_required_valid_stream_transcript_vectors_present() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+
+    // Minimum required valid vectors by feature tag combination.
+    let required_feature_sets = [
+        ("session-init", vec!["stream:session-init"]),
+        ("heartbeat", vec!["stream:heartbeat"]),
+        ("ordered-data or sequence", vec!["stream:sequence"]),
+    ];
+
+    let valid_stream_manifests: Vec<_> = manifests
+        .iter()
+        .filter_map(|(_, r)| r.as_ref().ok())
+        .filter(|m| {
+            m.kind == VectorKind::Valid
+                && !m.deferred
+                && m.features.iter().any(|f| f == "stream:transcript")
+        })
+        .collect();
+
+    let mut missing = Vec::new();
+    for (label, needed_tags) in &required_feature_sets {
+        let found = valid_stream_manifests.iter().any(|m| {
+            needed_tags
+                .iter()
+                .all(|tag| m.features.iter().any(|f| f == tag))
+        });
+        if !found {
+            missing.push(format!(
+                "no valid stream transcript vector with tags {:?} ({})",
+                needed_tags, label
+            ));
+        }
+    }
+
+    if !missing.is_empty() {
+        panic!(
+            "minimum required valid stream transcript vectors are missing:\n{}",
+            missing.join("\n")
+        );
+    }
+}
+
+/// Validates the minimum required invalid stream transcript vectors exist and
+/// are not deferred.
+#[test]
+fn minimum_required_invalid_stream_transcript_vectors_present() {
+    let root = vectors_root();
+    let manifests = discover_manifests(&root).expect("discover manifests");
+
+    let invalid_stream_non_deferred: Vec<_> = manifests
+        .iter()
+        .filter_map(|(path, r)| r.as_ref().ok().map(|m| (path, m)))
+        .filter(|(_, m)| {
+            m.kind == VectorKind::Invalid
+                && !m.deferred
+                && m.features.iter().any(|f| f == "stream:transcript")
+        })
+        .collect();
+
+    // We need at least 8 non-deferred invalid stream transcript vectors per M12a-stream-cp milestone requirements.
+    if invalid_stream_non_deferred.len() < 8 {
+        panic!(
+            "expected at least 8 non-deferred invalid stream transcript vectors, found {}:\n{}",
+            invalid_stream_non_deferred.len(),
+            invalid_stream_non_deferred
+                .iter()
+                .map(|(p, m)| format!("  [{}] {}", m.id, p.display()))
+                .collect::<Vec<_>>()
+                .join("\n"),
         );
     }
 }

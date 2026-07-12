@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-reserved-session-opcode",
+  "title": "Stream transcript (invalid): SESSION_CONTROL entry with reserved opcode 0x08",
+  "description": "Serialized SAR stream transcript with SESSION_INIT followed by a SESSION_CONTROL entry using opcode 0x08. Session opcodes 0x08..=0x0F are reserved per spec and must be rejected. Must be rejected with SAR_ERR_RESERVED_VALUE.",
+  "kind": "invalid",
+  "file": "reserved_session_opcode.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_RESERVED_VALUE",
+    "error": "ReservedValue",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "Session opcodes 0x08..=0x0F are reserved; receivers must fail closed.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

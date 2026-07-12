@@ -886,6 +886,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
+        if lfh.entry_mode.is_session_control() || lfh.entry_mode.op_code() != 0 {
+            return Err(SarError::Unsupported(
+                "archive parsing rejects SESSION_CONTROL entries and nonzero OP_CODE values by default",
+            ));
+        }
         let is_effectively_compressed =
             header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
         let is_encrypted = lfh.entry_mode.is_encrypted();
