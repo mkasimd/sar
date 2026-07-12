@@ -665,8 +665,6 @@ If this milestone document appears to describe library/profile layout differentl
 
 ---
 
-# Current and future milestones
-
 ## M12a-M9b-cp: Delta patch generation corrective pass (complete)
 
 * `sar-delta`: `generate_vcdiff_patch` and `generate_bsdiff_patch` public APIs implemented (RFC 3284 ADD-only VCDIFF stream; SARBSD01 single-control-triple BSDIFF)
@@ -771,6 +769,10 @@ If this milestone document appears to describe library/profile layout differentl
 * Added targeted `sar-archive` and `sar-stream` tests for audit policies and transcript recording.
 * No `sar-audit` crate was added in this pass.
 * This pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`.
+
+---
+
+# Current and future milestones
 
 ## M12b: fuzzing and malicious corpus
 
