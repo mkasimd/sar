@@ -39,7 +39,7 @@ For conformance status, see `docs/CONFORMANCE.md`.
 | `sar-cli` | `partial` | User-facing command-line interface over sar-archive, sar-core low-level APIs, and specialized feature crates for archive create/extract/list/verify/inspect/repair/version workflows, including metadata preservation/restoration controls and safe extraction policy. |
 | `sar-compression` | `implemented` | Compression algorithm registry plus bounded stream encode/decode helpers. |
 | `sar-core` | `partial` | Canonical SAR wire-format, status/error, limits, and low-level parse/write helper APIs. |
-| `sar-archive` | `implemented` | High-level SAR archive reader/writer, verification, and archive integration APIs. |
+| `sar-archive` | `implemented` | High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and archive-level recovery/repair APIs. |
 | `sar-crypto` | `partial` | Hashing, AEAD, KMS parsing, key-provider abstraction, zeroizing secret helpers, and TLS_EXPORTER KMS mode types/context encoding (M10e). |
 | `sar-delta` | `implemented` | Patch algorithm registry, patch generation, and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1. |
 | `sar-fec` | `implemented` | Forward Error Correction codecs and metadata parsing for XOR and Reed-Solomon SAR FEC. |
@@ -47,7 +47,7 @@ For conformance status, see `docs/CONFORMANCE.md`.
 | `sar-loss-tolerant` | `implemented` | Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). No dependency on sar-core. |
 | `sar-partition` | `deferred` | Partition/multi-volume archive support. Deliberately deferred in M11c. PartitionDescriptor and PARTITIONED_ARCHIVE remain in sar-core. |
 | `sar-sparse` | `implemented` | Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core. |
-| `sar-stream` | `implemented` | In-memory Stateful Streaming Mode session layer over sar-core structural parsing. |
+| `sar-stream` | `implemented` | Stateful Streaming Mode session layer, stream transcript semantic validation, and optional exact-byte transcript recording. |
 | `sar-transport` | `implemented` | Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, SAR-over-TCP binding (M10d), and SAR-over-QUIC binding (M10e, quic feature). |
 
 ## Crates
@@ -267,7 +267,7 @@ Path: `crates/sar-archive`
 
 Status: `implemented`
 
-High-level SAR archive reader/writer, verification, and archive integration APIs.
+High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and archive-level recovery/repair APIs.
 
 #### Public functions
 
@@ -309,6 +309,13 @@ High-level SAR archive reader/writer, verification, and archive integration APIs
 
 | Name | Kind | Signature | Description |
 | --- | --- | --- | --- |
+| `ArchiveAuditEntryKind` | `enum` | `pub enum ArchiveAuditEntryKind { OrdinaryEntry, InertOpcodeEntry, InertSessionControl }` | Per-entry audit classification for ordinary entries, inert control entries, or rejected entries. |
+| `ArchiveAuditEntryReport` | `struct` | `pub struct ArchiveAuditEntryReport { pub lfh_offset: u64, pub entry_mode_bits: u16, pub op_code: u8, pub session_control: bool, pub kind: ArchiveAuditEntryKind, pub payload_size: u64, pub uncompressed_size: u64, pub payload_status: ArchiveAuditPayloadStatus, ... }` | Per-entry archive audit report. |
+| `ArchiveAuditMode` | `enum` | `pub enum ArchiveAuditMode { Indexed, NoIndex }` | Audit mode classification for ordinary archive entries versus explicitly inert control/session-shaped entries. |
+| `ArchiveAuditOptions` | `struct` | `pub struct ArchiveAuditOptions { pub control_entry_policy: ControlEntryPolicy, pub payload_policy: PayloadAuditPolicy, pub include_inert_payload_bytes: bool }` | Options for deterministic archive audit, including control-entry handling and payload-audit policy. |
+| `ArchiveAuditPayloadStatus` | `enum` | `pub enum ArchiveAuditPayloadStatus { Decoded, Skipped, Unavailable, Failed }` | Per-entry payload verification status reported by archive audit. |
+| `ArchiveAuditRecoverySummary` | `struct` | `pub struct ArchiveAuditRecoverySummary { pub tlv_count: u32, pub tlv_type_ids: Vec<u8> }` | Summary of archive-level recovery metadata discovered during audit. |
+| `ArchiveAuditReport` | `struct` | `pub struct ArchiveAuditReport { pub mode: ArchiveAuditMode, pub global_flags: u32, pub entry_count_seen: u64, pub entries: Vec<ArchiveAuditEntryReport>, pub footer_present: bool, pub central_dictionary_present: bool, pub cd_footer_valid: bool, pub recovery: Option<ArchiveAuditRecoverySummary> }` | Deterministic archive audit report containing entry reports, recovery summary, and aggregate counts/status. |
 | `ArchiveMetadata` | `struct` | `pub struct ArchiveMetadata { pub global_header: GlobalHeader, pub central_dictionary: Option<CentralDictionary> }` | Parsed archive metadata summary. |
 | `ArchiveReader` | `struct` | `pub struct ArchiveReader<R> { ... }` | Streaming archive reader over a seekable source. |
 | `ArchiveReaderOptions` | `struct` | `pub struct ArchiveReaderOptions { pub limits: ResourceLimits }` | Reader-side decode limits. |
@@ -316,8 +323,9 @@ High-level SAR archive reader/writer, verification, and archive integration APIs
 | `ArchiveSummary` | `struct` | `pub struct ArchiveSummary { pub entry_count: u64, pub archive_size: u64, pub indexed: bool }` | Writer finish summary. |
 | `ArchiveWriter` | `struct` | `pub struct ArchiveWriter<W> { ... }` | Archive writer with compression and optional encryption support. |
 | `ArchiveWriterOptions` | `struct` | `pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings>, pub archive_recovery: Option<ArchiveRecoverySettings>, pub with_path: bool, pub with_permissions: bool, pub with_uid_gid: bool, pub with_timestamps: bool, pub with_per_file_crc: bool, pub with_content_hash: bool, pub with_symlinks: bool, pub with_delta: bool, pub lfh_size_field_policy: LfhSizeFieldPolicy }` | Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`). |
-| `ComplianceProfile` | `enum` | `pub enum ComplianceProfile { MinimalInteroperableArchive, Standard }` | Current archive compliance-profile selector. |
+| `ComplianceProfile` | `enum` | `pub enum ComplianceProfile { MinimalInteroperableArchive, StaticArchive, Package, StreamPackage, Backup, Telemetry, LiveMedia, Standard }` | Current archive compliance-profile selector. |
 | `CompressionSettings` | `struct` | `pub struct CompressionSettings { pub algo_id: u8, pub level: Option<u8> }` | Archive writer compression settings. |
+| `ControlEntryPolicy` | `enum` | `pub enum ControlEntryPolicy { Reject, PreserveInert }` | Policy controlling how archive audit handles entries with SESSION_CONTROL set or nonzero OP_CODE. |
 | `DeltaWriteOptions` | `struct` | `pub struct DeltaWriteOptions { pub algorithm: PatchAlgoId, pub base: Vec<u8>, pub delta_base_hash: [u8; 32] }` | Per-entry delta write options. Set on EntryInput.delta when with_delta=true. algorithm selects the patch algorithm; base provides the base bytes for VCDIFF/BSDIFF; delta_base_hash is a non-zero 32-byte opaque identity written to LFH. All-zero delta_base_hash is rejected for VCDIFF and BSDIFF at write time. |
 | `EncryptionSettings` | `struct` | `pub struct EncryptionSettings { pub algo_id: u8, pub kms_params: KmsParams }` | Archive writer encryption settings. |
 | `EntryInput` | `struct` | `pub struct EntryInput { pub name: String, pub payload: Vec<u8>, pub kind: Option<EntryKind>, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub stream_id: Option<u16>, pub sequence_no: Option<u16>, pub file_crc32: Option<u32>, pub content_hash: Option<EntryHashMetadata> }` | Input payload for archive writing. Use EntryInput::file(name, payload) for simple regular file entries. All metadata fields are optional and default to absent. Metadata fields are validated fail-closed against enabled GlobalFlags at add_entry time; missing flag causes SarError::FlagConflict. Symlink entries require HAS_SYMLINKS and a UTF-8 payload target. |
@@ -327,6 +335,7 @@ High-level SAR archive reader/writer, verification, and archive integration APIs
 | `FecSettings` | `struct` | `pub struct FecSettings { pub algo_id: u8, pub config0: u8, pub config1: u8, pub symbol_size: u32 }` | Writer-side Selective FEC configuration. |
 | `LfhSizeFieldPolicy` | `enum` | `pub enum LfhSizeFieldPolicy { Auto, Force32, Force64 }` | Archive-writer LFH size-field policy: Auto (default 32-bit with promotion before header emission), Force32 (fail closed if any size exceeds u32::MAX), Force64 (always emit 64-bit fields and set global SIZE_64BIT). |
 | `LogicalFile` | `struct` | `pub struct LogicalFile { pub name: String, pub fragment_id: Option<u32>, pub data: Vec<u8>, pub is_degraded: bool }` | A fully reconstructed logical file returned by ArchiveReader::read_all_logical_files. For fragmented entries, fragments have been assembled at their absolute offsets. For sparse entries, holes are zero-filled. is_degraded is true when the payload is incomplete due to LOSS_TOLERANT-permitted missing fragments. |
+| `PayloadAuditPolicy` | `enum` | `pub enum PayloadAuditPolicy { MetadataOnly, DecodeWhenKeysAvailable, RequireDecode }` | Policy controlling whether archive audit validates only structure, decodes when keys/bases are available, or requires payload decoding. |
 | `ProfileReport` | `struct` | `pub struct ProfileReport { pub compliant: bool, pub findings: Vec<String> }` | Report returned by profile validation. |
 | `SparseWriteOptions` | `struct` | `pub struct SparseWriteOptions { pub logical_size: u64, pub extents: Vec<SparseExtent> }` | Options for writing a sparse entry via ArchiveWriter::write_sparse_entry. logical_size is the full apparent file size including holes and is written to LFH Uncompressed Size. extents must be ordered, non-overlapping, and within logical_size bounds. |
 | `StreamArchiveParser` | `struct` | `pub struct StreamArchiveParser { ... }` | Forward-only stateless SAR byte-stream parser with partial-input support. |
@@ -580,19 +589,24 @@ Path: `crates/sar-stream`
 
 Status: `implemented`
 
-In-memory Stateful Streaming Mode session layer over sar-core structural parsing.
+Stateful Streaming Mode session layer, stream transcript semantic validation, and optional exact-byte transcript recording.
 
 #### Public functions
 
 | Name | Signature | Description |
 | --- | --- | --- |
+| `validate_stream_transcript` | `pub fn validate_stream_transcript(bytes: &[u8]) -> Result<StreamTranscriptValidationReport, SarError>` | Validate a serialized stream transcript with default validation options. |
 | `validate_stream_transcript_with_options` | `pub fn validate_stream_transcript_with_options(bytes: &[u8], options: &StreamTranscriptValidationOptions) -> Result<StreamTranscriptValidationReport, SarError>` | Strict transcript semantic validation for NO_INDEX primary stream bytes, with optional exact-byte recording to caller-selected path/sink. |
+| `validate_stream_transcript_with_sink` | `pub fn validate_stream_transcript_with_sink<W: Write + ?Sized>(bytes: &[u8], sink: &mut W) -> Result<StreamTranscriptValidationReport, SarError>` | Validate a serialized stream transcript while optionally recording exact input bytes to a transcript sink. |
 
 #### Public types
 
 | Name | Kind | Signature | Description |
 | --- | --- | --- | --- |
 | `SessionManager` | `struct` | `pub struct SessionManager { ... }` | In-memory Stateful Streaming Mode manager that binds Stream IDs to Session UUIDs, validates SESSION_* semantics, and emits actions/events without performing transport or filesystem I/O. |
+| `StreamTranscriptValidationOptions` | `struct` | `pub struct StreamTranscriptValidationOptions { pub recording: TranscriptRecording }` | Options controlling stream transcript validation and optional transcript recording. |
+| `StreamTranscriptValidationReport` | `struct` | `pub struct StreamTranscriptValidationReport { pub entry_count: u64 }` | Report returned after stream transcript validation, including validated entry count. |
+| `TranscriptRecording` | `enum` | `pub enum TranscriptRecording { Disabled, Path { path: PathBuf, overwrite: bool } }` | Output mode for optional exact-byte stream transcript recording. |
 
 ### `sar-transport`
 
