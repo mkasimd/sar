@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! SAR-over-QUIC transport binding (M10e).
 //!
 //! This module implements the SAR-over-QUIC transport binding as defined in

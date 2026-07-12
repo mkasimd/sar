@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// M10d SAR-over-TCP non-network buffer and limit tests.
 ///
 /// These tests use `MockDuplex` (an in-memory `Read + Write` adapter) instead

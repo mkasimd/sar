@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use std::{fs, fs::File, io::BufReader, path::PathBuf};
 
 use sar_archive::{

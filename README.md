@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # sar-rust
 
 Rust reference implementation for the **SAR Protocol v1.0**.
@@ -10,7 +15,7 @@ Rust reference implementation for the **SAR Protocol v1.0**.
 
 SAR is an experimental archive, replication, recovery, and streaming container format.
 
-It is designed for cases where archive bytes are not just “a compressed bag of files,” but part of a larger integrity, recovery, synchronization, or transport workflow: explicit metadata, bounded parsing, deterministic validation, authenticated transforms, sparse/delta/FEC handling, archive-level recovery metadata, and stream/session-aware profiles.
+It is designed for cases where archive bytes are not just "a compressed bag of files," but part of a larger integrity, recovery, synchronization, or transport workflow: explicit metadata, bounded parsing, deterministic validation, authenticated transforms, sparse/delta/FEC handling, archive-level recovery metadata, and stream/session-aware profiles.
 
 This repository contains the Rust workspace for the SAR Protocol v1.0 reference implementation, including the wire-format layer, high-level archive APIs, feature crates, CLI tooling, conformance vectors, audit primitives, and stream/transport components.
 
@@ -65,7 +70,7 @@ Use existing tools when they fit the job:
 * use `tar | gzip`, `tar | zstd`, or similar pipelines when simple compression pipelines are sufficient
 * use `gpg`, age, or dedicated encryption tools when mature file encryption is the main requirement
 * use `rsync`, object storage replication, or existing backup systems when those already satisfy your synchronization or recovery model
-* use established production backup/archive software when stability, support, and ecosystem compatibility matter more than SAR’s experimental design goals
+* use established production backup/archive software when stability, support, and ecosystem compatibility matter more than SAR's experimental design goals
 
 SAR is aimed at workflows where the archive/container itself needs to carry more of the system contract: deterministic parsing rules, transform ordering, authenticated metadata behavior, recovery metadata, sparse/delta/FEC semantics, profile-specific rejection policy, and stream/session-aware validation.
 
@@ -427,19 +432,6 @@ sar repair <archive.sar> <output.sar>
 sar version
 ```
 
-Resource limits can be configured for extraction, verification, and repair. These limits are part of the implementation’s fail-closed resource model and help bound allocation, decompression, sparse reconstruction, fragment handling, and repair behavior.
-
-Example bounded extraction:
-
-```bash
-sar extract asset.sar ./target \
-  --max-decoded-entry-size 1073741824 \
-  --max-in-memory-buffer 268435456 \
-  --max-loss-tolerant-gap 65536
-```
-
-The exact limits should be selected for the deployment environment and profile. The CLI uses conservative defaults and fails closed on configured limit violations.
-
 Compression examples:
 
 ```bash
@@ -455,9 +447,20 @@ sar create input-dir encrypted.sar --encrypt aes256-gcm --password "test-passwor
 sar extract encrypted.sar output-dir --password "test-password"
 ```
 
-FEC/recovery examples depend on the selected profile and current CLI surface. See `docs/API.md` and `docs/CONFORMANCE.md` for the current implemented behavior.
+Resource limits can be configured for extraction, verification, and repair. These limits are part of the implementation's fail-closed resource model and help bound allocation, decompression, sparse reconstruction, fragment handling, and repair behavior.
 
-Resource limits can be configured for extraction, verification, and repair. The CLI uses conservative defaults and fails closed on configured limit violations.
+Example bounded extraction:
+
+```bash
+sar extract asset.sar ./target \
+  --max-decoded-entry-size 1073741824 \
+  --max-in-memory-buffer 268435456 \
+  --max-loss-tolerant-gap 65536
+```
+
+The exact limits should be selected for the deployment environment and profile. The CLI uses conservative defaults and fails closed on configured limit violations.
+
+FEC/recovery examples depend on the selected profile and current CLI surface. See `docs/API.md` and `docs/CONFORMANCE.md` for the current implemented behavior.
 
 ## Security posture
 
@@ -524,17 +527,17 @@ Without the `quic` feature, TCP and in-memory transport behavior remain availabl
 
 Primary documentation files:
 
-* `specification.md` — SAR Protocol v1.0 specification document
-* `docs/API.md` — audited API inventory and current public surface
-* `docs/CONFORMANCE.md` — conformance notes and profile status
-* `docs/CRATE_RESPONSIBILITIES.md` — crate ownership boundaries
-* `docs/LIBRARY_LAYOUT.md` — workspace and library layout
-* `docs/MACHINE_READABLE_API.json` — machine-readable API inventory
-* `docs/MILESTONES.md` — milestone roadmap and completion status
-* `docs/SECURITY.md` — security posture and constraints
-* `docs/SPEC_QUESTIONS.md` — open specification questions and implementation gaps
-* `test-vectors/README.md` — conformance vector layout and manifest conventions
-* `AI_DISCLOSURE.md` — AI-assisted development disclosure
+* `specification.md` - SAR Protocol v1.0 specification document
+* `docs/API.md` - reviewed API inventory and current public surface
+* `docs/CONFORMANCE.md` - conformance notes and profile status
+* `docs/CRATE_RESPONSIBILITIES.md` - crate ownership boundaries
+* `docs/LIBRARY_LAYOUT.md` - workspace and library layout
+* `docs/MACHINE_READABLE_API.json` - machine-readable API inventory
+* `docs/MILESTONES.md` - milestone roadmap and completion status
+* `docs/SECURITY.md` - security posture and constraints
+* `docs/SPEC_QUESTIONS.md` - open specification questions and implementation gaps
+* `test-vectors/README.md` - conformance vector layout and manifest conventions
+* `AI_DISCLOSURE.md` - AI-assisted development disclosure
 
 The root README intentionally avoids duplicating the milestone tracker. Use `docs/MILESTONES.md` for roadmap state.
 
@@ -564,25 +567,11 @@ Unless a file contains a different SPDX license identifier, implementation files
 
 ## Contributing
 
-This repository is currently being developed toward a reference implementation.
+Contributions are welcome while the project remains experimental and milestone-driven.
 
-Before making substantial changes:
+Before making substantial changes, read `CONTRIBUTING.md` and the authoritative project documents it links to.
 
-* review `specification.md`
-* review `docs/CRATE_RESPONSIBILITIES.md`
-* review `docs/API.md`
-* preserve the SAR v1.0 wire format unless a milestone explicitly changes it
-* keep parser and reconstruction paths bounded
-* avoid compatibility re-exports that blur crate ownership
-* keep high-level archive behavior in `sar-archive`
-* keep wire-format/status/limits helpers in `sar-core`
-* keep stream/session semantics in `sar-stream`
-* avoid introducing filesystem side effects into library parsing code
-* do not make production-readiness, certification, or compliance claims without explicit project approval
-
-AI-assisted contributions are acceptable, but generated code remains the contributor’s responsibility. Review, test, and explain AI-generated changes before submitting them.
-
-Run the validation commands before opening a pull request.
+AI-assisted contributions are acceptable, but generated code remains the contributor's responsibility. Material AI assistance should be disclosed in the pull request.
 
 ## Current limitations
 

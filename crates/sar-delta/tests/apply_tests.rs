@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for [`sar_delta::apply_store_patch`].
 //!
 //! These tests verify the pure `apply_store_patch` function in isolation,

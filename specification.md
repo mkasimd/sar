@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 M. Kasim Dönmez
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 SPDX-License-Identifier: CC-BY-4.0
 -->
 
@@ -195,17 +195,17 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 | 0x02      | **ARGON2**                  | Memory-hard password derivation.  |
 | 0x03      | **ASYMMETRIC_WRAP**         | Encrypted master key wrapping.    |
 | 0x04      | **TLS_EXPORTER**            | TLS exporter derivation.          |
-| 0xF0–0xFF | **CUSTOM (RESERVED RANGE)** | Implementation-defined KMS modes. |
+| 0xF0-0xFF | **CUSTOM (RESERVED RANGE)** | Implementation-defined KMS modes. |
 
 ### 5.3.2.1 CUSTOM KMS Semantics
-* Values in range `0xF0–0xFF` are reserved for **implementation-defined KMS behavior**.
+* Values in range `0xF0-0xFF` are reserved for **implementation-defined KMS behavior**.
 * A CUSTOM KMS mode MUST be explicitly enabled by the application layer.
 * Two SAR implementations MAY assign different semantics to the same CUSTOM ID.
 * Interoperability is NOT guaranteed for CUSTOM modes unless out-of-band agreement exists.
 * If a CUSTOM mode is encountered and not supported, implementations MUST return `SAR_ERR_UNSUPPORTED`.
 
 #### 5.3.3 Mode-Specific Payload Structures
-**Mode 0x01 — PBKDF2**
+**Mode 0x01 - PBKDF2**
 | Field | Size | Description |
 | --- | --- | --- |
 | PRF Algo ID | 1B | 0x01: HMAC-SHA256, 0x02: HMAC-SHA512, 0x03: HMAC-SHA3-256. |
@@ -214,7 +214,7 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 | Iterations | 4B | MUST be ≥ 100,000. |
 | Derived Key Length | 2B | MUST match encryption algorithm requirements. |
 
-**Mode 0x02 — ARGON2**
+**Mode 0x02 - ARGON2**
 | Field | Size | Description |
 | --- | --- | --- |
 | Argon2 Variant | 1B | 0x01: Argon2d, 0x02: Argon2i, 0x03: Argon2id. |
@@ -226,16 +226,16 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 | Parallelism | 2B | Number of threads. |
 | Derived Key Length | 2B | MUST match algorithm requirements. |
 
-**Mode 0x03 — ASYMMETRIC_WRAP**
+**Mode 0x03 - ASYMMETRIC_WRAP**
 | Field | Size | Description |
 | --- | --- | --- |
 | Wrap Algo ID | 1B | 0x01: RSA-OAEP-2048, 0x02: RSA-OAEP-4096, 0x03: X25519, 0x04: ML-KEM-768, 0x05: ML-KEM-1024. |
 | Recipient Count | 1B | MUST be ≥ 1. |
-| *Recipient Loop* | — | Repeat per Recipient: |
-| — Recipient ID Len | 1B | Length of ID. |
-| — Recipient ID | Var | Key ID / Fingerprint. |
-| — Wrapped Key Len | 2B | Length of wrapped blob. |
-| — Wrapped Key Blob | Var | The Wrapped Master Key. |
+| *Recipient Loop* | - | Repeat per Recipient: |
+| - Recipient ID Len | 1B | Length of ID. |
+| - Recipient ID | Var | Key ID / Fingerprint. |
+| - Wrapped Key Len | 2B | Length of wrapped blob. |
+| - Wrapped Key Blob | Var | The Wrapped Master Key. |
 
 **Mode 0x04 - TLS_EXPORTER**
 | Field                      | Size | Description                                                                |
@@ -408,7 +408,7 @@ The descriptor is structured as:
 
 **Rationale**
 
-* Replaces ambiguous “offset-only” interpretation.
+* Replaces ambiguous "offset-only" interpretation.
 * Enables **stream reassembly without external state assumptions**.
 * Eliminates dependency on LFH ordering for reconstruction correctness.
 
@@ -493,7 +493,7 @@ The 16-bit Entry Mode is split into two functional bytes. The lower byte defines
 | 5 | `IS_FRAGMENT` | Set if this LFH describes a piece of a larger file, not a whole file. |
 | 6 | `LAST_FRAGMENT` | Set if this is the final piece required to complete the logical file. |
 | 7 | `LOSS_TOLERANT` | Entry or fragment group permits degraded reconstruction if fragments are missing or unrecoverable. |
-| 8–11 | `OP_CODE` | Command Enumeration (Context dependent on Bit 13). |
+| 8-11 | `OP_CODE` | Command Enumeration (Context dependent on Bit 13). |
 | 12 | RESERVED | Reserved. |
 | 13 | `SESSION_CONTROL` | Context Toggle: If set, Op-Codes are session-level. |
 | 14 | `ATOMIC_WRITE` | Verify CRC before unlinking/committing old data. |
@@ -579,7 +579,7 @@ The Session Mode deals with management of the stateful streaming connection (Sec
 | `0x5` | `SESSION_ACK` | Acknowledgement notification. Payload MUST contain a SAR Stream Acknowledgement Frame. |
 | `0x6` | `SESSION_METADATA` | Updates application metadata associated with the active stream. |
 | `0x7` | `SESSION_CAPABILITIES` | Reports supported session-control capabilities. |
-| `0x8–0xF` | RESERVED | Reserved for future session-control opcodes. |
+| `0x8-0xF` | RESERVED | Reserved for future session-control opcodes. |
 
 ## 7. Central Dictionary (CD)
 The CD is the primary management structure for random access and archive-wide metadata. It is OMITTED if `NO_INDEX` (Bit 1) is set.
@@ -604,10 +604,10 @@ The CD is the primary management structure for random access and archive-wide me
 * `0x03`: **LZ4** (High-speed compression)
 * `0x04`: **BROTLI** (Text optimized)
 * `0x05`: **XZ** (LZMA2 - Maximum ratio)
-* `0xF0–0xFF`: **CUSTOM** (Implementation-defined range)
+* `0xF0-0xFF`: **CUSTOM** (Implementation-defined range)
 
 #### 8.1.1 CUSTOM Compression Semantics
-* Values in `0xF0–0xFF` define user or vendor-specific compression algorithms.
+* Values in `0xF0-0xFF` define user or vendor-specific compression algorithms.
 * Implementations MUST NOT assume cross-compatibility.
 * If unsupported, MUST return `SAR_ERR_UNSUPPORTED`.
 * CUSTOM compression MAY require external metadata negotiated outside SAR.
@@ -619,10 +619,10 @@ The CD is the primary management structure for random access and archive-wide me
 * `0x03`: **AES256_CBC** (Block Cipher - Legacy Support)
 * `0x04`: **XCHACHA20_POLY** (XChaCha20-Poly1305 - Recommended AEAD)
 * `0x05`: **CHACHA20_POLY1305** (ChaCha20-Poly1305 AEAD)
-* `0x20–0x3F`: RESERVED for post-quantum encryption and KEM algorithms.
-* `0x40–0x5F`: RESERVED for experimental algorithms.
-* `0x60–0xEF`: RESERVED for future standardization.
-* `0xF0–0xFF`: **CUSTOM** (Implementation-defined range)
+* `0x20-0x3F`: RESERVED for post-quantum encryption and KEM algorithms.
+* `0x40-0x5F`: RESERVED for experimental algorithms.
+* `0x60-0xEF`: RESERVED for future standardization.
+* `0xF0-0xFF`: **CUSTOM** (Implementation-defined range)
 
 Any algorithm identifier not explicitly assigned in this section is RESERVED.
 
@@ -631,7 +631,7 @@ Implementations encountering a reserved value MUST return SAR_ERR_RESERVED_VALUE
 If decryption or authentication later fails, implementations MUST return SAR_ERR_DECRYPT_FAILED or SAR_ERR_AUTH_FAILED as appropriate.
 
 #### 8.2.1 CUSTOM Encryption Semantics
-* Values in `0xF0–0xFF` define user-defined encryption schemes.
+* Values in `0xF0-0xFF` define user-defined encryption schemes.
 * MUST require matching external specification between encoder and decoder.
 * If the required CUSTOM encryption specification is unavailable or unsupported, implementations MUST return SAR_ERR_UNSUPPORTED. 
 * CUSTOM encryption MUST NOT be assumed secure or standardized.
@@ -720,8 +720,8 @@ Patching algorithms are used only when `HAS_DELTA` (Bit 9) is set. The algorithm
 | `0x01`      | `VCDIFF`      | RFC 3284 VCDIFF delta stream.                     |
 | `0x02`      | `BSDIFF`      | SAR BSDIFF v1 delta payload.                      |
 | `0x03`      | `ZSTD_PATCH`  | Zstandard dictionary-based patch profile.         |
-| `0x04–0xEF` | Reserved      | Reserved for future SAR-defined patch algorithms. |
-| `0xF0–0xFF` | `CUSTOM`      | Implementation-defined range.                     |
+| `0x04-0xEF` | Reserved      | Reserved for future SAR-defined patch algorithms. |
+| `0xF0-0xFF` | `CUSTOM`      | Implementation-defined range.                     |
 
 Implementations that support delta patch processing (`HAS_DELTA`) MUST implement:
 
@@ -789,7 +789,7 @@ For `STORE_PATCH`, the `Delta Base Hash` field SHOULD be set to all zero bytes t
 
 For any patch algorithm that requires a base object, dictionary, or other external reconstruction input, an all-zero `Delta Base Hash` MUST be treated as missing reconstruction input and MUST result in `SAR_ERR_BASE_MISSING` if patch application is attempted.
 
-Implementations MUST NOT interpret an all-zero `Delta Base Hash` as “skip delta” for `VCDIFF`, `BSDIFF`, `ZSTD_PATCH`, or custom patch algorithms.
+Implementations MUST NOT interpret an all-zero `Delta Base Hash` as "skip delta" for `VCDIFF`, `BSDIFF`, `ZSTD_PATCH`, or custom patch algorithms.
 
 The `Delta Base Hash` field identifies the expected reconstruction input. Unless a hash algorithm is explicitly specified by this specification or by a negotiated extension, implementations MUST treat the field as an opaque identity value and MUST NOT guess the hash algorithm.
 
@@ -1006,25 +1006,25 @@ Implementations encountering `ZSTD_PATCH` without support for a negotiated or fu
 
 SAR BSDIFF v1 uses the classic bsdiff signed 64-bit integer encoding.
 
-This encoding is not two’s complement. Instead, it uses a sign-magnitude representation with a 63-bit magnitude and a separate sign bit.
+This encoding is not two's complement. Instead, it uses a sign-magnitude representation with a 63-bit magnitude and a separate sign bit.
 
 An integer is encoded in 8 bytes:
 
 * Bytes 0 through 6 contain the lower 56 bits of the magnitude in little-endian order.
 * Byte 7 contains:
 
-  * Bits 0–6: the upper 7 bits of the magnitude.
+  * Bits 0-6: the upper 7 bits of the magnitude.
   * Bit 7: the sign bit.
 
 Decoding:
 
-1. Interpret bits 0–6 of byte 7 together with all bits of bytes 0 through 6 as a 63-bit unsigned magnitude in little-endian order.
+1. Interpret bits 0-6 of byte 7 together with all bits of bytes 0 through 6 as a 63-bit unsigned magnitude in little-endian order.
 2. If bit 7 of byte 7 is set, the decoded value is negative.
 3. Otherwise, the decoded value is non-negative.
 
-This differs from two’s complement encoding: negative values are not formed by bit inversion and addition, but by applying a sign to the decoded magnitude.
+This differs from two's complement encoding: negative values are not formed by bit inversion and addition, but by applying a sign to the decoded magnitude.
 
-Decoders MUST reject integer values that cannot be represented safely in the implementation’s checked arithmetic.
+Decoders MUST reject integer values that cannot be represented safely in the implementation's checked arithmetic.
 
 Fields that represent lengths or sizes MUST be non-negative.
 
@@ -1036,7 +1036,7 @@ Used only when `CDC_SUPPORT` (Bit 5) is set. This ID is stored in the **CDC Algo
 * `0x02`: **FASTCDC** (Gear-hash based high-speed CDC).
 * `0x03`: **BUZHASH** (Buzhash based CDC).
 * `0x04 - 0xEF`: **RESERVED**
-* `0xF0–0xFF`: **CUSTOM** (Implementation-defined range).
+* `0xF0-0xFF`: **CUSTOM** (Implementation-defined range).
 
 Implementations that support CDC processing (`CDC_SUPPORT`) MUST implement:
 
@@ -2028,9 +2028,9 @@ Implementations encountering an assigned but unsupported hashing algorithm ident
 
 Implementations encountering a reserved hashing algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
-### 9.5 CDC Metadata (ID `0x40–0x4F`)
+### 9.5 CDC Metadata (ID `0x40-0x4F`)
 
-The `0x40–0x4F` Metadata TLV range is reserved for CDC cataloging, recipe resolution, and external-provider metadata.
+The `0x40-0x4F` Metadata TLV range is reserved for CDC cataloging, recipe resolution, and external-provider metadata.
 
 The detailed semantics and value layouts for CDC metadata TLVs are defined in **Section 21, CDC Cataloging and Metadata**.
 
@@ -2040,7 +2040,7 @@ The CDC metadata TLV Type IDs are assigned as follows:
 | ----------- | ------------------ | ------------------------------------------------- | ----------------------- |
 | `0x40`      | `CDC_MAP`          | Embedded CDC catalog for self-contained archives. | See Section 21.1.       |
 | `0x41`      | `CDC_EXT_PROVIDER` | URI for an external chunk provider.               | See Section 21.2.       |
-| `0x42–0x4E` | RESERVED           | Reserved for future CDC metadata assignments.     | N/A                     |
+| `0x42-0x4E` | RESERVED           | Reserved for future CDC metadata assignments.     | N/A                     |
 | `0x4F`      | `CDC_CUSTOM`       | Implementation-defined CDC metadata extension.    | Implementation-defined. |
 
 Implementations encountering an assigned but unsupported CDC metadata TLV Type ID MUST return `SAR_ERR_UNSUPPORTED`.
@@ -2188,7 +2188,7 @@ All semantics involving:
 
 are defined exclusively in:
 
-> **Section 18 — Stream Persistence and Stateful Streaming Mode**
+> **Section 18 - Stream Persistence and Stateful Streaming Mode**
 
 Implementations **MUST NOT** conflate the SAR Byte Stream model defined in this section with Stateful Streaming semantics defined in Section 18.
 
@@ -3213,7 +3213,7 @@ An additional QUIC control stream is not a primary SAR stream. It MUST NOT begin
 
 An additional QUIC control stream MUST begin directly with an LFH-encoded `SESSION_CONTROL` entry.
 
-To associate an additional QUIC control stream with an active SAR session, the receiver MUST read the invariant LFH prefix through the `Stream ID` field, select the active session context bound to that Stream ID on the same QUIC connection, and then parse the complete LFH using that session’s Global Header, Global Flags, KMS state, LFH layout rules, and AEAD state.
+To associate an additional QUIC control stream with an active SAR session, the receiver MUST read the invariant LFH prefix through the `Stream ID` field, select the active session context bound to that Stream ID on the same QUIC connection, and then parse the complete LFH using that session's Global Header, Global Flags, KMS state, LFH layout rules, and AEAD state.
 
 The first LFH on an additional QUIC control stream MUST satisfy all of the following:
 
@@ -3243,9 +3243,9 @@ Use of multiple QUIC streams for one SAR session MUST NOT relax Stream ID unique
 
 For a given selected feature set and security mode, SAR-over-QUIC encodings defined by this profile are canonical.
 
-A SAR-over-QUIC sender’s primary-stream entries MUST be processed the same way by every conforming receiver that supports the selected feature set and security mode.
+A SAR-over-QUIC sender's primary-stream entries MUST be processed the same way by every conforming receiver that supports the selected feature set and security mode.
 
-When bidirectional control is active, a SAR-over-QUIC client’s reverse-direction `SESSION_ACK`, `SESSION_STATUS`, and `SESSION_CAPABILITIES` entries MUST be decodable by every conforming SAR-over-QUIC listener implementation that supports the selected feature set and security mode.
+When bidirectional control is active, a SAR-over-QUIC client's reverse-direction `SESSION_ACK`, `SESSION_STATUS`, and `SESSION_CAPABILITIES` entries MUST be decodable by every conforming SAR-over-QUIC listener implementation that supports the selected feature set and security mode.
 
 Implementations MUST NOT require private stream markers, alternate control-stream magic values, or implementation-specific control envelopes for the encodings defined by this profile.
 
@@ -3372,8 +3372,8 @@ Implementations MUST use distinct `Key Usage ID` values for distinct key usages.
 | --------- | ---------------- | -------------------------------------------------------------- |
 | 0x01      | SAR_OVER_QUIC    | SAR-over-QUIC profile.                                         |
 | 0x02      | SAR_OVER_TCP_TLS | SAR-over-TCP wrapped in TLS.                                   |
-| 0x03–0xEF | RESERVED         | Reserved for future standard TLS-based SAR transport profiles. |
-| 0xF0–0xFF | CUSTOM           | Implementation-defined transport profiles.                     |
+| 0x03-0xEF | RESERVED         | Reserved for future standard TLS-based SAR transport profiles. |
+| 0xF0-0xFF | CUSTOM           | Implementation-defined transport profiles.                     |
 
 **TLS_EXPORTER Key Usage ID Registry**
 
@@ -3382,8 +3382,8 @@ Implementations MUST use distinct `Key Usage ID` values for distinct key usages.
 | 0x01      | CLIENT_TO_SERVER_ENTRY | SAR entry protection for client-to-server direction. |
 | 0x02      | SERVER_TO_CLIENT_ENTRY | SAR entry protection for server-to-client direction. |
 | 0x03      | SESSION_CONTROL        | SAR session-control protection, if separately keyed. |
-| 0x04–0xEF | RESERVED               | Reserved for future standard key usages.             |
-| 0xF0–0xFF | CUSTOM                 | Implementation-defined key usages.                   |
+| 0x04-0xEF | RESERVED               | Reserved for future standard key usages.             |
+| 0xF0-0xFF | CUSTOM                 | Implementation-defined key usages.                   |
 
 For TLS_EXPORTER key usage, `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` refer to TLS transport roles, not SAR Sender/Receiver roles.
 
@@ -3420,7 +3420,7 @@ For entries carried on an additional QUIC control stream that does not contain a
 
 For additional QUIC control streams, the LFH portion of AAD MUST be the LFH bytes physically present on that control stream.
 
-An additional QUIC control stream MUST NOT alter or replace the associated session’s Global Header bytes, Global Flags, KMS state, transform state, TLS exporter context, or AEAD configuration.
+An additional QUIC control stream MUST NOT alter or replace the associated session's Global Header bytes, Global Flags, KMS state, transform state, TLS exporter context, or AEAD configuration.
 
 When TLS-exporter SAR-AEAD mode is active, implementations MUST ensure that the TLS-exporter-derived keying context is bound to the SAR session as defined in Section 18.6.3.
 
@@ -3480,7 +3480,7 @@ An unencrypted SAR entry received after TLS-exporter SAR-AEAD binding is active 
 
 By default, `SESSION_CONTROL` entries use the same directional key usage as ordinary SAR entries sent by the same TLS endpoint, as defined in Section 18.6.3.
 
-Additional QUIC control streams opened after TLS-exporter SAR-AEAD binding is active inherit the associated session’s Global Header, KMS state, TLS exporter context, AEAD configuration, and active key usage rules.
+Additional QUIC control streams opened after TLS-exporter SAR-AEAD binding is active inherit the associated session's Global Header, KMS state, TLS exporter context, AEAD configuration, and active key usage rules.
 
 If KMS Mode `0x04 TLS_EXPORTER` is selected and an endpoint does not support it, the endpoint MUST fail closed with `SAR_ERR_UNSUPPORTED`, `SAR_ERR_KMS_FAILED`, or the closest applicable transport error.
 
@@ -3603,7 +3603,7 @@ Managing non-contiguous data requires the Receiver to act as a stateful buffer m
 
 ### 19.4.1 Reassembly Timeouts (The "Dead-Drop" Rule)
 In `FILE_FRAGMENTATION` mode (Global Bit 4), the Receiver MUST implement a **Fragment TTL (Time To Live)**.
-* **Problem**: A Sender starts a 4GB transfer in fragments but crashes after fragment 10. Without a timeout, the Receiver’s memory remains "poisoned" with an incomplete reassembly buffer.
+* **Problem**: A Sender starts a 4GB transfer in fragments but crashes after fragment 10. Without a timeout, the Receiver's memory remains "poisoned" with an incomplete reassembly buffer.
 * **Requirement**: If no new fragment for a specific `Fragment ID` arrives within a set window (default 60s), the Receiver SHALL discard the buffer and return `SAR_ERR_FRAGMENT_TIMEOUT` (17).
 
 ### 19.4.2 Out-of-Order Handling
@@ -3724,7 +3724,7 @@ The `CDC Algo ID` is the final stage of the decoding pipeline.
 
 SAR CDC processing uses the LFH `CDC Algo ID` field to identify the chunking algorithm for an entry. The CDC algorithm registry is defined in **Section 8.5, CDC Algorithms (****`SAR_L_CDC`****)**.
 
-CDC cataloging and recipe-resolution metadata is carried in Metadata TLVs from the `0x40–0x4F` range. The CDC metadata TLV registry is defined in **Section 9.5, CDC Metadata (ID ****`0x40–0x4F`****)**.
+CDC cataloging and recipe-resolution metadata is carried in Metadata TLVs from the `0x40-0x4F` range. The CDC metadata TLV registry is defined in **Section 9.5, CDC Metadata (ID ****`0x40-0x4F`****)**.
 
 To resolve Recipes, SAR implementations require a Catalog mapping content hashes to physical byte locations or to an external provider.
 
@@ -3897,7 +3897,7 @@ Offset       Byte Values (Hex)                        Description
 | **Fragment ID** | `0xDEADC0DE` | Unique identifier linking this payload to the reassembly buffer for this file. |
 | **Fragment Index** | `1` | Informs the Scatter-Gather logic that this is the second block of the file. |
 | **Fragment Descriptor** | `Offset: 2048, Size: 1024` | **Crucial:** Directs the receiver to write the decrypted payload starting at byte 2048 of the logical file. |
-| **Name Length** | `0` | Since `Fragment Index > 0`, the name is already known by the receiver’s state machine. |
+| **Name Length** | `0` | Since `Fragment Index > 0`, the name is already known by the receiver's state machine. |
 | **Path Length** | `0` | Evaluated conditionally based on the `HAS_PATH` global bitmask. |
 ### A.3. Transformation Pipeline Execution
 To process the payload in the example above, the implementation must follow the **Canonical Decoding Order** (Section 13.7.4):

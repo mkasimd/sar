@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// Build the global-header AAD section.
 ///
 /// Layout: `magic(4) + version(1) + reserved(1) + flags_size(2) + flags_bytes(flags_size)`.

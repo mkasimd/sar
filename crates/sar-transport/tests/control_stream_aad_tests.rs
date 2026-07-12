@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// M10i additional-control-stream AAD derivation tests.
 ///
 /// These tests verify the cryptographic properties of the AEAD Additional

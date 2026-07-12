@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CDC metadata parse/write tests (CDC_MAP round-trips, validation, error cases).
 
 use sar_cdc::{

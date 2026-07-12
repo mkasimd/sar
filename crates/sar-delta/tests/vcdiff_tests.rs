@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for [`sar_delta::apply_vcdiff`].
 //!
 //! These tests exercise the VCDIFF RFC 3284 decoder in isolation.

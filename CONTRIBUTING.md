@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2026 M. Kasim Dönmez
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 SPDX-License-Identifier: Apache-2.0
 -->
 
@@ -9,21 +9,21 @@ Thank you for your interest in contributing to SAR.
 
 SAR is an experimental archive, replication, recovery, and streaming container format with a Rust reference implementation. The project is under active development and is not yet a stable production release.
 
-This document explains contribution process and review expectations. It does not replace the project’s authoritative design and status documents.
+This document explains contribution process and review expectations. It does not replace the project's authoritative design and status documents.
 
 ## Authoritative project documents
 
 Before making substantial changes, consult the documents that define the relevant area:
 
-* `specification.md` — SAR Protocol v1.0 wire-format and protocol behavior
-* `docs/CRATE_RESPONSIBILITIES.md` — crate ownership and architectural boundaries
-* `docs/API.md` — current public API inventory
-* `docs/MACHINE_READABLE_API.json` — machine-readable public API inventory
-* `docs/CONFORMANCE.md` — conformance status and vector expectations
-* `docs/SECURITY.md` — security posture and constraints
-* `docs/MILESTONES.md` — milestone roadmap and implementation status
-* `docs/LIBRARY_LAYOUT.md` — intended future library/profile/binding layout
-* `AI_DISCLOSURE.md` — project-level AI-assisted development disclosure
+* `specification.md` - SAR Protocol v1.0 wire-format and protocol behavior
+* `docs/CRATE_RESPONSIBILITIES.md` - crate ownership and architectural boundaries
+* `docs/API.md` - current public API inventory
+* `docs/MACHINE_READABLE_API.json` - machine-readable public API inventory
+* `docs/CONFORMANCE.md` - conformance status and vector expectations
+* `docs/SECURITY.md` - security posture and constraints
+* `docs/MILESTONES.md` - milestone roadmap and implementation status
+* `docs/LIBRARY_LAYOUT.md` - intended future library/profile/binding layout
+* `AI_DISCLOSURE.md` - project-level AI-assisted development disclosure
 
 If this file appears to conflict with one of those documents, treat the more specific authoritative document as controlling and update whichever file is stale.
 
@@ -132,7 +132,7 @@ Examples:
 * documentation/API changes should keep API inventory files accurate if public API changes
 * conformance-vector changes should update manifests and manifest tests where needed
 
-Do not rely only on “it compiles.”
+Do not rely only on "it compiles."
 
 ## Recommended validation
 
@@ -292,7 +292,7 @@ Do not copy code or documentation from sources with incompatible licenses.
 
 ## Reporting security issues
 
-Do not open public issues for vulnerabilities or suspected vulnerabilities unless the repository’s security policy explicitly instructs you to do so.
+Do not open public issues for vulnerabilities or suspected vulnerabilities unless the repository's security policy explicitly instructs you to do so.
 
 See `docs/SECURITY.md` for the current security posture and reporting guidance.
 

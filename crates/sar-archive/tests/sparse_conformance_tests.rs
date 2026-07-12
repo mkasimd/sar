@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(unused_imports)]
 //! Sparse-file conformance tests: scatter-gather, trailing holes, ordering,
 //! compression/encryption integration, and fragmentation ordering.

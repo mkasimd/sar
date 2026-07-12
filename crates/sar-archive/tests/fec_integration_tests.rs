@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(unused_imports)]
 //! Integration tests for FEC metadata in `sar-core`:
 //! - LFH Selective FEC parsing and validation.

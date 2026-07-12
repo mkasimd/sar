@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CLI integration tests for sparse-file extraction behavior.
 //!
 //! These tests verify that `sar extract` reconstructs sparse holes correctly,

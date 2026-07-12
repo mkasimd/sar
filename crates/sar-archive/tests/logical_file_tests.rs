@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(unused_imports)]
 //! Tests for `sar_archive::ArchiveReader::read_all_logical_files` — fragment reassembly,
 //! sparse reconstruction, and loss-tolerant integration through the high-level

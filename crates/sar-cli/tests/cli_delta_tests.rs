@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CLI tests for `inspect --json` delta metadata reporting (Milestone 9b).
 //!
 //! These tests verify:

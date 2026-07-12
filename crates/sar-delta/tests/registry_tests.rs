@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for the patch algorithm registry (`SAR_L_PATCH`, spec section 8.4).
 //!
 //! These tests verify:

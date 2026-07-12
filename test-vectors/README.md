@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # SAR Conformance Test Vectors (M12a-stream-cp)
 
 This directory contains the official conformance vector set for the SAR Protocol v1.0
@@ -6,7 +11,7 @@ reference implementation.
 ## Serialized SAR stream transcripts (M12a-stream-cp)
 
 Vectors under `valid/stream-session/` and `invalid/stream-session/` are
-**serialized SAR stream transcripts** — deterministic byte sequences shaped like a primary
+**serialized SAR stream transcripts** - deterministic byte sequences shaped like a primary
 SAR stream:
 
 ```
@@ -41,43 +46,43 @@ implementation behavior across any implementation.
 
 ```
 test-vectors/
-  README.md                  — this file
-  manifest.schema.json       — JSON schema for all manifest files
+  README.md                  - this file
+  manifest.schema.json       - JSON schema for all manifest files
   profiles/
-    README.md                — profile descriptions and cold-storage/tape status
-    static-archive/          — static archive profile vectors
-    package/                 — package profile vectors
-    stream-package/          — stream package profile vectors
-    backup/                  — backup profile vectors
-    telemetry/               — telemetry profile vectors
-    live-media/              — live-media profile vectors
-    cold-storage/            — cold-storage/tape placeholder (see profiles/README.md)
+    README.md                - profile descriptions and cold-storage/tape status
+    static-archive/          - static archive profile vectors
+    package/                 - package profile vectors
+    stream-package/          - stream package profile vectors
+    backup/                  - backup profile vectors
+    telemetry/               - telemetry profile vectors
+    live-media/              - live-media profile vectors
+    cold-storage/            - cold-storage/tape placeholder (see profiles/README.md)
   valid/
-    minimal/                 — minimal single-entry archives (STORE + NO_INDEX)
-    indexed/                 — indexed archives with central dictionary
-    no-index/                — NO_INDEX forward-only archives
-    compression/             — STORE / DEFLATE / ZSTD compression variants
-    crypto/                  — AES-256-GCM and XChaCha20-Poly1305 encrypted archives
-    fec/                     — real XOR/Reed-Solomon selective FEC archives and shared metadata fixture
-    fragmentation/           — deferred/reference-only fragment fixtures until real fragment binaries exist
-    sparse/                  — real sparse reconstruction fixtures plus deferred sparse+delta reference
-    cdc/                     — real CDC literal-mode fixture plus deferred FASTCDC CDC_MAP reference
-    delta/                   — real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
-    stream-session/          — serialized SAR stream transcript fixtures (SESSION_INIT, SESSION_CAPABILITIES, ordered-data, heartbeat, sequence-wrap)
-    filesystem-metadata/     — permissions, owner, timestamps, symlink, directory vectors
+    minimal/                 - minimal single-entry archives (STORE + NO_INDEX)
+    indexed/                 - indexed archives with central dictionary
+    no-index/                - NO_INDEX forward-only archives
+    compression/             - STORE / DEFLATE / ZSTD compression variants
+    crypto/                  - AES-256-GCM and XChaCha20-Poly1305 encrypted archives
+    fec/                     - real XOR/Reed-Solomon selective FEC archives and shared metadata fixture
+    fragmentation/           - deferred/reference-only fragment fixtures until real fragment binaries exist
+    sparse/                  - real sparse reconstruction fixtures plus deferred sparse+delta reference
+    cdc/                     - real CDC literal-mode fixture plus deferred FASTCDC CDC_MAP reference
+    delta/                   - real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
+    stream-session/          - serialized SAR stream transcript fixtures (SESSION_INIT, SESSION_CAPABILITIES, ordered-data, heartbeat, sequence-wrap)
+    filesystem-metadata/     - permissions, owner, timestamps, symlink, directory vectors
   invalid/
-    structure/               — truncated GH/LFH/CD/Footer cases
-    flags/                   — Global Flag and Entry Mode conflicts
-    algorithms/              — unsupported/reserved compression/crypto/FEC/CDC/delta IDs
-    crypto/                  — bad AEAD tag, wrong nonce, mismatched KMS
-    fec/                     — malformed FEC metadata
-    fragmentation/           — gap, overlap, duplicate index, missing LAST_FRAGMENT
-    sparse/                  — sparse extent overlap, zero-length, excessive size
-    cdc/                     — malformed CDC metadata, reserved CDC IDs
-    delta/                   — deterministic patch-algo/base-hash/truncation/limit fixtures
-    stream-session/          — invalid session sequence, duplicate stream ID, heartbeat-with-payload, reserved opcode
-    filesystem-metadata/     — absolute path, traversal, unsafe symlink, setuid bits
-    resource-limits/         — excessive declared sizes, excessive TLV count
+    structure/               - truncated GH/LFH/CD/Footer cases
+    flags/                   - Global Flag and Entry Mode conflicts
+    algorithms/              - unsupported/reserved compression/crypto/FEC/CDC/delta IDs
+    crypto/                  - bad AEAD tag, wrong nonce, mismatched KMS
+    fec/                     - malformed FEC metadata
+    fragmentation/           - gap, overlap, duplicate index, missing LAST_FRAGMENT
+    sparse/                  - sparse extent overlap, zero-length, excessive size
+    cdc/                     - malformed CDC metadata, reserved CDC IDs
+    delta/                   - deterministic patch-algo/base-hash/truncation/limit fixtures
+    stream-session/          - invalid session sequence, duplicate stream ID, heartbeat-with-payload, reserved opcode
+    filesystem-metadata/     - absolute path, traversal, unsafe symlink, setuid bits
+    resource-limits/         - excessive declared sizes, excessive TLV count
 ```
 
 ## Manifest format
@@ -204,7 +209,7 @@ Supported `kind` values: `file`, `directory`, `symlink`.
 }
 ```
 
-**Invalid/deferred vectors** may omit `entries` or leave it empty — no logical
+**Invalid/deferred vectors** may omit `entries` or leave it empty - no logical
 archive content exists or can be described for archives that are expected to fail.
 
 ### Large/generated payload exception
@@ -230,11 +235,11 @@ For file entries where `size > 60` or `logical_size > 60`, omit `payload_utf8` a
 ```
 
 Allowed `payload_generation.kind` values:
-- `repeated_byte` — single byte repeated N times
-- `repeated_pattern` — byte pattern repeated
-- `zeroes` — all zero bytes
-- `external_fixture` — load from an external fixture file
-- `sparse_logical` — sparse logical layout
+- `repeated_byte` - single byte repeated N times
+- `repeated_pattern` - byte pattern repeated
+- `zeroes` - all zero bytes
+- `external_fixture` - load from an external fixture file
+- `sparse_logical` - sparse logical layout
 
 Do **not** commit large binary payloads. For >4 GiB behavior, use deterministic
 generation or sparse logical descriptions.
@@ -332,7 +337,7 @@ For invalid vectors the `expected` block uses the relevant SAR error status:
 `expected.error` is advisory human-readable debugging text only. Cross-implementation
 validators must not require exact `expected.error` string matching.
 
-Invalid vectors may omit `entries` — there is no valid logical archive to describe.
+Invalid vectors may omit `entries` - there is no valid logical archive to describe.
 Non-deferred invalid vectors should reference real generated `.sar` fixtures; deferred invalid vectors may set `file` to `null`.
 
 Stable SAR status identifiers (from `SarStatus` in `sar-core`):
@@ -357,7 +362,7 @@ Stable SAR status identifiers (from `SarStatus` in `sar-core`):
 | `SAR_ERR_INVALID_MAP`   | Invalid sparse/CDC map                      |
 | `SAR_ERR_INVALID_LENGTH`| Invalid declared length                      |
 
-Do **not** over-specify exact human-readable error message strings — only stable
+Do **not** over-specify exact human-readable error message strings - only stable
 `expected.status` identifiers are durable across implementation revisions.
 
 ## Deferred vectors
@@ -406,7 +411,7 @@ vector at `test-vectors/valid/...` uses:
 4. For delta vectors, use the `base_files` entries as inputs to the patch operation.
 5. For sparse vectors, reconstruct the logical file from `entries[].extents`.
 6. The `entries` field describes the fully-decoded logical content after all
-   transforms — this is what a correct implementation must produce.
+   transforms - this is what a correct implementation must produce.
 
 ## How to validate a vector
 
@@ -456,7 +461,7 @@ Keep vector files **small and reviewable** (< 4 KiB for most vectors).
 - **Valid**: Archives that any conformant implementation must accept. Should have
   non-empty `entries`.
 - **Invalid**: Archives that any conformant implementation must reject. `entries` may
-  be omitted or empty — no valid logical archive exists.
+  be omitted or empty - no valid logical archive exists.
 - **Profile**: Vectors whose acceptance depends on the chosen conformance profile.
   Profile vectors may be acceptable under one profile and rejected under another.
   Non-deferred profile vectors pointing to valid archives should have `entries`.
@@ -480,4 +485,4 @@ documented in `docs/CONFORMANCE.md`.
 ## Cold-storage/tape status
 
 Cold-storage/tape vectors are deferred. See `profiles/README.md` for details.
-    recovery/                — archive-level Recovery TLV flag/metadata/repair-negative fixtures
+    recovery/                - archive-level Recovery TLV flag/metadata/repair-negative fixtures

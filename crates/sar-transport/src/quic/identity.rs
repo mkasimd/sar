@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Server identity types for SAR-over-QUIC.
 //!
 //! These types carry TLS credentials in DER format and are independent of

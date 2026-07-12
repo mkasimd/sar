@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// M10d SAR-over-TCP loopback integration tests.
 ///
 /// All tests use 127.0.0.1 loopback connections with ephemeral ports.

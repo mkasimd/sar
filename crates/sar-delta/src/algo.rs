@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Patch algorithm identifier constants and registry validation
 //! (spec section 8.4, `SAR_L_PATCH`).
 //!

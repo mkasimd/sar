@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Archive-level Data Recovery TLV inspection, planning, and repair (Section 9.2).
 //!
 //! The protected byte range is defined as: "beginning at the first byte of

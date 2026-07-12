@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use sar_core::{EntryMode, GlobalFlags, SarError, validate_entry_mode_against_global};
 
 #[test]

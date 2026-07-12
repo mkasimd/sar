@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for sparse-file map parsing, writing, validation, and reconstruction.
 
 use sar_core::{

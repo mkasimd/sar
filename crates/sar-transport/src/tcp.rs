@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! SAR-over-TCP binding (M10d).
 //!
 //! Wraps an existing [`InMemoryTransport`] in TCP-policy mode and drives it

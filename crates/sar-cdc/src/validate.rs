@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CDC validation helpers.
 //!
 //! These functions are used by both the reader and writer pipelines to enforce

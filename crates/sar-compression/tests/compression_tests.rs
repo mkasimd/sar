@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use sar_compression::{
     COMP_ALGO_DEFLATE, COMP_ALGO_STORE, COMP_ALGO_ZSTD, CompressionError, CompressionOptions,
     DecompressionOptions, decode_stream, encode_stream,

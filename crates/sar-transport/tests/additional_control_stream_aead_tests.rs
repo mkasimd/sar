@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// M10i additional-control-stream AEAD decryption tests.
 ///
 /// These tests exercise the real `InMemoryTransport::feed_bytes` →

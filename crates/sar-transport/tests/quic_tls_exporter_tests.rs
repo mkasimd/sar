@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// M10e SAR-over-QUIC TLS_EXPORTER and KMS tests.
 ///
 /// Tests 13–23 from the M10e spec:

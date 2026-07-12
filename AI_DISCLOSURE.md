@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # AI Disclosure
 
 This repository was developed with substantial AI assistance.
@@ -37,7 +42,7 @@ AI assistance was used as an engineering aid, not as final authority.
 
 ## Human contribution
 
-The human maintainer provided the project’s controlling direction and final accountability.
+The human maintainer provided the project's controlling direction and final accountability.
 
 Human contributions included:
 
