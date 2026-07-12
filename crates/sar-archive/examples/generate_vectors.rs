@@ -505,8 +505,7 @@ const STREAM_ID_PRIMARY: u16 = 0x0042;
 
 /// Fixed session UUID used in all stream transcript fixtures.
 const SESSION_UUID_PRIMARY: [u8; 16] = [
-    0x42, 0xde, 0xad, 0xbe, 0xef, 0x42, 0x42, 0x42,
-    0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
+    0x42, 0xde, 0xad, 0xbe, 0xef, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42,
 ];
 
 /// Session flags with no bidirectional control/stream bits set.
@@ -584,8 +583,7 @@ fn make_session_control_lfh_and_payload(
     payload: Vec<u8>,
 ) -> Vec<u8> {
     let global_flags = GlobalFlags::NO_INDEX;
-    let entry_mode_bits =
-        (u16::from(opcode) << 8) | sar_core::EntryMode::SESSION_CONTROL;
+    let entry_mode_bits = (u16::from(opcode) << 8) | sar_core::EntryMode::SESSION_CONTROL;
     let payload_len = payload.len() as u64;
     let mut lfh = LocalFileHeader::minimal_store(b"ctl".to_vec(), payload_len);
     lfh.stream_id = stream_id;
@@ -599,11 +597,7 @@ fn make_session_control_lfh_and_payload(
 }
 
 /// Builds one LFH + payload blob for a DATA_WRITE filesystem entry.
-fn make_fs_data_write_lfh_and_payload(
-    stream_id: u16,
-    sequence_no: u16,
-    payload: &[u8],
-) -> Vec<u8> {
+fn make_fs_data_write_lfh_and_payload(stream_id: u16, sequence_no: u16, payload: &[u8]) -> Vec<u8> {
     let global_flags = GlobalFlags::NO_INDEX;
     let entry_mode_bits: u16 = ENTRY_MODE_DATA_WRITE;
     let payload_len = payload.len() as u64;
@@ -632,7 +626,10 @@ fn generate_stream_transcript_vectors() {
             SESSION_OPCODE_INIT,
             make_session_init_payload(SESSION_UUID_PRIMARY, SESSION_FLAGS_NONE),
         ));
-        write_fixture("valid/stream-session/session-init/stream_session_init.sar", &bytes);
+        write_fixture(
+            "valid/stream-session/session-init/stream_session_init.sar",
+            &bytes,
+        );
     }
 
     // ------------------------------------------------------------------

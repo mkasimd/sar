@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
 use sar_core::{
     GlobalFlags, SarError, SarStatus,
     format::{parse_global_header, parse_lfh},
     limits::ResourceLimits,
 };
 use sar_stream::{SessionEntry, SessionEvent, SessionManager, SessionManagerConfig};
+use serde::Deserialize;
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -120,7 +120,10 @@ fn stream_transcript_manifests()
     manifests.retain(|(_, manifest)| {
         !manifest.deferred
             && manifest.file.is_some()
-            && manifest.features.iter().any(|feature| feature == "stream:transcript")
+            && manifest
+                .features
+                .iter()
+                .any(|feature| feature == "stream:transcript")
     });
     manifests.sort_by(|(a, _), (b, _)| a.cmp(b));
     Ok(manifests)
@@ -171,7 +174,10 @@ fn valid_stream_transcript_vectors_pass_strict_validation() {
         }
     }
 
-    assert!(!failures.is_empty() || checked > 0, "no valid stream transcript vectors found");
+    assert!(
+        !failures.is_empty() || checked > 0,
+        "no valid stream transcript vectors found"
+    );
     if !failures.is_empty() {
         panic!(
             "{}/{} valid stream transcript vector(s) failed:\n{}",

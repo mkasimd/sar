@@ -826,10 +826,7 @@ pub fn run_conformance_check(
     } else {
         None
     };
-    let is_stream_transcript = manifest
-        .features
-        .iter()
-        .any(|f| f == "stream:transcript");
+    let is_stream_transcript = manifest.features.iter().any(|f| f == "stream:transcript");
     if is_stream_transcript {
         return ConformanceCheckResult {
             manifest_id: manifest.id.clone(),

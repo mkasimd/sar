@@ -108,7 +108,10 @@ fn valid_non_deferred_vectors_parse_ok() {
             continue;
         }
         if manifest.features.iter().any(|f| f == "stream:transcript") {
-            println!("[SKIP] {} — stream transcript semantics run in sar-stream", manifest.id);
+            println!(
+                "[SKIP] {} — stream transcript semantics run in sar-stream",
+                manifest.id
+            );
             continue;
         }
 
@@ -168,7 +171,10 @@ fn invalid_non_deferred_vectors_are_rejected() {
             continue;
         }
         if manifest.features.iter().any(|f| f == "stream:transcript") {
-            println!("[SKIP] {} — stream transcript semantics run in sar-stream", manifest.id);
+            println!(
+                "[SKIP] {} — stream transcript semantics run in sar-stream",
+                manifest.id
+            );
             continue;
         }
 

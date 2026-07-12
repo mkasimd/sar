@@ -1474,7 +1474,11 @@ fn stream_transcript_profile_rejection_manifests_are_not_byte_invalid() {
             Err(_) => continue,
         };
 
-        if !manifest.features.iter().any(|f| f == "stream:profile-rejection") {
+        if !manifest
+            .features
+            .iter()
+            .any(|f| f == "stream:profile-rejection")
+        {
             continue;
         }
         seen += 1;
@@ -1544,7 +1548,10 @@ fn minimum_required_valid_stream_transcript_vectors_present() {
                 .all(|tag| m.features.iter().any(|f| f == tag))
         });
         if !found {
-            missing.push(format!("no valid stream transcript vector with tags {:?} ({})", needed_tags, label));
+            missing.push(format!(
+                "no valid stream transcript vector with tags {:?} ({})",
+                needed_tags, label
+            ));
         }
     }
 
