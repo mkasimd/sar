@@ -317,7 +317,7 @@
         },
         "since_milestone": {
           "type": "string",
-          "pattern": "^(M)?[0-9]+[a-z]?(?:-[A-Za-z0-9]+)*|stage-[0-9]+$"
+          "pattern": "^(?:(?:M)?[0-9]+[a-z]?(?:-[A-Za-z0-9]+)*|stage-[0-9]+)$"
         },
         "feature_flags": {
           "type": "array",
