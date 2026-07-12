@@ -298,6 +298,12 @@ pub struct EntryReader {
     pub metadata: EntryMetadata,
 }
 
+#[derive(Debug)]
+struct DecodedArchiveEntryParts {
+    payload: Vec<u8>,
+    metadata: EntryMetadata,
+}
+
 /// Writer input.
 ///
 /// Delta write configuration for a single archive entry.
@@ -671,6 +677,161 @@ pub struct VerificationReport {
     pub cdc_support: bool,
 }
 
+/// Policy for handling entries that carry SESSION_CONTROL or nonzero OP_CODE bits.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlEntryPolicy {
+    /// Reject inert control/opcode entries with `SAR_ERR_UNSUPPORTED`.
+    #[default]
+    Reject,
+    /// Preserve and report inert control/opcode entries as audit records.
+    PreserveInert,
+}
+
+/// Payload handling policy for archive auditing.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PayloadAuditPolicy {
+    /// Parse structure and report payload metadata without decoding payload bytes.
+    MetadataOnly,
+    /// Decode ordinary archive-entry payloads when key/base providers are available.
+    ///
+    /// Missing key/base/provider conditions are reported as unavailable and do
+    /// not fail the full audit.
+    DecodeWhenKeysAvailable,
+    /// Require ordinary archive-entry decode. Missing key/base/provider conditions fail.
+    #[default]
+    RequireDecode,
+}
+
+/// Archive audit options.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ArchiveAuditOptions {
+    /// Policy for SESSION_CONTROL/nonzero OP_CODE entries.
+    pub control_entry_policy: ControlEntryPolicy,
+    /// Policy for ordinary archive-entry payload decoding during audit.
+    pub payload_policy: PayloadAuditPolicy,
+    /// When `true`, include raw payload bytes for inert entries.
+    ///
+    /// This is opt-in and intended for explicit audit export workflows.
+    pub include_inert_payload_bytes: bool,
+}
+
+/// Archive mode observed by audit.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveAuditMode {
+    /// Indexed archive with CD/Footer.
+    Indexed,
+    /// Forward-only archive with `NO_INDEX`.
+    NoIndex,
+}
+
+/// Per-entry audit classification.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveAuditEntryKind {
+    /// Ordinary archive entry (`SESSION_CONTROL=0`, `OP_CODE=0`).
+    OrdinaryEntry,
+    /// Inert nonzero-opcode entry (`SESSION_CONTROL=0`, `OP_CODE!=0`).
+    InertOpcodeEntry,
+    /// Inert session-control entry (`SESSION_CONTROL=1`).
+    InertSessionControl,
+}
+
+/// Payload decode result for one audited entry.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveAuditPayloadStatus {
+    /// Payload decoding succeeded.
+    Decoded,
+    /// Payload decoding was intentionally skipped by policy.
+    Skipped,
+    /// Payload decoding was unavailable (e.g., missing key/base provider).
+    Unavailable,
+    /// Payload decoding failed with a concrete error.
+    Failed,
+}
+
+/// Per-entry archive audit report.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveAuditEntryReport {
+    /// Absolute LFH offset.
+    pub lfh_offset: u64,
+    /// Raw `Entry_Mode` bits.
+    pub entry_mode_bits: u16,
+    /// Raw `OP_CODE` value.
+    pub op_code: u8,
+    /// Whether `SESSION_CONTROL` bit is set.
+    pub session_control: bool,
+    /// Entry semantic class in audit mode.
+    pub kind: ArchiveAuditEntryKind,
+    /// Encoded payload size from LFH.
+    pub payload_size: u64,
+    /// Logical/uncompressed size from LFH.
+    pub uncompressed_size: u64,
+    /// Compression algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comp_algo_id: Option<u8>,
+    /// Encryption algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encr_algo_id: Option<u8>,
+    /// FEC algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fec_algo_id: Option<u8>,
+    /// Patch algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch_algo_id: Option<u8>,
+    /// Payload audit status.
+    pub payload_status: ArchiveAuditPayloadStatus,
+    /// Decoded payload size when decode succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoded_payload_size: Option<u64>,
+    /// Stable SAR status when payload decode is unavailable/failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_error_status: Option<String>,
+    /// Human-readable payload decode error summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_error: Option<String>,
+    /// Optional raw inert payload bytes when explicitly requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inert_payload_bytes: Option<Vec<u8>>,
+}
+
+/// Recovery TLV summary in archive audit reports.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveAuditRecoverySummary {
+    /// Number of recovery TLVs (`0x10..=0x1F`) found in CD metadata.
+    pub tlv_count: u32,
+    /// Sorted type IDs of recovery TLVs found.
+    pub tlv_type_ids: Vec<u8>,
+}
+
+/// Deterministic machine-readable archive audit report.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveAuditReport {
+    /// Archive indexing mode.
+    pub mode: ArchiveAuditMode,
+    /// Raw global flag bits from the Global Header.
+    pub global_flags: u32,
+    /// Number of entries observed in the Data Area.
+    pub entry_count_seen: u64,
+    /// Per-entry audit reports in stream order.
+    pub entries: Vec<ArchiveAuditEntryReport>,
+    /// Footer presence (indexed archives only).
+    pub footer_present: bool,
+    /// Central Dictionary presence.
+    pub central_dictionary_present: bool,
+    /// For indexed archives, indicates that the Central Dictionary and Footer
+    /// were present and structurally parseable during audit. For `NO_INDEX`
+    /// archives this is always `true`. This is not a separate cryptographic
+    /// or full semantic validity claim.
+    pub cd_footer_valid: bool,
+    /// Recovery TLV presence/summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<ArchiveAuditRecoverySummary>,
+}
+
 /// Streaming archive reader over a seekable source.
 pub struct ArchiveReader<R> {
     reader: R,
@@ -891,22 +1052,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 "archive parsing rejects SESSION_CONTROL entries and nonzero OP_CODE values by default",
             ));
         }
-        let is_effectively_compressed =
-            header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
-        let is_encrypted = lfh.entry_mode.is_encrypted();
-
-        if is_encrypted && !header.flags.contains(GlobalFlags::ENCRYPTED) {
-            return Err(SarError::FlagConflict(
-                "IS_ENCRYPTED requires global ENCRYPTED",
-            ));
-        }
-
-        let effective_comp_algo_id = if is_effectively_compressed {
-            lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
-        } else {
-            COMP_ALGO_STORE
-        };
-
         let payload_start = self
             .next_offset
             .checked_add(u64::from(lfh.header_size))
@@ -925,500 +1070,20 @@ impl<R: Read + Seek> ArchiveReader<R> {
             .allocation_len(lfh.payload_size, "payload length usize")?;
         let mut encoded_payload = vec![0u8; payload_len];
         self.reader.read_exact(&mut encoded_payload)?;
-
-        let crypto = if is_encrypted {
-            let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
-                "encrypted entry missing encryption algorithm ID",
-            ))?;
-            validate_encr_algo_id(algo_id).map_err(SarError::from)?;
-            let provider = self.key_provider.as_deref().ok_or(SarError::KeyMissing(
-                "no key provider configured for encrypted archive",
-            ))?;
-            let context = build_kms_context(&header)?;
-            let key = resolve_cek(provider, &context).map_err(SarError::from)?;
-            let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
-                "encrypted entry missing IV/nonce field",
-            ))?;
-            // Per spec §13.2.1: when SELECTIVE_FEC is active and FEC Algo ID is
-            // non-zero, FEC Size and FEC Value are excluded from the AAD.
-            let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
-            let aad_lfh_bytes =
-                lfh_bytes_for_aad(header.flags, &lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
-            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
-            Some(EntryCryptoContext {
-                algo_id,
-                iv_nonce,
-                aad,
-                key,
-            })
-        } else {
-            None
-        };
-
-        // For sparse entries, `uncompressed_size` is the final logical file size
-        // (including holes), not the decoded payload byte count.  The decoded
-        // payload equals the sum of sparse extent lengths, which may be much
-        // smaller than the logical size.  Pass a permissive upper bound so the
-        // decompressor does not refuse to run.
-        let is_sparse =
-            header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
-
-        // STORE_PATCH resource-limit guard: reject before any allocation when the
-        // declared Uncompressed Size exceeds the configured limit.  Non-sparse
-        // entries are also protected by the `expected_output_size` path inside
-        // `decode_payload_v2`, but sparse entries use `max_decoded_entry_size` as
-        // `expected_output_size` there (since their logical size can exceed the
-        // decoded payload size); an explicit check is needed for those too.
-        let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
-        let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
-        if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
-            self.options
-                .limits
-                .check_decoded_entry_size(lfh.uncompressed_size)?;
-        }
-
-        // STORE_PATCH pre-decode length guard for non-compressed, non-encrypted
-        // entries: the decoded patch payload equals the raw encoded payload, so a
-        // mismatch between `payload_size` and `Uncompressed Size` is detectable
-        // before `decode_payload_v2`.  Return PatchFailed rather than letting the
-        // STORE decompressor's output-limit enforcement produce LimitExceeded.
-        if is_has_delta
-            && patch_raw_id == PATCH_ALGO_STORE_PATCH
-            && !is_effectively_compressed
-            && !is_encrypted
-            && !is_sparse
-            && lfh.payload_size != lfh.uncompressed_size
-        {
-            return Err(SarError::PatchFailed(
-                "STORE_PATCH: raw payload length does not match LFH Uncompressed Size",
-            ));
-        }
-
-        let decode_expected = if is_sparse {
-            // We don't want the decompressor to be bounded by logical_size;
-            // max_decoded_entry_size is already the correct upper bound.
-            self.options.max_decoded_entry_size()
-        } else if is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH {
-            // For BSDIFF, VCDIFF, and other patch algorithms the compressed/encrypted
-            // payload contains the *patch bytes*, not the final target bytes.
-            // The decompressor output size will be the decompressed patch size, which
-            // is distinct from (and typically larger than) `lfh.uncompressed_size`
-            // (the target size).  Use `max_decoded_entry_size` as the upper bound and
-            // let the patch algorithm itself verify the final target size.
-            self.options.max_decoded_entry_size()
-        } else {
-            lfh.uncompressed_size
-        };
-
-        let decoded = decode_payload_v2(
+        let decoded = self.decode_ordinary_archive_entry_from_parts(
+            &header,
+            self.next_offset,
+            &lfh,
+            &lfh_bytes,
             &encoded_payload,
-            DecodingPlanV2 {
-                is_compressed: is_effectively_compressed,
-                comp_algo_id: effective_comp_algo_id,
-                expected_output_size: decode_expected,
-                max_output_size: self.options.max_decoded_entry_size(),
-                crypto,
-            },
         )?;
-
-        // Apply delta patch when `HAS_DELTA` is active.
-        //
-        // Transformation order (spec §8.4 / §6.1):
-        //   FEC repair (done above)  →  AEAD decrypt (decode_payload_v2)  →
-        //   decompress (decode_payload_v2)  →  patch application  →
-        //   sparse reconstruction (read_all_logical_files)
-        let decoded = if is_has_delta {
-            match patch_raw_id {
-                PATCH_ALGO_STORE_PATCH => {
-                    // STORE_PATCH: the decoded payload IS the complete reconstructed
-                    // target logical byte sequence.  No base read.  No instruction
-                    // stream.  No external dictionary.
-                    //
-                    // For non-sparse entries the output length must equal
-                    // Uncompressed Size exactly; sparse reconstruction handles the
-                    // final logical size for sparse entries.
-                    if !is_sparse {
-                        apply_store_patch(&decoded, lfh.uncompressed_size).map_err(|e| match e {
-                            sar_delta::PatchError::PatchFailed(m) => SarError::PatchFailed(m),
-                            sar_delta::PatchError::Unsupported(m) => SarError::Unsupported(m),
-                            sar_delta::PatchError::ReservedValue(m) => SarError::ReservedValue(m),
-                            sar_delta::PatchError::BaseMissing(m) => SarError::BaseMissing(m),
-                            sar_delta::PatchError::LimitExceeded(m) => SarError::LimitExceeded(m),
-                        })?
-                    } else {
-                        decoded
-                    }
-                }
-                PATCH_ALGO_VCDIFF => {
-                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
-                    if hash == ZERO_DELTA_BASE_HASH {
-                        return Err(SarError::BaseMissing(
-                            "VCDIFF: all-zero Delta Base Hash indicates missing base",
-                        ));
-                    }
-                    let base = self
-                        .options
-                        .delta_base
-                        .as_deref()
-                        .ok_or(SarError::BaseMissing(
-                            "VCDIFF: no base bytes supplied in reader options",
-                        ))?;
-                    let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits);
-                    apply_vcdiff(base, &decoded, lfh.uncompressed_size, &vcdiff_limits)
-                        .map_err(map_patch_error)?
-                }
-                PATCH_ALGO_BSDIFF => {
-                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
-                    if hash == ZERO_DELTA_BASE_HASH {
-                        return Err(SarError::BaseMissing(
-                            "BSDIFF: all-zero Delta Base Hash indicates missing base",
-                        ));
-                    }
-                    let base = self
-                        .options
-                        .delta_base
-                        .as_deref()
-                        .ok_or(SarError::BaseMissing(
-                            "BSDIFF: no base bytes supplied in reader options",
-                        ))?;
-                    let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits);
-                    apply_bsdiff(base, &decoded, lfh.uncompressed_size, &bsdiff_limits)
-                        .map_err(map_patch_error)?
-                }
-                PATCH_ALGO_ZSTD_PATCH => {
-                    return Err(SarError::Unsupported(
-                        "ZSTD_PATCH: dictionary protocol not specified; not implemented",
-                    ));
-                }
-                id if id >= PATCH_ALGO_CUSTOM_MIN => {
-                    return Err(SarError::Unsupported(
-                        "CUSTOM patch algorithm not supported",
-                    ));
-                }
-                _ => {
-                    return Err(SarError::ReservedValue("reserved patch algorithm ID"));
-                }
-            }
-        } else {
-            decoded
-        };
-
-        if !is_sparse {
-            if u64::try_from(decoded.len())
-                .map_err(|_| SarError::Overflow("decoded payload len"))?
-                != lfh.uncompressed_size
-            {
-                return Err(SarError::InvalidLength(
-                    "decoded payload size does not match LFH Uncompressed Size",
-                ));
-            }
-            // STORE mode requires Payload Size == Uncompressed Size only when
-            // the payload IS the target (no delta transformation, or STORE_PATCH
-            // which is also an identity pass-through).  For BSDIFF and VCDIFF
-            // the uncompressed_size is the target size while payload_size is the
-            // patch size, so the two may legitimately differ.
-            if !is_effectively_compressed
-                && !is_encrypted
-                && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
-                && lfh.payload_size != lfh.uncompressed_size
-            {
-                return Err(SarError::InvalidLength(
-                    "STORE mode requires Payload Size == Uncompressed Size",
-                ));
-            }
-        }
-
-        let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
-            let algo_id = lfh.fec_algo_id.unwrap_or(0);
-            sar_core::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
-        } else {
-            None
-        };
-
-        // Parse sparse extents (needed for both legacy and new metadata fields).
-        let sparse_extents: Option<Vec<SparseExtent>> =
-            if header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
-                let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
-                Some(sar_core::sparse::parse_sparse_map(
-                    &lfh.sparse_map,
-                    is_64bit,
-                    &self.options.limits,
-                )?)
-            } else {
-                None
-            };
-
-        // Compute effective CDC algo ID (for legacy field).
-        let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
-            let algo_id = lfh.cdc_algo_id.unwrap_or(0);
-            sar_core::cdc::validate_cdc_algo_id(algo_id)?;
-            Some(algo_id)
-        } else {
-            None
-        };
-
-        // Derive entry name string (for entry-kind determination).
-        // The SAR specification requires all strings to be UTF-8.  Reject
-        // any entry whose name bytes are not valid UTF-8.
-        let name_str = String::from_utf8(lfh.name.clone())
-            .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
-
-        // Validate directory entry payload rule: IS_DIRECTORY entries MUST have
-        // Payload Size == 0 (spec §15, IS_DIRECTORY entry mode bit 1).
-        if lfh.entry_mode.is_directory() && lfh.payload_size != 0 {
-            return Err(SarError::Malformed(
-                "IS_DIRECTORY entry must have zero Payload Size",
-            ));
-        }
-
-        let entry_kind =
-            sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name_str.is_empty());
-        let symlink_target = if matches!(entry_kind, sar_core::metadata::EntryKind::Symlink) {
-            Some(
-                std::str::from_utf8(&decoded)
-                    .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
-                    .to_owned(),
-            )
-        } else {
-            None
-        };
-
-        // Compression presence model.
-        let compression_presence: sar_core::metadata::FieldPresence<
-            sar_core::metadata::EntryCompressionMetadata,
-        > = if header.flags.contains(GlobalFlags::COMPRESSED) {
-            let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
-            let cm = sar_core::metadata::EntryCompressionMetadata {
-                algo_id: raw_algo_id,
-                algorithm_name: compression_algorithm_name(raw_algo_id),
-            };
-            if is_effectively_compressed {
-                sar_core::metadata::FieldPresence::PresentActive(cm)
-            } else {
-                sar_core::metadata::FieldPresence::PresentInactive(cm)
-            }
-        } else {
-            sar_core::metadata::FieldPresence::Absent
-        };
-
-        // Encryption presence model.
-        let encryption_presence: sar_core::metadata::FieldPresence<
-            sar_core::metadata::EntryEncryptionMetadata,
-        > = if header.flags.contains(GlobalFlags::ENCRYPTED) {
-            let algo_id = lfh.encr_algo_id.unwrap_or(0);
-            let iv_nonce = lfh.iv_nonce.unwrap_or([0u8; 24]);
-            let em = sar_core::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
-            if is_encrypted {
-                sar_core::metadata::FieldPresence::PresentActive(em)
-            } else {
-                sar_core::metadata::FieldPresence::PresentInactive(em)
-            }
-        } else {
-            sar_core::metadata::FieldPresence::Absent
-        };
-
-        // FEC presence model.
-        let fec_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryFecMetadata> =
-            if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
-                let algo_id = lfh.fec_algo_id.unwrap_or(0);
-                let fm = sar_core::metadata::EntryFecMetadata {
-                    algo_id,
-                    summary: fec.clone(),
-                };
-                if algo_id != 0 {
-                    sar_core::metadata::FieldPresence::PresentActive(fm)
-                } else {
-                    sar_core::metadata::FieldPresence::PresentInactive(fm)
-                }
-            } else {
-                sar_core::metadata::FieldPresence::Absent
-            };
-
-        // Fragment descriptor for new metadata.
-        let frag_desc_new = lfh
-            .fragment_descriptor
-            .as_ref()
-            .map(|fd| FragmentDescriptor {
-                absolute_offset: fd.absolute_offset,
-                fragment_size: fd.fragment_size,
-            });
-
-        // Fragment presence model.
-        let fragment_presence: sar_core::metadata::FieldPresence<
-            sar_core::metadata::EntryFragmentMetadata,
-        > = if header.flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
-            let frag_id = lfh.fragment_id.unwrap_or(0);
-            let frag_idx = lfh.fragment_index.unwrap_or(0);
-            let fm = sar_core::metadata::EntryFragmentMetadata {
-                fragment_id: frag_id,
-                fragment_index: frag_idx,
-                descriptor: frag_desc_new.clone(),
-                is_last: lfh.entry_mode.is_last_fragment(),
-                is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
-            };
-            if lfh.entry_mode.is_fragment() {
-                sar_core::metadata::FieldPresence::PresentActive(fm)
-            } else {
-                sar_core::metadata::FieldPresence::PresentInactive(fm)
-            }
-        } else {
-            sar_core::metadata::FieldPresence::Absent
-        };
-
-        // CDC metadata (no active/inactive distinction — just present/absent).
-        let cdc: Option<sar_core::metadata::EntryCdcMetadata> =
-            cdc_algo_id_opt.map(|algo_id| sar_core::metadata::EntryCdcMetadata { algo_id });
-
-        // Delta metadata.
-        let delta: Option<sar_core::metadata::EntryDeltaMetadata> = if is_has_delta {
-            Some(sar_core::metadata::EntryDeltaMetadata {
-                patch_algo_id: patch_raw_id,
-                base_hash: lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH),
-            })
-        } else {
-            None
-        };
-
-        // Sparse metadata.
-        let sparse: Option<sar_core::metadata::EntrySparseMetadata> =
-            sparse_extents
-                .as_ref()
-                .map(|extents| sar_core::metadata::EntrySparseMetadata {
-                    extents: extents.clone(),
-                });
-
-        // Hash metadata.
-        let has_crc = header.flags.contains(GlobalFlags::PER_FILE_CRC);
-        let has_hash = header.flags.contains(GlobalFlags::DEDUPLICATION);
-        let hash: Option<sar_core::metadata::EntryHashMetadata> = if has_crc || has_hash {
-            Some(sar_core::metadata::EntryHashMetadata {
-                crc32: if has_crc { lfh.file_crc32 } else { None },
-                content_hash: if has_hash { lfh.content_hash } else { None },
-            })
-        } else {
-            None
-        };
-
-        let metadata = EntryMetadata {
-            lfh_offset: self.next_offset,
-            name: name_str,
-            // `path` retains backward-compatible Option<String> semantics: None
-            // when HAS_PATH is not set or path is empty.  Use `path_presence` for
-            // the authoritative three-state presence model.
-            path: if lfh.path.is_empty() {
-                None
-            } else {
-                let p = String::from_utf8(lfh.path.clone())
-                    .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
-                Some(p)
-            },
-            symlink_target,
-            payload_size: lfh.payload_size,
-            uncompressed_size: lfh.uncompressed_size,
-            compression_algo_id: effective_comp_algo_id,
-            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
-            is_compressed: is_effectively_compressed,
-            fec,
-            fragment_id: lfh.fragment_id,
-            fragment_index: lfh.fragment_index,
-            fragment_descriptor: frag_desc_new,
-            is_fragment: lfh.entry_mode.is_fragment(),
-            is_last_fragment: lfh.entry_mode.is_last_fragment(),
-            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
-            sparse_extents,
-            file_crc32: lfh.file_crc32,
-            content_hash: lfh.content_hash,
-            cdc_algo_id: cdc_algo_id_opt,
-            // Patch fields: present when HAS_DELTA is globally set.
-            // Registry validation and patch application have already been performed
-            // above; this block only surfaces the validated ID and opaque hash bytes.
-            patch_algo_id: if is_has_delta {
-                Some(patch_raw_id)
-            } else {
-                None
-            },
-            delta_base_hash: if is_has_delta {
-                Some(lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH))
-            } else {
-                None
-            },
-            // M11a expanded metadata.
-            entry_kind,
-            entry_mode_raw: lfh.entry_mode.bits(),
-            stream_id: lfh.stream_id,
-            sequence_no: lfh.sequence_no,
-            is_hidden: lfh.entry_mode.is_hidden_attr(),
-            permissions: lfh
-                .permissions
-                .map(|mode| sar_core::metadata::EntryPermissionMetadata { mode }),
-            owner: lfh
-                .uid_gid
-                .map(|uid_gid| sar_core::metadata::EntryOwnerMetadata { uid_gid }),
-            timestamps: lfh
-                .timestamps
-                .map(|ts| sar_core::metadata::EntryTimestampMetadata {
-                    mtime: ts[0],
-                    atime: ts[1],
-                    ctime: ts[2],
-                }),
-            // M11b filesystem metadata presence model.
-            path_presence: if header.flags.contains(GlobalFlags::HAS_PATH) {
-                if lfh.path.is_empty() {
-                    sar_core::metadata::FieldPresence::PresentInactive(String::new())
-                } else {
-                    let p = String::from_utf8(lfh.path.clone())
-                        .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?;
-                    sar_core::metadata::FieldPresence::PresentActive(p)
-                }
-            } else {
-                sar_core::metadata::FieldPresence::Absent
-            },
-            permissions_presence: if header.flags.contains(GlobalFlags::HAS_PERMS) {
-                sar_core::metadata::FieldPresence::PresentActive(
-                    sar_core::metadata::EntryPermissionMetadata {
-                        mode: lfh.permissions.unwrap_or(0),
-                    },
-                )
-            } else {
-                sar_core::metadata::FieldPresence::Absent
-            },
-            owner_presence: if header.flags.contains(GlobalFlags::EXT_UID_GID) {
-                sar_core::metadata::FieldPresence::PresentActive(
-                    sar_core::metadata::EntryOwnerMetadata {
-                        uid_gid: lfh.uid_gid.unwrap_or(0),
-                    },
-                )
-            } else {
-                sar_core::metadata::FieldPresence::Absent
-            },
-            timestamps_presence: if header.flags.contains(GlobalFlags::EXT_TIME) {
-                let ts = lfh.timestamps.unwrap_or([0u64; 3]);
-                sar_core::metadata::FieldPresence::PresentActive(
-                    sar_core::metadata::EntryTimestampMetadata {
-                        mtime: ts[0],
-                        atime: ts[1],
-                        ctime: ts[2],
-                    },
-                )
-            } else {
-                sar_core::metadata::FieldPresence::Absent
-            },
-            compression_presence,
-            encryption_presence,
-            fec_presence,
-            fragment_presence,
-            cdc,
-            delta,
-            sparse,
-            hash,
-        };
 
         self.next_offset = payload_end;
 
         Ok(Some(EntryReader {
             header: lfh,
-            payload: decoded,
-            metadata,
+            payload: decoded.payload,
+            metadata: decoded.metadata,
         }))
     }
 
@@ -1517,6 +1182,207 @@ impl<R: Read + Seek> ArchiveReader<R> {
         })
     }
 
+    /// Audits archive structure and payload availability with explicit policies.
+    ///
+    /// Defaults are safe:
+    /// - `ControlEntryPolicy::Reject`
+    /// - `PayloadAuditPolicy::RequireDecode`
+    pub fn audit(&mut self, options: ArchiveAuditOptions) -> Result<ArchiveAuditReport, SarError> {
+        if self.global_header.is_none() {
+            let _ = self.read_global_header()?;
+        }
+
+        let header = self
+            .global_header
+            .as_ref()
+            .ok_or(SarError::Malformed("global header missing"))?
+            .clone();
+        self.next_offset = self.header_len;
+
+        let mut entries = Vec::new();
+        while self.next_offset < self.data_end {
+            let lfh_offset = self.next_offset;
+            self.reader.seek(SeekFrom::Start(lfh_offset))?;
+
+            let mut header_size_bytes = [0u8; 4];
+            self.reader.read_exact(&mut header_size_bytes)?;
+            let header_size = usize::try_from(u32::from_le_bytes(header_size_bytes))
+                .map_err(|_| SarError::Overflow("LFH header size"))?;
+            self.options.limits.check_lfh_header_bytes(header_size)?;
+            if header_size < 4 {
+                return Err(SarError::InvalidLength(
+                    "LFH Header Size smaller than fixed prefix",
+                ));
+            }
+
+            let mut lfh_bytes = vec![0u8; header_size];
+            lfh_bytes[..4].copy_from_slice(&header_size_bytes);
+            if header_size > 4 {
+                self.reader.read_exact(&mut lfh_bytes[4..])?;
+            }
+            let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
+
+            let session_control = lfh.entry_mode.is_session_control();
+            let op_code = lfh.entry_mode.op_code();
+            let kind = if session_control {
+                ArchiveAuditEntryKind::InertSessionControl
+            } else if op_code != 0 {
+                ArchiveAuditEntryKind::InertOpcodeEntry
+            } else {
+                ArchiveAuditEntryKind::OrdinaryEntry
+            };
+            if !matches!(kind, ArchiveAuditEntryKind::OrdinaryEntry)
+                && options.control_entry_policy == ControlEntryPolicy::Reject
+            {
+                return Err(SarError::Unsupported(
+                    "archive parsing rejects SESSION_CONTROL entries and nonzero OP_CODE values by default",
+                ));
+            }
+
+            let payload_start = self
+                .next_offset
+                .checked_add(u64::from(lfh.header_size))
+                .ok_or(SarError::Overflow("payload start"))?;
+            let payload_end = payload_start
+                .checked_add(lfh.payload_size)
+                .ok_or(SarError::Overflow("payload end"))?;
+            if payload_end > self.data_end {
+                return Err(SarError::Truncated("payload exceeds data area bounds"));
+            }
+
+            let mut decoded_payload_size = None;
+            let mut payload_error_status = None;
+            let mut payload_error = None;
+            let mut inert_payload_bytes = None;
+            let payload_status;
+
+            match kind {
+                ArchiveAuditEntryKind::OrdinaryEntry => match options.payload_policy {
+                    PayloadAuditPolicy::MetadataOnly => {
+                        payload_status = ArchiveAuditPayloadStatus::Skipped;
+                    }
+                    PayloadAuditPolicy::DecodeWhenKeysAvailable
+                    | PayloadAuditPolicy::RequireDecode => {
+                        self.reader.seek(SeekFrom::Start(payload_start))?;
+                        let payload_len = self
+                            .options
+                            .limits
+                            .allocation_len(lfh.payload_size, "payload length usize")?;
+                        let mut encoded_payload = vec![0u8; payload_len];
+                        self.reader.read_exact(&mut encoded_payload)?;
+
+                        match self.decode_ordinary_archive_entry_from_parts(
+                            &header,
+                            lfh_offset,
+                            &lfh,
+                            &lfh_bytes,
+                            &encoded_payload,
+                        ) {
+                            Ok(decoded) => {
+                                payload_status = ArchiveAuditPayloadStatus::Decoded;
+                                decoded_payload_size = Some(
+                                    u64::try_from(decoded.payload.len())
+                                        .map_err(|_| SarError::Overflow("decoded payload size"))?,
+                                );
+                            }
+                            Err(err) => {
+                                let is_unavailable = matches!(
+                                    err,
+                                    SarError::KeyMissing(_) | SarError::BaseMissing(_)
+                                );
+                                payload_error_status = Some(err.status().name().to_string());
+                                payload_error = Some(err.to_string());
+
+                                if options.payload_policy == PayloadAuditPolicy::RequireDecode {
+                                    return Err(err);
+                                }
+                                // Only missing key/base/provider conditions degrade to
+                                // Unavailable in best-effort audit mode. All concrete
+                                // decode, authentication, metadata, and structural errors
+                                // remain Failed per the audit policy.
+                                payload_status = if is_unavailable {
+                                    ArchiveAuditPayloadStatus::Unavailable
+                                } else {
+                                    ArchiveAuditPayloadStatus::Failed
+                                };
+                            }
+                        }
+                    }
+                },
+                ArchiveAuditEntryKind::InertOpcodeEntry
+                | ArchiveAuditEntryKind::InertSessionControl => {
+                    payload_status = ArchiveAuditPayloadStatus::Skipped;
+                    if options.include_inert_payload_bytes {
+                        self.reader.seek(SeekFrom::Start(payload_start))?;
+                        let payload_len = self
+                            .options
+                            .limits
+                            .allocation_len(lfh.payload_size, "payload length usize")?;
+                        let mut raw_payload = vec![0u8; payload_len];
+                        self.reader.read_exact(&mut raw_payload)?;
+                        inert_payload_bytes = Some(raw_payload);
+                    }
+                }
+            }
+
+            entries.push(ArchiveAuditEntryReport {
+                lfh_offset,
+                entry_mode_bits: lfh.entry_mode.bits(),
+                op_code,
+                session_control,
+                kind,
+                payload_size: lfh.payload_size,
+                uncompressed_size: lfh.uncompressed_size,
+                comp_algo_id: lfh.comp_algo_id,
+                encr_algo_id: lfh.encr_algo_id,
+                fec_algo_id: lfh.fec_algo_id,
+                patch_algo_id: lfh.patch_algo_id,
+                payload_status,
+                decoded_payload_size,
+                payload_error_status,
+                payload_error,
+                inert_payload_bytes,
+            });
+
+            self.next_offset = payload_end;
+        }
+
+        let mut recovery_type_ids: Vec<u8> = self
+            .cd
+            .as_ref()
+            .into_iter()
+            .flat_map(|cd| cd.metadata.iter())
+            .filter_map(|tlv| (0x10..=0x1F).contains(&tlv.type_id).then_some(tlv.type_id))
+            .collect();
+        recovery_type_ids.sort_unstable();
+        recovery_type_ids.dedup();
+        let recovery = if recovery_type_ids.is_empty() {
+            None
+        } else {
+            Some(ArchiveAuditRecoverySummary {
+                tlv_count: u32::try_from(recovery_type_ids.len())
+                    .map_err(|_| SarError::Overflow("recovery tlv count"))?,
+                tlv_type_ids: recovery_type_ids,
+            })
+        };
+
+        Ok(ArchiveAuditReport {
+            mode: if header.flags.contains(GlobalFlags::NO_INDEX) {
+                ArchiveAuditMode::NoIndex
+            } else {
+                ArchiveAuditMode::Indexed
+            },
+            global_flags: header.flags.bits(),
+            entry_count_seen: u64::try_from(entries.len())
+                .map_err(|_| SarError::Overflow("entry count"))?,
+            entries,
+            footer_present: !header.flags.contains(GlobalFlags::NO_INDEX),
+            central_dictionary_present: self.cd.is_some(),
+            cd_footer_valid: header.flags.contains(GlobalFlags::NO_INDEX) || self.cd.is_some(),
+            recovery,
+        })
+    }
+
     /// Returns parsed archive metadata when header has been read.
     pub fn metadata(&self) -> Option<ArchiveMetadata> {
         self.global_header
@@ -1525,6 +1391,446 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 global_header: global_header.clone(),
                 central_dictionary: self.cd.clone(),
             })
+    }
+
+    /// Decodes and validates one ordinary archive entry using normal archive rules.
+    fn decode_ordinary_archive_entry_from_parts(
+        &self,
+        header: &GlobalHeader,
+        lfh_offset: u64,
+        lfh: &LocalFileHeader,
+        lfh_bytes: &[u8],
+        encoded_payload: &[u8],
+    ) -> Result<DecodedArchiveEntryParts, SarError> {
+        let is_effectively_compressed =
+            header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
+        let is_encrypted = lfh.entry_mode.is_encrypted();
+        if is_encrypted && !header.flags.contains(GlobalFlags::ENCRYPTED) {
+            return Err(SarError::FlagConflict(
+                "IS_ENCRYPTED requires global ENCRYPTED",
+            ));
+        }
+        let is_sparse =
+            header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
+        let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
+        let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
+
+        if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
+            self.options
+                .limits
+                .check_decoded_entry_size(lfh.uncompressed_size)?;
+        }
+
+        if is_has_delta
+            && patch_raw_id == PATCH_ALGO_STORE_PATCH
+            && !is_effectively_compressed
+            && !is_encrypted
+            && !is_sparse
+            && lfh.payload_size != lfh.uncompressed_size
+        {
+            return Err(SarError::PatchFailed(
+                "STORE_PATCH: raw payload length does not match LFH Uncompressed Size",
+            ));
+        }
+
+        let decode_expected =
+            if is_sparse || (is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH) {
+                self.options.max_decoded_entry_size()
+            } else {
+                lfh.uncompressed_size
+            };
+
+        let effective_comp_algo_id = if is_effectively_compressed {
+            lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
+        } else {
+            COMP_ALGO_STORE
+        };
+
+        let crypto = if is_encrypted {
+            let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
+                "encrypted entry missing encryption algorithm ID",
+            ))?;
+            validate_encr_algo_id(algo_id).map_err(SarError::from)?;
+            let provider = self.key_provider.as_deref().ok_or(SarError::KeyMissing(
+                "no key provider configured for encrypted archive",
+            ))?;
+            let context = build_kms_context(header)?;
+            let key = resolve_cek(provider, &context).map_err(SarError::from)?;
+            let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
+                "encrypted entry missing IV/nonce field",
+            ))?;
+            let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
+            let aad_lfh_bytes =
+                lfh_bytes_for_aad(header.flags, lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
+            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
+            Some(EntryCryptoContext {
+                algo_id,
+                iv_nonce,
+                aad,
+                key,
+            })
+        } else {
+            None
+        };
+
+        let decoded = decode_payload_v2(
+            encoded_payload,
+            DecodingPlanV2 {
+                is_compressed: is_effectively_compressed,
+                comp_algo_id: effective_comp_algo_id,
+                expected_output_size: decode_expected,
+                max_output_size: self.options.max_decoded_entry_size(),
+                crypto,
+            },
+        )?;
+
+        let decoded = if is_has_delta {
+            match patch_raw_id {
+                PATCH_ALGO_STORE_PATCH => {
+                    if !is_sparse {
+                        apply_store_patch(&decoded, lfh.uncompressed_size)
+                            .map_err(map_patch_error)?
+                    } else {
+                        decoded
+                    }
+                }
+                PATCH_ALGO_VCDIFF => {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
+                        return Err(SarError::BaseMissing(
+                            "VCDIFF: all-zero Delta Base Hash indicates missing base",
+                        ));
+                    }
+                    let base = self
+                        .options
+                        .delta_base
+                        .as_deref()
+                        .ok_or(SarError::BaseMissing(
+                            "VCDIFF: no base bytes supplied in reader options",
+                        ))?;
+                    let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits);
+                    apply_vcdiff(base, &decoded, lfh.uncompressed_size, &vcdiff_limits)
+                        .map_err(map_patch_error)?
+                }
+                PATCH_ALGO_BSDIFF => {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
+                        return Err(SarError::BaseMissing(
+                            "BSDIFF: all-zero Delta Base Hash indicates missing base",
+                        ));
+                    }
+                    let base = self
+                        .options
+                        .delta_base
+                        .as_deref()
+                        .ok_or(SarError::BaseMissing(
+                            "BSDIFF: no base bytes supplied in reader options",
+                        ))?;
+                    let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits);
+                    apply_bsdiff(base, &decoded, lfh.uncompressed_size, &bsdiff_limits)
+                        .map_err(map_patch_error)?
+                }
+                PATCH_ALGO_ZSTD_PATCH => {
+                    return Err(SarError::Unsupported(
+                        "ZSTD_PATCH: dictionary protocol not specified; not implemented",
+                    ));
+                }
+                id if id >= PATCH_ALGO_CUSTOM_MIN => {
+                    return Err(SarError::Unsupported(
+                        "CUSTOM patch algorithm not supported",
+                    ));
+                }
+                _ => return Err(SarError::ReservedValue("reserved patch algorithm ID")),
+            }
+        } else {
+            decoded
+        };
+
+        if !is_sparse {
+            if u64::try_from(decoded.len())
+                .map_err(|_| SarError::Overflow("decoded payload len"))?
+                != lfh.uncompressed_size
+            {
+                return Err(SarError::InvalidLength(
+                    "decoded payload size does not match LFH Uncompressed Size",
+                ));
+            }
+            if !is_effectively_compressed
+                && !is_encrypted
+                && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
+                && lfh.payload_size != lfh.uncompressed_size
+            {
+                return Err(SarError::InvalidLength(
+                    "STORE mode requires Payload Size == Uncompressed Size",
+                ));
+            }
+        }
+
+        let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
+            let algo_id = lfh.fec_algo_id.unwrap_or(0);
+            sar_core::fec::parse_lfh_fec_value(algo_id, &lfh.fec_value, &self.options.limits)?
+        } else {
+            None
+        };
+
+        let sparse_extents: Option<Vec<SparseExtent>> =
+            if header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
+                let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
+                Some(sar_core::sparse::parse_sparse_map(
+                    &lfh.sparse_map,
+                    is_64bit,
+                    &self.options.limits,
+                )?)
+            } else {
+                None
+            };
+
+        let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+            let algo_id = lfh.cdc_algo_id.unwrap_or(0);
+            sar_core::cdc::validate_cdc_algo_id(algo_id)?;
+            Some(algo_id)
+        } else {
+            None
+        };
+
+        let name = String::from_utf8(lfh.name.clone())
+            .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
+
+        if lfh.entry_mode.is_directory() && lfh.payload_size != 0 {
+            return Err(SarError::Malformed(
+                "IS_DIRECTORY entry must have zero Payload Size",
+            ));
+        }
+
+        let entry_kind =
+            sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, name.is_empty());
+        let symlink_target = if matches!(entry_kind, sar_core::metadata::EntryKind::Symlink) {
+            Some(
+                std::str::from_utf8(&decoded)
+                    .map_err(|_| SarError::Malformed("Symlink target payload is not valid UTF-8"))?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+
+        let path = if lfh.path.is_empty() {
+            None
+        } else {
+            Some(
+                String::from_utf8(lfh.path.clone())
+                    .map_err(|_| SarError::Malformed("LFH Path String is not valid UTF-8"))?,
+            )
+        };
+
+        let compression_presence: sar_core::metadata::FieldPresence<
+            sar_core::metadata::EntryCompressionMetadata,
+        > = if header.flags.contains(GlobalFlags::COMPRESSED) {
+            let raw_algo_id = lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE);
+            let metadata = sar_core::metadata::EntryCompressionMetadata {
+                algo_id: raw_algo_id,
+                algorithm_name: compression_algorithm_name(raw_algo_id),
+            };
+            if is_effectively_compressed {
+                sar_core::metadata::FieldPresence::PresentActive(metadata)
+            } else {
+                sar_core::metadata::FieldPresence::PresentInactive(metadata)
+            }
+        } else {
+            sar_core::metadata::FieldPresence::Absent
+        };
+
+        let encryption_presence: sar_core::metadata::FieldPresence<
+            sar_core::metadata::EntryEncryptionMetadata,
+        > = if header.flags.contains(GlobalFlags::ENCRYPTED) {
+            let algo_id = lfh.encr_algo_id.unwrap_or(0);
+            let iv_nonce = lfh.iv_nonce.unwrap_or([0u8; 24]);
+            let metadata = sar_core::metadata::EntryEncryptionMetadata { algo_id, iv_nonce };
+            if is_encrypted {
+                sar_core::metadata::FieldPresence::PresentActive(metadata)
+            } else {
+                sar_core::metadata::FieldPresence::PresentInactive(metadata)
+            }
+        } else {
+            sar_core::metadata::FieldPresence::Absent
+        };
+
+        let fec_presence: sar_core::metadata::FieldPresence<sar_core::metadata::EntryFecMetadata> =
+            if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
+                let algo_id = lfh.fec_algo_id.unwrap_or(0);
+                let metadata = sar_core::metadata::EntryFecMetadata {
+                    algo_id,
+                    summary: fec.clone(),
+                };
+                if algo_id != 0 {
+                    sar_core::metadata::FieldPresence::PresentActive(metadata)
+                } else {
+                    sar_core::metadata::FieldPresence::PresentInactive(metadata)
+                }
+            } else {
+                sar_core::metadata::FieldPresence::Absent
+            };
+
+        let fragment_descriptor = lfh
+            .fragment_descriptor
+            .as_ref()
+            .map(|fd| FragmentDescriptor {
+                absolute_offset: fd.absolute_offset,
+                fragment_size: fd.fragment_size,
+            });
+
+        let fragment_presence: sar_core::metadata::FieldPresence<
+            sar_core::metadata::EntryFragmentMetadata,
+        > = if header.flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
+            let fragment_id = lfh.fragment_id.unwrap_or(0);
+            let fragment_index = lfh.fragment_index.unwrap_or(0);
+            let metadata = sar_core::metadata::EntryFragmentMetadata {
+                fragment_id,
+                fragment_index,
+                descriptor: fragment_descriptor.clone(),
+                is_last: lfh.entry_mode.is_last_fragment(),
+                is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            };
+            if lfh.entry_mode.is_fragment() {
+                sar_core::metadata::FieldPresence::PresentActive(metadata)
+            } else {
+                sar_core::metadata::FieldPresence::PresentInactive(metadata)
+            }
+        } else {
+            sar_core::metadata::FieldPresence::Absent
+        };
+
+        let cdc = cdc_algo_id_opt.map(|algo_id| sar_core::metadata::EntryCdcMetadata { algo_id });
+
+        let delta = if is_has_delta {
+            Some(sar_core::metadata::EntryDeltaMetadata {
+                patch_algo_id: patch_raw_id,
+                base_hash: lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH),
+            })
+        } else {
+            None
+        };
+
+        let sparse =
+            sparse_extents
+                .as_ref()
+                .map(|extents| sar_core::metadata::EntrySparseMetadata {
+                    extents: extents.clone(),
+                });
+
+        let has_crc = header.flags.contains(GlobalFlags::PER_FILE_CRC);
+        let has_hash = header.flags.contains(GlobalFlags::DEDUPLICATION);
+        let hash = if has_crc || has_hash {
+            Some(sar_core::metadata::EntryHashMetadata {
+                crc32: if has_crc { lfh.file_crc32 } else { None },
+                content_hash: if has_hash { lfh.content_hash } else { None },
+            })
+        } else {
+            None
+        };
+
+        let metadata = EntryMetadata {
+            lfh_offset,
+            name,
+            path: path.clone(),
+            symlink_target,
+            payload_size: lfh.payload_size,
+            uncompressed_size: lfh.uncompressed_size,
+            compression_algo_id: effective_comp_algo_id,
+            compression_algorithm: compression_algorithm_name(effective_comp_algo_id),
+            is_compressed: is_effectively_compressed,
+            fec,
+            fragment_id: lfh.fragment_id,
+            fragment_index: lfh.fragment_index,
+            fragment_descriptor,
+            is_fragment: lfh.entry_mode.is_fragment(),
+            is_last_fragment: lfh.entry_mode.is_last_fragment(),
+            is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
+            sparse_extents,
+            file_crc32: lfh.file_crc32,
+            content_hash: lfh.content_hash,
+            cdc_algo_id: cdc_algo_id_opt,
+            patch_algo_id: if is_has_delta {
+                Some(patch_raw_id)
+            } else {
+                None
+            },
+            delta_base_hash: if is_has_delta {
+                Some(lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH))
+            } else {
+                None
+            },
+            entry_kind,
+            entry_mode_raw: lfh.entry_mode.bits(),
+            stream_id: lfh.stream_id,
+            sequence_no: lfh.sequence_no,
+            is_hidden: lfh.entry_mode.is_hidden_attr(),
+            permissions: lfh
+                .permissions
+                .map(|mode| sar_core::metadata::EntryPermissionMetadata { mode }),
+            owner: lfh
+                .uid_gid
+                .map(|uid_gid| sar_core::metadata::EntryOwnerMetadata { uid_gid }),
+            timestamps: lfh
+                .timestamps
+                .map(|ts| sar_core::metadata::EntryTimestampMetadata {
+                    mtime: ts[0],
+                    atime: ts[1],
+                    ctime: ts[2],
+                }),
+            path_presence: if header.flags.contains(GlobalFlags::HAS_PATH) {
+                if let Some(path) = path {
+                    sar_core::metadata::FieldPresence::PresentActive(path)
+                } else {
+                    sar_core::metadata::FieldPresence::PresentInactive(String::new())
+                }
+            } else {
+                sar_core::metadata::FieldPresence::Absent
+            },
+            permissions_presence: if header.flags.contains(GlobalFlags::HAS_PERMS) {
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryPermissionMetadata {
+                        mode: lfh.permissions.unwrap_or(0),
+                    },
+                )
+            } else {
+                sar_core::metadata::FieldPresence::Absent
+            },
+            owner_presence: if header.flags.contains(GlobalFlags::EXT_UID_GID) {
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryOwnerMetadata {
+                        uid_gid: lfh.uid_gid.unwrap_or(0),
+                    },
+                )
+            } else {
+                sar_core::metadata::FieldPresence::Absent
+            },
+            timestamps_presence: if header.flags.contains(GlobalFlags::EXT_TIME) {
+                let timestamps = lfh.timestamps.unwrap_or([0u64; 3]);
+                sar_core::metadata::FieldPresence::PresentActive(
+                    sar_core::metadata::EntryTimestampMetadata {
+                        mtime: timestamps[0],
+                        atime: timestamps[1],
+                        ctime: timestamps[2],
+                    },
+                )
+            } else {
+                sar_core::metadata::FieldPresence::Absent
+            },
+            compression_presence,
+            encryption_presence,
+            fec_presence,
+            fragment_presence,
+            cdc,
+            delta,
+            sparse,
+            hash,
+        };
+
+        Ok(DecodedArchiveEntryParts {
+            payload: decoded,
+            metadata,
+        })
     }
 
     /// Reads all entries from the archive and returns fully reconstructed

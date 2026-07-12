@@ -27,6 +27,8 @@ Stream transcript semantic conformance is executed by
 `crates/sar-stream/tests/stream_transcript_conformance_tests.rs`.
 `sar-archive` conformance skips `stream:transcript` semantic checks and keeps default
 archive-safe behavior (reject `SESSION_CONTROL` and nonzero `OP_CODE` by default).
+`sar-archive` audit mode can optionally parse these fixtures structurally in inert mode,
+but stream/session semantics remain owned by `sar-stream`.
 
 ## What are conformance vectors?
 

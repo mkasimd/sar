@@ -21,10 +21,13 @@ pub mod stream;
 pub mod transform;
 
 pub use archive::{
-    ArchiveMetadata, ArchiveReader, ArchiveReaderOptions, ArchiveRecoverySettings, ArchiveSummary,
-    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, DeltaWriteOptions,
+    ArchiveAuditEntryKind, ArchiveAuditEntryReport, ArchiveAuditMode, ArchiveAuditOptions,
+    ArchiveAuditPayloadStatus, ArchiveAuditRecoverySummary, ArchiveAuditReport, ArchiveMetadata,
+    ArchiveReader, ArchiveReaderOptions, ArchiveRecoverySettings, ArchiveSummary, ArchiveWriter,
+    ArchiveWriterOptions, CompressionSettings, ControlEntryPolicy, DeltaWriteOptions,
     EncryptionSettings, EntryInput, EntryMetadata, EntryReader, EntryWritten, FecSettings,
-    LfhSizeFieldPolicy, LogicalFile, SparseWriteOptions, StreamWriteState, VerificationReport,
+    LfhSizeFieldPolicy, LogicalFile, PayloadAuditPolicy, SparseWriteOptions, StreamWriteState,
+    VerificationReport,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
 pub use recovery::{
