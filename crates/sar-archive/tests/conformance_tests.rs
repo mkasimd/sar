@@ -381,3 +381,148 @@ fn conformance_summary() {
     println!("  Active:          {}", total - deferred);
     println!("  Test-vectors dir: {}", root.display());
 }
+
+// ---------------------------------------------------------------------------
+// Test: bad AEAD tag is rejected even with a valid key provider
+// ---------------------------------------------------------------------------
+
+/// Key provider for test-only vectors.  Returns the fixed test password used
+/// by the generate_vectors example.
+struct StaticTestPassword {
+    password: String,
+}
+
+impl sar_crypto::provider::KeyProvider for StaticTestPassword {
+    fn password_for(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+    ) -> Result<Option<sar_crypto::SecretString>, sar_crypto::error::SarCryptoError> {
+        Ok(Some(sar_crypto::SecretString::new(self.password.clone())))
+    }
+
+    fn unwrap_key(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+        _wrapped: &[u8],
+    ) -> Result<Option<sar_crypto::SecretBytes>, sar_crypto::error::SarCryptoError> {
+        Ok(None)
+    }
+
+    fn external_key(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+    ) -> Result<Option<sar_crypto::SecretBytes>, sar_crypto::error::SarCryptoError> {
+        Ok(None)
+    }
+}
+
+#[test]
+fn bad_aead_tag_auth_failure() {
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+    use sar_core::error::SarError;
+    use std::io::Cursor;
+
+    let root = vectors_root();
+    let vector_path = root.join("invalid/crypto/bad-aead-tag/bad_aead_tag.sar");
+
+    let bytes = std::fs::read(&vector_path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {}", vector_path.display(), e));
+
+    let key_provider: Box<dyn sar_crypto::provider::KeyProvider> = Box::new(StaticTestPassword {
+        password: "sar-test-password-aes".to_string(),
+    });
+
+    let opts = ArchiveReaderOptions::default();
+    let mut reader = ArchiveReader::with_options(Cursor::new(&bytes), opts)
+        .expect("reader init")
+        .with_key_provider(key_provider);
+
+    reader.read_global_header().expect("global header");
+
+    // The first (and only) entry should fail with an authentication error.
+    let result = reader.next_entry();
+    match result {
+        Err(SarError::AuthFailed(_) | SarError::DecryptFailed(_)) => {
+            println!("[PASS] bad-aead-tag correctly rejected with auth failure");
+        }
+        Err(e) => panic!(
+            "bad-aead-tag rejected with unexpected error (expected auth failure): {}",
+            e
+        ),
+        Ok(_) => panic!("bad-aead-tag was accepted but must be rejected"),
+    }
+}
+
+#[test]
+fn crypto_vectors_parse_structurally_with_key_provider() {
+    use sar_archive::{ArchiveReader, ArchiveReaderOptions};
+    use std::io::Cursor;
+
+    let root = vectors_root();
+    let crypto_vectors = [
+        (
+            "valid/crypto/aes256-gcm/aes256_gcm_entry.sar",
+            "sar-test-password-aes",
+        ),
+        (
+            "valid/crypto/xchacha20-poly1305/xchacha20_poly1305_entry.sar",
+            "sar-test-password-xchacha",
+        ),
+    ];
+
+    let mut failures = Vec::new();
+
+    for (rel_path, password) in &crypto_vectors {
+        let path = root.join(rel_path);
+        let bytes = match std::fs::read(&path) {
+            Ok(b) => b,
+            Err(e) => {
+                failures.push(format!("cannot read {}: {}", path.display(), e));
+                continue;
+            }
+        };
+
+        let key_provider: Box<dyn sar_crypto::provider::KeyProvider> =
+            Box::new(StaticTestPassword {
+                password: (*password).to_string(),
+            });
+
+        let opts = ArchiveReaderOptions::default();
+        let mut reader = match ArchiveReader::with_options(Cursor::new(&bytes), opts) {
+            Ok(r) => r.with_key_provider(key_provider),
+            Err(e) => {
+                failures.push(format!("{}: reader init failed: {}", rel_path, e));
+                continue;
+            }
+        };
+
+        if let Err(e) = reader.read_global_header() {
+            failures.push(format!("{}: global header failed: {}", rel_path, e));
+            continue;
+        }
+
+        loop {
+            match reader.next_entry() {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(e) => {
+                    failures.push(format!("{}: entry failed: {}", rel_path, e));
+                    break;
+                }
+            }
+        }
+
+        println!(
+            "[PASS] {} — parsed successfully with key provider",
+            rel_path
+        );
+    }
+
+    if !failures.is_empty() {
+        panic!(
+            "{} crypto vector(s) failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        );
+    }
+}
