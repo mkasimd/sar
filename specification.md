@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Dönmez
+SPDX-License-Identifier: CC-BY-4.0
+-->
+
 # The Streamable Archive and Replication Protocol (SAR Protocol)
 ## Abstract
 This document specifies the Streamable Archive and Replication Protocol (SAR Protocol) version 1.0. SAR is a binary container format designed for high-performance data serialization, streaming, and secure long-term storage providing a data replication protocol. SAR prioritizes minimal metadata overhead, deterministic parsing, and native support for modern cryptographic and compression primitives. It utilizes a bitmask-driven architectural design where the presence of metadata fields is strictly governed by global flags. This revision formalizes the distinction between compression and patching registries, enabling a dual-stage pipeline where a binary patch is itself compressed, while maintaining features such as `NO_INDEX` mode, the Padding & Empty-Area Protocol, and Key Management Systems (KMS).
