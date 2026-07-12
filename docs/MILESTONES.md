@@ -750,6 +750,28 @@ If this milestone document appears to describe library/profile layout differentl
 * Additional QUIC control streams are not covered by this pass
 * This pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`
 
+## M12a-audit-cp: archive audit primitives and stream transcript recording
+
+* Added `sar-archive` archive-audit APIs:
+  * `ArchiveAuditOptions`
+  * `ArchiveAuditReport` (+ per-entry/report enums for control/payload outcomes)
+  * `ControlEntryPolicy` (`Reject` default, `PreserveInert` opt-in)
+  * `PayloadAuditPolicy` (`MetadataOnly`, `DecodeWhenKeysAvailable`, `RequireDecode`)
+* Default archive parsing behavior is unchanged:
+  * reject `SESSION_CONTROL` entries by default
+  * reject nonzero `OP_CODE` entries by default
+  * continue accepting classic `NO_INDEX` archives without stream-session semantics
+* Inert archive audit mode (`ControlEntryPolicy::PreserveInert`) performs structural auditing without executing stream-session semantics.
+* DATA_WRITE payload auditing in `sar-archive` now supports metadata-only inspection and explicit decode policies while preserving key-provider/auth behavior.
+* Added strict transcript validation + optional exact-byte transcript recording APIs in `sar-stream`:
+  * `validate_stream_transcript`
+  * `validate_stream_transcript_with_options`
+  * `validate_stream_transcript_with_sink`
+* Transcript recording is disabled by default, opt-in only, records exact received bytes, and surfaces I/O errors.
+* Added targeted `sar-archive` and `sar-stream` tests for audit policies and transcript recording.
+* No `sar-audit` crate was added in this pass.
+* This pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`.
+
 ## M12b: fuzzing and malicious corpus
 
 * global header fuzzing

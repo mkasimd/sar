@@ -3071,10 +3071,12 @@
       "purpose": "High-level SAR archive reader/writer, verification, and archive integration APIs.",
       "status": "implemented",
       "milestones": [
-        "11d"
+        "11d",
+        "12a-audit-cp"
       ],
       "features": [
-        "Milestone 11d: archive API architecture split from sar-core. Owns ArchiveReader/ArchiveWriter, entry metadata/input/output types, verification/listing flows, stream parser orchestration, indexed and NO_INDEX archive integration."
+        "Milestone 11d: archive API architecture split from sar-core. Owns ArchiveReader/ArchiveWriter, entry metadata/input/output types, verification/listing flows, stream parser orchestration, indexed and NO_INDEX archive integration.",
+        "Milestone 12a-audit-cp: archive audit primitives with explicit control-entry and payload-audit policies, deterministic machine-readable reports, and inert structural handling for stream transcript containers."
       ],
       "modules": [
         {
@@ -3228,6 +3230,28 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Maps well to a high-level verify API."
+            },
+            {
+              "name": "ArchiveReader::audit",
+              "kind": "function",
+              "signature": "pub fn ArchiveReader<R>::audit(&mut self, options: ArchiveAuditOptions) -> Result<ArchiveAuditReport, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Performs deterministic archive structural audit with explicit control-entry and payload policies. Default-safe mode rejects SESSION_CONTROL/nonzero OP_CODE; inert mode can preserve such entries as non-executed audit records.",
+              "parameters": [],
+              "returns": "Result<ArchiveAuditReport, SarError>",
+              "errors": [
+                "SarError"
+              ],
+              "safety_notes": [],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "12a-audit-cp",
+              "related_spec_sections": [],
+              "implemented": true,
+              "ffi_candidate": true,
+              "ffi_readiness": "candidate",
+              "ffi_notes": "Candidate for inspect/audit FFI wrappers once report structs are flattened for C ABI."
             },
             {
               "name": "ArchiveReader::read_all_logical_files",
@@ -6823,14 +6847,16 @@
       "purpose": "In-memory Stateful Streaming Mode session layer over sar-core structural parsing.",
       "status": "implemented",
       "milestones": [
-        "10b"
+        "10b",
+        "12a-audit-cp"
       ],
       "features": [
         "Activation requires NO_INDEX + non-zero Stream ID + valid SESSION_INIT.",
         "Session UUID binding, per-stream sequence continuity/wraparound, and SESSION_* frame parsing/writing.",
         "Filesystem/session OP_CODE namespace validation with in-memory event/action output only.",
         "LOSS_TOLERANT can surface authenticated degraded output as SAR_WARN_INCOMPLETE but does not suppress auth, decompression, patch, or structural failures.",
-        "No transport framing, networking, sockets, or async runtime."
+        "No transport framing, networking, sockets, or async runtime.",
+        "M12a-audit-cp: strict serialized stream transcript validation and optional exact-byte transcript recording (disabled by default)."
       ],
       "modules": [
         {
@@ -6869,6 +6895,35 @@
               "ffi_candidate": true,
               "ffi_readiness": "candidate",
               "ffi_notes": "Possible future opaque-handle wrapper because the API is already transport-free and in-memory."
+            },
+            {
+              "name": "validate_stream_transcript_with_options",
+              "kind": "function",
+              "signature": "pub fn validate_stream_transcript_with_options(bytes: &[u8], options: &StreamTranscriptValidationOptions) -> Result<StreamTranscriptValidationReport, SarError>",
+              "visibility": "public",
+              "stability": "stable",
+              "description": "Strict transcript semantic validation for NO_INDEX primary stream bytes, with optional exact-byte recording to caller-selected path/sink.",
+              "parameters": [],
+              "returns": "Result<StreamTranscriptValidationReport, SarError>",
+              "errors": [
+                "SarError"
+              ],
+              "safety_notes": [
+                "Recording is opt-in; default validation does not write files.",
+                "Validation remains strict and does not execute filesystem semantics."
+              ],
+              "examples": [],
+              "feature_flags": [],
+              "since_milestone": "12a-audit-cp",
+              "related_spec_sections": [
+                "18.1",
+                "18.2",
+                "18.3"
+              ],
+              "implemented": true,
+              "ffi_candidate": false,
+              "ffi_readiness": "not_ready",
+              "ffi_notes": "Path/sink and Rust I/O trait usage require dedicated FFI surface design."
             }
           ]
         }

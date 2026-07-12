@@ -11,6 +11,8 @@ use sar_stream::{
     validate_stream_transcript, validate_stream_transcript_with_options,
 };
 
+const TEST_SESSION_UUID: [u8; 16] = [0x11; 16];
+
 fn unique_temp_path(file_name: &str) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -31,7 +33,7 @@ fn build_valid_transcript() -> Vec<u8> {
     .expect("header");
 
     let init_payload = SessionInitFrame {
-        session_uuid: [0x11; 16],
+        session_uuid: TEST_SESSION_UUID,
         flags: SessionFlags::from_bits(0),
     }
     .to_bytes()
@@ -47,8 +49,10 @@ fn build_valid_transcript() -> Vec<u8> {
     bytes.extend_from_slice(&init_payload);
 
     let payload = b"abc";
-    let mut data_lfh =
-        LocalFileHeader::minimal_store(b"data".to_vec(), u64::try_from(payload.len()).expect("len"));
+    let mut data_lfh = LocalFileHeader::minimal_store(
+        b"data".to_vec(),
+        u64::try_from(payload.len()).expect("len"),
+    );
     data_lfh.stream_id = 0x42;
     data_lfh.sequence_no = 1;
     data_lfh.entry_mode = EntryMode::from_bits(0);
@@ -69,8 +73,10 @@ fn build_invalid_data_before_init_transcript() -> Vec<u8> {
     })
     .expect("header");
     let payload = b"abc";
-    let mut data_lfh =
-        LocalFileHeader::minimal_store(b"data".to_vec(), u64::try_from(payload.len()).expect("len"));
+    let mut data_lfh = LocalFileHeader::minimal_store(
+        b"data".to_vec(),
+        u64::try_from(payload.len()).expect("len"),
+    );
     data_lfh.stream_id = 0x42;
     data_lfh.sequence_no = 0;
     data_lfh.entry_mode = EntryMode::from_bits(0);
@@ -88,7 +94,10 @@ fn recording_is_disabled_by_default() {
     }
 
     let _ = validate_stream_transcript(&transcript).expect("valid");
-    assert!(!path.exists(), "default validation must not write transcript");
+    assert!(
+        !path.exists(),
+        "default validation must not write transcript"
+    );
 }
 
 #[test]

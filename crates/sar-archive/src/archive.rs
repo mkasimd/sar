@@ -1737,18 +1737,19 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 return Err(SarError::Truncated("payload exceeds data area bounds"));
             }
 
-            let mut payload_status = ArchiveAuditPayloadStatus::Skipped;
             let mut decoded_payload_size = None;
             let mut payload_error_status = None;
             let mut payload_error = None;
             let mut inert_payload_bytes = None;
+            let payload_status;
 
             match kind {
                 ArchiveAuditEntryKind::DataWrite => match options.payload_policy {
                     PayloadAuditPolicy::MetadataOnly => {
                         payload_status = ArchiveAuditPayloadStatus::Skipped;
                     }
-                    PayloadAuditPolicy::DecodeWhenKeysAvailable | PayloadAuditPolicy::RequireDecode => {
+                    PayloadAuditPolicy::DecodeWhenKeysAvailable
+                    | PayloadAuditPolicy::RequireDecode => {
                         self.reader.seek(SeekFrom::Start(payload_start))?;
                         let payload_len = self
                             .options
@@ -1757,7 +1758,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         let mut encoded_payload = vec![0u8; payload_len];
                         self.reader.read_exact(&mut encoded_payload)?;
 
-                        match self.decode_audit_payload(&header, &lfh, &lfh_bytes, &encoded_payload) {
+                        match self.decode_audit_payload(&header, &lfh, &lfh_bytes, &encoded_payload)
+                        {
                             Ok(decoded) => {
                                 payload_status = ArchiveAuditPayloadStatus::Decoded;
                                 decoded_payload_size = Some(
@@ -1785,7 +1787,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         }
                     }
                 },
-                ArchiveAuditEntryKind::InertFilesystemOp | ArchiveAuditEntryKind::InertSessionControl => {
+                ArchiveAuditEntryKind::InertFilesystemOp
+                | ArchiveAuditEntryKind::InertSessionControl => {
                     payload_status = ArchiveAuditPayloadStatus::Skipped;
                     if options.include_inert_payload_bytes {
                         self.reader.seek(SeekFrom::Start(payload_start))?;
@@ -1853,7 +1856,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             entries,
             footer_present: !header.flags.contains(GlobalFlags::NO_INDEX),
             central_dictionary_present: self.cd.is_some(),
-            cd_footer_valid: true,
+            cd_footer_valid: header.flags.contains(GlobalFlags::NO_INDEX) || self.cd.is_some(),
             recovery,
         })
     }
@@ -1868,6 +1871,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
             })
     }
 
+    /// Decodes one DATA_WRITE payload for audit mode using normal archive rules.
+    ///
+    /// This mirrors the `next_entry` decode path (decrypt/authenticate,
+    /// decompress, delta apply, and size checks) without building full
+    /// high-level entry metadata. `lfh_bytes` is required for AEAD AAD
+    /// construction when encrypted entries are present.
     fn decode_audit_payload(
         &self,
         header: &GlobalHeader,
@@ -1883,7 +1892,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 "IS_ENCRYPTED requires global ENCRYPTED",
             ));
         }
-        let is_sparse = header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
+        let is_sparse =
+            header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
         let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
         let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
 
@@ -1905,12 +1915,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
             ));
         }
 
-        let decode_expected = if is_sparse || (is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH)
-        {
-            self.options.max_decoded_entry_size()
-        } else {
-            lfh.uncompressed_size
-        };
+        let decode_expected =
+            if is_sparse || (is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH) {
+                self.options.max_decoded_entry_size()
+            } else {
+                lfh.uncompressed_size
+            };
 
         let effective_comp_algo_id = if is_effectively_compressed {
             lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
@@ -1928,9 +1938,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
             ))?;
             let context = build_kms_context(header)?;
             let key = resolve_cek(provider, &context).map_err(SarError::from)?;
-            let iv_nonce = lfh
-                .iv_nonce
-                .ok_or(SarError::Malformed("encrypted entry missing IV/nonce field"))?;
+            let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
+                "encrypted entry missing IV/nonce field",
+            ))?;
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
             let aad_lfh_bytes =
                 lfh_bytes_for_aad(header.flags, lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
@@ -1945,23 +1955,100 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
-        let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits)?;
-        let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits)?;
-
-        decode_payload_v2(
+        let decoded = decode_payload_v2(
             encoded_payload,
             DecodingPlanV2 {
                 is_compressed: is_effectively_compressed,
                 comp_algo_id: effective_comp_algo_id,
-                crypto,
                 expected_output_size: decode_expected,
-                is_has_delta,
-                patch_algo_id: patch_raw_id,
-                delta_base: self.options.delta_base.as_deref(),
-                bsdiff_limits,
-                vcdiff_limits,
+                max_output_size: self.options.max_decoded_entry_size(),
+                crypto,
             },
-        )
+        )?;
+
+        let decoded = if is_has_delta {
+            match patch_raw_id {
+                PATCH_ALGO_STORE_PATCH => {
+                    if !is_sparse {
+                        apply_store_patch(&decoded, lfh.uncompressed_size)
+                            .map_err(map_patch_error)?
+                    } else {
+                        decoded
+                    }
+                }
+                PATCH_ALGO_VCDIFF => {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
+                        return Err(SarError::BaseMissing(
+                            "VCDIFF: all-zero Delta Base Hash indicates missing base",
+                        ));
+                    }
+                    let base = self
+                        .options
+                        .delta_base
+                        .as_deref()
+                        .ok_or(SarError::BaseMissing(
+                            "VCDIFF: no base bytes supplied in reader options",
+                        ))?;
+                    let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits);
+                    apply_vcdiff(base, &decoded, lfh.uncompressed_size, &vcdiff_limits)
+                        .map_err(map_patch_error)?
+                }
+                PATCH_ALGO_BSDIFF => {
+                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
+                    if hash == ZERO_DELTA_BASE_HASH {
+                        return Err(SarError::BaseMissing(
+                            "BSDIFF: all-zero Delta Base Hash indicates missing base",
+                        ));
+                    }
+                    let base = self
+                        .options
+                        .delta_base
+                        .as_deref()
+                        .ok_or(SarError::BaseMissing(
+                            "BSDIFF: no base bytes supplied in reader options",
+                        ))?;
+                    let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits);
+                    apply_bsdiff(base, &decoded, lfh.uncompressed_size, &bsdiff_limits)
+                        .map_err(map_patch_error)?
+                }
+                PATCH_ALGO_ZSTD_PATCH => {
+                    return Err(SarError::Unsupported(
+                        "ZSTD_PATCH: dictionary protocol not specified; not implemented",
+                    ));
+                }
+                id if id >= PATCH_ALGO_CUSTOM_MIN => {
+                    return Err(SarError::Unsupported(
+                        "CUSTOM patch algorithm not supported",
+                    ));
+                }
+                _ => return Err(SarError::ReservedValue("reserved patch algorithm ID")),
+            }
+        } else {
+            decoded
+        };
+
+        if !is_sparse {
+            if u64::try_from(decoded.len())
+                .map_err(|_| SarError::Overflow("decoded payload len"))?
+                != lfh.uncompressed_size
+            {
+                return Err(SarError::InvalidLength(
+                    "decoded payload size does not match LFH Uncompressed Size",
+                ));
+            }
+            if !is_effectively_compressed
+                && !is_encrypted
+                && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
+                && lfh.payload_size != lfh.uncompressed_size
+            {
+                return Err(SarError::InvalidLength(
+                    "STORE mode requires Payload Size == Uncompressed Size",
+                ));
+            }
+        }
+
+        Ok(decoded)
     }
 
     /// Reads all entries from the archive and returns fully reconstructed

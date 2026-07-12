@@ -50,7 +50,10 @@ fn make_no_index_archive_with_single_entry(entry_mode: EntryMode, payload: &[u8]
     })
     .expect("global header");
 
-    let mut lfh = LocalFileHeader::minimal_store(b"entry".to_vec(), payload.len() as u64);
+    let mut lfh = LocalFileHeader::minimal_store(
+        b"entry".to_vec(),
+        u64::try_from(payload.len()).expect("payload length"),
+    );
     lfh.entry_mode = entry_mode;
     lfh.stream_id = 1;
     lfh.sequence_no = 1;
@@ -127,7 +130,9 @@ fn default_audit_rejects_session_control() {
         b"",
     );
     let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
-    let err = reader.audit(ArchiveAuditOptions::default()).expect_err("reject");
+    let err = reader
+        .audit(ArchiveAuditOptions::default())
+        .expect_err("reject");
     assert_eq!(err.status(), SarStatus::ErrUnsupported);
 }
 
@@ -135,7 +140,9 @@ fn default_audit_rejects_session_control() {
 fn default_audit_rejects_nonzero_opcode() {
     let bytes = make_no_index_archive_with_single_entry(EntryMode::from_bits(0x01 << 8), b"x");
     let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
-    let err = reader.audit(ArchiveAuditOptions::default()).expect_err("reject");
+    let err = reader
+        .audit(ArchiveAuditOptions::default())
+        .expect_err("reject");
     assert_eq!(err.status(), SarStatus::ErrUnsupported);
 }
 

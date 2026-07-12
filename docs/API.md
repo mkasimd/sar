@@ -735,6 +735,7 @@ Import high-level archive APIs from `sar_archive`, not `sar_core`.
 - Milestone 10a: stream archive parser orchestration
 - Milestone 11a/11b: expanded `EntryInput`, `EntryMetadata`, filesystem metadata round-trip
 - Milestone 11d: crate split — moved from `sar-core`
+- Milestone 12a audit-cp: archive structural audit APIs with inert control/opcode handling and payload audit policies
 
 ### Public modules
 
@@ -753,6 +754,7 @@ Import high-level archive APIs from `sar_archive`, not `sar_core`.
   - `read_global_header()`
   - `next_entry()`
   - `verify()`
+  - `audit(ArchiveAuditOptions)`
   - `metadata()`
   - `read_all_logical_files(allow_lossy: bool)`
 - `ArchiveWriter<W>`
@@ -787,6 +789,8 @@ Import high-level archive APIs from `sar_archive`, not `sar_core`.
   - `limits: ResourceLimits`
   - `delta_base: Option<Vec<u8>>`
 - `ArchiveRecoverySettings`, `CompressionSettings`, `EncryptionSettings`, `FecSettings`, `LfhSizeFieldPolicy`
+- `ArchiveAuditOptions`, `ArchiveAuditReport`, `ArchiveAuditEntryReport`, `ArchiveAuditRecoverySummary`
+- `ControlEntryPolicy`, `PayloadAuditPolicy`, `ArchiveAuditMode`, `ArchiveAuditEntryKind`, `ArchiveAuditPayloadStatus`
 - `SparseWriteOptions { logical_size: u64, extents: Vec<SparseExtent> }`
 - `EntryInput`, `EntryReader`, `EntryMetadata`, `EntryWritten`, `LogicalFile`
 - `ArchiveMetadata`, `ArchiveSummary`, `VerificationReport`
@@ -1301,7 +1305,7 @@ The following crates are not high-level archive API owners. They either provide 
 ### `sar-stream`
 
 - Purpose: in-memory Stateful Streaming Mode session semantics layered over `sar-core`
-- Status: implemented for Milestone 10b session semantics only
+- Status: implemented for Milestone 10b session semantics + M12a audit-cp strict transcript validation/recording helpers
 - Public APIs:
   - `SessionManager`, `SessionManagerConfig`
   - `SessionEntry`, `ProcessResult`
@@ -1310,10 +1314,13 @@ The following crates are not high-level archive API owners. They either provide 
   - `FilesystemAction`, `FilesystemEntryAction`, `FilesystemDeleteAction`, `FilesystemRenameAction`, `FilesystemSyncBarrierAction`
   - `SessionInitFrame`, `SessionResumeFrame`, `SessionStatusFrame`, `SessionAckFrame`, `SessionMetadataFrame`, `SessionCapabilitiesFrame`
   - `SessionFlags`, `CapabilityFlags`, `AckFlags`, `SessionOpCode`, `FilesystemOpCode`
+  - `validate_stream_transcript`, `validate_stream_transcript_with_options`, `validate_stream_transcript_with_sink`
+  - `StreamTranscriptValidationOptions`, `StreamTranscriptValidationReport`, `TranscriptRecording`
 - FFI readiness: `candidate`
 - Notes:
   - strictly in-memory only; no transport abstraction or network I/O
   - requires `NO_INDEX` + non-zero `Stream ID` + valid `SESSION_INIT` before stateful activation
+  - stream transcript recording is disabled by default and only writes exact received bytes when explicitly enabled
   - sequence continuity is enforced for all accepted entries, including heartbeats and control frames
   - `CapabilityFlags` now includes `CAP_TLS_EXPORTER_AEAD` (bit 6, spec-defined); this bit passes `validate()`, is not advertised by TCP bindings, and advertises support only rather than selecting TLS_EXPORTER SAR-AEAD
 
