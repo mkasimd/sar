@@ -37,7 +37,7 @@ Resolved items are kept separately to avoid presenting closed work as still open
 - **M11c/M11c-cp:** crate-boundary cleanup and corrective split delivered.
 - **M11d:** high-level archive API ownership moved to `sar-archive`.
 - **M11e:** CLI metadata flags/behavior and safe extraction policy gating delivered.
-- **M12a:** conformance, corrective vector, stream transcript, and audit primitive passes
+- **M12a:** conformance framework, corrective vector passes, serialized stream transcript vectors, archive audit primitives, and stream transcript validation/recording APIs delivered.
 
 ## Future milestone alignment note
 

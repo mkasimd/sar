@@ -17,8 +17,9 @@ Before making substantial changes, consult the documents that define the relevan
 
 * `specification.md` - SAR Protocol v1.0 wire-format and protocol behavior
 * `docs/CRATE_RESPONSIBILITIES.md` - crate ownership and architectural boundaries
-* `docs/API.md` - current public API inventory
-* `docs/MACHINE_READABLE_API.json` - machine-readable public API inventory
+* `docs/MACHINE_READABLE_API.json` - authoritative inventory
+* `docs/MACHINE_READABLE_API.schema.json` - inventory schema
+* `docs/API.md` - generated human-readable subset
 * `docs/CONFORMANCE.md` - conformance status and vector expectations
 * `docs/SECURITY.md` - security posture and constraints
 * `docs/MILESTONES.md` - milestone roadmap and implementation status
@@ -209,13 +210,14 @@ If a pull request changes public API:
 
 * describe the change
 * explain why it is needed
-* update API documentation and machine-readable inventory where applicable
+* update `docs/MACHINE_READABLE_API.json`
+* validate it with `python tools/check_api_schema.py`
+* regenerate `docs/API.md` with `python tools/generate_api_md.py`
 * update README examples if affected
 * update tests
 
 The authoritative API inventory is:
 
-* `docs/API.md`
 * `docs/MACHINE_READABLE_API.json`
 
 ## AI-assisted contributions

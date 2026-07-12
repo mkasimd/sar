@@ -501,6 +501,9 @@ Conformance manifest validation is covered by the Rust test suite, including `sa
 Optional documentation/JSON validation, if Python is available:
 
 ```bash
+python -m json.tool docs/MACHINE_READABLE_API.schema.json > /dev/null
+python tools/check_api_schema.py
+python tools/generate_api_md.py --check
 python -m json.tool docs/MACHINE_READABLE_API.json > /dev/null
 python -m json.tool test-vectors/manifest.schema.json > /dev/null
 find test-vectors -name manifest.json -print0 | xargs -0 -n1 python -m json.tool > /dev/null
@@ -528,11 +531,12 @@ Without the `quic` feature, TCP and in-memory transport behavior remain availabl
 Primary documentation files:
 
 * `specification.md` - SAR Protocol v1.0 specification document
-* `docs/API.md` - reviewed API inventory and current public surface
+* `docs/MACHINE_READABLE_API.json` - authoritative machine-readable public API inventory
+* `docs/MACHINE_READABLE_API.schema.json` - schema for the machine-readable API inventory
+* `docs/API.md` - generated human-readable subset of the API inventory
 * `docs/CONFORMANCE.md` - conformance notes and profile status
 * `docs/CRATE_RESPONSIBILITIES.md` - crate ownership boundaries
 * `docs/LIBRARY_LAYOUT.md` - workspace and library layout
-* `docs/MACHINE_READABLE_API.json` - machine-readable API inventory
 * `docs/MILESTONES.md` - milestone roadmap and completion status
 * `docs/SECURITY.md` - security posture and constraints
 * `docs/SPEC_QUESTIONS.md` - open specification questions and implementation gaps
