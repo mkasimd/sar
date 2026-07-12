@@ -311,7 +311,7 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | --- | --- | --- | --- |
 | `ArchiveAuditEntryKind` | `enum` | `pub enum ArchiveAuditEntryKind { OrdinaryEntry, InertOpcodeEntry, InertSessionControl }` | Per-entry audit classification for ordinary entries, inert control entries, or rejected entries. |
 | `ArchiveAuditEntryReport` | `struct` | `pub struct ArchiveAuditEntryReport { pub lfh_offset: u64, pub entry_mode_bits: u16, pub op_code: u8, pub session_control: bool, pub kind: ArchiveAuditEntryKind, pub payload_size: u64, pub uncompressed_size: u64, pub payload_status: ArchiveAuditPayloadStatus, ... }` | Per-entry archive audit report. |
-| `ArchiveAuditMode` | `enum` | `pub enum ArchiveAuditMode { Indexed, NoIndex }` | Audit mode classification for ordinary archive entries versus explicitly inert control/session-shaped entries. |
+| `ArchiveAuditMode` | `enum` | `pub enum ArchiveAuditMode { Indexed, NoIndex }` | Archive audit mode indicating whether the audited archive was indexed or NO_INDEX. |
 | `ArchiveAuditOptions` | `struct` | `pub struct ArchiveAuditOptions { pub control_entry_policy: ControlEntryPolicy, pub payload_policy: PayloadAuditPolicy, pub include_inert_payload_bytes: bool }` | Options for deterministic archive audit, including control-entry handling and payload-audit policy. |
 | `ArchiveAuditPayloadStatus` | `enum` | `pub enum ArchiveAuditPayloadStatus { Decoded, Skipped, Unavailable, Failed }` | Per-entry payload verification status reported by archive audit. |
 | `ArchiveAuditRecoverySummary` | `struct` | `pub struct ArchiveAuditRecoverySummary { pub tlv_count: u32, pub tlv_type_ids: Vec<u8> }` | Summary of archive-level recovery metadata discovered during audit. |

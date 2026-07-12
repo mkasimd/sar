@@ -4333,7 +4333,7 @@
           },
           {
             "name": "ArchiveAuditMode",
-            "description": "Audit mode classification for ordinary archive entries versus explicitly inert control/session-shaped entries.",
+            "description": "Archive audit mode indicating whether the audited archive was indexed or NO_INDEX.",
             "metadata": {
               "since_milestone": "12a-audit-cp",
               "stability": "stable",
