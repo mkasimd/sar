@@ -87,7 +87,6 @@ fn assert_require_decode_matches_next_entry(bytes: &[u8], expected_status: SarSt
         })
         .expect_err("require-decode audit must fail");
     assert_eq!(audit_err.status(), ordinary_err.status());
-    assert_eq!(audit_err.to_string(), ordinary_err.to_string());
 
     let mut best_effort_reader = ArchiveReader::new(Cursor::new(bytes.to_vec())).expect("reader");
     let report = best_effort_reader

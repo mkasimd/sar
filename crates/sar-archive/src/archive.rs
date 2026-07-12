@@ -1296,6 +1296,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
                                 if options.payload_policy == PayloadAuditPolicy::RequireDecode {
                                     return Err(err);
                                 }
+                                // Only missing key/base/provider conditions degrade to
+                                // Unavailable in best-effort audit mode. All concrete
+                                // decode, authentication, metadata, and structural errors
+                                // remain Failed per the audit policy.
                                 payload_status = if is_unavailable {
                                     ArchiveAuditPayloadStatus::Unavailable
                                 } else {
