@@ -671,6 +671,158 @@ pub struct VerificationReport {
     pub cdc_support: bool,
 }
 
+/// Policy for handling entries that carry SESSION_CONTROL or nonzero OP_CODE bits.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlEntryPolicy {
+    /// Reject control/opcode entries with `SAR_ERR_UNSUPPORTED`.
+    #[default]
+    Reject,
+    /// Preserve and report control/opcode entries as inert audit records.
+    PreserveInert,
+}
+
+/// Payload handling policy for archive auditing.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PayloadAuditPolicy {
+    /// Parse structure and report payload metadata without decoding payload bytes.
+    MetadataOnly,
+    /// Decode DATA_WRITE payloads when key/base providers are available.
+    ///
+    /// Missing key/base/provider conditions are reported as unavailable and do
+    /// not fail the full audit.
+    DecodeWhenKeysAvailable,
+    /// Require DATA_WRITE decode. Missing key/base/provider conditions fail.
+    #[default]
+    RequireDecode,
+}
+
+/// Archive audit options.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ArchiveAuditOptions {
+    /// Policy for SESSION_CONTROL/nonzero OP_CODE entries.
+    pub control_entry_policy: ControlEntryPolicy,
+    /// Policy for DATA_WRITE payload decoding during audit.
+    pub payload_policy: PayloadAuditPolicy,
+    /// When `true`, include raw payload bytes for inert entries.
+    ///
+    /// This is opt-in and intended for explicit audit export workflows.
+    pub include_inert_payload_bytes: bool,
+}
+
+/// Archive mode observed by audit.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveAuditMode {
+    /// Indexed archive with CD/Footer.
+    Indexed,
+    /// Forward-only archive with `NO_INDEX`.
+    NoIndex,
+}
+
+/// Per-entry audit classification.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveAuditEntryKind {
+    /// Normal DATA_WRITE semantics (`SESSION_CONTROL=0`, `OP_CODE=0`).
+    DataWrite,
+    /// Inert filesystem/replication operation (`SESSION_CONTROL=0`, `OP_CODE!=0`).
+    InertFilesystemOp,
+    /// Inert session-control entry (`SESSION_CONTROL=1`).
+    InertSessionControl,
+}
+
+/// Payload decode result for one audited entry.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ArchiveAuditPayloadStatus {
+    /// Payload decoding succeeded.
+    Decoded,
+    /// Payload decoding was intentionally skipped by policy.
+    Skipped,
+    /// Payload decoding was unavailable (e.g., missing key/base provider).
+    Unavailable,
+    /// Payload decoding failed with a concrete error.
+    Failed,
+}
+
+/// Per-entry archive audit report.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveAuditEntryReport {
+    /// Absolute LFH offset.
+    pub lfh_offset: u64,
+    /// Raw `Entry_Mode` bits.
+    pub entry_mode_bits: u16,
+    /// Raw `OP_CODE` value.
+    pub op_code: u8,
+    /// Whether `SESSION_CONTROL` bit is set.
+    pub session_control: bool,
+    /// Entry semantic class in audit mode.
+    pub kind: ArchiveAuditEntryKind,
+    /// Encoded payload size from LFH.
+    pub payload_size: u64,
+    /// Logical/uncompressed size from LFH.
+    pub uncompressed_size: u64,
+    /// Compression algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comp_algo_id: Option<u8>,
+    /// Encryption algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encr_algo_id: Option<u8>,
+    /// FEC algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fec_algo_id: Option<u8>,
+    /// Patch algorithm ID when physically present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch_algo_id: Option<u8>,
+    /// Payload audit status.
+    pub payload_status: ArchiveAuditPayloadStatus,
+    /// Decoded payload size when decode succeeded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decoded_payload_size: Option<u64>,
+    /// Stable SAR status when payload decode is unavailable/failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_error_status: Option<String>,
+    /// Human-readable payload decode error summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload_error: Option<String>,
+    /// Optional raw inert payload bytes when explicitly requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inert_payload_bytes: Option<Vec<u8>>,
+}
+
+/// Recovery TLV summary in archive audit reports.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveAuditRecoverySummary {
+    /// Number of recovery TLVs (`0x10..=0x1F`) found in CD metadata.
+    pub tlv_count: u32,
+    /// Sorted type IDs of recovery TLVs found.
+    pub tlv_type_ids: Vec<u8>,
+}
+
+/// Deterministic machine-readable archive audit report.
+#[derive(Debug, Clone, Serialize)]
+pub struct ArchiveAuditReport {
+    /// Archive indexing mode.
+    pub mode: ArchiveAuditMode,
+    /// Raw global flag bits from the Global Header.
+    pub global_flags: u32,
+    /// Number of entries observed in the Data Area.
+    pub entry_count_seen: u64,
+    /// Per-entry audit reports in stream order.
+    pub entries: Vec<ArchiveAuditEntryReport>,
+    /// Footer presence (indexed archives only).
+    pub footer_present: bool,
+    /// Central Dictionary presence.
+    pub central_dictionary_present: bool,
+    /// CD/Footer validation status.
+    pub cd_footer_valid: bool,
+    /// Recovery TLV presence/summary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery: Option<ArchiveAuditRecoverySummary>,
+}
+
 /// Streaming archive reader over a seekable source.
 pub struct ArchiveReader<R> {
     reader: R,
@@ -1517,6 +1669,195 @@ impl<R: Read + Seek> ArchiveReader<R> {
         })
     }
 
+    /// Audits archive structure and payload availability with explicit policies.
+    ///
+    /// Defaults are safe:
+    /// - `ControlEntryPolicy::Reject`
+    /// - `PayloadAuditPolicy::RequireDecode`
+    pub fn audit(&mut self, options: ArchiveAuditOptions) -> Result<ArchiveAuditReport, SarError> {
+        if self.global_header.is_none() {
+            let _ = self.read_global_header()?;
+        }
+
+        let header = self
+            .global_header
+            .as_ref()
+            .ok_or(SarError::Malformed("global header missing"))?
+            .clone();
+        self.next_offset = self.header_len;
+
+        let mut entries = Vec::new();
+        while self.next_offset < self.data_end {
+            let lfh_offset = self.next_offset;
+            self.reader.seek(SeekFrom::Start(lfh_offset))?;
+
+            let mut header_size_bytes = [0u8; 4];
+            self.reader.read_exact(&mut header_size_bytes)?;
+            let header_size = usize::try_from(u32::from_le_bytes(header_size_bytes))
+                .map_err(|_| SarError::Overflow("LFH header size"))?;
+            self.options.limits.check_lfh_header_bytes(header_size)?;
+            if header_size < 4 {
+                return Err(SarError::InvalidLength(
+                    "LFH Header Size smaller than fixed prefix",
+                ));
+            }
+
+            let mut lfh_bytes = vec![0u8; header_size];
+            lfh_bytes[..4].copy_from_slice(&header_size_bytes);
+            if header_size > 4 {
+                self.reader.read_exact(&mut lfh_bytes[4..])?;
+            }
+            let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
+
+            let session_control = lfh.entry_mode.is_session_control();
+            let op_code = lfh.entry_mode.op_code();
+            let kind = if session_control {
+                ArchiveAuditEntryKind::InertSessionControl
+            } else if op_code != 0 {
+                ArchiveAuditEntryKind::InertFilesystemOp
+            } else {
+                ArchiveAuditEntryKind::DataWrite
+            };
+            if !matches!(kind, ArchiveAuditEntryKind::DataWrite)
+                && options.control_entry_policy == ControlEntryPolicy::Reject
+            {
+                return Err(SarError::Unsupported(
+                    "archive parsing rejects SESSION_CONTROL entries and nonzero OP_CODE values by default",
+                ));
+            }
+
+            let payload_start = self
+                .next_offset
+                .checked_add(u64::from(lfh.header_size))
+                .ok_or(SarError::Overflow("payload start"))?;
+            let payload_end = payload_start
+                .checked_add(lfh.payload_size)
+                .ok_or(SarError::Overflow("payload end"))?;
+            if payload_end > self.data_end {
+                return Err(SarError::Truncated("payload exceeds data area bounds"));
+            }
+
+            let mut payload_status = ArchiveAuditPayloadStatus::Skipped;
+            let mut decoded_payload_size = None;
+            let mut payload_error_status = None;
+            let mut payload_error = None;
+            let mut inert_payload_bytes = None;
+
+            match kind {
+                ArchiveAuditEntryKind::DataWrite => match options.payload_policy {
+                    PayloadAuditPolicy::MetadataOnly => {
+                        payload_status = ArchiveAuditPayloadStatus::Skipped;
+                    }
+                    PayloadAuditPolicy::DecodeWhenKeysAvailable | PayloadAuditPolicy::RequireDecode => {
+                        self.reader.seek(SeekFrom::Start(payload_start))?;
+                        let payload_len = self
+                            .options
+                            .limits
+                            .allocation_len(lfh.payload_size, "payload length usize")?;
+                        let mut encoded_payload = vec![0u8; payload_len];
+                        self.reader.read_exact(&mut encoded_payload)?;
+
+                        match self.decode_audit_payload(&header, &lfh, &lfh_bytes, &encoded_payload) {
+                            Ok(decoded) => {
+                                payload_status = ArchiveAuditPayloadStatus::Decoded;
+                                decoded_payload_size = Some(
+                                    u64::try_from(decoded.len())
+                                        .map_err(|_| SarError::Overflow("decoded payload size"))?,
+                                );
+                            }
+                            Err(err) => {
+                                let is_unavailable = matches!(
+                                    err,
+                                    SarError::KeyMissing(_) | SarError::BaseMissing(_)
+                                );
+                                payload_error_status = Some(err.status().name().to_string());
+                                payload_error = Some(err.to_string());
+
+                                if options.payload_policy == PayloadAuditPolicy::RequireDecode {
+                                    return Err(err);
+                                }
+                                payload_status = if is_unavailable {
+                                    ArchiveAuditPayloadStatus::Unavailable
+                                } else {
+                                    ArchiveAuditPayloadStatus::Failed
+                                };
+                            }
+                        }
+                    }
+                },
+                ArchiveAuditEntryKind::InertFilesystemOp | ArchiveAuditEntryKind::InertSessionControl => {
+                    payload_status = ArchiveAuditPayloadStatus::Skipped;
+                    if options.include_inert_payload_bytes {
+                        self.reader.seek(SeekFrom::Start(payload_start))?;
+                        let payload_len = self
+                            .options
+                            .limits
+                            .allocation_len(lfh.payload_size, "payload length usize")?;
+                        let mut raw_payload = vec![0u8; payload_len];
+                        self.reader.read_exact(&mut raw_payload)?;
+                        inert_payload_bytes = Some(raw_payload);
+                    }
+                }
+            }
+
+            entries.push(ArchiveAuditEntryReport {
+                lfh_offset,
+                entry_mode_bits: lfh.entry_mode.bits(),
+                op_code,
+                session_control,
+                kind,
+                payload_size: lfh.payload_size,
+                uncompressed_size: lfh.uncompressed_size,
+                comp_algo_id: lfh.comp_algo_id,
+                encr_algo_id: lfh.encr_algo_id,
+                fec_algo_id: lfh.fec_algo_id,
+                patch_algo_id: lfh.patch_algo_id,
+                payload_status,
+                decoded_payload_size,
+                payload_error_status,
+                payload_error,
+                inert_payload_bytes,
+            });
+
+            self.next_offset = payload_end;
+        }
+
+        let mut recovery_type_ids: Vec<u8> = self
+            .cd
+            .as_ref()
+            .into_iter()
+            .flat_map(|cd| cd.metadata.iter())
+            .filter_map(|tlv| (0x10..=0x1F).contains(&tlv.type_id).then_some(tlv.type_id))
+            .collect();
+        recovery_type_ids.sort_unstable();
+        recovery_type_ids.dedup();
+        let recovery = if recovery_type_ids.is_empty() {
+            None
+        } else {
+            Some(ArchiveAuditRecoverySummary {
+                tlv_count: u32::try_from(recovery_type_ids.len())
+                    .map_err(|_| SarError::Overflow("recovery tlv count"))?,
+                tlv_type_ids: recovery_type_ids,
+            })
+        };
+
+        Ok(ArchiveAuditReport {
+            mode: if header.flags.contains(GlobalFlags::NO_INDEX) {
+                ArchiveAuditMode::NoIndex
+            } else {
+                ArchiveAuditMode::Indexed
+            },
+            global_flags: header.flags.bits(),
+            entry_count_seen: u64::try_from(entries.len())
+                .map_err(|_| SarError::Overflow("entry count"))?,
+            entries,
+            footer_present: !header.flags.contains(GlobalFlags::NO_INDEX),
+            central_dictionary_present: self.cd.is_some(),
+            cd_footer_valid: true,
+            recovery,
+        })
+    }
+
     /// Returns parsed archive metadata when header has been read.
     pub fn metadata(&self) -> Option<ArchiveMetadata> {
         self.global_header
@@ -1525,6 +1866,102 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 global_header: global_header.clone(),
                 central_dictionary: self.cd.clone(),
             })
+    }
+
+    fn decode_audit_payload(
+        &self,
+        header: &GlobalHeader,
+        lfh: &LocalFileHeader,
+        lfh_bytes: &[u8],
+        encoded_payload: &[u8],
+    ) -> Result<Vec<u8>, SarError> {
+        let is_effectively_compressed =
+            header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
+        let is_encrypted = lfh.entry_mode.is_encrypted();
+        if is_encrypted && !header.flags.contains(GlobalFlags::ENCRYPTED) {
+            return Err(SarError::FlagConflict(
+                "IS_ENCRYPTED requires global ENCRYPTED",
+            ));
+        }
+        let is_sparse = header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty();
+        let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
+        let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
+
+        if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
+            self.options
+                .limits
+                .check_decoded_entry_size(lfh.uncompressed_size)?;
+        }
+
+        if is_has_delta
+            && patch_raw_id == PATCH_ALGO_STORE_PATCH
+            && !is_effectively_compressed
+            && !is_encrypted
+            && !is_sparse
+            && lfh.payload_size != lfh.uncompressed_size
+        {
+            return Err(SarError::PatchFailed(
+                "STORE_PATCH: raw payload length does not match LFH Uncompressed Size",
+            ));
+        }
+
+        let decode_expected = if is_sparse || (is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH)
+        {
+            self.options.max_decoded_entry_size()
+        } else {
+            lfh.uncompressed_size
+        };
+
+        let effective_comp_algo_id = if is_effectively_compressed {
+            lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
+        } else {
+            COMP_ALGO_STORE
+        };
+
+        let crypto = if is_encrypted {
+            let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
+                "encrypted entry missing encryption algorithm ID",
+            ))?;
+            validate_encr_algo_id(algo_id).map_err(SarError::from)?;
+            let provider = self.key_provider.as_deref().ok_or(SarError::KeyMissing(
+                "no key provider configured for encrypted archive",
+            ))?;
+            let context = build_kms_context(header)?;
+            let key = resolve_cek(provider, &context).map_err(SarError::from)?;
+            let iv_nonce = lfh
+                .iv_nonce
+                .ok_or(SarError::Malformed("encrypted entry missing IV/nonce field"))?;
+            let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
+            let aad_lfh_bytes =
+                lfh_bytes_for_aad(header.flags, lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
+            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
+            Some(EntryCryptoContext {
+                algo_id,
+                iv_nonce,
+                aad,
+                key,
+            })
+        } else {
+            None
+        };
+
+        let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits)?;
+        let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits)?;
+
+        decode_payload_v2(
+            encoded_payload,
+            DecodingPlanV2 {
+                is_compressed: is_effectively_compressed,
+                comp_algo_id: effective_comp_algo_id,
+                crypto,
+                expected_output_size: decode_expected,
+                is_has_delta,
+                patch_algo_id: patch_raw_id,
+                delta_base: self.options.delta_base.as_deref(),
+                bsdiff_limits,
+                vcdiff_limits,
+            },
+        )
     }
 
     /// Reads all entries from the archive and returns fully reconstructed

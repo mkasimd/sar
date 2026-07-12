@@ -1,0 +1,272 @@
+use std::fs;
+use std::io::Cursor;
+use std::path::Path;
+
+use sar_archive::{
+    ArchiveAuditEntryKind, ArchiveAuditOptions, ArchiveAuditPayloadStatus, ArchiveReader,
+    ArchiveWriter, ArchiveWriterOptions, CompressionSettings, ControlEntryPolicy, EntryInput,
+    PayloadAuditPolicy,
+};
+use sar_core::{
+    EntryMode, GlobalFlags, GlobalHeader, LocalFileHeader, SarError, SarStatus,
+    format::{write_global_header, write_lfh},
+};
+use sar_crypto::{
+    ENCR_AES256_GCM, KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes, SecretString,
+    kms::types::Pbkdf2Params,
+};
+
+#[derive(Clone)]
+struct TestKeyProvider {
+    password: SecretString,
+}
+
+impl KeyProvider for TestKeyProvider {
+    fn password_for(&self, _ctx: &KmsContext) -> Result<Option<SecretString>, SarCryptoError> {
+        Ok(Some(self.password.clone()))
+    }
+
+    fn unwrap_key(
+        &self,
+        _ctx: &KmsContext,
+        _wrapped: &[u8],
+    ) -> Result<Option<SecretBytes>, SarCryptoError> {
+        Ok(None)
+    }
+
+    fn external_key(&self, _ctx: &KmsContext) -> Result<Option<SecretBytes>, SarCryptoError> {
+        Ok(None)
+    }
+}
+
+fn make_no_index_archive_with_single_entry(entry_mode: EntryMode, payload: &[u8]) -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX;
+    let mut bytes = write_global_header(&GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    })
+    .expect("global header");
+
+    let mut lfh = LocalFileHeader::minimal_store(b"entry".to_vec(), payload.len() as u64);
+    lfh.entry_mode = entry_mode;
+    lfh.stream_id = 1;
+    lfh.sequence_no = 1;
+    bytes.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+fn read_stream_fixture(name: &str) -> Vec<u8> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workspace = manifest_dir
+        .parent()
+        .expect("crates/")
+        .parent()
+        .expect("workspace root");
+    let path = workspace
+        .join("test-vectors")
+        .join("valid")
+        .join("stream-session")
+        .join(name)
+        .join("manifest.json");
+    let raw = fs::read_to_string(path).expect("manifest");
+    let manifest: serde_json::Value = serde_json::from_str(&raw).expect("manifest json");
+    let file_name = manifest
+        .get("file")
+        .and_then(serde_json::Value::as_str)
+        .expect("manifest file");
+    let fixture = workspace
+        .join("test-vectors")
+        .join("valid")
+        .join("stream-session")
+        .join(name)
+        .join(file_name);
+    fs::read(fixture).expect("fixture")
+}
+
+fn encrypted_no_index_archive(password: &SecretString) -> Vec<u8> {
+    let mut out = Vec::new();
+    let writer_key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
+        password: password.clone(),
+    });
+    let mut writer = ArchiveWriter::new_with_compression_and_key_provider(
+        Cursor::new(&mut out),
+        ArchiveWriterOptions {
+            no_index: true,
+            encryption: Some(sar_archive::EncryptionSettings {
+                algo_id: ENCR_AES256_GCM,
+                kms_params: KmsParams::Pbkdf2(Pbkdf2Params {
+                    prf_algo_id: sar_crypto::PBKDF2_PRF_HMAC_SHA256,
+                    salt: vec![0x44; 32],
+                    iterations: 100_000,
+                    derived_key_length: 32,
+                }),
+            }),
+            fec: None,
+            sparse: false,
+            ..Default::default()
+        },
+        CompressionSettings::store(),
+        Some(writer_key_provider),
+    )
+    .expect("writer");
+    writer
+        .add_entry(EntryInput::file("enc.txt", b"encrypted payload".to_vec()))
+        .expect("entry");
+    writer.finish().expect("finish");
+    out
+}
+
+#[test]
+fn default_audit_rejects_session_control() {
+    let bytes = make_no_index_archive_with_single_entry(
+        EntryMode::from_bits(EntryMode::SESSION_CONTROL),
+        b"",
+    );
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let err = reader.audit(ArchiveAuditOptions::default()).expect_err("reject");
+    assert_eq!(err.status(), SarStatus::ErrUnsupported);
+}
+
+#[test]
+fn default_audit_rejects_nonzero_opcode() {
+    let bytes = make_no_index_archive_with_single_entry(EntryMode::from_bits(0x01 << 8), b"x");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let err = reader.audit(ArchiveAuditOptions::default()).expect_err("reject");
+    assert_eq!(err.status(), SarStatus::ErrUnsupported);
+}
+
+#[test]
+fn inert_audit_parses_stream_transcript_fixture_structurally() {
+    let bytes = read_stream_fixture("session-init");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::PreserveInert,
+            payload_policy: PayloadAuditPolicy::MetadataOnly,
+            include_inert_payload_bytes: false,
+        })
+        .expect("audit");
+
+    assert!(
+        report
+            .entries
+            .iter()
+            .any(|entry| entry.kind == ArchiveAuditEntryKind::InertSessionControl)
+    );
+}
+
+#[test]
+fn inert_audit_reports_nonzero_opcode_entries_as_inert() {
+    let bytes = make_no_index_archive_with_single_entry(EntryMode::from_bits(0x04 << 8), b"abc");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::PreserveInert,
+            payload_policy: PayloadAuditPolicy::RequireDecode,
+            include_inert_payload_bytes: false,
+        })
+        .expect("audit");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.kind, ArchiveAuditEntryKind::InertFilesystemOp);
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Skipped);
+    assert!(entry.decoded_payload_size.is_none());
+}
+
+#[test]
+fn inert_audit_decodes_normal_data_write_entries() {
+    let bytes = make_no_index_archive_with_single_entry(EntryMode::from_bits(0), b"abc");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::PreserveInert,
+            payload_policy: PayloadAuditPolicy::RequireDecode,
+            include_inert_payload_bytes: false,
+        })
+        .expect("audit");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.kind, ArchiveAuditEntryKind::DataWrite);
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Decoded);
+    assert_eq!(entry.decoded_payload_size, Some(3));
+}
+
+#[test]
+fn metadata_only_does_not_require_decryption_keys() {
+    let password = SecretString::new("audit-pass".to_string());
+    let bytes = encrypted_no_index_archive(&password);
+
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::Reject,
+            payload_policy: PayloadAuditPolicy::MetadataOnly,
+            include_inert_payload_bytes: false,
+        })
+        .expect("audit");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Skipped);
+    assert!(entry.decoded_payload_size.is_none());
+}
+
+#[test]
+fn decode_when_keys_available_reports_unavailable_for_missing_key_provider() {
+    let password = SecretString::new("audit-pass".to_string());
+    let bytes = encrypted_no_index_archive(&password);
+
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::Reject,
+            payload_policy: PayloadAuditPolicy::DecodeWhenKeysAvailable,
+            include_inert_payload_bytes: false,
+        })
+        .expect("audit");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Unavailable);
+    assert_eq!(
+        entry.payload_error_status.as_deref(),
+        Some(SarStatus::ErrKeyMissing.name())
+    );
+}
+
+#[test]
+fn require_decode_fails_when_keys_missing() {
+    let password = SecretString::new("audit-pass".to_string());
+    let bytes = encrypted_no_index_archive(&password);
+
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let err = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::Reject,
+            payload_policy: PayloadAuditPolicy::RequireDecode,
+            include_inert_payload_bytes: false,
+        })
+        .expect_err("missing key provider should fail");
+    assert!(matches!(err, SarError::KeyMissing(_)));
+}
+
+#[test]
+fn require_decode_with_valid_key_provider_succeeds() {
+    let password = SecretString::new("audit-pass".to_string());
+    let bytes = encrypted_no_index_archive(&password);
+    let key_provider: Box<dyn KeyProvider> = Box::new(TestKeyProvider {
+        password: password.clone(),
+    });
+
+    let mut reader = ArchiveReader::new(Cursor::new(bytes))
+        .expect("reader")
+        .with_key_provider(key_provider);
+    let report = reader
+        .audit(ArchiveAuditOptions {
+            control_entry_policy: ControlEntryPolicy::Reject,
+            payload_policy: PayloadAuditPolicy::RequireDecode,
+            include_inert_payload_bytes: false,
+        })
+        .expect("audit");
+    let entry = report.entries.first().expect("entry");
+    assert_eq!(entry.payload_status, ArchiveAuditPayloadStatus::Decoded);
+    assert_eq!(entry.payload_error_status, None);
+}
