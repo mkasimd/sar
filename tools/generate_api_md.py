@@ -498,7 +498,7 @@ def main(argv: list[str]) -> int:
             print(f"error: generated file is missing: {args.output}", file=sys.stderr)
             return 1
 
-            if existing != generated:
+        if existing != generated:
             print(
                 f"error: {args.output} is stale; run `python tools/generate_api_md.py`",
                 file=sys.stderr,
