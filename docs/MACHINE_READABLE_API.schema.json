@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "docs/MACHINE_READABLE_API.schema.json",
+  "$id": "urn:sar:machine-readable-api:schema:2",
   "title": "SAR machine-readable API inventory",
   "description": "Normalized machine-readable public API inventory for the SAR Rust reference implementation.",
   "type": "object",
