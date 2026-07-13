@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-bad-session-init-payload-length",
+  "title": "Stream transcript (invalid): SESSION_INIT with malformed payload length",
+  "description": "Serialized SAR stream transcript with a SESSION_INIT entry whose payload is 5 bytes instead of the required 18 bytes (16-byte UUID + 2-byte flags). Must be rejected with SAR_ERR_INVALID_LENGTH.",
+  "kind": "invalid",
+  "file": "bad_session_init_payload_length.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_LENGTH",
+    "error": "InvalidLength",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "SESSION_INIT payload must be exactly 18 bytes: 16-byte UUID + 2-byte flags LE.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

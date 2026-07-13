@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "id": "invalid-sparse-zero-length",
+  "title": "Invalid: zero-length sparse extent",
+  "description": "SAR archive with a sparse map containing an extent with length 0. Zero-length extents must be rejected.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "sparse-files"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_INVALID_LENGTH",
+    "error": "InvalidLength",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires sparse map write with zero-length extent."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

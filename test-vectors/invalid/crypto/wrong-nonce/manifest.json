@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "id": "invalid-wrong-nonce",
+  "title": "Invalid: wrong nonce for encrypted entry",
+  "description": "Encrypted SAR archive where the nonce has been corrupted. AEAD decryption must fail with authentication error.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "crypto:aes256-gcm",
+    "crypto:aes-256-gcm"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_AUTH_FAILED",
+    "error": "AuthFailed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: nonce corruption test requires precise KMS payload manipulation."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": {
+    "algorithm": "aes-256-gcm",
+    "id": "0x01"
+  }
+}

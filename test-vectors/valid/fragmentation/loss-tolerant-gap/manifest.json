@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "id": "frag-loss-tolerant-gap",
+  "title": "Deferred reference: LOSS_TOLERANT fragment-gap fixture",
+  "description": "Reference-only manifest for a future canonical LOSS_TOLERANT fragment-gap fixture. The removed fallback archive was a normal STORE archive without fragment metadata, descriptor gaps, or degraded reconstruction semantics.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "telemetry",
+    "live-media"
+  ],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "package": "reject",
+    "telemetry": "accept",
+    "live-media": "accept"
+  },
+  "limits": {
+    "max_loss_tolerant_gap": 65536
+  },
+  "notes": [
+    "Reference-only manifest: no canonical binary fixture is committed in this pass.",
+    "Discovered during the M12a vector audit. Real LOSS_TOLERANT fragment-gap coverage requires fragment metadata and degraded reassembly behavior.",
+    "The previous fallback STORE archive was removed so the vector does not overclaim loss-tolerant fragment-gap coverage."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false,
+  "entries": [],
+  "deferred": true,
+  "base_files": []
+}

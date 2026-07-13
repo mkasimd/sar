@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "id": "cdc-fastcdc-metadata",
+  "title": "Deferred reference: FASTCDC CDC_MAP fixture",
+  "description": "Reference-only manifest for a future canonical FASTCDC CDC_MAP fixture. The removed fallback archive reused the CDC literal-mode fixture and did not contain FASTCDC or CDC_MAP metadata.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "backup"
+  ],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "backup": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "Reference-only manifest: no canonical binary fixture is committed in this pass.",
+    "Discovered during the M12a vector audit. A real FASTCDC CDC_MAP fixture requires explicit CDC metadata rather than a literal-mode fallback archive.",
+    "The previous fallback archive was removed so the vector does not overclaim FASTCDC CDC_MAP coverage."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false,
+  "entries": [],
+  "deferred": true,
+  "base_files": []
+}

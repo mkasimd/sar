@@ -1,0 +1,26 @@
+[package]
+name = "sar-archive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+crc32fast.workspace = true
+sar-core = { path = "../sar-core" }
+sar-compression = { path = "../sar-compression" }
+sar-crypto = { path = "../sar-crypto" }
+sar-fec = { path = "../sar-fec" }
+sar-cdc = { path = "../sar-cdc" }
+sar-delta = { path = "../sar-delta" }
+sar-fragmentation = { path = "../sar-fragmentation" }
+sar-sparse = { path = "../sar-sparse" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile = "3.13"
+zeroize.workspace = true
+
+[lints]
+workspace = true

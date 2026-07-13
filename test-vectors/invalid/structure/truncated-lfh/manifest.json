@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "invalid-truncated-lfh",
+  "title": "Invalid: truncated LFH",
+  "description": "SAR archive with a valid Global Header but truncated LFH. Must be rejected with a truncated error.",
+  "kind": "invalid",
+  "file": "truncated_lfh.sar",
+  "profiles": [],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_TRUNCATED",
+    "error": "Truncated",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "Hand-crafted minimal truncation case."
+  ],
+  "generated_by": "hand-crafted",
+  "compression": false,
+  "crypto": false
+}

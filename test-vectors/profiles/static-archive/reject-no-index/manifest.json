@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "profile-static-archive-reject-no-index",
+  "title": "Profile (static-archive): reject NO_INDEX archive",
+  "description": "A valid SAR archive with NO_INDEX flag must be rejected by the static-archive profile, which requires indexed archives for random access.",
+  "kind": "profile",
+  "file": "../../../valid/no-index/two-entries/no_index_two_entries.sar",
+  "profiles": [
+    "static-archive"
+  ],
+  "features": [
+    "no-index"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "backup": "accept",
+    "telemetry": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "The binary file is shared with valid/no-index/two-entries/. The static-archive profile must reject it."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false
+}

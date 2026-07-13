@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/sar-core",
+  "crates/sar-compression",
+  "crates/sar-crypto",
+  "crates/sar-cdc",
+  "crates/sar-delta",
+  "crates/sar-fec",
+  "crates/sar-fragmentation",
+  "crates/sar-partition",
+  "crates/sar-sparse",
+  "crates/sar-loss-tolerant",
+  "crates/sar-archive",
+  "crates/sar-stream",
+  "crates/sar-transport",
+  "crates/sar-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+bitflags = "2.6"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+walkdir = "2.5"
+flate2 = "1.1"
+zstd = "0.13"
+aes-gcm = "0.10"
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+blake3 = "1"
+pbkdf2 = { version = "0.12", features = ["hmac"] }
+argon2 = "0.5"
+zeroize = { version = "1.8", features = ["derive", "alloc"] }
+subtle = "2.5"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+getrandom = "0.2"
+hmac = "0.12"
+rpassword = "7"
+crc32fast = "1.5"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"

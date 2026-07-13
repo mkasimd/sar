@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "frag-valid-reassembly",
+  "title": "Deferred reference: fragment reassembly fixture",
+  "description": "Reference-only manifest for a future canonical fragmented reassembly fixture. The removed fallback archive contained two ordinary STORE entries rather than SAR fragment metadata, so it could not honestly claim fragment-group coverage.",
+  "kind": "valid",
+  "file": null,
+  "profiles": [
+    "static-archive",
+    "backup"
+  ],
+  "features": [],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "accept",
+    "backup": "accept"
+  },
+  "limits": {},
+  "notes": [
+    "Reference-only manifest: no canonical binary fixture is committed in this pass.",
+    "Discovered during the M12a vector audit. Real fragment-group fixtures require the streaming writer path and will be restored in a later corrective pass.",
+    "The previous fallback STORE archive was removed so the vector does not overclaim fragmentation coverage."
+  ],
+  "generated_by": "rust-generator",
+  "compression": false,
+  "crypto": false,
+  "entries": [],
+  "deferred": true,
+  "base_files": []
+}

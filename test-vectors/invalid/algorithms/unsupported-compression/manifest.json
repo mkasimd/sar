@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "invalid-unsupported-compression",
+  "title": "Invalid: unsupported compression algorithm ID",
+  "description": "SAR archive with a compression algorithm ID that is not in the registry (e.g. 0xFE, a custom range). Must fail closed with an unsupported error.",
+  "kind": "invalid",
+  "file": "unsupported_compression.sar",
+  "profiles": [],
+  "features": [
+    "compression:unsupported"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "Hand-crafted: compression algo ID set to 0xFE."
+  ],
+  "generated_by": "hand-crafted",
+  "compression": {
+    "algorithm": "unsupported",
+    "id": "0xfe"
+  },
+  "crypto": false
+}

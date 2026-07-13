@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "profile-package-reject-custom-algo",
+  "title": "Profile (package): reject custom/unregistered algorithm IDs",
+  "description": "Package profile must reject any archive using custom or unregistered algorithm IDs, even if a custom profile extension would normally allow them.",
+  "kind": "profile",
+  "file": null,
+  "profiles": [
+    "package"
+  ],
+  "features": [
+    "compression:unsupported"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_UNSUPPORTED",
+    "error": "Unsupported",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "package": "reject",
+    "static-archive": "reject"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: binary shared with invalid/algorithms/unsupported-compression/ when available."
+  ],
+  "deferred": true,
+  "compression": {
+    "algorithm": "unsupported",
+    "id": "0xfe"
+  },
+  "crypto": false
+}

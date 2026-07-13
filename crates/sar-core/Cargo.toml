@@ -1,0 +1,24 @@
+[package]
+name = "sar-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bitflags.workspace = true
+crc32fast.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+sar-crypto = { path = "../sar-crypto" }
+sar-fec = { path = "../sar-fec" }
+sar-cdc = { path = "../sar-cdc" }
+sar-fragmentation = { path = "../sar-fragmentation" }
+sar-sparse = { path = "../sar-sparse" }
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile = "3.13"
+
+[lints]
+workspace = true

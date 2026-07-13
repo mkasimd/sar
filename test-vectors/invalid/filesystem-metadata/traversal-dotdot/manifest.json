@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "id": "invalid-fs-traversal-dotdot",
+  "title": "Invalid: path traversal via '..' component",
+  "description": "SAR archive where an entry path contains a '..' component (e.g. '../../../etc/passwd'). Must be rejected to prevent directory traversal. Rejection is required regardless of context.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "indexed",
+    "has-path"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires ArchiveWriter path validation bypass or hand-crafted LFH.",
+    "'..' components must always fail closed."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

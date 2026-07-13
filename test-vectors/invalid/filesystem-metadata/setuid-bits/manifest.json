@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "id": "invalid-fs-setuid-bits",
+  "title": "Invalid: setuid/setgid/sticky permission bits",
+  "description": "Profile vector: SAR archive with HAS_PERMS flag where an entry permission mode has setuid bit set. Extraction profiles that disable setuid restoration by default should reject or strip these bits. This vector documents the expected default rejection.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [
+    "static-archive",
+    "package",
+    "backup"
+  ],
+  "features": [
+    "indexed",
+    "has-perms"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_MALFORMED",
+    "error": "Malformed",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "static-archive": "reject",
+    "package": "reject",
+    "backup": "reject"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: setuid/setgid bit policy validation depends on profile extraction enforcement.",
+    "Default policy: setuid/setgid/sticky bits are stripped/rejected unless explicitly allowed."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

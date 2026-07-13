@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-data-before-session-init",
+  "title": "Stream transcript (invalid): DATA_WRITE before SESSION_INIT",
+  "description": "Serialized SAR stream transcript with a DATA_WRITE filesystem entry on a nonzero Stream ID before any SESSION_INIT has been received. Stateful Streaming Mode requires a valid SESSION_INIT to be processed before accepting filesystem entries for a stream. Must be rejected with SAR_ERR_STREAM_STATE.",
+  "kind": "invalid",
+  "file": "data_before_session_init.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_STREAM_STATE",
+    "error": "StreamState",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "The bytes are structurally valid SAR; the violation is at the session-semantics level.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

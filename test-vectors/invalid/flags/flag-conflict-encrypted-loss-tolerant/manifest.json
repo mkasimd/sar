@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "invalid-flag-conflict-encrypted-loss-tolerant",
+  "title": "Invalid: ENCRYPTED + LOSS_TOLERANT Entry Mode flag conflict",
+  "description": "SAR archive where an entry has both ENCRYPTED flag and LOSS_TOLERANT entry mode set. LOSS_TOLERANT must never suppress authentication/crypto failures. Implementation must reject this combination.",
+  "kind": "invalid",
+  "file": null,
+  "profiles": [],
+  "features": [
+    "crypto:aes-256-gcm"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_FLAG_CONFLICT",
+    "error": "FlagConflict",
+    "warnings": []
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: generating this vector requires careful LFH construction.",
+    "The validator must reject LOSS_TOLERANT when it would suppress AEAD failure."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": {
+    "algorithm": "aes-256-gcm",
+    "id": "0x01"
+  }
+}

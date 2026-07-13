@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-reserved-session-init-flags",
+  "title": "Stream transcript (invalid): SESSION_INIT with reserved flag bits set",
+  "description": "Serialized SAR stream transcript with a SESSION_INIT entry whose flags field has reserved bits set (bits 4..15). Reserved SESSION_INIT flag bits must be zero per spec. Must be rejected with SAR_ERR_RESERVED_VALUE.",
+  "kind": "invalid",
+  "file": "reserved_session_init_flags.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_RESERVED_VALUE",
+    "error": "ReservedValue",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "SESSION_FLAGS bits 4..15 are reserved and must be zero.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

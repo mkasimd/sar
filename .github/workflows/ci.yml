@@ -1,0 +1,219 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# The workflow only reads repository contents and pull-request file lists.
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      api: ${{ steps.filter.outputs.api }}
+
+    steps:
+      - name: Classify changed files
+        id: filter
+        uses: actions/github-script@v7
+        with:
+          script: |
+            function setAllTrue(reason) {
+              core.info(reason);
+              core.setOutput("rust", "true");
+              core.setOutput("api", "true");
+            }
+
+            if (context.eventName === "push") {
+              setAllTrue("Push to main: run all CI domains.");
+              return;
+            }
+
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              setAllTrue("Non-PR/non-push event: run all CI domains.");
+              return;
+            }
+
+            const files = await github.paginate(
+              github.rest.pulls.listFiles,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                per_page: 100
+              }
+            );
+
+            const changed = files.map((file) => file.filename);
+
+            core.info("Changed files:");
+            for (const file of changed) {
+              core.info(`- ${file}`);
+            }
+
+            function isRustRelevant(path) {
+              return (
+                path === "Cargo.toml" ||
+                path === "Cargo.lock" ||
+                path === "rust-toolchain" ||
+                path === "rust-toolchain.toml" ||
+                path === ".github/workflows/ci.yml" ||
+                path.startsWith(".cargo/") ||
+                path.startsWith("crates/") ||
+                path.startsWith("tests/") ||
+                path.startsWith("benches/") ||
+                path.startsWith("examples/") ||
+                path.startsWith("fuzz/")
+              );
+            }
+
+            function isApiRelevant(path) {
+              return (
+                path === ".github/workflows/ci.yml" ||
+                path === "docs/API.md" ||
+                path === "docs/MACHINE_READABLE_API.json" ||
+                path === "docs/MACHINE_READABLE_API.schema.json" ||
+                path === "test-vectors/manifest.schema.json" ||
+                path === "tools/check_api_schema.py" ||
+                path === "tools/generate_api_md.py" ||
+                path.startsWith("crates/") ||
+                (
+                  path.startsWith("test-vectors/") &&
+                  path.endsWith("/manifest.json")
+                )
+              );
+            }
+
+            const rust = changed.some(isRustRelevant);
+            const api = changed.some(isApiRelevant) || rust;
+
+            core.info(`rust=${rust}`);
+            core.info(`api=${api}`);
+
+            core.setOutput("rust", String(rust));
+            core.setOutput("api", String(api));
+
+  format-lint:
+    name: Format / Lint
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable with rustfmt and clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore/cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-rust-stable
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+  test:
+    name: Test
+    needs:
+      - changes
+      - format-lint
+    if: needs.changes.outputs.rust == 'true' && needs.format-lint.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore/cache Cargo registry and build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-rust-stable
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
+
+      - name: Run workspace tests
+        run: cargo test --workspace --all-features --locked
+
+      # NOTE:
+      # The fuzz/ directory does not currently contain a Cargo project.
+      # If fuzzing targets are added under fuzz/ in the future, do not run them
+      # here. Fuzzing is slow, target-dependent, and should be handled in a
+      # dedicated fuzzing workflow or via OSS-Fuzz / cargo-fuzz.
+
+  api-inventory-json-checks:
+    name: API inventory and JSON checks
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Restore/cache pip downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-jsonschema-v1
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python validation dependencies
+        run: python -m pip install --disable-pip-version-check "jsonschema>=4,<5"
+
+      - name: Check machine-readable API JSON syntax
+        run: python -m json.tool docs/MACHINE_READABLE_API.json > /dev/null
+
+      - name: Check machine-readable API schema syntax
+        run: python -m json.tool docs/MACHINE_READABLE_API.schema.json > /dev/null
+
+      - name: Validate API inventory against schema
+        run: python tools/check_api_schema.py
+
+      - name: Check generated API.md is current
+        run: python tools/generate_api_md.py --check
+
+      - name: Check test-vector manifest schema syntax
+        run: python -m json.tool test-vectors/manifest.schema.json > /dev/null
+
+      - name: Check all test-vector manifests are valid JSON
+        run: |
+          find test-vectors -name manifest.json -print0 \
+            | sort -z \
+            | xargs -0 -r -n1 python -m json.tool > /dev/null

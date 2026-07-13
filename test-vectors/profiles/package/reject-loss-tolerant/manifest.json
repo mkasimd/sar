@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "id": "profile-package-reject-loss-tolerant",
+  "title": "Profile (package): reject LOSS_TOLERANT entries",
+  "description": "Package profile must reject archives with LOSS_TOLERANT entry mode. Package integrity requires complete, authenticated data.",
+  "kind": "profile",
+  "file": null,
+  "profiles": [
+    "package"
+  ],
+  "features": [
+    "loss-tolerant"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "profile_expectations": {
+    "package": "reject",
+    "static-archive": "reject"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: binary shared with valid/fragmentation/loss-tolerant-gap/ when available."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": false
+}

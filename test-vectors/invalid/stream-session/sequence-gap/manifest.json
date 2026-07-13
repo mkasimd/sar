@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-invalid-sequence-gap",
+  "title": "Stream transcript (invalid): sequence number gap (seq=1 missing)",
+  "description": "Serialized SAR stream transcript with SESSION_INIT at seq=0, then a DATA_WRITE at seq=2, skipping seq=1. Sequence numbers must increment by exactly one for each accepted entry. Must be rejected with SAR_ERR_STREAM_STATE.",
+  "kind": "invalid",
+  "file": "sequence_gap.sar",
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init",
+    "stream:sequence"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_STREAM_STATE",
+    "error": "StreamState",
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "Sequence continuity: expected seq=1, received seq=2.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

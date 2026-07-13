@@ -1,0 +1,27 @@
+version: 2
+
+updates:
+  # ── Cargo dependencies ──────────────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Group minor and patch bumps into a single PR to reduce noise.
+    groups:
+      cargo-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  # ── GitHub Actions ──────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Keep all Actions updates together.
+    groups:
+      github-actions:
+        patterns:
+          - "*"

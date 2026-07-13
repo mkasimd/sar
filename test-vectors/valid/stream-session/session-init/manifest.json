@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "id": "stream-transcript-valid-session-init",
+  "title": "Stream transcript (valid): minimal SESSION_INIT",
+  "description": "Serialized SAR stream transcript with a single SESSION_INIT entry. Validates that the session layer activates a session when a valid SESSION_INIT is received on a NO_INDEX stream with a nonzero Stream ID. Does not require live TCP/QUIC transport.",
+  "kind": "valid",
+  "file": "stream_session_init.sar",
+  "profiles": [
+    "stream-package",
+    "telemetry",
+    "live-media"
+  ],
+  "features": [
+    "stream:transcript",
+    "stream:session",
+    "stream:session-init"
+  ],
+  "expected": {
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": []
+  },
+  "compression": false,
+  "crypto": false,
+  "generated_by": "rust-generator",
+  "notes": [
+    "This is a serialized SAR stream transcript, not an ordinary static archive.",
+    "The same bytes are valid in stream-session context; a static-archive profile would reject them.",
+    "See profiles/static-archive/reject-session-control/ for the profile-rejection counterpart.",
+    "Additional QUIC control streams are not covered here (future transport-vector work).",
+    "This is not M12b fuzzing."
+  ]
+}

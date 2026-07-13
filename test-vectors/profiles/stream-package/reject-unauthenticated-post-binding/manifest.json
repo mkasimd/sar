@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "id": "profile-stream-package-reject-unauthenticated-post-binding",
+  "title": "Profile (stream-package): reject unauthenticated post-binding entries",
+  "description": "When TLS_EXPORTER binding is active, all post-binding SAR entries must be encrypted/authenticated. A plaintext entry after binding must be rejected by the stream-package profile.",
+  "kind": "profile",
+  "file": null,
+  "profiles": [
+    "stream-package"
+  ],
+  "features": [
+    "stream-session",
+    "crypto:tls-exporter"
+  ],
+  "expected": {
+    "valid": false,
+    "status": "SAR_ERR_AUTH_FAILED",
+    "error": "AuthFailed",
+    "warnings": []
+  },
+  "profile_expectations": {
+    "stream-package": "reject",
+    "live-media": "reject"
+  },
+  "limits": {},
+  "notes": [
+    "DEFERRED: requires sar-transport TLS_EXPORTER integration for binary generation."
+  ],
+  "deferred": true,
+  "compression": false,
+  "crypto": {
+    "algorithm": "tls-exporter",
+    "id": "0x03"
+  }
+}
