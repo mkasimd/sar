@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "docs/MACHINE_READABLE_API.schema.json",
+  "$id": "urn:sar:machine-readable-api:schema:2",
   "title": "SAR machine-readable API inventory",
   "description": "Normalized machine-readable public API inventory for the SAR Rust reference implementation.",
   "type": "object",
@@ -316,8 +316,8 @@
           "type": "boolean"
         },
         "since_milestone": {
-          "type": "string",
-          "pattern": "^(M)?[0-9]+[a-z]?(?:-[A-Za-z0-9]+)*|stage-[0-9]+$"
+            "type": "string",
+            "pattern": "^(?:(?:M)?[0-9]+[a-z]?(?:\\.[0-9]+)?(?:-[A-Za-z0-9]+)*|stage-[0-9]+)$"
         },
         "feature_flags": {
           "type": "array",

@@ -2985,9 +2985,9 @@
         "Milestone 10a stateless forward-only stream parser/writer state model.",
         "Milestone 11a LFH Metadata API Completeness: expanded EntryInput, expanded EntryMetadata, FieldPresence<T> presence model, EntryKind, all metadata structs, complete LFH metadata round-trip.",
         "Milestone 11b Filesystem Metadata Encode/Decode: FieldPresence-typed path_presence/permissions_presence/owner_presence/timestamps_presence in EntryMetadata, symlink_target metadata, symlink payload UTF-8 validation, directory payload validation, IS_SYMLINK->HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests.",
-        "Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to sar-fragmentation, sparse semantic logic moved to sar-sparse, loss-tolerant policy helpers added to sar-loss-tolerant, partition deliberately deferred.",
+        "Milestone 11c: Crate-boundary cleanup \u2014 fragment semantic logic moved to sar-fragmentation, sparse semantic logic moved to sar-sparse, loss-tolerant policy helpers added to sar-loss-tolerant, partition deliberately deferred.",
         "Milestone 11c-cp (corrective pass): sar_core::fragment module removed (was pure re-exports); semantic sparse re-exports removed from sar_core::sparse (SparseExtent kept as architectural re-export); sar-loss-tolerant integrated into sar-fragmentation; FragmentError::PayloadSizeMismatch and DuplicateIndex added (always fatal); zero-length sparse extents now rejected; write_sparse_map now returns Result<Vec<u8>, SarError> (fail-closed on 32-bit truncation); error conversion bridges updated.",
-        "Milestone 11d: archive API architecture split — high-level archive reader/writer and stream parser orchestration moved to sar-archive; sar-core now owns canonical wire/status/limits and low-level helpers."
+        "Milestone 11d: archive API architecture split \u2014 high-level archive reader/writer and stream parser orchestration moved to sar-archive; sar-core now owns canonical wire/status/limits and low-level helpers."
       ],
       "metadata": {
         "milestones": [
@@ -3098,7 +3098,7 @@
     {
       "name": "sar-archive",
       "path": "crates/sar-archive",
-      "description": "High-level SAR archive reader/writer, verification, and archive integration APIs.",
+      "description": "High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and archive-level recovery/repair APIs.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -3233,7 +3233,7 @@
           },
           {
             "name": "ArchiveReader::read_all_logical_files",
-            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
+            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted \u2014 not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
             "metadata": {
               "since_milestone": "8",
               "parameters": [
@@ -3352,8 +3352,8 @@
             },
             "signature": "pub fn ArchiveWriter<W>::write_sparse_entry(&mut self, name: &str, gathered_payload: &[u8], sparse: SparseWriteOptions) -> Result<(), SarError>",
             "errors": [
-              "SarError::Malformed — sparse flag not set",
-              "SarError::InvalidMap — overlapping extents, extent beyond logical_size, payload length mismatch"
+              "SarError::Malformed \u2014 sparse flag not set",
+              "SarError::InvalidMap \u2014 overlapping extents, extent beyond logical_size, payload length mismatch"
             ]
           },
           {
@@ -3419,7 +3419,7 @@
             },
             "signature": "pub fn ArchiveWriter<W>::new_with_cd_metadata(writer: W, options: ArchiveWriterOptions, cd_metadata: Vec<Tlv>) -> Result<Self, SarError>",
             "errors": [
-              "SarError::FlagConflict — CD metadata supplied for NO_INDEX output",
+              "SarError::FlagConflict \u2014 CD metadata supplied for NO_INDEX output",
               "SarError"
             ]
           },
@@ -4165,7 +4165,7 @@
               "path": "src/profile.rs"
             },
             "kind": "enum",
-            "signature": "pub enum ComplianceProfile { MinimalInteroperableArchive, Standard }"
+            "signature": "pub enum ComplianceProfile { MinimalInteroperableArchive, StaticArchive, Package, StreamPackage, Backup, Telemetry, LiveMedia, Standard }"
           },
           {
             "name": "ProfileReport",
@@ -4275,6 +4275,172 @@
             },
             "kind": "struct",
             "signature": "pub struct StreamArchiveParser { ... }"
+          },
+          {
+            "name": "ControlEntryPolicy",
+            "description": "Policy controlling how archive audit handles entries with SESSION_CONTROL set or nonzero OP_CODE.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum ControlEntryPolicy { Reject, PreserveInert }"
+          },
+          {
+            "name": "PayloadAuditPolicy",
+            "description": "Policy controlling whether archive audit validates only structure, decodes when keys/bases are available, or requires payload decoding.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum PayloadAuditPolicy { MetadataOnly, DecodeWhenKeysAvailable, RequireDecode }"
+          },
+          {
+            "name": "ArchiveAuditOptions",
+            "description": "Options for deterministic archive audit, including control-entry handling and payload-audit policy.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "candidate",
+                "notes": "Candidate for FFI audit wrappers."
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct ArchiveAuditOptions { pub control_entry_policy: ControlEntryPolicy, pub payload_policy: PayloadAuditPolicy, pub include_inert_payload_bytes: bool }"
+          },
+          {
+            "name": "ArchiveAuditMode",
+            "description": "Archive audit mode indicating whether the audited archive was indexed or NO_INDEX.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum ArchiveAuditMode { Indexed, NoIndex }"
+          },
+          {
+            "name": "ArchiveAuditEntryKind",
+            "description": "Per-entry audit classification for ordinary entries, inert control entries, or rejected entries.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum ArchiveAuditEntryKind { OrdinaryEntry, InertOpcodeEntry, InertSessionControl }"
+          },
+          {
+            "name": "ArchiveAuditPayloadStatus",
+            "description": "Per-entry payload verification status reported by archive audit.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum ArchiveAuditPayloadStatus { Decoded, Skipped, Unavailable, Failed }"
+          },
+          {
+            "name": "ArchiveAuditEntryReport",
+            "description": "Per-entry archive audit report.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "candidate",
+                "notes": "Candidate for inspect/audit FFI wrappers once report structs are flattened for C ABI."
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct ArchiveAuditEntryReport { pub lfh_offset: u64, pub entry_mode_bits: u16, pub op_code: u8, pub session_control: bool, pub kind: ArchiveAuditEntryKind, pub payload_size: u64, pub uncompressed_size: u64, pub payload_status: ArchiveAuditPayloadStatus, ... }"
+          },
+          {
+            "name": "ArchiveAuditRecoverySummary",
+            "description": "Summary of archive-level recovery metadata discovered during audit.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "candidate",
+                "notes": "Candidate for inspect/audit FFI wrappers once report structs are flattened for C ABI."
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct ArchiveAuditRecoverySummary { pub tlv_count: u32, pub tlv_type_ids: Vec<u8> }"
+          },
+          {
+            "name": "ArchiveAuditReport",
+            "description": "Deterministic archive audit report containing entry reports, recovery summary, and aggregate counts/status.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "candidate",
+                "notes": "Candidate for inspect/audit FFI wrappers once report structs are flattened for C ABI."
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct ArchiveAuditReport { pub mode: ArchiveAuditMode, pub global_flags: u32, pub entry_count_seen: u64, pub entries: Vec<ArchiveAuditEntryReport>, pub footer_present: bool, pub central_dictionary_present: bool, pub cd_footer_valid: bool, pub recovery: Option<ArchiveAuditRecoverySummary> }"
           }
         ],
         "constants": []
@@ -5433,7 +5599,7 @@
         "functions": [
           {
             "name": "validate_patch_algo_id",
-            "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04–0xEF, Unsupported for 0xF0–0xFF, and PatchAlgoId for assigned IDs 0x00–0x03. Does not apply any patch.",
+            "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04\u20130xEF, Unsupported for 0xF0\u20130xFF, and PatchAlgoId for assigned IDs 0x00\u20130x03. Does not apply any patch.",
             "metadata": {
               "since_milestone": "9b",
               "parameters": [
@@ -5460,8 +5626,8 @@
             },
             "signature": "pub fn validate_patch_algo_id(id: u8) -> Result<PatchAlgoId, PatchError>",
             "errors": [
-              "PatchError::ReservedValue (0x04–0xEF)",
-              "PatchError::Unsupported (0xF0–0xFF)"
+              "PatchError::ReservedValue (0x04\u20130xEF)",
+              "PatchError::Unsupported (0xF0\u20130xFF)"
             ]
           },
           {
@@ -5720,7 +5886,7 @@
         "types": [
           {
             "name": "PatchAlgoId",
-            "description": "SAR patch algorithm identifiers from spec §8.4. Custom(u8) covers 0xF0–0xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
+            "description": "SAR patch algorithm identifiers from spec \u00a78.4. Custom(u8) covers 0xF0\u20130xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -5890,7 +6056,7 @@
           },
           {
             "name": "PATCH_ALGO_CUSTOM_MIN",
-            "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0–0xFF; all return Unsupported.",
+            "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0\u20130xFF; all return Unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -5910,7 +6076,7 @@
           },
           {
             "name": "PATCH_ALGO_CUSTOM_MAX",
-            "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0–0xFF; all return Unsupported.",
+            "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0\u20130xFF; all return Unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -6511,7 +6677,7 @@
             "name": "validate_fragment_group",
             "description": "Validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6528,7 +6694,7 @@
             "name": "reconstruct_fragments",
             "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Validates duplicate fragment indexes, payload-size agreement, index gaps, missing LAST_FRAGMENT, descriptor byte-range gaps (initial/middle/tail), and LOSS_TOLERANT degraded-output policy with max_loss_tolerant_gap.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6547,7 +6713,7 @@
             "name": "FragmentError",
             "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow. M11c-cp additions: PayloadSizeMismatch (payload length does not match descriptor.fragment_size, always fatal) and DuplicateIndex (duplicate fragment_index in group, always fatal even with LOSS_TOLERANT).",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6565,7 +6731,7 @@
             "name": "FragmentLimits",
             "description": "Resource limits for fragment operations.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6583,7 +6749,7 @@
             "name": "FragmentDescriptor",
             "description": "Per-fragment extent descriptor.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6601,7 +6767,7 @@
             "name": "FragmentEntry",
             "description": "Decoded fragment with payload and metadata.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6646,7 +6812,7 @@
             "name": "gap_degraded_output_permitted",
             "description": "Returns whether a missing-fragment gap may produce degraded output. Requires LOSS_TOLERANT flag.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6663,7 +6829,7 @@
             "name": "classify_recovery",
             "description": "Maps gap/failure booleans to RecoveryStatus.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6682,7 +6848,7 @@
             "name": "RecoveryStatus",
             "description": "Reconstruction outcome. Variants: Complete, Degraded, Failed.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6746,7 +6912,7 @@
             "name": "validate_sparse_extents",
             "description": "Validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety. Does not validate payload-length agreement.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6763,7 +6929,7 @@
             "name": "apply_sparse_reconstruction",
             "description": "Scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because payload bytes are available.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6782,7 +6948,7 @@
             "name": "SparseError",
             "description": "Error type for sparse operations. Variants: InvalidMap, Truncated, LimitExceeded, Overflow.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6800,7 +6966,7 @@
             "name": "SparseLimits",
             "description": "Resource limits for sparse operations.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6818,7 +6984,7 @@
             "name": "SparseExtent",
             "description": "One sparse data region (offset + length).",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6855,7 +7021,7 @@
     {
       "name": "sar-stream",
       "path": "crates/sar-stream",
-      "description": "In-memory Stateful Streaming Mode session layer over sar-core structural parsing.",
+      "description": "Stateful Streaming Mode session layer, stream transcript semantic validation, and optional exact-byte transcript recording.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -6886,6 +7052,50 @@
               "path": "src/lib.rs"
             },
             "signature": "pub fn validate_stream_transcript_with_options(bytes: &[u8], options: &StreamTranscriptValidationOptions) -> Result<StreamTranscriptValidationReport, SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
+            "name": "validate_stream_transcript",
+            "description": "Validate a serialized stream transcript with default validation options.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "returns": "Result<StreamTranscriptValidationReport, SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready",
+                "notes": "Slice-based API; FFI wrapper requires separate design."
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "signature": "pub fn validate_stream_transcript(bytes: &[u8]) -> Result<StreamTranscriptValidationReport, SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
+            "name": "validate_stream_transcript_with_sink",
+            "description": "Validate a serialized stream transcript while optionally recording exact input bytes to a transcript sink.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "returns": "Result<StreamTranscriptValidationReport, SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready",
+                "notes": "Write trait sink requires dedicated FFI surface design."
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "signature": "pub fn validate_stream_transcript_with_sink<W: Write + ?Sized>(bytes: &[u8], sink: &mut W) -> Result<StreamTranscriptValidationReport, SarError>",
             "errors": [
               "SarError"
             ]
@@ -6921,6 +7131,62 @@
             },
             "kind": "struct",
             "signature": "pub struct SessionManager { ... }"
+          },
+          {
+            "name": "TranscriptRecording",
+            "description": "Output mode for optional exact-byte stream transcript recording.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready",
+                "notes": "PathBuf variant requires FFI path design."
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum TranscriptRecording { Disabled, Path { path: PathBuf, overwrite: bool } }"
+          },
+          {
+            "name": "StreamTranscriptValidationOptions",
+            "description": "Options controlling stream transcript validation and optional transcript recording.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct StreamTranscriptValidationOptions { pub recording: TranscriptRecording }"
+          },
+          {
+            "name": "StreamTranscriptValidationReport",
+            "description": "Report returned after stream transcript validation, including validated entry count.",
+            "metadata": {
+              "since_milestone": "12a-audit-cp",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "candidate",
+                "notes": "Simple value struct; suitable for FFI reporting."
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct StreamTranscriptValidationReport { pub entry_count: u64 }"
           }
         ],
         "constants": []
@@ -8131,7 +8397,7 @@
       },
       "arbitrary_byte_erasure_repair": {
         "available": false,
-        "reason": "spec gap — no normative byte-to-block mapping defined for arbitrary byte erasure positions",
+        "reason": "spec gap \u2014 no normative byte-to-block mapping defined for arbitrary byte erasure positions",
         "behavior": "plan_archive_repair returns RecoveryUnavailable for non-block-aligned erasures"
       },
       "cdc": {
