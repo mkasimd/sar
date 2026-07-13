@@ -145,20 +145,38 @@ cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-For documentation, API inventory, or conformance-vector changes, also validate JSON files where practical:
+For documentation, API inventory, or conformance-vector changes, also validate JSON files and generated API documentation where practical:
 
 ```bash
 python -m json.tool docs/MACHINE_READABLE_API.json > /dev/null
+python -m json.tool docs/MACHINE_READABLE_API.schema.json > /dev/null
+python tools/check_api_schema.py
+python tools/generate_api_md.py --check
 python -m json.tool test-vectors/manifest.schema.json > /dev/null
 find test-vectors -name manifest.json -print0 | xargs -0 -n1 python -m json.tool > /dev/null
 ```
 
-Optional checks, depending on local tooling:
+Before a public release, and periodically during development, maintainers should also run dependency and supply-chain checks.
+
+Install the optional Cargo tools with:
+
+```bash
+cargo install --locked cargo-audit
+cargo install --locked cargo-deny
+```
+
+Run:
 
 ```bash
 cargo audit
 cargo deny check
 ```
+
+`cargo audit` checks `Cargo.lock` against the RustSec advisory database for known vulnerable crate versions.
+
+`cargo deny check` checks the dependency graph for advisories, license policy, banned crates, duplicate versions, and source restrictions. It uses the repository's checked-in `deny.toml` policy.
+
+These checks may require network access to fetch advisory or index data.
 
 If you cannot run a validation step, say so in the pull request.
 
@@ -170,8 +188,8 @@ Avoid duplicating detailed rules from other files unless a short summary is need
 
 When updating public API behavior, check whether these files need updates:
 
-* `docs/API.md`
 * `docs/MACHINE_READABLE_API.json`
+* generated `docs/API.md`
 * `README.md`
 
 When changing conformance behavior, check:
