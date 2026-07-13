@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// M10i TLS_EXPORTER post-binding SAR-AEAD enforcement tests.
 ///
 /// Verifies that the transport layer correctly enforces:

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
 
 use common::{filesystem_data_entry_bytes, session_archive_init_bytes, session_init_entry_bytes};

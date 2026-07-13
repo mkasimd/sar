@@ -2,6 +2,11 @@
 applyTo: "crates/**/*.rs"
 ---
 
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Rust crate implementation rules
 
 * Keep SAR wire format stable unless explicitly asked to change it.

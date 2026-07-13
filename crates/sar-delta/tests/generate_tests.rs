@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for VCDIFF and SAR BSDIFF v1 patch generation.
 //!
 //! Spec requirements tested (spec §8.4):

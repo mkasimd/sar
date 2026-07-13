@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use sar_compression::COMP_ALGO_STORE;
 use sar_crypto::{KeyProvider, aad::build_aead_aad, provider::resolve_cek, validate_encr_algo_id};
 use sar_delta::{

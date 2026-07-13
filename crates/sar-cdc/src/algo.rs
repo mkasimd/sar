@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CDC algorithm identifier constants (spec section 8.5, `SAR_L_CDC`).
 //!
 //! These are stored in the one-byte `CDC Algo ID` field of the Local File

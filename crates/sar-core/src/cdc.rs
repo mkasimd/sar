@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CDC (Content-Defined Chunking) support for the SAR core parser/writer.
 //!
 //! This module bridges [`sar_cdc`] primitives with the `sar-core` type

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Tests for LOSS_TOLERANT semantics: degraded reconstruction vs. hard failures.
 
 use sar_core::error::SarError;

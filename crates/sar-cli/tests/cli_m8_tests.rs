@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CLI integration tests for Milestone 8 (fragmentation, sparse, loss-tolerant,
 //! archive-level recovery, repair command).
 

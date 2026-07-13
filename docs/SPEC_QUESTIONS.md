@@ -1,7 +1,12 @@
-# Spec Questions and Conservative Choices (post-M11e)
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
 
-This file tracks real open specification questions that still affect interoperability.
-Resolved items are kept separately to avoid presenting closed M11 work as still open.
+# Spec Questions and Conservative Choices
+
+This file tracks real open specification questions that may affect interoperability.
+Resolved items are kept separately to avoid presenting closed work as still open.
 
 ## Open questions
 
@@ -25,17 +30,21 @@ Resolved items are kept separately to avoid presenting closed M11 work as still 
 - **Question:** How strict conformance profiles should treat newly assigned IDs without profile updates.
 - **Current implementation posture:** Fail-closed unless explicitly supported.
 
-## Resolved in M11 (not open)
+## Resolved (not open)
 
 - **M11a:** LFH metadata API completeness delivered.
 - **M11b:** Filesystem metadata encode/decode behavior delivered.
 - **M11c/M11c-cp:** crate-boundary cleanup and corrective split delivered.
 - **M11d:** high-level archive API ownership moved to `sar-archive`.
 - **M11e:** CLI metadata flags/behavior and safe extraction policy gating delivered.
+- **M12a:** conformance framework, corrective vector passes, serialized stream transcript vectors, archive audit primitives, and stream transcript validation/recording APIs delivered.
 
 ## Future milestone alignment note
-- M12: conformance vectors, fuzzing/malicious corpus, docs/security posture hardening.
-- M13: security audit and remediation.
-- M14: C ABI and Python module.
-- M15: packaging and release automation.
-- M16: Swift/iOS and Kotlin/Java Android packages.
+
+* M12b: fuzzing and malicious corpus.
+* M12c: documentation/API/security posture hardening.
+* M13: security audit and remediation.
+* M14: C ABI and Python module.
+* M15: packaging and release automation.
+* M16: Swift/iOS and Kotlin/Java Android packages.
+

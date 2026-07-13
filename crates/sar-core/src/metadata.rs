@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Expanded LFH metadata types for M11a.
 //!
 //! These types represent the complete set of metadata that can be stored in or

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![cfg(feature = "quic")]
 //! M10g Part B + D — TLS PQ/hybrid key agreement policy tests.
 //!

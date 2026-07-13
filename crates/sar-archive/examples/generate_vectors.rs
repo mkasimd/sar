@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Vector generator for `test-vectors/`.
 //!
 //! Generates binary `.sar` fixture files for conformance testing.

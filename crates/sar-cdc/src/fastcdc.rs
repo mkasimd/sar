@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Deterministic FASTCDC chunker (spec section 8.5, algorithm `0x02`).
 //!
 //! FASTCDC is a gear-hash based, high-speed Content-Defined Chunking algorithm.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use sar_crypto::aad::{build_aead_aad, global_header_aad_bytes};
 
 #[test]

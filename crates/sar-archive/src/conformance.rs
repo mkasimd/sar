@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Conformance vector manifest types and schema validator.
 //!
 //! This module provides machine-readable types for SAR Protocol v1.0

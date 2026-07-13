@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! TLS_EXPORTER KMS mode (0x04) types and context encoding.
 //!
 //! Provides the parsed payload structure for KMS Mode `0x04 TLS_EXPORTER`,

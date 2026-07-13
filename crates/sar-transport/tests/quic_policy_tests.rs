@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 mod common;
 
 use common::{malformed_lfh_prefix, session_archive_init_bytes, session_close_entry_bytes};

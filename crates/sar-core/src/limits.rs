@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unified resource-limit model for the SAR parser/writer pipeline.
 //!
 //! Every archive-declared size, count, offset, length, and algorithm parameter

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Unit tests for [`sar_delta::apply_bsdiff`] and [`sar_delta::decode_bsdiff_int`].
 //!
 //! These tests exercise the SAR BSDIFF v1 (`SARBSD01`) patcher in isolation.

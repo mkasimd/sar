@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use pbkdf2::pbkdf2_hmac;
 use sha2::Sha256;
 use zeroize::Zeroizing;

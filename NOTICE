@@ -1,0 +1,10 @@
+SAR Protocol v1.0 Rust reference implementation
+
+Copyright 2026 M. Kasim Dönmez
+
+This repository contains materials under multiple licenses:
+
+- Rust source code, tests, examples, tools, conformance manifests, and implementation documentation are licensed under the Apache License 2.0.
+- The SAR Protocol v1.0 specification document (`specification.md`) is licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).
+
+See the LICENSES/ directory for license texts.

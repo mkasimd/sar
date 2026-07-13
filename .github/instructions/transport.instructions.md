@@ -2,6 +2,11 @@
 applyTo: "crates/sar-transport/**"
 ---
 
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # SAR transport rules
 
 * Preserve M10 TCP/QUIC behavior unless explicitly asked to change it.

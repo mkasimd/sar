@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(unused_imports)]
 //! Tests for delta LFH field parsing, writing, and structural validation
 //! (spec section 6.1, `HAS_DELTA`).

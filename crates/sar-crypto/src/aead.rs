@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use aes_gcm::aead::{AeadInPlace, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce, Tag as AesTag};
 use chacha20poly1305::{Tag as XTag, XChaCha20Poly1305, XNonce};

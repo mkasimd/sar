@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(unused_imports)]
 /// CDC interaction tests: CDC metadata with STORE, compressed, encrypted, sparse,
 /// fragmented entries.  Also verifies that resource limits are enforced for CDC.

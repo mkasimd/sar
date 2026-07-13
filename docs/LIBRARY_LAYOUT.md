@@ -1,4 +1,9 @@
-# Library Layout and Monorepo Scope (post-M11e)
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# Library Layout and Monorepo Scope
 
 This document records current monorepo layout and future binding/library direction.
 

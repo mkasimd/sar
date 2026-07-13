@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::{
     error::SarError,
     flags::{EntryMode, GlobalFlags, validate_entry_mode_against_global, validate_global_flags},

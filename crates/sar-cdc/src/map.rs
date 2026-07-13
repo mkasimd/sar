@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! CDC_MAP TLV v1 binary parse, serialisation, and hash verification.
 //!
 //! ## On-wire format

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 #![allow(unused_imports)]
 //! Tests for sparse reconstruction across fragment groups (§13.7.6 / §19.6).
 //!

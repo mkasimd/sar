@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 use sar_crypto::hash::{blake3_hash, ct_eq, hash_data, new_hasher, sha256};
 use sar_crypto::{HASH_BLAKE3, HASH_SHA3_256, HASH_SHA256, SarCryptoError};
 

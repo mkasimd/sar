@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! Sparse-file map parsing, writing, and scatter-gather reconstruction.
 //!
 //! This module provides physical LFH sparse map parse/write functions:

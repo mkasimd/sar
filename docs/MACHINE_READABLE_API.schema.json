@@ -1,0 +1,555 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:sar:machine-readable-api:schema:2",
+  "title": "SAR machine-readable API inventory",
+  "description": "Normalized machine-readable public API inventory for the SAR Rust reference implementation.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "description",
+    "source",
+    "crates"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "integer",
+      "const": 2
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "source audit",
+        "manual audit",
+        "converted from schema v1",
+        "generated inventory"
+      ]
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "default": []
+    },
+    "crates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/crate"
+      }
+    },
+    "metadata": {
+      "$ref": "#/$defs/metadata"
+    }
+  },
+  "$defs": {
+    "crate": {
+      "type": "object",
+      "required": [
+        "name",
+        "path",
+        "description",
+        "status",
+        "api"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^sar-[a-z0-9-]+$"
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^crates/sar-[a-z0-9-]+$"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/crate_status"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "api": {
+          "$ref": "#/$defs/api"
+        },
+        "metadata": {
+          "$ref": "#/$defs/crate_metadata"
+        }
+      }
+    },
+    "api": {
+      "type": "object",
+      "required": [
+        "functions",
+        "types",
+        "constants"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "functions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/function"
+          }
+        },
+        "types": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/type"
+          }
+        },
+        "constants": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/constant"
+          }
+        }
+      }
+    },
+    "function": {
+      "type": "object",
+      "required": [
+        "name",
+        "signature",
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "use_for": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/example"
+          },
+          "default": []
+        },
+        "metadata": {
+          "$ref": "#/$defs/item_metadata"
+        }
+      }
+    },
+    "type": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "$ref": "#/$defs/type_kind"
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "use_for": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "examples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/example"
+          },
+          "default": []
+        },
+        "metadata": {
+          "$ref": "#/$defs/item_metadata"
+        }
+      }
+    },
+    "constant": {
+      "type": "object",
+      "required": [
+        "name",
+        "signature",
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "use_for": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "metadata": {
+          "$ref": "#/$defs/item_metadata"
+        }
+      }
+    },
+    "example": {
+      "type": "object",
+      "required": [
+        "title",
+        "code"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "rust",
+            "bash",
+            "text",
+            "json"
+          ],
+          "default": "rust"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "item_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "module": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibility": {
+          "$ref": "#/$defs/visibility"
+        },
+        "stability": {
+          "$ref": "#/$defs/stability"
+        },
+        "implemented": {
+          "type": "boolean"
+        },
+        "since_milestone": {
+            "type": "string",
+            "pattern": "^(?:(?:M)?[0-9]+[a-z]?(?:\\.[0-9]+)?(?:-[A-Za-z0-9]+)*|stage-[0-9]+)$"
+        },
+        "feature_flags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "related_spec_sections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          },
+          "default": []
+        },
+        "returns": {
+          "type": "string",
+          "minLength": 1
+        },
+        "safety_notes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "ffi": {
+          "$ref": "#/$defs/ffi_metadata"
+        },
+        "legacy": {
+          "$ref": "#/$defs/freeform_object"
+        }
+      }
+    },
+    "parameter": {
+      "type": "object",
+      "required": [
+        "name",
+        "type",
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ffi_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "candidate": {
+          "type": "boolean"
+        },
+        "readiness": {
+          "$ref": "#/$defs/ffi_readiness"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "binding_readiness": {
+          "$ref": "#/$defs/binding_readiness"
+        },
+        "security_notes": {
+          "$ref": "#/$defs/freeform_object"
+        },
+        "legacy": {
+          "$ref": "#/$defs/freeform_object"
+        }
+      }
+    },
+    "binding_readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "c_abi": {
+          "$ref": "#/$defs/binding_status"
+        },
+        "python": {
+          "$ref": "#/$defs/binding_status"
+        },
+        "swift_ios": {
+          "$ref": "#/$defs/binding_status"
+        },
+        "kotlin_java_android": {
+          "$ref": "#/$defs/binding_status"
+        },
+        "cpp_via_c_abi": {
+          "$ref": "#/$defs/binding_status"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "crate_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "milestones": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/module_summary"
+          },
+          "default": []
+        },
+        "legacy": {
+          "$ref": "#/$defs/freeform_object"
+        }
+      }
+    },
+    "module_summary": {
+      "type": "object",
+      "required": [
+        "name",
+        "path",
+        "item_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string"
+        },
+        "item_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "crate_status": {
+      "type": "string",
+      "enum": [
+        "implemented",
+        "partial",
+        "deferred",
+        "experimental",
+        "unstable"
+      ]
+    },
+    "binding_status": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "candidate",
+        "unstable",
+        "not_ready",
+        "not_applicable",
+        "deferred",
+        "experimental"
+      ]
+    },
+    "type_kind": {
+      "type": "string",
+      "enum": [
+        "struct",
+        "enum",
+        "trait",
+        "type_alias"
+      ]
+    },
+    "visibility": {
+      "type": "string",
+      "enum": [
+        "public",
+        "public_reexport",
+        "crate_public"
+      ]
+    },
+    "stability": {
+      "type": "string",
+      "enum": [
+        "stable",
+        "experimental",
+        "unstable",
+        "evolving",
+        "internal_public"
+      ]
+    },
+    "ffi_readiness": {
+      "type": "string",
+      "enum": [
+        "ready",
+        "candidate",
+        "requires_wrapper",
+        "not_ready",
+        "not_applicable",
+        "unstable"
+      ]
+    },
+    "freeform_object": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  }
+}

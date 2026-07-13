@@ -2,6 +2,11 @@
 applyTo: "ffi/**,bindings/**"
 ---
 
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # SAR FFI and binding rules
 
 * Do not expose Rust `String`, `Vec`, `Option<T>`, references, slices, or lifetime-bearing structs directly across C ABI.

@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # SAR Conformance Profiles
 
 This directory contains profile-specific conformance vectors for SAR Protocol v1.0.
@@ -150,7 +155,7 @@ must be bounded. Compatible with transport-level loss tolerance.
 
 ### `cold-storage` (deferred)
 
-**Status: DEFERRED — no binary vectors in M12a.**
+**Status: DEFERRED - no binary vectors in M12a.**
 
 The cold-storage/tape profile is intended for archival storage on sequential media
 (tape, optical disc) where the archive may be read after long periods with

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! SAR-over-QUIC listener, connection, and stream types.
 
 use std::collections::BTreeMap;

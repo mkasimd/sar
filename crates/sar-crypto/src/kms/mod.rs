@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// Argon2 key derivation.
 pub mod argon2;
 /// Asymmetric key wrapping hooks.

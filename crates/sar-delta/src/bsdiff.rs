@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! SAR BSDIFF v1 (`SARBSD01`) patch application (spec §8.4.4).
 //!
 //! The decoded patch payload format is:

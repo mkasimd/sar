@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 /// CLI CDC tests: `inspect --json` includes CDC metadata,
 /// `verify --cdc` passes/fails as expected.
 use std::fs;

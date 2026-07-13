@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # SAR Implementation Milestones
 
 This document records the intended implementation roadmap for the SAR Protocol v1.0 reference implementation.
@@ -714,11 +719,11 @@ If this milestone document appears to describe library/profile layout differentl
 ## M12a-stream-cp: Serialized SAR stream transcript conformance vectors (corrected)
 
 * Added deterministic valid stream transcript fixtures under `test-vectors/valid/stream-session/`:
-  * `session-init` — minimal: Global Header + SESSION_INIT
-  * `session-capabilities` — SESSION_INIT + SESSION_CAPABILITIES
-  * `ordered-data` — SESSION_INIT + two DATA_WRITE entries with sequence numbering
-  * `heartbeat` — SESSION_INIT + SESSION_HEARTBEAT (zero-payload)
-  * `sequence-wrap` — sequence number wraps from 0xFFFF to 0x0000
+  * `session-init` - minimal: Global Header + SESSION_INIT
+  * `session-capabilities` - SESSION_INIT + SESSION_CAPABILITIES
+  * `ordered-data` - SESSION_INIT + two DATA_WRITE entries with sequence numbering
+  * `heartbeat` - SESSION_INIT + SESSION_HEARTBEAT (zero-payload)
+  * `sequence-wrap` - sequence number wraps from 0xFFFF to 0x0000
 * Added deterministic invalid stream transcript fixtures under `test-vectors/invalid/stream-session/`:
   * `data-before-session-init` → `SAR_ERR_STREAM_STATE`
   * `duplicate-session-init` → `SAR_ERR_STREAM_STATE`

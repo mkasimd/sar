@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+// SPDX-License-Identifier: Apache-2.0
+
 //! GF(2^8) finite field arithmetic for Reed-Solomon.
 //!
 //! Field parameters (per SAR spec):
