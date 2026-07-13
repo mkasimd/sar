@@ -41,7 +41,7 @@ zeroize = { version = "1.8", features = ["derive", "alloc"] }
 subtle = "2.5"
 rand_core = { version = "0.6.4", features = ["getrandom"] }
 getrandom = "0.2"
-hmac = "0.12"
+hmac = "0.13"
 rpassword = "7"
 crc32fast = "1.5"
 
