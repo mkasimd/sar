@@ -2106,7 +2106,7 @@
             "name": "write_sparse_map",
             "description": "Serializes sparse extents to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates.",
             "metadata": {
-              "since_milestone": "M11c-cp",
+              "since_milestone": "11c-cp",
               "returns": "Vec<u8>",
               "stability": "stable",
               "implemented": true,
@@ -2243,7 +2243,7 @@
             "name": "FieldPresence",
             "description": "Three-state presence model for LFH metadata fields. Absent: global flag not set, field physically missing from wire. PresentInactive: global flag set but entry mode bit unset. PresentActive: global flag set and semantically active.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2262,7 +2262,7 @@
             "name": "EntryKind",
             "description": "Entry kind derived from EntryMode bits. RegularFile: default. Directory: IS_DIRECTORY set. Symlink: IS_SYMLINK set. EmptyArea: name is empty.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2281,7 +2281,7 @@
             "name": "EntryPermissionMetadata",
             "description": "POSIX-style permission mode bits from LFH HAS_PERMS field.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2300,7 +2300,7 @@
             "name": "EntryOwnerMetadata",
             "description": "UID/GID ownership info decoded from the packed EXT_UID_GID u32 field (low 16 bits = UID, high 16 bits = GID, i.e. uid | (gid << 16)). Use uid() and gid() accessor methods.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2318,7 +2318,7 @@
             "name": "EntryTimestampMetadata",
             "description": "Modification, access, and status-change timestamps (64-bit Unix seconds) from LFH EXT_TIME field.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2337,7 +2337,7 @@
             "name": "EntryCompressionMetadata",
             "description": "Compression algorithm ID from LFH COMPRESSED field.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2355,7 +2355,7 @@
             "name": "EntryEncryptionMetadata",
             "description": "Encryption algorithm ID and IV/nonce from LFH ENCRYPTED fields.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2374,7 +2374,7 @@
             "name": "EntryFecMetadata",
             "description": "FEC algorithm ID from LFH SELECTIVE_FEC field.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2392,7 +2392,7 @@
             "name": "EntryCdcMetadata",
             "description": "CDC algorithm ID from LFH CDC_SUPPORT field.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2410,7 +2410,7 @@
             "name": "EntryDeltaMetadata",
             "description": "Delta patch algorithm ID and base-file hash from LFH HAS_DELTA fields.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2429,7 +2429,7 @@
             "name": "EntryFragmentMetadata",
             "description": "Fragment descriptor fields from LFH FILE_FRAGMENTATION global flag.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2447,7 +2447,7 @@
             "name": "EntrySparseMetadata",
             "description": "Sparse file map from LFH SPARSE_FILES global flag.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2466,7 +2466,7 @@
             "name": "EntryHashMetadata",
             "description": "Content hash algorithm ID and hash bytes from LFH DEDUPLICATION field.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -3534,7 +3534,7 @@
             "name": "EntryInput::file",
             "description": "Ergonomic constructor for a regular file entry with default metadata. Use this instead of struct literal construction.",
             "metadata": {
-              "since_milestone": "M11a",
+              "since_milestone": "11a",
               "returns": "EntryInput",
               "stability": "stable",
               "implemented": true,
@@ -3875,7 +3875,7 @@
             "name": "LfhSizeFieldPolicy",
             "description": "Archive-writer LFH size-field policy: Auto (default 32-bit with promotion before header emission), Force32 (fail closed if any size exceeds u32::MAX), Force64 (always emit 64-bit fields and set global SIZE_64BIT).",
             "metadata": {
-              "since_milestone": "M11a.1",
+              "since_milestone": "11a.1",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6677,7 +6677,7 @@
             "name": "validate_fragment_group",
             "description": "Validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6694,7 +6694,7 @@
             "name": "reconstruct_fragments",
             "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Validates duplicate fragment indexes, payload-size agreement, index gaps, missing LAST_FRAGMENT, descriptor byte-range gaps (initial/middle/tail), and LOSS_TOLERANT degraded-output policy with max_loss_tolerant_gap.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6713,7 +6713,7 @@
             "name": "FragmentError",
             "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow. M11c-cp additions: PayloadSizeMismatch (payload length does not match descriptor.fragment_size, always fatal) and DuplicateIndex (duplicate fragment_index in group, always fatal even with LOSS_TOLERANT).",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6731,7 +6731,7 @@
             "name": "FragmentLimits",
             "description": "Resource limits for fragment operations.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6749,7 +6749,7 @@
             "name": "FragmentDescriptor",
             "description": "Per-fragment extent descriptor.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6767,7 +6767,7 @@
             "name": "FragmentEntry",
             "description": "Decoded fragment with payload and metadata.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6812,7 +6812,7 @@
             "name": "gap_degraded_output_permitted",
             "description": "Returns whether a missing-fragment gap may produce degraded output. Requires LOSS_TOLERANT flag.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6829,7 +6829,7 @@
             "name": "classify_recovery",
             "description": "Maps gap/failure booleans to RecoveryStatus.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6848,7 +6848,7 @@
             "name": "RecoveryStatus",
             "description": "Reconstruction outcome. Variants: Complete, Degraded, Failed.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6912,7 +6912,7 @@
             "name": "validate_sparse_extents",
             "description": "Validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety. Does not validate payload-length agreement.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6929,7 +6929,7 @@
             "name": "apply_sparse_reconstruction",
             "description": "Scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because payload bytes are available.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6948,7 +6948,7 @@
             "name": "SparseError",
             "description": "Error type for sparse operations. Variants: InvalidMap, Truncated, LimitExceeded, Overflow.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6966,7 +6966,7 @@
             "name": "SparseLimits",
             "description": "Resource limits for sparse operations.",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -6984,7 +6984,7 @@
             "name": "SparseExtent",
             "description": "One sparse data region (offset + length).",
             "metadata": {
-              "since_milestone": "M11c",
+              "since_milestone": "11c",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
