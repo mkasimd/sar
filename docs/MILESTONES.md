@@ -779,116 +779,251 @@ If this milestone document appears to describe library/profile layout differentl
 
 # Current and future milestones
 
-## M12b: fuzzing and malicious corpus
+## M12a-pre-fuzz-cp: dependency compatibility and pre-fuzz hardening
 
-* global header fuzzing
-* LFH fuzzing
-* CD/footer fuzzing
-* TLV fuzzing
-* low-level `sar-core` parser corpus
-* high-level `sar-archive` orchestration corpus
-* transform pipeline fuzzing
-* transform-switching DoS corpus:
+* resolve failing Dependabot dependency updates or explicitly defer unsafe/risky major updates
+* preserve crypto/authentication behavior across dependency updates
+* fail closed on missing required metadata when corresponding global metadata fields are active
+* tighten delta pre-dispatch target-size/resource validation where practical
+* document current in-memory archive-level recovery API limitations
+* add regression tests for metadata completeness, dependency compatibility, and delta resource behavior
+* keep `sar-partition` intentionally deferred; partition/multi-volume support remains future work
+* this pass does not start M12b long-running fuzzing and does not claim fuzz-hardening completeness
+
+## M12b.1: fuzzing workspace and policy
+
+* add `fuzz/` directory using `cargo-fuzz`
+* add initial `fuzz/Cargo.toml`
+* add `fuzz/README.md` documenting:
+
+  * local fuzzing workflow
+  * CI smoke policy
+  * corpus policy
+  * artifact policy
+  * crash triage
+  * minimization workflow
+  * promotion of minimized crashes into regression tests
+* add `.gitignore` rules for fuzz build outputs and generated artifacts
+* add a placeholder/skeleton fuzz target if needed to verify workspace wiring
+* ensure the fuzz workspace builds
+* this pass does not claim parser, archive, stream, transform, or malicious-corpus fuzz coverage
+
+## M12b.2: core parser fuzz targets
+
+* add parser-focused fuzz targets for:
+
+  * global header parsing
+  * LFH parsing
+  * TLV parsing
+  * Central Dictionary/Footer parsing
+* add small hand-curated seed corpus files where useful
+* ensure parser fuzz targets compile
+* ensure malformed input returns errors rather than panics
+* ensure parser fuzz targets use bounded `ResourceLimits`
+* add short smoke runs for parser targets
+* promote any discovered minimized parser crashes into normal `sar-core` regression tests
+* document parser fuzzing coverage and limitations
+
+## M12b.3: archive and stream structural fuzz targets
+
+* add higher-level no-panic/resource-limit fuzz targets for:
+
+  * `sar-archive` structural parsing
+  * ordinary archive entry decoding where safe bounded inputs are available
+  * archive audit entry walking
+  * `sar-stream` transcript validation
+* keep stream transcript semantic validation owned by `sar-stream`
+* keep archive structural fuzzing separate from stream/session semantic execution
+* ensure archive/stream fuzz targets compile
+* add small hand-curated seed corpus files where useful
+* add short smoke runs for archive/stream targets
+* promote any discovered minimized crashes into normal `sar-archive` or `sar-stream` regression tests
+* document archive/stream fuzzing coverage and limitations
+
+## M12b.4: initial local fuzzing pass
+
+* run short smoke fuzzing for all initial fuzz targets
+* run local exploratory fuzzing for a limited period on the highest-risk targets
+* record which targets were run and for roughly how long
+* minimize any discovered crash inputs
+* promote useful minimized crash inputs into normal regression tests
+* document unresolved or long-running fuzzing work explicitly
+* this pass establishes initial fuzzing execution only; it does not claim exhaustive fuzzing, production hardening, or security-audit completion
+
+## M12b.5: extended malicious corpus and long-running fuzzing
+
+* expand transform pipeline fuzzing
+* expand transform-switching DoS corpus:
 
   * many small entries with alternating compression algorithms
   * alternating patch/compression/encryption combinations
   * repeated decompressor initialization
   * repeated patch-window initialization
   * bounded rejection tests for strict profiles
-* crypto/auth ordering corpus
-* TLS_EXPORTER/AAD negative corpus:
+* expand crypto/auth ordering corpus
+* expand TLS_EXPORTER/AAD negative corpus:
 
   * wrong Global Header AAD
   * wrong LFH AAD
   * wrong session binding
   * bad tag/ciphertext
   * generic authentication failure behavior
-* decompression bomb corpus
-* allocator-churn / repeated-initialization corpus
-* FEC/fragmentation corpus
-* CDC/delta corpus
-* stream/session corpus
-* metadata edge-case corpus
-* malformed filesystem metadata corpus
-* extraction-race malicious corpus where practical:
+* expand decompression bomb corpus
+* expand allocator-churn / repeated-initialization corpus
+* expand FEC/fragmentation corpus
+* expand CDC/delta corpus
+* expand stream/session corpus
+* expand metadata edge-case corpus
+* expand malformed filesystem metadata corpus
+* expand extraction-race malicious corpus where practical:
 
   * path replacement attempts
   * symlink traversal attempts
   * unsafe directory permission ordering
   * hostile metadata combinations
-* profile-specific rejection corpus
+* expand profile-specific rejection corpus
+* run longer local, scheduled, or dedicated fuzzing campaigns
+* keep long-running fuzzing as ongoing security-hardening work rather than a prerequisite for future milestones
 
-## M12c: docs/API/security posture hardening
+## M12c.1: documentation and public-claims hardening
 
 * conformance docs
-* machine-readable API inventory
-* security model docs
-* CLI behavior docs
 * compatibility notes
 * spec-question cleanup
 * public claims audit
+* document current fuzzing coverage and limitations
+* document deferred functionality, including partition/multi-volume support
+* ensure public documentation does not claim production readiness, exhaustive fuzzing, independent audit, certification, or stable API/ABI guarantees
+
+## M12c.2: API inventory and crate-boundary hardening
+
+* machine-readable API inventory
+* generated API documentation
 * crate-boundary consistency audit
 * library-layout consistency audit
-* security-profile documentation draft if needed before M14a
 * document which hardening behavior is implementation/profile policy rather than SAR wire-format behavior
+* ensure public API inventory reflects current experimental/pre-stable status
+* ensure generated docs remain in sync with machine-readable API inventory
 
-## M13a: security audit
+## M12c.3: security posture documentation
 
-* cryptography
-* parsing
-* memory
-* panic/DoS
-* unsafe
-* dependency risk
-* metadata restoration risks
-* path traversal / symlink hazards
-* UID/GID/permission restoration hazards
-* crate-boundary attack surface
-* profile/library layout attack surface
-* transport/session attack surface
-* FFI readiness risks
-* side-channel and secret-handling audit:
+* security model docs
+* CLI behavior docs
+* recovery API limitation documentation
+* metadata restoration risk documentation
+* security-profile documentation draft if needed before M14a
+* update `SECURITY.md` where security posture changed
+* ensure documentation distinguishes current behavior, planned hardening, and future profile policy
 
-  * TLS_EXPORTER SAR-AEAD key derivation
-  * AEAD tag failure behavior
-  * constant-time handling of secret comparisons where comparison is unavoidable
-  * zeroization of exporter-derived material where practical
-  * no secret material exposed through logs/errors/debug APIs
-* transform resource-accounting audit:
 
-  * decompressor setup limits
-  * patch setup limits
-  * algorithm-switching profile limits
-  * allocator churn / repeated initialization DoS
-  * profile-specific strict-mode rejection behavior
-* filesystem extraction TOCTOU audit:
+## M13a.1: parser, memory, panic, and DoS audit
 
-  * directory staging permissions
-  * symlink/hardlink/path replacement races
-  * final metadata application ordering
-  * platform-specific extraction safety
-* cold-storage/tape resilience audit:
+* audit global header, LFH, TLV, CD, Footer, and archive structural parsing
+* audit checked arithmetic and length/offset calculations
+* audit `ResourceLimits` coverage
+* audit panic/DoS behavior
+* audit allocator-churn and repeated-initialization risks
+* audit unsafe usage policy
+* review fuzzing coverage and corpus quality for parser/resource targets
+* record findings as tracked remediation items
 
-  * identify which structural anchor failures are unrecoverable in plain SAR v1.0
-  * evaluate interoperable sidecar/container/profile approaches
-  * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
+## M13a.2: cryptography and secret-handling audit
 
-## M13b: refactoring/remediation from M13a
+* audit cryptographic dependency usage
+* audit authentication failure behavior
+* audit TLS_EXPORTER SAR-AEAD key derivation
+* audit AAD binding behavior
+* audit AEAD tag failure behavior
+* audit constant-time handling of secret comparisons where comparison is unavoidable
+* audit zeroization of exporter-derived material where practical
+* audit logs, errors, debug APIs, and test helpers for accidental secret exposure
+* record findings as tracked remediation items
 
-* remove duplicated logic
-* simplify risky abstractions
+## M13a.3: transform and recovery resource-accounting audit
+
+* audit decompressor setup limits
+* audit patch setup limits
+* audit algorithm-switching profile limits
+* audit delta target-size and output-size invariants
+* audit sparse reconstruction limits
+* audit FEC/recovery metadata bounds
+* audit in-memory recovery API limitations
+* audit profile-specific strict-mode rejection behavior
+* record findings as tracked remediation items
+
+## M13a.4: filesystem metadata and extraction safety audit
+
+* audit metadata restoration risks
+* audit path traversal and path normalization behavior
+* audit symlink and hardlink hazards
+* audit UID/GID restoration hazards
+* audit permission restoration hazards
+* audit directory staging permissions
+* audit symlink/hardlink/path replacement races
+* audit final metadata application ordering
+* audit platform-specific extraction safety
+* record findings as tracked remediation items
+
+## M13a.5: crate-boundary, profile-boundary, transport, and FFI-readiness audit
+
+* audit crate-boundary attack surface
+* audit profile/library layout attack surface
+* audit transport/session attack surface
+* audit FFI readiness risks
+* audit whether public Rust APIs expose unstable layout assumptions
+* audit which APIs should remain Rust-only and which may be suitable for C/Python bindings
+* record findings as tracked remediation items
+
+## M13a.6: cold-storage and tape resilience audit
+
+* identify which structural anchor failures are unrecoverable in plain SAR v1.0
+* evaluate interoperable sidecar/container/profile approaches
+* evaluate sidecar recovery index options
+* evaluate external container parity options
+* evaluate tape block parity options
+* evaluate profile-defined redundant manifest options
+* document compatibility impact for specification-compliant readers
+* do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
+
+## M13b.1: parser/resource/security remediation
+
+* address high-priority findings from parser, memory, panic, and DoS audit
+* address high-value fuzzing findings from parser/resource targets
 * strengthen invariants
 * reduce attack surface
+* add regression tests for fixed findings
+* preserve existing conformance behavior unless a deliberate breaking change is documented
+
+## M13b.2: crypto, transform, and recovery remediation
+
+* address high-priority cryptography and secret-handling findings
+* address transform resource-accounting findings
+* address delta/patch setup limit findings
+* address recovery bounds and metadata validation findings
+* harden secret-handling and error-reporting paths
+* add regression tests for fixed findings
+
+## M13b.3: extraction, metadata, and filesystem remediation
+
+* address metadata restoration findings
+* address path traversal / symlink / hardlink findings
+* harden extraction staging and metadata restoration paths
+* add regression tests for fixed findings
+* preserve fail-closed extraction behavior
+
+## M13b.4: public API and binding-readiness remediation
+
+* remove duplicated logic where it affects stability or safety
+* simplify risky abstractions
 * harden crate boundaries
 * harden profile/library boundaries
-* harden transform resource accounting
-* harden extraction staging and metadata restoration paths
-* harden secret-handling and error-reporting paths
-* prepare stable public API surface
-* prepare C ABI/Python architecture after security findings
+* triage extended fuzzing findings and decide whether any specific high-severity findings must block binding/package milestones
+* prepare stable public API surface candidates
+* prepare C ABI/Python architecture using security-audit findings available at that point
 * preserve monorepo layout when preparing C ABI/Python architecture
 
-## M14a: C ABI security profile and split-library design
+
+## M14a.1: C ABI profile and shared-library layout design
 
 * define C ABI security profiles before freezing the ABI
 * align profile design with `docs/LIBRARY_LAYOUT.md`
@@ -911,6 +1046,12 @@ If this milestone document appears to describe library/profile layout differentl
 * define which features are excluded from privileged profiles
 * define profile constructors for C callers
 * define default-deny behavior for unsupported/custom features
+* document that shared libraries do not provide process isolation
+* document helper-process model for high-risk/networked use
+* no stable ABI freeze yet unless the profile/layout design is complete and reviewed
+
+## M14a.2: C ABI ownership and type-system design
+
 * define FFI-safe metadata ownership:
 
   * do not expose Rust `String`, `Vec`, `Option<T>`, borrowed references, slices, or lifetime-bearing structs directly across C ABI
@@ -923,12 +1064,26 @@ If this milestone document appears to describe library/profile layout differentl
 * define cancellation behavior for long-running operations
 * define thread-safety expectations
 * define dependency/linking expectations per profile
+* define C ABI source, headers, examples, tests, and packaging metadata path, such as `ffi/c/`
+* no stable ABI freeze yet unless ownership and lifetime rules are complete and reviewed
+
+## M14a.3: C ABI security behavior design
+
 * define side-channel and secret-handling expectations for FFI-facing APIs:
 
   * secret/authentication material is not exposed through C ABI
   * authentication failures remain generic
   * no raw exporter-derived key material is returned to callers
   * debug/log APIs must not expose secret material
+* define panic-containment expectations
+* define error/status mapping expectations
+* define profile behavior for unsupported/custom features
+* define behavior for unsupported profiles, unsupported transforms, unsupported stream features, and unsupported custom extensions
+* update `SECURITY.md` or future `SECURITY_PROFILES.md`
+* no stable ABI freeze yet unless security behavior is complete and reviewed
+
+## M14a.4: C ABI cold-storage/profile resilience design
+
 * evaluate cold-storage/tape structural-anchor resilience as profile design, not default SAR v1.0 wire-format behavior:
 
   * sidecar recovery index
@@ -936,51 +1091,104 @@ If this milestone document appears to describe library/profile layout differentl
   * tape block parity
   * profile-defined redundant manifest
   * compatibility impact for specification-compliant readers
-* document that shared libraries do not provide process isolation
-* document helper-process model for high-risk/networked use
-* C ABI source, headers, examples, tests, and packaging metadata live under a monorepo path such as `ffi/c/`
-* update `SECURITY.md` / future `SECURITY_PROFILES.md`
-* no stable ABI freeze yet unless the design is complete and reviewed
+* decide whether any cold-storage/tape resilience behavior belongs in C ABI profiles
+* document which resilience behavior is profile/container policy rather than SAR wire-format behavior
+* no stable ABI freeze yet unless resilience/profile behavior is complete and reviewed
 
-## M14b: stable C ABI
+## M14b.1: minimal stable C ABI skeleton
 
-* define stable C header
-* opaque handle model
-* archive reader/writer C API
-* profile constructors
-* metadata handle API
-* entry/result destructor API
-* error/status mapping
-* memory ownership rules
-* callback conventions
-* cancellation conventions
-* thread-safety conventions
-* no Rust panic across FFI
-* ABI versioning
-* ABI compatibility tests
-* no raw Rust type layout exposed across C ABI
-* C ABI errors do not reveal secret/AAD mismatch details
-* C ABI APIs do not expose raw key/exporter-derived material
+* define stable C header structure
+* define ABI versioning symbols
+* define opaque handle model
+* define error/status mapping
+* define destructor conventions
+* ensure no raw Rust type layout is exposed across C ABI
+* ensure no Rust panic crosses FFI
+* add minimal C ABI build test
+* add minimal C caller smoke test
 
-## M14c: C ABI examples/tests
+## M14b.2: C archive reader ABI
+
+* define archive reader C API
+* define archive-open behavior
+* define archive-entry iteration behavior
+* define entry metadata access behavior
+* define reader/result destructor API
+* define callback conventions where needed
+* define cancellation conventions where needed
+* define thread-safety conventions
+* add C ABI tests for archive reader behavior
+
+## M14b.3: C archive writer ABI
+
+* define archive writer C API
+* define archive creation/write behavior
+* define entry input behavior
+* define metadata setting behavior
+* define fail-closed behavior for missing required metadata
+* define writer/result destructor API
+* define callback conventions where needed
+* define cancellation conventions where needed
+* add C ABI tests for archive writer behavior
+
+## M14b.4: C verification and audit ABI
+
+* define archive verification C API
+* define archive audit C API where exposed by the stable API surface
+* define integrity/authentication failure mapping
+* define profile-specific rejection behavior
+* ensure C ABI errors do not reveal secret/AAD mismatch details
+* ensure C ABI APIs do not expose raw key/exporter-derived material
+* add C ABI tests for verification and audit behavior
+
+## M14b.5: C metadata and profile ABI
+
+* define metadata handle API
+* define filesystem metadata access API where supported
+* define profile constructors
+* define profile-selection behavior
+* define profile capability discovery behavior where supported
+* define memory ownership rules for metadata and profile results
+* add C ABI tests for metadata/profile behavior
+
+## M14b.6: C streaming/session ABI where enabled
+
+* define streaming/session C API where appropriate
+* define stream transcript validation C API where appropriate
+* define transcript recording C API where appropriate
+* expose transport/session APIs only where enabled by selected profile/library features
+* ensure unsupported streaming/session behavior fails closed
+* add C ABI tests for streaming/session behavior where supported
+
+## M14c.1: C examples and build integration
 
 * C build examples
-* C archive read/write examples
+* C archive read examples
+* C archive write examples
 * C metadata examples
-* C streaming examples where supported
+* C verification/audit examples
 * C profile-selection examples
 * C package-profile examples
 * C backup-profile examples where supported
 * C error-handling examples
+
+## M14c.2: C ABI integration and misuse tests
+
 * C ABI integration tests
 * sanitizer-friendly FFI tests
 * ownership/destructor misuse tests where practical
+* repeated create/drop tests
 * no-panic-across-FFI tests
 * secret material non-exposure tests where practical
+* C streaming examples/tests where supported
 
-## M14d: Python module
+## M14d.1: Python package architecture
 
-* Python bindings over stable API surface
+* Python bindings expose capabilities aligned with the C ABI where practical
+* Python bindings may call Rust directly through PyO3 rather than calling through the C ABI internally
+* use PyO3 as the default Rust/Python binding layer unless a later design review selects a better option
+* use maturin as the default Python build and packaging tool unless a later design review selects a better option
+* define Python packaging metadata around `pyproject.toml`
 * align Python package shape with `docs/LIBRARY_LAYOUT.md`
 * do not mirror every Rust crate as a public Python module
 * preferred Python package shape:
@@ -991,26 +1199,90 @@ If this milestone document appears to describe library/profile layout differentl
   * `sar.profiles`
   * `sar.stream` where enabled
   * `sar.transport` where enabled
-* archive read/write API
-* metadata access API
-* verification API
-* profile-selection API
-* streaming/session API where appropriate
+* define how Rust feature flags map to Python extras where practical
+* optional extras/features for archive/package/quic/backup/full profiles where appropriate
+* default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
+* Python binding source, packaging metadata, tests, and examples live under a monorepo path such as `bindings/python/`
+
+## M14d.2: Python error, status, and ownership foundation
+
 * Python exceptions mapped from SAR status codes
+* Python exception hierarchy preserves generic authentication/integrity failure behavior
+* Python APIs must not expose raw key/exporter-derived material
+* Python exceptions must not reveal secret/AAD mismatch details
 * Python-owned metadata objects or safe opaque-handle wrappers
 * PyO3 ownership conversion rules
 * Python wrapper objects must release Rust-owned resources automatically when the Python object is dropped
-* PyO3 classes wrapping opaque Rust handles must implement safe ownership/drop behavior and must not leak heap-owned Rust metadata, readers, writers, buffers, or stream handles
+* PyO3 classes wrapping opaque Rust handles must implement safe ownership/drop behavior
 * long-lived readers/writers/streams should provide explicit close/release APIs or context-manager support where appropriate
-* Python garbage collection behavior must be tested for repeated create/drop cycles and long-running streaming use
+* Python garbage collection behavior must be tested for repeated create/drop cycles
+
+## M14d.3: Python archive reader API
+
+* archive open/read API
+* archive entry iteration API
+* archive metadata access API
+* archive reader options where supported by the stable API surface
+* archive verification hooks where they are reader-adjacent
+* context-manager support for archive readers
 * no borrowed views into temporary archive buffers unless owner lifetime is enforced by Python object references
-* optional extras/features for archive/package/quic/backup/full profiles where appropriate
-* default Python install should not load transport, QUIC, or all-feature code unless explicitly selected
-* Python exceptions must not reveal secret/AAD mismatch details
-* Python APIs must not expose raw key/exporter-derived material
-* Python binding source, packaging metadata, tests, and examples live under a monorepo path such as `bindings/python/`
+* Python examples/tests for archive reading and entry iteration
+
+## M14d.4: Python archive writer API
+
+* archive creation/write API
+* archive entry input API
+* metadata setting API
+* profile-aware writer options where supported by the stable API surface
+* context-manager support for archive writers
+* fail-closed behavior for missing required metadata
+* Python tests for metadata completeness and writer error behavior
+* Python examples/tests for archive writing
+
+## M14d.5: Python verification and audit APIs
+
+* archive verification API
+* archive audit API where exposed by the stable API surface
+* integrity/authentication failure mapping to generic Python exceptions
+* profile-specific rejection behavior
+* tests for verification success/failure behavior
+* tests ensuring Python exceptions do not reveal secret/AAD mismatch details
+* Python examples/tests for verification and audit workflows
+
+## M14d.6: Python metadata and profile APIs
+
+* metadata access API
+* filesystem metadata API where supported
+* profile-selection API
+* profile capability discovery API where supported
+* package/backup/static/archive profile APIs where supported
+* tests for metadata ownership, copying, and lifetime behavior
+* tests for profile selection and unsupported-feature rejection
+* Python examples/tests for metadata and profile workflows
+
+## M14d.7: Python streaming/session APIs where enabled
+
+* streaming/session API where appropriate
+* stream transcript validation bindings where appropriate
+* transcript recording bindings where appropriate
+* transport/session APIs only where enabled by selected package/profile features
+* unsupported streaming/session behavior fails closed
+* examples/tests for streaming/session APIs where supported
+* ensure Python package defaults do not force transport or QUIC dependencies
+
+## M14d.8: Python packaging, wheels, and integration tests
+
+* configure maturin-based local builds
+* configure `pyproject.toml` for the Python package
+* document local development commands such as `maturin develop`
+* document wheel build commands such as `maturin build`
 * wheel/build documentation
-* Python examples/tests
+* package metadata
+* optional extras/build-feature documentation
+* import smoke tests
+* repeated create/drop integration tests
+* basic archive read/write integration test using the installed Python package
+* CI job design for Python wheel build/test where appropriate
 
 ## M15a: monorepo packaging and CI layout
 
@@ -1117,3 +1389,4 @@ If this milestone document appears to describe library/profile layout differentl
 * use a monorepo path such as `bindings/android/`
 * do not split Android bindings into a separate Git repository
 * generated Android package artifacts are release/CI outputs and must not be committed to source control
+
