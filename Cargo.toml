@@ -31,8 +31,8 @@ clap = { version = "4.5", features = ["derive"] }
 walkdir = "2.5"
 flate2 = "1.1"
 zstd = "0.13"
-aes-gcm = "0.10"
-chacha20poly1305 = "0.10"
+aes-gcm = "0.11"
+chacha20poly1305 = "0.11"
 sha2 = "0.11"
 blake3 = "1"
 pbkdf2 = { version = "0.13", features = ["hmac"] }
