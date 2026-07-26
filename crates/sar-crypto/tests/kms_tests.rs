@@ -4,6 +4,7 @@
 use zeroize::Zeroizing;
 
 use sar_crypto::kms::asymmetric::unwrap_cek;
+use sar_crypto::kms::pbkdf2::derive_key;
 use sar_crypto::kms::types::{
     Argon2Params, AsymmetricRecipient, AsymmetricWrapParams, KmsParams, Pbkdf2Params,
     parse_kms_payload, serialize_kms_payload,
@@ -12,6 +13,10 @@ use sar_crypto::{
     ARGON2_VARIANT_ID, KMS_ARGON2, KMS_ASYMMETRIC_WRAP, KMS_PBKDF2, KMS_TLS_EXPORTER,
     PBKDF2_PRF_HMAC_SHA256, SarCryptoError, validate_kms_mode_id,
 };
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
 
 #[test]
 fn pbkdf2_parse_serialize_round_trip() {
@@ -38,6 +43,23 @@ fn pbkdf2_validation_errors() {
     low_iters.extend_from_slice(&32u16.to_le_bytes());
     let err = parse_kms_payload(KMS_PBKDF2, &low_iters).expect_err("low iterations");
     assert!(matches!(err, SarCryptoError::Malformed(_)));
+}
+
+#[test]
+fn pbkdf2_hmac_sha256_known_vector() {
+    let params = Pbkdf2Params {
+        prf_algo_id: PBKDF2_PRF_HMAC_SHA256,
+        salt: b"0123456789abcdef".to_vec(),
+        iterations: 100_000,
+        derived_key_length: 32,
+    };
+
+    let key = derive_key(&params, b"correct horse battery staple").expect("derive key");
+
+    assert_eq!(
+        hex(&key),
+        "090105d3788cadab9c12509fa1ba1d46a91a158d7a1779b114322f3fd5a825cb"
+    );
 }
 
 #[test]
