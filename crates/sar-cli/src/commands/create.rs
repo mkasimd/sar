@@ -50,7 +50,7 @@ pub(crate) fn create_archive(
     let encryption = if let Some(choice) = encrypt {
         let password = load_password(password)?;
         let mut salt = [0u8; 32];
-        getrandom::getrandom(&mut salt)
+        getrandom::fill(&mut salt)
             .map_err(|_| SarError::Internal("random salt generation failed"))?;
         let settings = EncryptionSettings {
             algo_id: encryption_to_algo_id(choice),
