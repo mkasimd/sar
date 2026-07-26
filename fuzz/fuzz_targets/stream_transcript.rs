@@ -5,9 +5,9 @@
 //!
 //! Exercises `sar_stream::validate_stream_transcript_with_options` against
 //! arbitrary byte input. Transcript recording is disabled so no files are
-//! written to disk. Stream transcript semantic rules are owned entirely by
-//! `sar-stream`; they are not reimplemented here. Does not instantiate
-//! archive stream/session execution directly.
+//! written to disk. Stream transcript semantic validation is delegated to
+//! `sar-stream`; this fuzz target does not reimplement transcript rules. Does
+//! not instantiate archive stream/session execution directly.
 
 #![no_main]
 
