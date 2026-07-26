@@ -2889,22 +2889,40 @@ impl<W: Write> ArchiveWriter<W> {
             ));
         }
 
-        // Permissions require HAS_PERMS.
-        if entry.permissions.is_some() && !self.flags.contains(GlobalFlags::HAS_PERMS) {
+        // Permissions require HAS_PERMS, and HAS_PERMS requires explicit permissions.
+        if self.flags.contains(GlobalFlags::HAS_PERMS) {
+            if entry.permissions.is_none() {
+                return Err(SarError::Malformed(
+                    "ArchiveWriterOptions::with_permissions requires EntryInput::permissions",
+                ));
+            }
+        } else if entry.permissions.is_some() {
             return Err(SarError::FlagConflict(
                 "EntryInput::permissions requires ArchiveWriterOptions::with_permissions = true",
             ));
         }
 
-        // UID/GID requires EXT_UID_GID.
-        if entry.uid_gid.is_some() && !self.flags.contains(GlobalFlags::EXT_UID_GID) {
+        // UID/GID requires EXT_UID_GID, and EXT_UID_GID requires explicit UID/GID metadata.
+        if self.flags.contains(GlobalFlags::EXT_UID_GID) {
+            if entry.uid_gid.is_none() {
+                return Err(SarError::Malformed(
+                    "ArchiveWriterOptions::with_uid_gid requires EntryInput::uid_gid",
+                ));
+            }
+        } else if entry.uid_gid.is_some() {
             return Err(SarError::FlagConflict(
                 "EntryInput::uid_gid requires ArchiveWriterOptions::with_uid_gid = true",
             ));
         }
 
-        // Timestamps require EXT_TIME.
-        if entry.timestamps.is_some() && !self.flags.contains(GlobalFlags::EXT_TIME) {
+        // Timestamps require EXT_TIME, and EXT_TIME requires explicit timestamp metadata.
+        if self.flags.contains(GlobalFlags::EXT_TIME) {
+            if entry.timestamps.is_none() {
+                return Err(SarError::Malformed(
+                    "ArchiveWriterOptions::with_timestamps requires EntryInput::timestamps",
+                ));
+            }
+        } else if entry.timestamps.is_some() {
             return Err(SarError::FlagConflict(
                 "EntryInput::timestamps requires ArchiveWriterOptions::with_timestamps = true",
             ));
@@ -2991,20 +3009,24 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         // When a Global Flag forces a field to be physically present in the LFH,
-        // the field must be written even if the caller did not provide a value.
-        // Zero is the correct wire-format fill: parsers treat it as "present with default
-        // value", not "absent".  This is distinct from the fail-closed validation above,
-        // which rejects entries that *provide* a non-None value when the flag is unset.
+        // the high-level writer requires the caller to provide that metadata explicitly.
+        // Explicit zero values remain valid; missing values fail closed.
         if self.flags.contains(GlobalFlags::HAS_PERMS) {
-            lfh.permissions = entry.permissions.or(Some(0));
+            lfh.permissions = Some(entry.permissions.ok_or(SarError::Malformed(
+                "HAS_PERMS requires EntryInput::permissions",
+            ))?);
         }
 
         if self.flags.contains(GlobalFlags::EXT_UID_GID) {
-            lfh.uid_gid = entry.uid_gid.or(Some(0));
+            lfh.uid_gid = Some(entry.uid_gid.ok_or(SarError::Malformed(
+                "EXT_UID_GID requires EntryInput::uid_gid",
+            ))?);
         }
 
         if self.flags.contains(GlobalFlags::EXT_TIME) {
-            lfh.timestamps = Some(entry.timestamps.unwrap_or([0u64; 3]));
+            lfh.timestamps = Some(entry.timestamps.ok_or(SarError::Malformed(
+                "EXT_TIME requires EntryInput::timestamps",
+            ))?);
         }
 
         if self.flags.contains(GlobalFlags::PER_FILE_CRC) {
