@@ -19,3 +19,31 @@ path = "fuzz_targets/smoke_core.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parse_global_header"
+path = "fuzz_targets/parse_global_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_lfh"
+path = "fuzz_targets/parse_lfh.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_tlv"
+path = "fuzz_targets/parse_tlv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_cd_footer"
+path = "fuzz_targets/parse_cd_footer.rs"
+test = false
+doc = false
+bench = false
