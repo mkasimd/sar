@@ -228,6 +228,89 @@ Useful minimized crashes should become ordinary tests in the owning crate:
 Regression tests should assert the stable expected behavior, usually that
 malformed input returns a deterministic error instead of panicking.
 
+## M12b.3 smoke-run commands
+
+Build all M12b.3 targets:
+
+```bash
+cargo +nightly fuzz build archive_structural
+cargo +nightly fuzz build archive_entry_decode
+cargo +nightly fuzz build archive_audit
+cargo +nightly fuzz build stream_transcript
+```
+
+Run short smoke executions with seed corpus:
+
+```bash
+mkdir -p fuzz/corpus/archive_structural
+cp fuzz/seeds/archive_structural/*.bin fuzz/corpus/archive_structural/
+cargo +nightly fuzz run archive_structural -- -runs=100
+
+mkdir -p fuzz/corpus/archive_entry_decode
+cp fuzz/seeds/archive_entry_decode/*.bin fuzz/corpus/archive_entry_decode/
+cargo +nightly fuzz run archive_entry_decode -- -runs=100
+
+mkdir -p fuzz/corpus/archive_audit
+cp fuzz/seeds/archive_audit/*.bin fuzz/corpus/archive_audit/
+cargo +nightly fuzz run archive_audit -- -runs=100
+
+mkdir -p fuzz/corpus/stream_transcript
+cp fuzz/seeds/stream_transcript/*.bin fuzz/corpus/stream_transcript/
+cargo +nightly fuzz run stream_transcript -- -runs=100
+```
+
+Do not use tracked `fuzz/seeds/...` directories directly as writable libFuzzer
+corpus directories. Copy seeds to `fuzz/corpus/` first, which is gitignored.
+
+## M12b.3 coverage and limitations
+
+The following applies to all four M12b.3 targets:
+
+* No panic on any input is the primary invariant.
+* Malformed input returning errors is expected and correct.
+* Resource limits are applied before allocation or expansion.
+* No exhaustive fuzzing coverage is claimed.
+* No production hardening or security audit completion is claimed.
+* No malicious corpus family coverage is claimed.
+* Does not execute stream/session side effects.
+* Does not perform filesystem extraction.
+* Does not require key material or external delta bases.
+
+### `archive_structural`
+
+Covers: high-level archive structural parsing via `ArchiveReader::read_global_header`.
+
+Does not cover: entry payload decoding, stream/session execution, CD offset
+verification, control entry walking, FEC repair, delta reconstruction, CDC
+chunk resolution.
+
+### `archive_entry_decode`
+
+Covers: global header parsing plus bounded ordinary entry walking and decoding
+via `ArchiveReader::next_entry`, stopping at 16 entries or on error.
+
+Does not cover: encrypted entries (no key provider), delta entries requiring
+external bases, stream/session entries, filesystem extraction, full archive
+verification.
+
+### `archive_audit`
+
+Covers: archive audit metadata walking via `ArchiveReader::audit` with
+`PayloadAuditPolicy::MetadataOnly` and `ControlEntryPolicy::Reject`. Exercises
+LFH parsing, entry classification, and CD parsing without payload decoding.
+
+Does not cover: payload decoding, key providers, control entry preservation,
+inert payload inspection, FEC repair.
+
+### `stream_transcript`
+
+Covers: `sar-stream` transcript semantic validation via
+`validate_stream_transcript_with_options`. Stream transcript semantic rules
+are owned entirely by `sar-stream`.
+
+Does not cover: archive stream parser (`StreamArchiveParser`), session
+execution, filesystem side effects, long-running campaigns.
+
 ## Current targets
 
 ### `smoke_core`
@@ -268,6 +351,48 @@ M12b.2 parser target for `sar_core::format::parse_footer` and
 The target always attempts footer parsing, then uses the first input byte to
 select a bounded subset of Central Dictionary flags before parsing the remaining
 bytes as a Central Dictionary.
+
+### `archive_structural`
+
+M12b.3 high-level structural parsing target using `ArchiveReader`.
+
+Treats input as arbitrary archive bytes. Constructs `ArchiveReader` with strict
+resource limits and calls `read_global_header`. Does not decode entry payloads.
+Does not execute stream/session semantics.
+
+Malformed input returning errors is expected. No panic on any input.
+
+### `archive_entry_decode`
+
+M12b.3 archive ordinary entry walking target using `ArchiveReader`.
+
+Treats input as arbitrary archive bytes. After parsing the global header, walks
+at most 16 ordinary entries via `next_entry`. Stops on the first error. Does
+not perform filesystem extraction. Does not require key providers or external
+delta bases.
+
+Malformed input returning errors is expected. No panic on any input.
+
+### `archive_audit`
+
+M12b.3 archive audit metadata walking target using `ArchiveReader::audit`.
+
+Treats input as arbitrary archive bytes. Calls `audit` with
+`PayloadAuditPolicy::MetadataOnly` and `ControlEntryPolicy::Reject`. Does not
+decode encrypted payloads or execute control entries.
+
+Malformed input returning errors is expected. No panic on any input.
+
+### `stream_transcript`
+
+M12b.3 stream transcript semantic validation target using
+`sar_stream::validate_stream_transcript_with_options`.
+
+Treats input as arbitrary stream transcript bytes. Transcript recording is
+disabled so no files are written to disk. Stream transcript semantic rules are
+owned entirely by `sar-stream` and are not reimplemented here.
+
+Malformed input returning errors is expected. No panic on any input.
 
 ## Hand-curated seed inputs
 
