@@ -3,9 +3,9 @@
 
 //! M12b.3: High-level archive structural parsing fuzz target.
 //!
-//! Exercises `ArchiveReader` global header parsing and structural verification
-//! against arbitrary byte input. Does not decode entry payloads. Does not
-//! execute stream/session semantics.
+//! Exercises high-level `ArchiveReader` global header parsing against arbitrary
+//! byte input. Does not decode entry payloads. Does not execute stream/session
+//! semantics.
 
 #![no_main]
 
