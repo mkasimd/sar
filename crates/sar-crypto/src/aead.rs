@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 // SPDX-License-Identifier: Apache-2.0
 
-use aes_gcm::aead::{AeadInPlace, KeyInit};
+use aes_gcm::aead::inout::InOutBuf;
+use aes_gcm::aead::{AeadInOut, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce, Tag as AesTag};
 use chacha20poly1305::{Tag as XTag, XChaCha20Poly1305, XNonce};
 use rand_core::RngCore;
@@ -31,10 +32,11 @@ pub fn aead_encrypt(
         ENCR_AES256_GCM => {
             let cipher = Aes256Gcm::new_from_slice(key)
                 .map_err(|_| SarCryptoError::InvalidLength("AES key init failed"))?;
-            let nonce = Nonce::from_slice(&iv_nonce_field[..12]);
+            let nonce = Nonce::try_from(&iv_nonce_field[..12])
+                .map_err(|_| SarCryptoError::InvalidLength("AES-GCM nonce length invalid"))?;
             let mut buf = plaintext.to_vec();
             let tag = cipher
-                .encrypt_in_place_detached(nonce, aad, &mut buf)
+                .encrypt_inout_detached(&nonce, aad, InOutBuf::from(buf.as_mut_slice()))
                 .map_err(|_| SarCryptoError::Internal("AES-GCM encryption failed"))?;
             buf.extend_from_slice(tag.as_slice());
             Ok(buf)
@@ -42,10 +44,12 @@ pub fn aead_encrypt(
         ENCR_XCHACHA20_POLY => {
             let cipher = XChaCha20Poly1305::new_from_slice(key)
                 .map_err(|_| SarCryptoError::InvalidLength("XChaCha20 key init failed"))?;
-            let nonce = XNonce::from_slice(iv_nonce_field);
+            let nonce = XNonce::try_from(iv_nonce_field.as_slice()).map_err(|_| {
+                SarCryptoError::InvalidLength("XChaCha20-Poly1305 nonce length invalid")
+            })?;
             let mut buf = plaintext.to_vec();
             let tag = cipher
-                .encrypt_in_place_detached(nonce, aad, &mut buf)
+                .encrypt_inout_detached(&nonce, aad, InOutBuf::from(buf.as_mut_slice()))
                 .map_err(|_| SarCryptoError::Internal("XChaCha20-Poly1305 encryption failed"))?;
             buf.extend_from_slice(tag.as_slice());
             Ok(buf)
@@ -79,10 +83,17 @@ pub fn aead_decrypt(
         ENCR_AES256_GCM => {
             let cipher = Aes256Gcm::new_from_slice(key)
                 .map_err(|_| SarCryptoError::InvalidLength("AES key init failed"))?;
-            let nonce = Nonce::from_slice(&iv_nonce_field[..12]);
-            let tag = AesTag::from_slice(tag_bytes);
+            let nonce = Nonce::try_from(&iv_nonce_field[..12])
+                .map_err(|_| SarCryptoError::InvalidLength("AES-GCM nonce length invalid"))?;
+            let tag = AesTag::try_from(tag_bytes)
+                .map_err(|_| SarCryptoError::InvalidLength("AES-GCM tag length invalid"))?;
             let mut buf = ciphertext.to_vec();
-            match cipher.decrypt_in_place_detached(nonce, aad, &mut buf, tag) {
+            match cipher.decrypt_inout_detached(
+                &nonce,
+                aad,
+                InOutBuf::from(buf.as_mut_slice()),
+                &tag,
+            ) {
                 Ok(()) => Ok(buf),
                 Err(_) => {
                     buf.zeroize();
@@ -95,10 +106,21 @@ pub fn aead_decrypt(
         ENCR_XCHACHA20_POLY => {
             let cipher = XChaCha20Poly1305::new_from_slice(key)
                 .map_err(|_| SarCryptoError::InvalidLength("XChaCha20 key init failed"))?;
-            let nonce = XNonce::from_slice(iv_nonce_field);
-            let tag = XTag::from_slice(tag_bytes);
+
+            let nonce = XNonce::try_from(iv_nonce_field.as_slice()).map_err(|_| {
+                SarCryptoError::InvalidLength("XChaCha20-Poly1305 nonce length invalid")
+            })?;
+
+            let tag = XTag::try_from(tag_bytes).map_err(|_| {
+                SarCryptoError::InvalidLength("XChaCha20-Poly1305 tag length invalid")
+            })?;
             let mut buf = ciphertext.to_vec();
-            match cipher.decrypt_in_place_detached(nonce, aad, &mut buf, tag) {
+            match cipher.decrypt_inout_detached(
+                &nonce,
+                aad,
+                InOutBuf::from(buf.as_mut_slice()),
+                &tag,
+            ) {
                 Ok(()) => Ok(buf),
                 Err(_) => {
                     buf.zeroize();
