@@ -1,0 +1,21 @@
+[package]
+name = "sar-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.sar-core]
+path = "../crates/sar-core"
+
+[[bin]]
+name = "smoke_core"
+path = "fuzz_targets/smoke_core.rs"
+test = false
+doc = false
+bench = false
