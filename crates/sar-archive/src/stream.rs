@@ -1,19 +1,13 @@
 // SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 // SPDX-License-Identifier: Apache-2.0
 
-use sar_compression::COMP_ALGO_STORE;
-use sar_crypto::{KeyProvider, aad::build_aead_aad, provider::resolve_cek, validate_encr_algo_id};
-use sar_delta::{
-    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
-    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
-};
-
 use crate::archive::{
     ArchiveReaderOptions, EntryMetadata, EntryReader, bsdiff_limits_from_resource_limits,
-    build_kms_context, compression_algorithm_name, map_patch_error,
+    build_kms_context, compression_algorithm_name, map_patch_error, validate_delta_pre_dispatch,
     vcdiff_limits_from_resource_limits,
 };
 use crate::transform::{DecodingPlanV2, EntryCryptoContext, decode_payload_v2};
+use sar_compression::COMP_ALGO_STORE;
 use sar_core::{
     error::SarError,
     flags::GlobalFlags,
@@ -21,6 +15,11 @@ use sar_core::{
         GlobalHeader, LocalFileHeader, global_header_flags_bytes, lfh_bytes_for_aad,
         parse_global_header, parse_lfh,
     },
+};
+use sar_crypto::{KeyProvider, aad::build_aead_aad, provider::resolve_cek, validate_encr_algo_id};
+use sar_delta::{
+    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
+    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
 };
 
 const SAR_MAGIC: [u8; 4] = [0x53, 0x41, 0x52, 0x21];
@@ -489,6 +488,11 @@ impl StreamArchiveParser {
                     }
                 }
                 PATCH_ALGO_VCDIFF => {
+                    validate_delta_pre_dispatch(
+                        decoded.len(),
+                        lfh.uncompressed_size,
+                        &self.options.limits,
+                    )?;
                     let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
                     if hash == [0u8; 32] {
                         return Err(SarError::BaseMissing(
@@ -507,6 +511,11 @@ impl StreamArchiveParser {
                         .map_err(map_patch_error)?
                 }
                 PATCH_ALGO_BSDIFF => {
+                    validate_delta_pre_dispatch(
+                        decoded.len(),
+                        lfh.uncompressed_size,
+                        &self.options.limits,
+                    )?;
                     let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
                     if hash == [0u8; 32] {
                         return Err(SarError::BaseMissing(

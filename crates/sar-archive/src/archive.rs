@@ -1498,6 +1498,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     }
                 }
                 PATCH_ALGO_VCDIFF => {
+                    validate_delta_pre_dispatch(
+                        decoded.len(),
+                        lfh.uncompressed_size,
+                        &self.options.limits,
+                    )?;
+
                     let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
                     if hash == ZERO_DELTA_BASE_HASH {
                         return Err(SarError::BaseMissing(
@@ -1516,6 +1522,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         .map_err(map_patch_error)?
                 }
                 PATCH_ALGO_BSDIFF => {
+                    validate_delta_pre_dispatch(
+                        decoded.len(),
+                        lfh.uncompressed_size,
+                        &self.options.limits,
+                    )?;
+
                     let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
                     if hash == ZERO_DELTA_BASE_HASH {
                         return Err(SarError::BaseMissing(
@@ -3500,6 +3512,32 @@ pub(crate) fn map_patch_error(e: sar_delta::PatchError) -> SarError {
         sar_delta::PatchError::BaseMissing(m) => SarError::BaseMissing(m),
         sar_delta::PatchError::LimitExceeded(m) => SarError::LimitExceeded(m),
     }
+}
+
+/// Performs cheap reader-side delta checks before dispatching to a patch decoder.
+/// This catches obviously excessive target sizes and patch payload sizes before
+/// VCDIFF/BSDIFF-specific parsing begins.
+pub(crate) fn validate_delta_pre_dispatch(
+    patch_payload_len: usize,
+    expected_target_size: u64,
+    limits: &ResourceLimits,
+) -> Result<(), SarError> {
+    if expected_target_size > limits.max_decoded_entry_size {
+        return Err(SarError::LimitExceeded(
+            "delta target size exceeds max_decoded_entry_size",
+        ));
+    }
+
+    let patch_payload_len = u64::try_from(patch_payload_len)
+        .map_err(|_| SarError::Overflow("delta patch payload length exceeds u64"))?;
+
+    if patch_payload_len > limits.max_in_memory_buffer {
+        return Err(SarError::LimitExceeded(
+            "delta patch payload exceeds max_in_memory_buffer",
+        ));
+    }
+
+    Ok(())
 }
 
 /// Builds a [`BsdiffLimits`] from the unified [`ResourceLimits`].

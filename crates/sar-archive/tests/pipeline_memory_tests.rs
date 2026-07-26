@@ -30,6 +30,7 @@ use sar_core::{
     },
     sparse::{SparseExtent, write_sparse_map},
 };
+use sar_delta::{PATCH_ALGO_BSDIFF, PATCH_ALGO_VCDIFF};
 use sar_fragmentation::{
     FragmentDescriptor, FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments,
 };
@@ -61,6 +62,26 @@ fn header_bytes(flags: GlobalFlags) -> Vec<u8> {
         kms: None,
     })
     .expect("header")
+}
+
+/// Creates a minimal `NO_INDEX | HAS_DELTA` archive with non-zero delta base hash.
+/// This avoids duplicating raw archive construction in each new test.
+fn delta_archive_with_target_size(
+    patch_algo_id: u8,
+    target_size: u64,
+    patch_payload: &[u8],
+) -> Vec<u8> {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
+    let mut archive = header_bytes(flags);
+
+    let mut lfh = LocalFileHeader::minimal_store(b"delta.bin".to_vec(), patch_payload.len() as u64);
+    lfh.uncompressed_size = target_size;
+    lfh.patch_algo_id = Some(patch_algo_id);
+    lfh.delta_base_hash = Some([0xA5; 32]);
+
+    archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+    archive.extend_from_slice(patch_payload);
+    archive
 }
 
 // ---------------------------------------------------------------------------
@@ -601,6 +622,116 @@ fn archive_reader_decompression_respects_entry_limit() {
             SarError::LimitExceeded(_) | SarError::DecompressionFailed(_)
         ),
         "expected LimitExceeded or DecompressionFailed, got {err:?}"
+    );
+}
+
+#[test]
+fn vcdiff_delta_target_above_entry_limit_fails_before_dispatch() {
+    let archive = delta_archive_with_target_size(PATCH_ALGO_VCDIFF, 1025, &[0x00]);
+
+    let mut reader = sar_archive::ArchiveReader::with_options(
+        Cursor::new(archive),
+        sar_archive::ArchiveReaderOptions {
+            limits: ResourceLimits {
+                max_decoded_entry_size: 1024,
+                ..unlimited()
+            },
+            delta_base: Some(b"base".to_vec()),
+        },
+    )
+    .expect("reader");
+
+    reader.read_global_header().expect("header");
+    let err = reader
+        .next_entry()
+        .expect_err("must reject oversized delta target");
+
+    assert!(
+        matches!(err, SarError::LimitExceeded(_)),
+        "expected LimitExceeded, got {err:?}"
+    );
+}
+
+#[test]
+fn bsdiff_delta_target_above_entry_limit_fails_before_dispatch() {
+    let archive = delta_archive_with_target_size(PATCH_ALGO_BSDIFF, 1025, &[0x00]);
+
+    let mut reader = sar_archive::ArchiveReader::with_options(
+        Cursor::new(archive),
+        sar_archive::ArchiveReaderOptions {
+            limits: ResourceLimits {
+                max_decoded_entry_size: 1024,
+                ..unlimited()
+            },
+            delta_base: Some(b"base".to_vec()),
+        },
+    )
+    .expect("reader");
+
+    reader.read_global_header().expect("header");
+    let err = reader
+        .next_entry()
+        .expect_err("must reject oversized delta target");
+
+    assert!(
+        matches!(err, SarError::LimitExceeded(_)),
+        "expected LimitExceeded, got {err:?}"
+    );
+}
+
+#[test]
+fn vcdiff_delta_patch_payload_above_memory_limit_fails_before_dispatch() {
+    let archive = delta_archive_with_target_size(PATCH_ALGO_VCDIFF, 1, &[0x00, 0x01]);
+
+    let mut reader = sar_archive::ArchiveReader::with_options(
+        Cursor::new(archive),
+        sar_archive::ArchiveReaderOptions {
+            limits: ResourceLimits {
+                max_decoded_entry_size: 1024,
+                max_in_memory_buffer: 1,
+                ..unlimited()
+            },
+            delta_base: Some(b"base".to_vec()),
+        },
+    )
+    .expect("reader");
+
+    reader.read_global_header().expect("header");
+    let err = reader
+        .next_entry()
+        .expect_err("must reject oversized delta patch payload");
+
+    assert!(
+        matches!(err, SarError::LimitExceeded(_)),
+        "expected LimitExceeded, got {err:?}"
+    );
+}
+
+#[test]
+fn bsdiff_delta_patch_payload_above_memory_limit_fails_before_dispatch() {
+    let archive = delta_archive_with_target_size(PATCH_ALGO_BSDIFF, 1, &[0x00, 0x01]);
+
+    let mut reader = sar_archive::ArchiveReader::with_options(
+        Cursor::new(archive),
+        sar_archive::ArchiveReaderOptions {
+            limits: ResourceLimits {
+                max_decoded_entry_size: 1024,
+                max_in_memory_buffer: 1,
+                ..unlimited()
+            },
+            delta_base: Some(b"base".to_vec()),
+        },
+    )
+    .expect("reader");
+
+    reader.read_global_header().expect("header");
+    let err = reader
+        .next_entry()
+        .expect_err("must reject oversized delta patch payload");
+
+    assert!(
+        matches!(err, SarError::LimitExceeded(_)),
+        "expected LimitExceeded, got {err:?}"
     );
 }
 
