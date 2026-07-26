@@ -13,6 +13,12 @@ libfuzzer-sys = "0.4"
 [dependencies.sar-core]
 path = "../crates/sar-core"
 
+[dependencies.sar-archive]
+path = "../crates/sar-archive"
+
+[dependencies.sar-stream]
+path = "../crates/sar-stream"
+
 [[bin]]
 name = "smoke_core"
 path = "fuzz_targets/smoke_core.rs"
@@ -44,6 +50,34 @@ bench = false
 [[bin]]
 name = "parse_cd_footer"
 path = "fuzz_targets/parse_cd_footer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_structural"
+path = "fuzz_targets/archive_structural.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_entry_decode"
+path = "fuzz_targets/archive_entry_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_audit"
+path = "fuzz_targets/archive_audit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_transcript"
+path = "fuzz_targets/stream_transcript.rs"
 test = false
 doc = false
 bench = false
