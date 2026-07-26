@@ -236,4 +236,43 @@ Minimal M12b.1 workspace-wiring target.
 
 This target calls `sar_core::format::parse_global_header` with bounded
 `ResourceLimits`. It exists only to verify that the fuzz workspace builds and
-runs. Real parser coverage starts in M12b.2.
+runs.
+
+### `parse_global_header`
+
+M12b.2 parser target for `sar_core::format::parse_global_header`.
+
+Covers Global Header structure, magic/version validation, global flag byte
+length handling, optional partition descriptor parsing, and optional KMS
+extension length handling.
+
+### `parse_lfh`
+
+M12b.2 parser target for `sar_core::format::parse_lfh`.
+
+The first input byte selects a bounded subset of Global Flags used to interpret
+the LFH layout. The remaining bytes are parsed as LFH bytes.
+
+### `parse_tlv`
+
+M12b.2 parser target for `sar_core::tlv::parse_tlvs`.
+
+Covers TLV type classification, value length handling, count limits, and
+8-byte alignment padding validation.
+
+### `parse_cd_footer`
+
+M12b.2 parser target for `sar_core::format::parse_footer` and
+`sar_core::format::parse_central_dictionary`.
+
+The target always attempts footer parsing, then uses the first input byte to
+select a bounded subset of Central Dictionary flags before parsing the remaining
+bytes as a Central Dictionary.
+
+## Hand-curated seed inputs
+
+Small deterministic seed inputs live under:
+
+```text
+fuzz/seeds/<target-name>/
+```

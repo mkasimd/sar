@@ -5,3 +5,9 @@
 /fuzz/artifacts/
 /fuzz/corpus/
 /fuzz/*.log
+
+# Fuzz seed policy:
+# Generated libFuzzer corpus entries are hash-named and must not be committed.
+# Only hand-curated seed files with explicit .bin names are tracked here.
+/fuzz/seeds/*/*
+!/fuzz/seeds/*/*.bin
