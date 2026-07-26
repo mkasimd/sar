@@ -775,10 +775,6 @@ If this milestone document appears to describe library/profile layout differentl
 * No `sar-audit` crate was added in this pass.
 * This pass does not start `M12b` fuzzing and does not start `M12c`, `M13`, `M14`, `M15`, or `M16`.
 
----
-
-# Current and future milestones
-
 ## M12a-pre-fuzz-cp: dependency compatibility and pre-fuzz hardening
 
 * resolve failing Dependabot dependency updates or explicitly defer unsafe/risky major updates
@@ -789,6 +785,8 @@ If this milestone document appears to describe library/profile layout differentl
 * add regression tests for metadata completeness, dependency compatibility, and delta resource behavior
 * keep `sar-partition` intentionally deferred; partition/multi-volume support remains future work
 * this pass does not start M12b long-running fuzzing and does not claim fuzz-hardening completeness
+
+# Current and future milestones
 
 ## M12b.1: fuzzing workspace and policy
 

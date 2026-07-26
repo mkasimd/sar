@@ -15,7 +15,8 @@
 //! * Symlink entry encoding/decoding.
 //! * Hidden attribute encoding/decoding.
 //! * Combined metadata round-trips.
-//! * Physically-present-but-inactive metadata (zero/default values).
+//! * Explicit zero/default metadata values remain physically present.
+//! * Missing required metadata fails closed when the corresponding global flag is active.
 //! * NO_INDEX archive metadata.
 //! * Indexed archive metadata.
 //! * Compressed-entry + metadata interaction.
@@ -173,8 +174,6 @@ fn permissions_round_trip_with_has_perms() {
 
 #[test]
 fn permissions_zero_value_not_collapsed_to_none() {
-    // When HAS_PERMS is set but no permissions are provided by the entry,
-    // the writer emits zero; the reader must not collapse this to Absent.
     let entry = write_read_entry(
         sar_archive::ArchiveWriterOptions {
             no_index: true,
@@ -184,13 +183,13 @@ fn permissions_zero_value_not_collapsed_to_none() {
         sar_archive::EntryInput {
             name: "f.txt".into(),
             payload: b"data".to_vec(),
-            permissions: None, // no permissions → writer writes 0
+            permissions: Some(0),
             ..Default::default()
         },
     )
     .expect("roundtrip");
 
-    // Field is physically present; value is zero but must not be Absent.
+    // Field is physically present; explicit zero must not be treated as Absent.
     assert!(
         matches!(
             entry.metadata.permissions_presence,
@@ -202,7 +201,6 @@ fn permissions_zero_value_not_collapsed_to_none() {
         assert_eq!(p.mode, 0);
     }
 
-    // Legacy field: Some({mode:0}) when HAS_PERMS is set.
     let perms = entry.metadata.permissions.expect("permissions present");
     assert_eq!(perms.mode, 0);
 }
@@ -284,7 +282,7 @@ fn uid_gid_zero_value_preserved() {
         sar_archive::EntryInput {
             name: "f.txt".into(),
             payload: b"data".to_vec(),
-            uid_gid: None, // writer writes 0
+            uid_gid: Some(0),
             ..Default::default()
         },
     )
@@ -380,7 +378,7 @@ fn timestamps_zero_value_preserved() {
         sar_archive::EntryInput {
             name: "f.txt".into(),
             payload: b"data".to_vec(),
-            timestamps: None, // writer writes [0, 0, 0]
+            timestamps: Some([0, 0, 0]),
             ..Default::default()
         },
     )
@@ -1404,6 +1402,31 @@ fn writer_fails_closed_for_permissions_without_flag() {
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
 
+#[test]
+fn writer_fails_closed_for_missing_permissions_with_flag() {
+    let mut buf = Vec::new();
+    let mut writer = sar_archive::ArchiveWriter::new(
+        &mut buf,
+        sar_archive::ArchiveWriterOptions {
+            no_index: true,
+            with_permissions: true,
+            ..Default::default()
+        },
+    )
+    .expect("writer");
+
+    let err = writer
+        .add_entry(sar_archive::EntryInput {
+            name: "f.txt".into(),
+            payload: b"data".to_vec(),
+            permissions: None,
+            ..Default::default()
+        })
+        .expect_err("must fail");
+
+    assert!(matches!(err, SarError::Malformed(_)));
+}
+
 // ---------------------------------------------------------------------------
 // 38. Writer rejects uid_gid without EXT_UID_GID (fail-closed)
 // ---------------------------------------------------------------------------
@@ -1425,6 +1448,31 @@ fn writer_fails_closed_for_uid_gid_without_flag() {
     assert!(matches!(err, SarError::FlagConflict(_)));
 }
 
+#[test]
+fn writer_fails_closed_for_missing_uid_gid_with_flag() {
+    let mut buf = Vec::new();
+    let mut writer = sar_archive::ArchiveWriter::new(
+        &mut buf,
+        sar_archive::ArchiveWriterOptions {
+            no_index: true,
+            with_uid_gid: true,
+            ..Default::default()
+        },
+    )
+    .expect("writer");
+
+    let err = writer
+        .add_entry(sar_archive::EntryInput {
+            name: "f.txt".into(),
+            payload: b"data".to_vec(),
+            uid_gid: None,
+            ..Default::default()
+        })
+        .expect_err("must fail");
+
+    assert!(matches!(err, SarError::Malformed(_)));
+}
+
 // ---------------------------------------------------------------------------
 // 39. Writer rejects timestamps without EXT_TIME (fail-closed)
 // ---------------------------------------------------------------------------
@@ -1444,6 +1492,31 @@ fn writer_fails_closed_for_timestamps_without_flag() {
         })
         .expect_err("must fail");
     assert!(matches!(err, SarError::FlagConflict(_)));
+}
+
+#[test]
+fn writer_fails_closed_for_missing_timestamps_with_flag() {
+    let mut buf = Vec::new();
+    let mut writer = sar_archive::ArchiveWriter::new(
+        &mut buf,
+        sar_archive::ArchiveWriterOptions {
+            no_index: true,
+            with_timestamps: true,
+            ..Default::default()
+        },
+    )
+    .expect("writer");
+
+    let err = writer
+        .add_entry(sar_archive::EntryInput {
+            name: "f.txt".into(),
+            payload: b"data".to_vec(),
+            timestamps: None,
+            ..Default::default()
+        })
+        .expect_err("must fail");
+
+    assert!(matches!(err, SarError::Malformed(_)));
 }
 
 // ---------------------------------------------------------------------------
