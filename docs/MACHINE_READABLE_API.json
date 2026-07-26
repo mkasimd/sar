@@ -3098,7 +3098,7 @@
     {
       "name": "sar-archive",
       "path": "crates/sar-archive",
-      "description": "High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and archive-level recovery/repair APIs.",
+      "description": "High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and bounded in-memory archive-level recovery/repair APIs.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -3892,7 +3892,7 @@
           },
           {
             "name": "ArchiveRecoverySettings",
-            "description": "Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary.",
+            "description": "Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary. Current repair APIs for this archive-level recovery metadata are bounded in-memory APIs; streaming repair and external-storage-backed repair are future work.",
             "metadata": {
               "since_milestone": "8",
               "stability": "stable",
@@ -4447,7 +4447,8 @@
       },
       "notes": [
         "Milestone 11d: archive API architecture split from sar-core. Owns ArchiveReader/ArchiveWriter, entry metadata/input/output types, verification/listing flows, stream parser orchestration, indexed and NO_INDEX archive integration.",
-        "Milestone 12a-audit-cp: archive audit primitives with explicit control-entry and payload-audit policies, deterministic machine-readable reports, and inert structural handling for stream transcript containers."
+        "Milestone 12a-audit-cp: archive audit primitives with explicit control-entry and payload-audit policies, deterministic machine-readable reports, and inert structural handling for stream transcript containers.",
+        "Milestone 12a-pre-fuzz-cp: archive-level recovery/repair APIs are currently in-memory APIs. They accept complete archive byte slices, inspect or repair bounded protected ranges in memory, and return repaired archive bytes. Callers must enforce ResourceLimits, especially max_archive_size, max_recovery_protected_range, and max_repair_working_set. Streaming repair and external-storage-backed repair for very large archives remain future work."
       ],
       "metadata": {
         "milestones": [

@@ -39,7 +39,7 @@ For conformance status, see `docs/CONFORMANCE.md`.
 | `sar-cli` | `partial` | User-facing command-line interface over sar-archive, sar-core low-level APIs, and specialized feature crates for archive create/extract/list/verify/inspect/repair/version workflows, including metadata preservation/restoration controls and safe extraction policy. |
 | `sar-compression` | `implemented` | Compression algorithm registry plus bounded stream encode/decode helpers. |
 | `sar-core` | `partial` | Canonical SAR wire-format, status/error, limits, and low-level parse/write helper APIs. |
-| `sar-archive` | `implemented` | High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and archive-level recovery/repair APIs. |
+| `sar-archive` | `implemented` | High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and bounded in-memory archive-level recovery/repair APIs. |
 | `sar-crypto` | `partial` | Hashing, AEAD, KMS parsing, key-provider abstraction, zeroizing secret helpers, and TLS_EXPORTER KMS mode types/context encoding (M10e). |
 | `sar-delta` | `implemented` | Patch algorithm registry, patch generation, and patch application for STORE_PATCH, VCDIFF, and SAR BSDIFF v1. |
 | `sar-fec` | `implemented` | Forward Error Correction codecs and metadata parsing for XOR and Reed-Solomon SAR FEC. |
@@ -267,7 +267,7 @@ Path: `crates/sar-archive`
 
 Status: `implemented`
 
-High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and archive-level recovery/repair APIs.
+High-level SAR archive reader/writer, verification, audit, transform orchestration, forward-only stream parser, conformance/profile validation, and bounded in-memory archive-level recovery/repair APIs.
 
 #### Public functions
 
@@ -319,7 +319,7 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | `ArchiveMetadata` | `struct` | `pub struct ArchiveMetadata { pub global_header: GlobalHeader, pub central_dictionary: Option<CentralDictionary> }` | Parsed archive metadata summary. |
 | `ArchiveReader` | `struct` | `pub struct ArchiveReader<R> { ... }` | Streaming archive reader over a seekable source. |
 | `ArchiveReaderOptions` | `struct` | `pub struct ArchiveReaderOptions { pub limits: ResourceLimits }` | Reader-side decode limits. |
-| `ArchiveRecoverySettings` | `struct` | `pub struct ArchiveRecoverySettings { pub algo_id: u8, pub config0: u8, pub config1: u8, pub symbol_size: u32 }` | Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary. |
+| `ArchiveRecoverySettings` | `struct` | `pub struct ArchiveRecoverySettings { pub algo_id: u8, pub config0: u8, pub config1: u8, pub symbol_size: u32 }` | Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary. Current repair APIs for this archive-level recovery metadata are bounded in-memory APIs; streaming repair and external-storage-backed repair are future work. |
 | `ArchiveSummary` | `struct` | `pub struct ArchiveSummary { pub entry_count: u64, pub archive_size: u64, pub indexed: bool }` | Writer finish summary. |
 | `ArchiveWriter` | `struct` | `pub struct ArchiveWriter<W> { ... }` | Archive writer with compression and optional encryption support. |
 | `ArchiveWriterOptions` | `struct` | `pub struct ArchiveWriterOptions { pub no_index: bool, pub sparse: bool, pub encryption: Option<EncryptionSettings>, pub fec: Option<FecSettings>, pub archive_recovery: Option<ArchiveRecoverySettings>, pub with_path: bool, pub with_permissions: bool, pub with_uid_gid: bool, pub with_timestamps: bool, pub with_per_file_crc: bool, pub with_content_hash: bool, pub with_symlinks: bool, pub with_delta: bool, pub lfh_size_field_policy: LfhSizeFieldPolicy }` | Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`). |

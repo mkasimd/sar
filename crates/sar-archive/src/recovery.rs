@@ -9,10 +9,22 @@
 //!
 //! # Limitations
 //!
-//! Full archive-level repair orchestration requires explicit, block-aligned
-//! byte erasures.  See `docs/SPEC_QUESTIONS.md` for the open spec questions
-//! that prevent complete arbitrary-erasure orchestration.
-
+//! Current archive-level recovery APIs are in-memory APIs.  They accept the
+//! complete archive as `&[u8]`, inspect or repair the protected range in memory,
+//! and return repaired archive bytes as `Vec<u8>`.
+//!
+//! Callers must enforce [`ResourceLimits`] before passing untrusted archives or
+//! erasure inputs to these APIs.  In particular, `max_archive_size`,
+//! `max_recovery_protected_range`, and `max_repair_working_set` bound the
+//! supported repair working set.
+//!
+//! These APIs are suitable for bounded repair workflows, conformance tests, and
+//! controlled archive sizes.  They are not streaming repair APIs and do not yet
+//! support external-storage-backed repair for very large archives.
+//!
+//! Full archive-level repair orchestration also requires explicit,
+//! block-aligned byte erasures.  See `docs/SPEC_QUESTIONS.md` for the open spec
+//! questions that prevent complete arbitrary-erasure orchestration.
 use serde::{Deserialize, Serialize};
 
 use sar_core::{
