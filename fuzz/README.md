@@ -266,8 +266,9 @@ corpus directories. Copy seeds to `fuzz/corpus/` first, which is gitignored.
 
 The following applies to all four M12b.3 targets:
 
-* No panic on any input is the primary invariant.
 * Malformed input returning errors is expected and correct.
+* Panics on malformed input are treated as bugs and should be minimized and
+  promoted into regression tests.
 * Resource limits are applied before allocation or expansion.
 * No exhaustive fuzzing coverage is claimed.
 * No production hardening or security audit completion is claimed.
@@ -305,8 +306,9 @@ inert payload inspection, FEC repair.
 ### `stream_transcript`
 
 Covers: `sar-stream` transcript semantic validation via
-`validate_stream_transcript_with_options`. Stream transcript semantic rules
-are owned entirely by `sar-stream`.
+`validate_stream_transcript_with_options`. Stream transcript semantic
+validation is delegated to `sar-stream`; this fuzz target does not reimplement
+transcript rules.
 
 Does not cover: archive stream parser (`StreamArchiveParser`), session
 execution, filesystem side effects, long-running campaigns.
@@ -360,7 +362,8 @@ Treats input as arbitrary archive bytes. Constructs `ArchiveReader` with strict
 resource limits and calls `read_global_header`. Does not decode entry payloads.
 Does not execute stream/session semantics.
 
-Malformed input returning errors is expected. No panic on any input.
+Malformed input returning errors is expected. Panics on malformed input are
+treated as bugs and should be minimized and promoted into regression tests.
 
 ### `archive_entry_decode`
 
@@ -371,7 +374,8 @@ at most 16 ordinary entries via `next_entry`. Stops on the first error. Does
 not perform filesystem extraction. Does not require key providers or external
 delta bases.
 
-Malformed input returning errors is expected. No panic on any input.
+Malformed input returning errors is expected. Panics on malformed input are
+treated as bugs and should be minimized and promoted into regression tests.
 
 ### `archive_audit`
 
@@ -381,7 +385,8 @@ Treats input as arbitrary archive bytes. Calls `audit` with
 `PayloadAuditPolicy::MetadataOnly` and `ControlEntryPolicy::Reject`. Does not
 decode encrypted payloads or execute control entries.
 
-Malformed input returning errors is expected. No panic on any input.
+Malformed input returning errors is expected. Panics on malformed input are
+treated as bugs and should be minimized and promoted into regression tests.
 
 ### `stream_transcript`
 
@@ -389,10 +394,12 @@ M12b.3 stream transcript semantic validation target using
 `sar_stream::validate_stream_transcript_with_options`.
 
 Treats input as arbitrary stream transcript bytes. Transcript recording is
-disabled so no files are written to disk. Stream transcript semantic rules are
-owned entirely by `sar-stream` and are not reimplemented here.
+disabled so no files are written to disk. Stream transcript semantic
+validation is delegated to `sar-stream`; this fuzz target does not reimplement
+transcript rules.
 
-Malformed input returning errors is expected. No panic on any input.
+Malformed input returning errors is expected. Panics on malformed input are
+treated as bugs and should be minimized and promoted into regression tests.
 
 ## Hand-curated seed inputs
 
