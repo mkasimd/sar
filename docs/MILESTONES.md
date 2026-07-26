@@ -786,8 +786,6 @@ If this milestone document appears to describe library/profile layout differentl
 * keep `sar-partition` intentionally deferred; partition/multi-volume support remains future work
 * this pass does not start M12b long-running fuzzing and does not claim fuzz-hardening completeness
 
-# Current and future milestones
-
 ## M12b.1: fuzzing workspace and policy
 
 * add `fuzz/` directory using `cargo-fuzz`
@@ -805,6 +803,8 @@ If this milestone document appears to describe library/profile layout differentl
 * add a placeholder/skeleton fuzz target if needed to verify workspace wiring
 * ensure the fuzz workspace builds
 * this pass does not claim parser, archive, stream, transform, or malicious-corpus fuzz coverage
+
+# Current and future milestones
 
 ## M12b.2: core parser fuzz targets
 
