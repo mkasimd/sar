@@ -163,6 +163,7 @@ Install the optional Cargo tools with:
 ```bash
 cargo install --locked cargo-audit
 cargo install --locked cargo-deny
+cargo install --locked cargo-fuzz
 ```
 
 Run:
