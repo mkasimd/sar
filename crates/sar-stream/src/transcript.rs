@@ -123,13 +123,14 @@ fn validate_stream_transcript_internal(
 
         let payload_len =
             usize::try_from(lfh.payload_size).map_err(|_| SarError::Overflow("payload length"))?;
-        if pos + payload_len > bytes.len() {
+        let payload_end = pos
+            .checked_add(payload_len)
+            .ok_or(SarError::Overflow("payload span"))?;
+        if payload_end > bytes.len() {
             return Err(SarError::Truncated("stream transcript payload truncated"));
         }
-        let payload = bytes[pos..pos + payload_len].to_vec();
-        pos = pos
-            .checked_add(payload_len)
-            .ok_or(SarError::Overflow("transcript offset"))?;
+        let payload = bytes[pos..payload_end].to_vec();
+        pos = payload_end;
 
         let result = manager.process_entry(&SessionEntry::new(lfh, payload, false))?;
         if result
