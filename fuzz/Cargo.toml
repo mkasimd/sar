@@ -81,3 +81,38 @@ path = "fuzz_targets/stream_transcript.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name= "stream_transcript_declared_lengths"
+path = "fuzz_targets/stream_transcript_declared_lengths.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_entry_decode_wide"
+path = "fuzz_targets/archive_entry_decode_wide.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_audit_wide"
+path = "fuzz_targets/archive_audit_wide.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_lfh_wide"
+path = "fuzz_targets/parse_lfh_wide.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_tlv_wide"
+path = "fuzz_targets/parse_tlv_wide.rs"
+test = false
+doc = false
+bench = false

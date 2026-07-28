@@ -11,3 +11,6 @@
 # Only hand-curated seed files with explicit .bin names are tracked here.
 /fuzz/seeds/*/*
 !/fuzz/seeds/*/*.bin
+
+# the runner binary
+/tools/fuzz_runner

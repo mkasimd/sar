@@ -12,6 +12,12 @@ M12b.1 only establishes the fuzzing workspace and policy. It does not claim
 parser, archive, stream, transform, malicious-corpus, or security-audit
 coverage.
 
+## Run logs and findings
+
+Bounded local fuzzing pass records are kept in [`RUNS.md`](RUNS.md).
+
+Generated `fuzz/corpus/**`, `fuzz/artifacts/**`, and `fuzz/target/**` outputs are not committed. Minimized crash inputs are promoted into normal crate regression tests only after review.
+
 ## Toolchain requirement
 
 Normal `cargo-fuzz` build and run commands require a nightly Rust toolchain.
