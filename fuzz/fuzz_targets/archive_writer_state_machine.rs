@@ -151,7 +151,7 @@ fn build_extents(
         // Place extent at max(cursor, raw_offset % logical_size) to stay
         // within logical_size and avoid overlaps.
         let placement = if logical_size > 0 {
-            let capped = raw_offset.checked_rem(logical_size).unwrap_or(0);
+            let capped = raw_offset % logical_size;
             cursor.max(capped)
         } else {
             cursor
