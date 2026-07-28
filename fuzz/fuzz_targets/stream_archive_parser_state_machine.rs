@@ -78,9 +78,9 @@ fuzz_target!(|ops: Vec<ParserOp>| {
     let mut parser = StreamArchiveParser::with_options(options);
 
     for op in ops.into_iter().take(MAX_OPS) {
-        // Stop after the parser enters a terminal error or complete state.
+        // Stop after the parser enters a terminal state.
         match parser.state() {
-            StreamParseState::Error => break,
+            StreamParseState::Error | StreamParseState::ArchiveComplete => break,
             _ => {}
         }
 
