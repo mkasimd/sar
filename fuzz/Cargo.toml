@@ -9,6 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
 
 [dependencies.sar-core]
 path = "../crates/sar-core"
@@ -18,6 +19,12 @@ path = "../crates/sar-archive"
 
 [dependencies.sar-stream]
 path = "../crates/sar-stream"
+
+[dependencies.sar-transport]
+path = "../crates/sar-transport"
+
+[dependencies.sar-sparse]
+path = "../crates/sar-sparse"
 
 [[bin]]
 name = "smoke_core"
@@ -113,6 +120,27 @@ bench = false
 [[bin]]
 name = "parse_tlv_wide"
 path = "fuzz_targets/parse_tlv_wide.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_writer_state_machine"
+path = "fuzz_targets/archive_writer_state_machine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_archive_parser_state_machine"
+path = "fuzz_targets/stream_archive_parser_state_machine.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport_tcp_connection_state_machine"
+path = "fuzz_targets/transport_tcp_connection_state_machine.rs"
 test = false
 doc = false
 bench = false

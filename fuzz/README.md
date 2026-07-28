@@ -407,6 +407,46 @@ transcript rules.
 Malformed input returning errors is expected. Panics on malformed input are
 treated as bugs and should be minimized and promoted into regression tests.
 
+### `archive_writer_state_machine`
+
+M12b.4 stateful `ArchiveWriter` operation-sequence target.
+
+Drives `ArchiveWriter<Vec<u8>>` through arbitrary bounded sequences of
+`AddEntry`, `AddSparseEntry`, `CheckState`, and `Finish` operations to exercise
+writer lifecycle state transitions.  Uses `sparse = true` and indexed output so
+both sparse entries and CD/Footer finalization paths are reachable.
+
+Does not cover: encryption, key providers, delta entries, FEC, filesystem
+extraction, compression other than STORE.
+
+### `stream_archive_parser_state_machine`
+
+M12b.4 stateful `StreamArchiveParser` forward-only push-parsing target.
+
+Drives `StreamArchiveParser` through arbitrary bounded sequences of
+`PushChunk`, `Step`, `FinalizeInput`, and `CheckState` operations to exercise
+push-parse state transitions at unusual chunk boundaries.  Resource limits are
+applied before every allocation and buffer expansion.
+
+Does not cover: encryption, key providers, delta entries, filesystem
+extraction.
+
+### `transport_tcp_connection_state_machine`
+
+M12b.4 stateful in-memory transport write/process/close state-machine target.
+
+Drives `TransportHarness` (TCP-policy in-memory binding) through arbitrary
+bounded sequences of `Open`, `Feed`, `Close`, `Reset`, `CheckInactivity`, and
+`DrainActions` operations.  Session behavior is exercised indirectly through
+`InMemoryTransport`'s internal `SessionManager` calls.  No real sockets, no
+async runtime, no QUIC features.
+
+Direct `SessionManager` fuzzing is not included; session state is covered
+through `sar-transport`.
+
+Does not cover: real TCP networking, QUIC transport, async runtime, TLS
+exporter material, encrypted entry decryption.
+
 ## Hand-curated seed inputs
 
 Small deterministic seed inputs live under:
