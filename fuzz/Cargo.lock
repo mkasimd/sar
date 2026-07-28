@@ -48,6 +48,9 @@ name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+dependencies = [
+ "derive_arbitrary",
+]
 
 [[package]]
 name = "argon2"
@@ -266,6 +269,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
 dependencies = [
  "cmov",
+]
+
+[[package]]
+name = "derive_arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e567bd82dcff979e4b03460c307b3cdc9e96fde3d73bed1496d2bc75d9dd62a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -601,10 +615,13 @@ dependencies = [
 name = "sar-fuzz"
 version = "0.0.0"
 dependencies = [
+ "arbitrary",
  "libfuzzer-sys",
  "sar-archive",
  "sar-core",
+ "sar-sparse",
  "sar-stream",
+ "sar-transport",
 ]
 
 [[package]]
@@ -624,6 +641,16 @@ name = "sar-stream"
 version = "0.1.0"
 dependencies = [
  "sar-core",
+]
+
+[[package]]
+name = "sar-transport"
+version = "0.1.0"
+dependencies = [
+ "sar-archive",
+ "sar-core",
+ "sar-crypto",
+ "sar-stream",
 ]
 
 [[package]]
