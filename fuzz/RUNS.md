@@ -1,0 +1,396 @@
+<!--
+SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# SAR fuzzing run log
+
+This file records bounded local fuzzing passes for the SAR Rust reference
+implementation.
+
+These runs are development-time hardening activity. They do not claim exhaustive
+fuzzing, production hardening, independent security audit completion, or
+malicious corpus completeness.
+
+## M12b.4 initial local fuzzing pass
+
+Date: 2026-07-27 through 2026-07-28  
+Scope: initial local fuzzing execution, crash triage, post-fix regression
+validation, and extended local boundary fuzzing for M12b.4  
+Status: completed
+
+### Purpose
+
+This pass establishes initial local fuzzing execution for the current fuzz
+target set.
+
+It covers:
+
+- short smoke fuzzing;
+- bounded exploratory fuzzing on higher-risk parser, archive, and stream targets;
+- triage and minimization of discovered crash inputs;
+- promotion of a useful minimized crash input into a normal regression test;
+- post-fix validation of the affected target;
+- an extended local follow-up pass with wider and boundary-focused fuzz targets.
+
+Extended malicious corpus work and longer scheduled fuzzing campaigns remain
+deferred to M12b.5 and ongoing security hardening.
+
+### Initial higher-risk target selection
+
+The following higher-risk targets were selected for the initial local
+exploratory pass:
+
+```text
+archive_entry_decode
+archive_audit
+stream_transcript
+parse_lfh
+parse_cd_footer
+parse_tlv
+````
+
+Rationale:
+
+* `archive_entry_decode` exercises archive entry walking and payload decoding
+  under limits.
+* `archive_audit` exercises archive audit metadata walking and policy handling.
+* `stream_transcript` exercises stream transcript semantic validation.
+* `parse_lfh` exercises dense LFH parsing with flag-dependent optional fields.
+* `parse_cd_footer` exercises central dictionary and footer parsing.
+* `parse_tlv` exercises metadata length, count, and padding parsing.
+
+### Crash finding: `stream_transcript` overflow
+
+Status: fixed
+Target: `stream_transcript`
+Owner: `sar-stream`
+Result before fix: panic on malformed input
+Expected behavior: fail closed with `Err`, not panic
+
+#### Summary
+
+The `stream_transcript` fuzz target found a reproducible integer overflow panic
+in stream transcript validation.
+
+The panic occurred in:
+
+```text
+crates/sar-stream/src/transcript.rs:126:12
+```
+
+Observed panic:
+
+```text
+attempt to add with overflow
+```
+
+Backtrace excerpt:
+
+```text
+validate_stream_transcript_internal
+  at ./crates/sar-stream/src/transcript.rs:126:12
+
+validate_stream_transcript_with_options
+  at ./crates/sar-stream/src/transcript.rs:84:5
+
+__libfuzzer_sys_run
+  at ./fuzz/fuzz_targets/stream_transcript.rs:25:13
+```
+
+#### Reproducer
+
+Original local crash artifact:
+
+```text
+fuzz/artifacts/stream_transcript/crash-d558a30f12a7ec3a299d2969ad260c33a06be432
+```
+
+Artifact size:
+
+```text
+62 bytes
+```
+
+Base64 form reported by libFuzzer:
+
+```text
+U0FSIQEABAATAAACMgAAACAABAD/AAAAAAAAAAAA9v////////8AAAAAAAAAAAAAU0FSAACACAACADAAAAA=
+```
+
+Reproduction command used during triage:
+
+```bash
+RUST_BACKTRACE=1 cargo +nightly fuzz run stream_transcript \
+  fuzz/artifacts/stream_transcript/crash-d558a30f12a7ec3a299d2969ad260c33a06be432
+```
+
+#### Minimization
+
+Minimization command:
+
+```bash
+cargo +nightly fuzz tmin stream_transcript \
+  fuzz/artifacts/stream_transcript/crash-d558a30f12a7ec3a299d2969ad260c33a06be432
+```
+
+Result:
+
+```text
+cargo-fuzz confirmed the crash is reproducible but could not minimize it below
+the original 62-byte input.
+```
+
+The original 62-byte artifact is therefore the minimized reproducer.
+
+#### Fix
+
+This finding was fixed in PR #36.
+
+The fix replaced unchecked transcript payload-span arithmetic with checked
+conversion and checked addition. Malformed input that previously panicked now
+returns `SAR_ERR_OVERFLOW`.
+
+A normal `sar-stream` regression test was added for the 62-byte reproducer.
+
+### Local overnight exploratory rerun
+
+After preserving and minimizing the known `stream_transcript` crash, an
+overnight exploratory pass was run without `stream_transcript`.
+
+Run ID:
+
+```text
+M12b4-overnight-20260727-015202
+```
+
+Configuration:
+
+```text
+Start: 2026-07-27T01:52:02+0200
+End: 2026-07-27T07:52:32+0200
+Max total time per target: 21600 seconds
+Max generated input length: 65536 bytes
+Target count: 5
+```
+
+Selected targets:
+
+```text
+archive_entry_decode
+archive_audit
+parse_lfh
+parse_cd_footer
+parse_tlv
+```
+
+Results:
+
+| Target                 |           Runs | Exit | Artifacts | Result                            |
+| ---------------------- | -------------: | ---: | --------: | --------------------------------- |
+| `archive_entry_decode` |    770,684,193 |    0 |         0 | no obvious crash/error indicators |
+| `archive_audit`        |  3,335,103,406 |    0 |         0 | no obvious crash/error indicators |
+| `parse_lfh`            | 16,883,974,423 |    0 |         0 | no obvious crash/error indicators |
+| `parse_cd_footer`      | 12,310,690,890 |    0 |         0 | no obvious crash/error indicators |
+| `parse_tlv`            | 14,946,930,775 |    0 |         0 | no obvious crash/error indicators |
+
+Generated corpus entries and fuzz artifacts remained ignored and were not
+committed.
+
+### Post-fix `stream_transcript` validation
+
+After PR #36, the exact reproducer was validated again.
+
+A temporary reproducer file can be recreated with:
+
+```bash
+printf '%s' 'U0FSIQEABAATAAACMgAAACAABAD/AAAAAAAAAAAA9v////////8AAAAAAAAAAAAAU0FSAACACAACADAAAAA=' \
+  | base64 -d > /tmp/sar-m12b4-stream-transcript-overflow-62b.bin
+```
+
+Post-fix reproduction command:
+
+```bash
+RUST_BACKTRACE=1 cargo +nightly fuzz run stream_transcript \
+  /tmp/sar-m12b4-stream-transcript-overflow-62b.bin
+```
+
+Expected post-fix result:
+
+```text
+The reproducer returns SAR_ERR_OVERFLOW instead of panicking.
+```
+
+A focused one-hour post-fix fuzzing pass was then run for
+`stream_transcript`:
+
+```bash
+cargo +nightly fuzz run stream_transcript -- -max_total_time=3600 -max_len=65536
+```
+
+Result:
+
+```text
+Done 330845161 runs in 3601 second(s)
+```
+
+No panic or crash was observed after the fix.
+
+### Extended local boundary fuzz target additions
+
+Additional local fuzz targets were added for wider and boundary-focused
+exploratory fuzzing:
+
+```text
+archive_entry_decode_wide
+archive_audit_wide
+parse_lfh_wide
+parse_tlv_wide
+stream_transcript_declared_lengths
+```
+
+Purpose:
+
+* `archive_entry_decode_wide` exercises archive entry walking and payload
+  decoding with wider resource limits.
+* `archive_audit_wide` exercises archive audit metadata walking with wider
+  resource limits while retaining metadata-only payload policy.
+* `parse_lfh_wide` exercises LFH parsing with larger LFH, path, sparse, FEC,
+  and decoded-size limits.
+* `parse_tlv_wide` exercises TLV parsing with larger TLV, FEC, and CDC metadata
+  limits.
+* `stream_transcript_declared_lengths` exercises large declared stream
+  transcript lengths, overflow-adjacent values, truncation states, and
+  fail-closed behavior using compact fuzz inputs rather than multi-gigabyte
+  input files.
+
+### Extended declared-length stream transcript run
+
+Run directory:
+
+```text
+/tmp/sar-fuzz-runs/sar-fuzz-20260728-042612
+```
+
+Configuration:
+
+```text
+Started: 2026-07-28T04:26:12+0200
+Ended: 2026-07-28T05:26:15+0200
+Target: stream_transcript_declared_lengths
+Max total time: 3600 seconds
+Max generated input length: 4096 bytes
+Build before run: yes
+```
+
+Result:
+
+| Target                               |        Runs | Exit | Result              |
+| ------------------------------------ | ----------: | ---: | ------------------- |
+| `stream_transcript_declared_lengths` | 687,516,528 |    0 | no crash indicators |
+
+Log indicators:
+
+```text
+DONE: yes
+ERROR: no
+panicked at: no
+libFuzzer: deadly signal: no
+crash artifact marker: no
+```
+
+### Extended archive/parser/stream fuzzing campaign
+
+Run directory:
+
+```text
+/tmp/sar-fuzz-runs/sar-fuzz-20260728-042757
+```
+
+Configuration:
+
+```text
+Started: 2026-07-28T04:27:57+0200
+Ended: 2026-07-28T05:28:04+0200
+Max total time per target: 3600 seconds
+Max generated input length: 1048576 bytes
+Target count: 10
+Build before run: yes
+```
+
+Targets:
+
+```text
+archive_entry_decode
+archive_audit
+parse_lfh
+parse_cd_footer
+parse_tlv
+stream_transcript
+archive_entry_decode_wide
+archive_audit_wide
+parse_lfh_wide
+parse_tlv_wide
+```
+
+Results:
+
+| Target                      |          Runs | Exit | Result              |
+| --------------------------- | ------------: | ---: | ------------------- |
+| `archive_entry_decode`      |    88,088,598 |    0 | no crash indicators |
+| `archive_audit`             |   313,589,475 |    0 | no crash indicators |
+| `parse_lfh`                 | 2,431,126,452 |    0 | no crash indicators |
+| `parse_cd_footer`           | 1,583,936,157 |    0 | no crash indicators |
+| `parse_tlv`                 | 1,116,512,282 |    0 | no crash indicators |
+| `stream_transcript`         |   127,634,612 |    0 | no crash indicators |
+| `archive_entry_decode_wide` |   131,391,752 |    0 | no crash indicators |
+| `archive_audit_wide`        |   297,189,237 |    0 | no crash indicators |
+| `parse_lfh_wide`            | 2,399,821,661 |    0 | no crash indicators |
+| `parse_tlv_wide`            |   307,015,109 |    0 | no crash indicators |
+
+Total main campaign executions:
+
+```text
+8,796,305,335
+```
+
+Combined with the declared-length boundary target:
+
+```text
+9,483,821,863
+```
+
+All targets exited successfully. No run reported `ERROR:`, `panicked at`,
+`libFuzzer: deadly signal`, or a crash artifact marker.
+
+### Final M12b.4 result
+
+M12b.4 produced one confirmed fuzz finding:
+
+```text
+stream_transcript integer overflow panic
+```
+
+The finding was:
+
+* reproduced;
+* minimized to the original 62-byte input;
+* fixed with checked arithmetic;
+* promoted into a normal regression test;
+* validated with direct reproduction;
+* fuzzed again after the fix;
+* followed by extended local boundary and wide-target fuzzing.
+
+No additional crash indicators were observed in the post-fix M12b.4 fuzzing
+passes recorded above.
+
+### Unresolved / deferred work
+
+* Extended malicious corpus work remains deferred to M12b.5.
+* Longer scheduled or dedicated fuzzing campaigns remain ongoing
+  security-hardening work.
+* Chunked stream/session boundary fuzzing remains future work if or when the
+  stream/session APIs expose a suitable incremental feed interface.
+* These results do not claim exhaustive parser coverage or security-audit
+  completion.
+  
