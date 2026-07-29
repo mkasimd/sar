@@ -363,6 +363,73 @@ Combined with the declared-length boundary target:
 All targets exited successfully. No run reported `ERROR:`, `panicked at`,
 `libFuzzer: deadly signal`, or a crash artifact marker.
 
+### Stateful writer/parser/transport fuzzing campaign
+
+After adding stateful operation-sequence fuzz targets, a six-hour local
+overnight campaign was run against the new stateful targets.
+
+This campaign complements the earlier byte-oriented parser, archive, and stream
+fuzzing with public-API lifecycle fuzzing for:
+
+* archive writer state transitions;
+* forward-only incremental archive parsing;
+* in-memory transport/session-facing stream lifecycle behavior.
+
+Run directory:
+
+```text
+/tmp/sar-fuzz-runs/sar-fuzz-20260729-000956
+```
+
+Configuration:
+
+```text
+Started: 2026-07-29T00:09:56+0200
+Ended: 2026-07-29T06:09:59+0200
+Max total time per target: 21600 seconds
+Max generated input length: 1048576 bytes
+Target count: 3
+Build before run: yes
+```
+
+Targets:
+
+```text
+archive_writer_state_machine
+stream_archive_parser_state_machine
+transport_tcp_connection_state_machine
+```
+
+Results:
+
+| Target                                  |        Runs | Exit | Result              |
+| --------------------------------------- | ----------: | ---: | ------------------- |
+| `archive_writer_state_machine`          |  58,325,290 |    0 | no crash indicators |
+| `stream_archive_parser_state_machine`   | 905,415,385 |    0 | no crash indicators |
+| `transport_tcp_connection_state_machine` | 756,790,652 |    0 | no crash indicators |
+
+Total stateful campaign executions:
+
+```text
+1,720,531,327
+```
+
+All three targets built successfully and exited successfully. No run reported
+`ERROR:`, `panicked at`, `libFuzzer: deadly signal`, or a crash artifact marker.
+
+The stateful fuzz targets exercise:
+
+* `ArchiveWriter` lifecycle behavior using bounded regular-file and sparse-file
+  write operations, `stream_state()`, and `finish()`;
+* `StreamArchiveParser` push/step/finalize/state transitions with unusual chunk
+  boundaries and bounded resource limits;
+* `TransportHarness` TCP-policy in-memory open/feed/close/reset/inactivity
+  transitions without real sockets, networking, async runtime, or QUIC features.
+
+Direct `SessionManager` fuzzing was not added in this campaign. Session behavior
+is exercised indirectly through `sar-transport`'s public `TransportHarness`,
+which drives the in-memory transport/session state layer.
+
 ### Final M12b.4 result
 
 M12b.4 produced one confirmed fuzz finding:
@@ -379,18 +446,36 @@ The finding was:
 * promoted into a normal regression test;
 * validated with direct reproduction;
 * fuzzed again after the fix;
-* followed by extended local boundary and wide-target fuzzing.
+* followed by extended local boundary, wide-target, and stateful
+  operation-sequence fuzzing.
 
 No additional crash indicators were observed in the post-fix M12b.4 fuzzing
 passes recorded above.
+
+Recorded post-fix extended campaign executions:
+
+```text
+11,204,353,190
+```
+
+This total consists of:
+
+* `9,483,821,863` executions from the extended local boundary and
+  archive/parser/stream campaigns; and
+* `1,720,531,327` executions from the stateful writer/parser/transport campaign.
+
+These numbers are local fuzzing execution counts only. They do not imply
+exhaustive coverage, production hardening completion, independent security audit
+completion, or malicious corpus completeness.
 
 ### Unresolved / deferred work
 
 * Extended malicious corpus work remains deferred to M12b.5.
 * Longer scheduled or dedicated fuzzing campaigns remain ongoing
   security-hardening work.
-* Chunked stream/session boundary fuzzing remains future work if or when the
-  stream/session APIs expose a suitable incremental feed interface.
-* These results do not claim exhaustive parser coverage or security-audit
-  completion.
-  
+* Additional targeted stateful fuzzing may still be added later for specialized
+  profiles, invalid sparse-map generation, transport feature variants, or direct
+  session APIs if suitable public APIs are exposed.
+* These results do not claim exhaustive parser coverage, production hardening
+  completion, independent security audit completion, or malicious corpus
+  completeness.

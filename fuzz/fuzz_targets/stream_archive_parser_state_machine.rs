@@ -27,7 +27,7 @@ use libfuzzer_sys::fuzz_target;
 use sar_archive::{ArchiveReaderOptions, StreamArchiveParser, StreamParseState};
 use sar_core::{SarError, limits::ResourceLimits};
 
-const MAX_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_OPS: usize = 256;
 
 /// One fuzzer-generated parser operation.
@@ -128,9 +128,10 @@ fuzz_target!(|ops: Vec<ParserOp>| {
     parser.finalize_input();
     for _ in 0..MAX_OPS {
         match parser.state() {
-            StreamParseState::Error => break,
+            StreamParseState::Error | StreamParseState::ArchiveComplete => break,
             _ => {}
         }
+
         match parser.step() {
             Ok(sar_archive::StreamStep::Complete) => break,
             Ok(_) => {}
