@@ -542,6 +542,38 @@ Consumes seeds from: `cdc_delta`, `metadata_edge_cases`, `fec_fragmentation`.
 Does not perform FEC repair, CDC reconstruction, delta patching, or
 filesystem extraction.
 
+### PR5 seed consumption: `extraction_race` and `profile_rejection`
+
+M12b.5 PR5 adds two new seed categories consumed by existing targets.  No new
+dedicated fuzz targets were added; the existing entry-walking, structural, and
+global-header targets reach the intended surfaces.
+
+**`extraction_race` seeds** contain multi-entry archive shapes that probe path
+ordering, directory/file collisions, duplicate paths, `..` traversal, absolute
+paths, symlink-before-target, symlink traversal targets, and unsafe permission
+ordering.  Consumed by:
+
+- `archive_entry_decode` (walks entries; exercises multi-entry path ordering)
+- `archive_audit` (audit walks; exercises metadata ordering)
+- `archive_logical_files` (logical-file reconstruction; exercises fragment and
+  path ordering)
+
+Seeds live in `fuzz/seeds/extraction_race/`.
+
+**`profile_rejection` seeds** contain global-header byte inputs that probe
+version bytes higher than supported, reserved-byte violations, and flag
+conflicts (`NO_INDEX+OPT_PRESENT`, `NO_INDEX+HAS_GLOBAL_CRC32`,
+`HAS_GLOBAL_EC` without `OPT_PRESENT`, `SIGNED` without `OPT_PRESENT`,
+reserved KMS mode IDs, flags_size below minimum).  Consumed by:
+
+- `parse_global_header` (direct global-header parser)
+- `archive_structural` (high-level `ArchiveReader` global-header path)
+
+Seeds live in `fuzz/seeds/profile_rejection/`.
+
+Fuzz targets do not perform destructive filesystem operations.  Ordinary parser
+or archive errors returned from malformed input are expected.  Panics are bugs.
+
 ## M12b.5 PR2 smoke-run commands
 
 Build the PR2 target:
@@ -643,6 +675,46 @@ cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/parse_tlv/
 cargo +nightly fuzz run parse_tlv -- -runs=100
 ```
 
+## M12b.5 PR5 smoke-run commands
+
+PR5 reuses existing targets.  Copy PR5 seeds into the relevant corpus directories
+and run short smoke executions:
+
+```bash
+# extraction_race seeds: archive entry-walking targets
+mkdir -p fuzz/corpus/archive_entry_decode
+cp fuzz/seeds/extraction_race/*.bin fuzz/corpus/archive_entry_decode/
+cargo +nightly fuzz run archive_entry_decode -- -runs=10000
+
+mkdir -p fuzz/corpus/archive_audit
+cp fuzz/seeds/extraction_race/*.bin fuzz/corpus/archive_audit/
+cargo +nightly fuzz run archive_audit -- -runs=10000
+
+mkdir -p fuzz/corpus/archive_logical_files
+cp fuzz/seeds/extraction_race/*.bin fuzz/corpus/archive_logical_files/
+cargo +nightly fuzz run archive_logical_files -- -runs=10000
+
+# profile_rejection seeds: global-header and structural targets
+mkdir -p fuzz/corpus/parse_global_header
+cp fuzz/seeds/profile_rejection/*.bin fuzz/corpus/parse_global_header/
+cargo +nightly fuzz run parse_global_header -- -runs=10000
+
+mkdir -p fuzz/corpus/archive_structural
+cp fuzz/seeds/profile_rejection/*.bin fuzz/corpus/archive_structural/
+cargo +nightly fuzz run archive_structural -- -runs=10000
+```
+
+All targets above do not perform filesystem extraction or other destructive
+operations.  Ordinary parse or archive errors from malformed seed inputs are
+expected.  Panics are bugs.
+
+Alternatively, use `tools/copy_fuzz_seeds.sh` to copy all curated seeds
+(including PR5) into their respective corpus directories at once:
+
+```bash
+bash tools/copy_fuzz_seeds.sh
+```
+
 ## PR4 seed consumption summary
 
 PR4 seed categories and the fuzz targets that consume them:
@@ -653,6 +725,15 @@ PR4 seed categories and the fuzz targets that consume them:
 | `cdc_delta`                   | ✓ | - | ✓ | ✓ | ✓ | - | ✓ |
 | `metadata_edge_cases`         | - | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `filesystem_metadata_malformed` | ✓ | ✓ | - | ✓ | ✓ | - | - |
+
+## PR5 seed consumption summary
+
+PR5 seed categories and the fuzz targets that consume them:
+
+| Seed category       | `archive_entry_decode` | `archive_audit` | `archive_logical_files` | `parse_global_header` | `archive_structural` |
+|--------------------|:-:|:-:|:-:|:-:|:-:|
+| `extraction_race`   | ✓ | ✓ | ✓ | - | - |
+| `profile_rejection` | - | - | - | ✓ | ✓ |
 
 ## Hand-curated seed inputs
 
