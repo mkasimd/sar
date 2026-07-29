@@ -619,6 +619,7 @@ dependencies = [
  "libfuzzer-sys",
  "sar-archive",
  "sar-core",
+ "sar-crypto",
  "sar-sparse",
  "sar-stream",
  "sar-transport",
