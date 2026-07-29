@@ -236,7 +236,11 @@ must produce a deterministic error. The repair path must not attempt
 out-of-bounds reads or allocations when shard counts are wrong. Fragment
 reassembly must reject overlapping or illegally-sized fragments without panic.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR4.
+**Current status:** PR4 seeds added (`fragment_gap_missing_index.bin`,
+`fragment_overlap_offsets.bin`, `fec_reserved_algo_nonempty.bin`,
+`fec_unsupported_algo.bin`) under `fuzz/seeds/fec_fragmentation/`. Covered by
+`archive_logical_files`, with additional parser/path exercise via
+`archive_entry_decode`, `archive_audit`, and `parse_lfh`/`parse_lfh_wide`.
 
 ---
 
@@ -262,7 +266,11 @@ produce a deterministic error. Integer overflow in delta offset arithmetic must
 be detected with checked arithmetic. Out-of-bounds copy operations in a patch
 must be rejected without panic.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR4.
+**Current status:** PR4 seeds added (`cdc_reserved_algo_id.bin`,
+`cdc_custom_algo_unsupported.bin`, `delta_custom_patch_algo.bin`,
+`delta_vcdiff_zero_base_hash.bin`, `cdc_map_malformed_short_value.bin`) under
+`fuzz/seeds/cdc_delta/`. Covered by `archive_entry_decode`,
+`archive_audit`, `archive_logical_files`, and `parse_tlv`/`parse_tlv_wide`.
 
 ---
 
@@ -286,7 +294,11 @@ must be rejected in strict mode and handled gracefully in permissive mode
 without panic. Reserved flag bits must be rejected outright. CD/LFH
 disagreements must produce a deterministic validation error.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR4.
+**Current status:** PR4 seeds added (`invalid_utf8_name.bin`,
+`invalid_utf8_path.bin`, `tlv_nonzero_padding.bin`,
+`tlv_reserved_length_ffffffff.bin`) under `fuzz/seeds/metadata_edge_cases/`.
+Covered by `archive_entry_decode`, `archive_audit`, and
+`parse_tlv`/`parse_tlv_wide`.
 
 ---
 
@@ -310,7 +322,11 @@ and rejected before any filesystem operation. Overflow values in numeric
 metadata fields must be caught with checked arithmetic. Unresolvable hardlink
 or symlink references must produce a deterministic error.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR4.
+**Current status:** PR4 seeds added (`symlink_traversal_like_metadata.bin`,
+`symlink_non_utf8_target.bin`, `directory_with_payload.bin`,
+`hostile_metadata_combo.bin`) under
+`fuzz/seeds/filesystem_metadata_malformed/`. Covered by
+`archive_entry_decode`, `archive_audit`, and `archive_logical_files`.
 
 ---
 
