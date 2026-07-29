@@ -355,7 +355,15 @@ Absent intermediate directories must be created safely or the entry must be
 rejected with a deterministic error. No TOCTOU window must be exposed for
 path traversal escalation.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR5.
+**Current status:** PR5 seeds added (`dir_then_file_same_path.bin`,
+`file_then_dir_same_path.bin`, `duplicate_path_entries.bin`,
+`dotdot_traversal_path.bin`, `absolute_path_entry.bin`,
+`symlink_before_target.bin`, `symlink_traversal_path.bin`,
+`unsafe_permission_ordering.bin`) under `fuzz/seeds/extraction_race/`.
+Partially covered by `archive_entry_decode`, `archive_audit`, and
+`archive_logical_files` via `tools/copy_fuzz_seeds.sh`. No dedicated fuzz
+target added; existing entry-walking targets consume these seeds effectively.
+No destructive filesystem operations are performed by any fuzz target.
 
 ---
 
@@ -380,4 +388,11 @@ processing of profile-specific fields must occur after a profile rejection.
 A higher-than-supported version number must be treated as unsupported, not
 silently downgraded.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR5.
+**Current status:** PR5 seeds added (`version_too_high.bin`, `version_max.bin`,
+`reserved_header_byte.bin`, `no_index_opt_present.bin`, `no_index_crc32.bin`,
+`global_ec_missing_opt_present.bin`, `signed_missing_opt_present.bin`,
+`kms_mode_reserved_id.bin`, `flags_size_below_minimum.bin`,
+`no_index_valid_archive.bin`) under `fuzz/seeds/profile_rejection/`. Partially
+covered by `parse_global_header` and `archive_structural` via
+`tools/copy_fuzz_seeds.sh`. No dedicated fuzz target added; existing
+global-header and structural targets consume these seeds effectively.
