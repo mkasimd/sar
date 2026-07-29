@@ -99,7 +99,10 @@ implementation never returns plaintext before authentication succeeds.
 an error before any plaintext is returned. A truncated or absent AEAD tag must
 be rejected outright. No partial plaintext must be surfaced to the caller.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR3.
+**Current status:** PR3 seeds added (`wrong_global_header_aad.bin`,
+`wrong_lfh_aad.bin`, `bad_tag.bin`, `bad_ciphertext.bin`,
+`generic_auth_failure.bin`) and covered by
+`crypto_auth_tls_exporter_negative`.
 
 ---
 
@@ -122,7 +125,10 @@ exporter material must result in a deterministic key-derivation or
 authentication error. No raw exporter-derived bytes must be surfaced in errors,
 logs, or debug output.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR3.
+**Current status:** PR3 seeds added (`wrong_session_binding.bin`,
+`malformed_kms_empty_label.bin`, `malformed_kms_reserved_kdf.bin`,
+`malformed_kms_reserved_flags.bin`, `malformed_kms_truncated_salt.bin`)
+and covered by `crypto_auth_tls_exporter_negative`.
 
 ---
 
