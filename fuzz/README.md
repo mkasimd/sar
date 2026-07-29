@@ -488,6 +488,18 @@ Seeds live in `fuzz/seeds/crypto_auth_ordering/` and
 Does not cover: real TLS/QUIC networking, async runtimes, or key-management
 production APIs.
 
+### `archive_logical_files`
+
+M12b.5 PR4 logical-file reconstruction target using
+`ArchiveReader::read_all_logical_files`.
+
+Treats input as arbitrary archive bytes and exercises fragment-group
+reassembly, sparse ordering checks, and metadata validation in the
+reconstruction path. Runs both strict (`allow_lossy=false`) and lossy-enabled
+(`allow_lossy=true`) decode paths with bounded resource limits.
+
+Does not cover: filesystem extraction or any on-disk mutation.
+
 ## M12b.5 PR2 smoke-run commands
 
 Build the PR2 target:
@@ -528,6 +540,44 @@ mkdir -p fuzz/corpus/crypto_auth_tls_exporter_negative
 cp fuzz/seeds/crypto_auth_ordering/*.bin fuzz/corpus/crypto_auth_tls_exporter_negative/
 cp fuzz/seeds/tls_exporter_aad_negative/*.bin fuzz/corpus/crypto_auth_tls_exporter_negative/
 cargo +nightly fuzz run crypto_auth_tls_exporter_negative -- -runs=100
+```
+
+## M12b.5 PR4 smoke-run commands
+
+Build the new PR4 target plus reused parser/reader targets:
+
+```bash
+cargo +nightly fuzz build archive_logical_files
+cargo +nightly fuzz build archive_entry_decode
+cargo +nightly fuzz build archive_audit
+cargo +nightly fuzz build parse_tlv
+```
+
+Run short smoke executions with seed corpus:
+
+```bash
+mkdir -p fuzz/corpus/archive_logical_files
+cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/archive_logical_files/
+cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/archive_logical_files/
+cargo +nightly fuzz run archive_logical_files -- -runs=100
+
+mkdir -p fuzz/corpus/archive_entry_decode
+cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/archive_entry_decode/
+cp fuzz/seeds/cdc_delta/*.bin fuzz/corpus/archive_entry_decode/
+cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/archive_entry_decode/
+cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/archive_entry_decode/
+cargo +nightly fuzz run archive_entry_decode -- -runs=100
+
+mkdir -p fuzz/corpus/archive_audit
+cp fuzz/seeds/cdc_delta/*.bin fuzz/corpus/archive_audit/
+cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/archive_audit/
+cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/archive_audit/
+cargo +nightly fuzz run archive_audit -- -runs=100
+
+mkdir -p fuzz/corpus/parse_tlv
+cp fuzz/seeds/cdc_delta/*.bin fuzz/corpus/parse_tlv/
+cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/parse_tlv/
+cargo +nightly fuzz run parse_tlv -- -runs=100
 ```
 
 ## Hand-curated seed inputs
