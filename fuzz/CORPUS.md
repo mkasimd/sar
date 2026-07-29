@@ -42,7 +42,9 @@ Resource limits must be checked before any transform allocation or expansion
 step. No panic must result from deeply nested or mutually incompatible
 transform chains.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR2.
+**Current status:** Seeds added in PR2 (`minimal_store.bin`, `single_entry_deflate.bin`,
+`single_entry_zstd.bin`, `multi_entry_deflate.bin`, `multi_entry_zstd.bin`,
+`empty_deflate.bin`). Covered by `transform_pipeline_fuzz` target.
 
 ---
 
@@ -65,7 +67,10 @@ be rejected with a deterministic error on first encounter. Per-entry resource
 limits must prevent unbounded cumulative state growth. No panic or undetected
 resource leak must result.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR2.
+**Current status:** Seeds added in PR2 (`many_store_entries.bin`,
+`many_small_deflate_entries.bin`, `many_small_zstd_entries.bin`). Covered by
+`transform_pipeline_fuzz` target via algorithm-ID mutation from these seeds.
+Dedicated state-machine target planned for PR3.
 
 ---
 
