@@ -87,11 +87,11 @@ fn lfh_flags(sel0: u8, sel1: u8) -> GlobalFlags {
 }
 
 fuzz_target!(|data: &[u8]| {
-    if data.len() < 2 {
-        return;
-    }
+    let sel0 = data.first().copied().unwrap_or(0);
+    let sel1 = data.get(1).copied().unwrap_or(0);
+    let payload = if data.len() > 2 { &data[2..] } else { &[] };
 
-    let flags = lfh_flags(data[0], data[1]);
+    let flags = lfh_flags(sel0, sel1);
     let limits = parser_limits();
-    let _ = parse_lfh(&data[2..], &flags, &limits);
+    let _ = parse_lfh(payload, &flags, &limits);
 });
