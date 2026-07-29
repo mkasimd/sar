@@ -23,56 +23,62 @@ audit completion, or malicious corpus completeness is claimed.
 
 ### `transform_pipeline`
 
-**Purpose:** Exercise multi-step transform chains where an attacker controls
-the pipeline composition. Targets cases such as a deeply nested pipeline,
-repeated application of the same transform, incompatible transform adjacency,
-or a pipeline whose composed output exceeds resource limits.
+**Purpose:** Exercise archive entry decoding across supported and mutated transform
+metadata. This category focuses on reader-side transform initialization,
+resource-limit enforcement, and fail-closed handling when transform metadata is
+malformed, unsupported, truncated, or inconsistent with the payload.
 
 **Example input shapes:**
-- LFH bytes with COMPRESS_ALGO and ENCRYPT_ALGO fields set to unusual or
-  reserved combinations.
-- Archives where a single entry declares a long pipeline (max-depth or
-  beyond-max-depth transform chain).
-- Inputs where each transform step individually validates but the composed
-  result triggers an overflow or policy violation.
 
-**Expected fail-closed behavior:** The parser or archive reader must reject
-invalid or unsupported transform combinations with a deterministic error.
-Resource limits must be checked before any transform allocation or expansion
-step. No panic must result from deeply nested or mutually incompatible
-transform chains.
+- Valid STORE, DEFLATE, and ZSTD archive seeds used as mutation starting points.
+- Archives with multiple small compressed entries to exercise repeated
+  decompressor initialization and teardown.
+- Entries whose compression metadata is mutated to reserved, unsupported, or
+  malformed algorithm IDs.
+- Truncated or malformed compressed payloads.
+- Entries whose declared decoded size or metadata exceeds configured resource
+  limits.
 
-**Current status:** Seeds added in PR2 (`minimal_store.bin`, `single_entry_deflate.bin`,
-`single_entry_zstd.bin`, `multi_entry_deflate.bin`, `multi_entry_zstd.bin`,
-`empty_deflate.bin`). Covered by `transform_pipeline_fuzz` target.
+**Expected fail-closed behavior:** Unsupported or malformed transform metadata
+must be rejected with a deterministic error. Resource limits must be checked
+before decompression expansion or large allocation. Malformed compressed payloads
+must not panic and must not cause unbounded memory growth.
+
+**Current status:** Seeds added in PR2 (`minimal_store.bin`,
+`single_entry_deflate.bin`, `single_entry_zstd.bin`, `multi_entry_deflate.bin`,
+`multi_entry_zstd.bin`, `empty_deflate.bin`, `truncated_global_header.bin`,
+`empty.bin`). Covered by the `transform_pipeline_fuzz` target. Encryption,
+AAD/TLS exporter behavior, and delta patch transforms are covered by separate
+corpus categories.
 
 ---
 
 ### `transform_switching_dos`
 
-**Purpose:** Target rapid or mid-stream transform switches designed to cause
-expensive state teardown and re-initialization. An adversary may craft a
-sequence of entries that repeatedly change algorithms to exhaust CPU or memory
-through churn rather than a single large allocation.
+**Purpose:** Target repeated transform setup and teardown patterns that could
+cause excessive CPU, memory, or allocator churn through many small entries rather
+than one large archive member.
 
 **Example input shapes:**
-- Archives with many small entries each declaring a distinct compression or
-  encryption algorithm, forcing repeated codec initialization.
-- Sequences that alternate between supported and unsupported algorithms to
-  probe error-path cleanup cost.
-- A single entry whose transform fields cycle through every enumerated value.
 
-**Expected fail-closed behavior:** Each unsupported or reserved algorithm must
-be rejected with a deterministic error on first encounter. Per-entry resource
-limits must prevent unbounded cumulative state growth. No panic or undetected
-resource leak must result.
+- Archives with many small STORE entries.
+- Archives with many small DEFLATE entries.
+- Archives with many small ZSTD entries.
+- Mutations that alternate supported, reserved, and unsupported compression
+  algorithm IDs across entries.
+- Truncated or malformed archives that fail during repeated entry walking.
+
+**Expected fail-closed behavior:** Unsupported or reserved algorithms must be
+rejected deterministically. Per-entry and pipeline resource limits must prevent
+unbounded cumulative state growth. Repeated codec initialization, teardown, and
+error-path cleanup must not panic or leak unbounded state.
 
 **Current status:** Seeds added in PR2 (`many_store_entries.bin`,
-`many_small_deflate_entries.bin`, `many_small_zstd_entries.bin`). Covered by
-`transform_pipeline_fuzz` target via algorithm-ID mutation from these seeds.
-Dedicated state-machine target planned for PR3.
-
----
+`many_small_deflate_entries.bin`, `many_small_zstd_entries.bin`,
+`magic_only.bin`, `truncated_global_header.bin`, `empty.bin`). Partially covered
+by `transform_pipeline_fuzz` and existing archive reader/audit fuzz targets.
+Additional dedicated state-machine or transform-switching targets may be added
+later if needed, but are not part of PR3.
 
 ### `crypto_auth_ordering`
 
@@ -122,48 +128,56 @@ logs, or debug output.
 
 ### `decompression_bomb`
 
-**Purpose:** Detect cases where a small compressed input expands to a very
-large output. Targets the decompression path with inputs crafted to expand
-far beyond declared or permitted sizes, stressing the resource-limit
-enforcement that must halt expansion before memory is exhausted.
+**Purpose:** Detect cases where small compressed inputs could expand beyond
+configured decoded-size, pipeline-memory, or archive-size limits.
 
 **Example input shapes:**
-- Compressed payloads (e.g., zlib or zstd streams) that decompress to output
-  many times the compressed size.
-- Payloads whose declared uncompressed size in the LFH is very large but whose
-  compressed bytes are minimal.
-- Payloads with a declared size that matches the resource limit exactly, to
-  probe boundary enforcement.
 
-**Expected fail-closed behavior:** Decompression must stop and return an error
-as soon as the running output size would exceed the configured resource limit.
-No allocation beyond the enforced limit must be attempted. No panic must
-result.
+- Compressed payloads that decompress to output much larger than their compressed
+  size.
+- Entries whose declared decoded size is near, equal to, or above configured
+  resource limits.
+- Truncated compressed streams that fail during decompression initialization or
+  early output production.
+- Multi-entry archives that repeatedly approach decoded-size limits.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR2.
+**Expected fail-closed behavior:** Decompression must stop and return an error as
+soon as the running decoded output would exceed the configured resource limit.
+No allocation beyond the enforced limit must be attempted. No panic must result.
+
+**Current status:** Partially covered by PR2 through `transform_pipeline_fuzz`
+and compressed archive seeds. Dedicated high-ratio decompression-bomb seeds may
+still be added later, but must remain bounded and must not require committing
+large generated payloads.
 
 ---
 
-### `allocator_churn`
+### `stream_session`
 
-**Purpose:** Generate high allocator pressure through a long sequence of small
-or medium allocations and frees, looking for use-after-free, double-free, or
-allocator exhaustion in paths that resize internal buffers repeatedly.
+**Purpose:** Cover streaming and session semantics: frame ordering, session ID
+collisions, transcript replay, session teardown behavior, and frames that arrive
+outside the expected lifecycle sequence.
 
 **Example input shapes:**
-- Archives with many small entries that each trigger a separate buffer
-  allocation, decoded in sequence to maximize alloc/free cycling.
-- Inputs that alternate between entries requiring heap expansion and entries
-  that fit in existing capacity.
-- Malformed entries whose decode path allocates and then immediately returns
-  an error, exercising cleanup paths.
 
-**Expected fail-closed behavior:** Every allocation must be bounded by
-resource limits. Errors returned during decode must leave no heap corruption.
-Repeated alloc/free cycles must not cause allocator exhaustion or undefined
-behavior.
+- Stream transcripts with duplicate or out-of-order frame sequence numbers.
+- Session open/close frames in reversed order to probe lifecycle state checks.
+- Transcripts referencing a session ID that was never opened.
+- Long transcripts with frames that oscillate between valid and malformed to
+  stress incremental validation.
+- Transport-harness operation sequences that open, feed, close, reset, and check
+  inactivity across a small set of stream IDs.
 
-**Current status:** seed-only. No dedicated fuzz target yet. Planned for PR2.
+**Expected fail-closed behavior:** Frames received outside the expected session
+lifecycle must be rejected with a deterministic error. Duplicate sequence
+numbers must be detected and must not cause double-processing. Malformed
+transcripts must return errors without undetected state corruption.
+
+**Current status:** Partially covered by existing `stream_transcript`,
+`stream_transcript_declared_lengths`, and
+`transport_tcp_connection_state_machine` fuzz targets. Additional stream/session
+seeds or dedicated targets may be added later if new public APIs expose suitable
+incremental session surfaces.
 
 ---
 
