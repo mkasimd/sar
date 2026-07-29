@@ -9,8 +9,10 @@
 # Fuzz seed policy:
 # Generated libFuzzer corpus entries are hash-named and must not be committed.
 # Only hand-curated seed files with explicit .bin names are tracked here.
+# .gitkeep files are tracked to preserve empty seed directories in git.
 /fuzz/seeds/*/*
 !/fuzz/seeds/*/*.bin
+!/fuzz/seeds/*/.gitkeep
 
 # the runner binary
 /tools/fuzz_runner
