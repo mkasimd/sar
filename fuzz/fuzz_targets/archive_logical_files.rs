@@ -27,7 +27,7 @@ fn fuzz_limits() -> ResourceLimits {
         max_sparse_descriptors: 64,
         max_fragment_count: 64,
         max_fragment_group_span: 64 * 1024,
-        max_fragment_gap_bytes: 64 * 1024,
+        max_loss_tolerant_gap: 64 * 1024,
         max_fec_value_bytes: 4 * 1024,
         max_recovery_protected_range: 64 * 1024,
         max_repair_working_set: 64 * 1024,
