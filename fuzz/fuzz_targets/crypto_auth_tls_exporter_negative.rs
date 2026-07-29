@@ -70,12 +70,19 @@ fn exercise_crypto_auth_ordering(seed: &[u8]) {
         return;
     };
 
+    let mut intentionally_negative = false;
+
     if control & 0x01 != 0 {
-        global_aad[0] ^= take_or(seed, 1, 0x80);
+        let delta = take_or(seed, 1, 0x80) | 0x01;
+        global_aad[0] ^= delta;
+        intentionally_negative = true;
     }
+
     if control & 0x02 != 0 {
         let last = lfh_aad.len().saturating_sub(1);
-        lfh_aad[last] ^= take_or(seed, 1, 0x40);
+        let delta = take_or(seed, 1, 0x40) | 0x01;
+        lfh_aad[last] ^= delta;
+        intentionally_negative = true;
     }
 
     let mut mutated = encoded;
@@ -83,29 +90,36 @@ fn exercise_crypto_auth_ordering(seed: &[u8]) {
     if control & 0x04 != 0 && !mutated.is_empty() {
         let max_cipher_idx = mutated.len().saturating_sub(16).saturating_sub(1);
         let idx = usize::from(take_or(seed, 2, 0)) % (max_cipher_idx + 1);
-        mutated[idx] ^= take_or(seed, 3, 0x11);
+        let delta = take_or(seed, 3, 0x11) | 0x01;
+        mutated[idx] ^= delta;
+        intentionally_negative = true;
     }
 
     if control & 0x08 != 0 && mutated.len() >= 16 {
         let tag_offset = usize::from(take_or(seed, 3, 0)) % 16;
         let idx = mutated.len() - 1 - tag_offset;
-        mutated[idx] ^= take_or(seed, 4, 0xAA);
+        let delta = take_or(seed, 4, 0xAA) | 0x01;
+        mutated[idx] ^= delta;
+        intentionally_negative = true;
     }
 
     if control & 0x10 != 0 && mutated.len() > 16 {
         let drop = usize::from(take_or(seed, 4, 1) % 16) + 1;
         let new_len = mutated.len().saturating_sub(drop);
         mutated.truncate(new_len);
+        intentionally_negative = true;
     }
 
     let decode_algo = if control & 0x20 != 0 {
+        intentionally_negative = true;
         0xFF
     } else {
         COMP_ALGO_DEFLATE
     };
 
     let aad = build_aead_aad(&global_aad, &lfh_aad);
-    let _ = decode_payload_v2(
+
+    let result = decode_payload_v2(
         &mutated,
         DecodingPlanV2 {
             is_compressed: true,
@@ -120,6 +134,10 @@ fn exercise_crypto_auth_ordering(seed: &[u8]) {
             }),
         },
     );
+
+    if intentionally_negative && result.is_ok() {
+        panic!("tampered crypto/auth input decoded successfully");
+    }
 }
 
 fn exercise_tls_exporter_negative(seed: &[u8]) {
@@ -205,7 +223,11 @@ fn exercise_tls_exporter_negative(seed: &[u8]) {
         },
     );
 
-    let _ = matches!(result, Err(SarError::AuthFailed(_) | SarError::DecryptFailed(_)));
+    match result {
+        Err(SarError::AuthFailed(_) | SarError::DecryptFailed(_)) => {}
+        Ok(_) => panic!("session-binding mismatch decrypted successfully"),
+        Err(_) => panic!("session-binding mismatch returned non-auth failure"),
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
