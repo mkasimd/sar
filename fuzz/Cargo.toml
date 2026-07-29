@@ -144,3 +144,10 @@ path = "fuzz_targets/transport_tcp_connection_state_machine.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "transform_pipeline_fuzz"
+path = "fuzz_targets/transform_pipeline_fuzz.rs"
+test = false
+doc = false
+bench = false
