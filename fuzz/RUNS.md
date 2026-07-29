@@ -479,3 +479,62 @@ completion, or malicious corpus completeness.
 * These results do not claim exhaustive parser coverage, production hardening
   completion, independent security audit completion, or malicious corpus
   completeness.
+  
+## M12b.5 extended malicious corpus and long-running fuzzing
+
+Date: 2026-07-29  
+Scope: malicious corpus expansion and targeted local fuzzing for M12b.5  
+Status: in progress
+
+### PR2 transform pipeline and transform-switching corpus run
+
+After adding the `transform_pipeline_fuzz` target and PR2 transform pipeline /
+transform-switching seed archives, a one-hour local campaign was run against the
+new target and two existing archive-reader targets.
+
+Run directory:
+
+```text
+/tmp/sar-fuzz-runs/sar-fuzz-20260729-205624
+```
+
+Configuration:
+
+```text
+Started: 2026-07-29T20:56:24+0200
+Ended: 2026-07-29T21:56:27+0200
+Max total time per target: 3600 seconds
+Max generated input length: 1048576 bytes
+Target count: 3
+Build before run: yes
+```
+
+Targets:
+
+```text
+transform_pipeline_fuzz
+archive_entry_decode
+archive_audit
+```
+
+Results:
+
+| Target                   |        Runs | Exit | Result              |
+| ------------------------ | ----------: | ---: | ------------------- |
+| `transform_pipeline_fuzz` | 129,383,564 |    0 | no crash indicators |
+| `archive_entry_decode`   | 144,756,628 |    0 | no crash indicators |
+| `archive_audit`          | 267,364,313 |    0 | no crash indicators |
+
+Total PR2 campaign executions:
+
+```text
+541,504,505
+```
+
+All three targets built successfully and exited successfully. No run reported
+`ERROR:`, `panicked at`, `libFuzzer: deadly signal`, or a crash artifact marker.
+
+This run covers bounded transform-pipeline and transform-switching corpus
+expansion only. It does not claim exhaustive transform coverage, complete
+decompression-bomb coverage, production hardening completion, independent
+security audit completion, or malicious corpus completeness.
