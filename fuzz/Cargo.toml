@@ -161,3 +161,10 @@ path = "fuzz_targets/crypto_auth_tls_exporter_negative.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "archive_logical_files"
+path = "fuzz_targets/archive_logical_files.rs"
+test = false
+doc = false
+bench = false
