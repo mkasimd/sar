@@ -500,6 +500,48 @@ reconstruction path. Runs both strict (`allow_lossy=false`) and lossy-enabled
 
 Does not cover: filesystem extraction or any on-disk mutation.
 
+### `pr4_lfh_metadata_edges`
+
+M12b.5 PR4 direct LFH parser target for PR4 metadata families.
+
+The first two input bytes select a bounded combination of `GlobalFlags`
+relevant to PR4: byte 0 maps `SIZE_64BIT`, `HAS_PATH`, `SPARSE_FILES`,
+`SELECTIVE_FEC`, `HAS_PERMS`, `EXT_UID_GID`, `EXT_TIME`, and
+`FILE_FRAGMENTATION`; byte 1 maps `CDC_SUPPORT`, `HAS_DELTA`, `HAS_SYMLINKS`,
+`PER_FILE_CRC`, `DEDUPLICATION`, and `COMPRESSED`. The remaining bytes are
+parsed as LFH bytes via `sar_core::format::parse_lfh`.
+
+Resource limits are wider than the basic `parse_lfh` target:
+`max_lfh_header_bytes=4096`, `max_path_bytes=1024`,
+`max_sparse_map_bytes=4096`, `max_sparse_descriptors=256`,
+`max_fec_value_bytes=4096`, `max_fragment_count=256`,
+`max_fragment_group_span=262144`, `max_loss_tolerant_gap=262144`,
+`max_decoded_entry_size=65536`, `max_in_memory_buffer=65536`,
+`max_total_pipeline_memory=131072`.
+
+Consumes seeds from: `fec_fragmentation`, `metadata_edge_cases`,
+`filesystem_metadata_malformed`.
+
+Does not perform FEC repair, delta patching, CDC reconstruction, or
+filesystem extraction.
+
+### `pr4_tlv_metadata_edges`
+
+M12b.5 PR4 direct TLV parser target for PR4 metadata families.
+
+Exercises `sar_core::tlv::parse_tlvs` for FEC/recovery TLVs, CDC map TLVs,
+delta metadata TLVs, data-hash / metadata TLV edge cases, reserved/unsupported
+TLV type IDs, and malformed TLV length, count, and padding.
+
+Resource limits are wider than the basic `parse_tlv` target:
+`max_tlv_bytes=16384`, `max_tlv_count=128`, `max_fec_value_bytes=16384`,
+`max_cdc_metadata_bytes=16384`.
+
+Consumes seeds from: `cdc_delta`, `metadata_edge_cases`, `fec_fragmentation`.
+
+Does not perform FEC repair, CDC reconstruction, delta patching, or
+filesystem extraction.
+
 ## M12b.5 PR2 smoke-run commands
 
 Build the PR2 target:
@@ -544,12 +586,15 @@ cargo +nightly fuzz run crypto_auth_tls_exporter_negative -- -runs=100
 
 ## M12b.5 PR4 smoke-run commands
 
-Build the new PR4 target plus reused parser/reader targets:
+Build the PR4 targets plus reused parser/reader targets:
 
 ```bash
 cargo +nightly fuzz build archive_logical_files
+cargo +nightly fuzz build pr4_lfh_metadata_edges
+cargo +nightly fuzz build pr4_tlv_metadata_edges
 cargo +nightly fuzz build archive_entry_decode
 cargo +nightly fuzz build archive_audit
+cargo +nightly fuzz build parse_lfh
 cargo +nightly fuzz build parse_tlv
 ```
 
@@ -559,7 +604,19 @@ Run short smoke executions with seed corpus:
 mkdir -p fuzz/corpus/archive_logical_files
 cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/archive_logical_files/
 cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/archive_logical_files/
-cargo +nightly fuzz run archive_logical_files -- -runs=100
+cargo +nightly fuzz run archive_logical_files -- -runs=10000
+
+mkdir -p fuzz/corpus/pr4_lfh_metadata_edges
+cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/pr4_lfh_metadata_edges/
+cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/pr4_lfh_metadata_edges/
+cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/pr4_lfh_metadata_edges/
+cargo +nightly fuzz run pr4_lfh_metadata_edges -- -runs=10000
+
+mkdir -p fuzz/corpus/pr4_tlv_metadata_edges
+cp fuzz/seeds/cdc_delta/*.bin fuzz/corpus/pr4_tlv_metadata_edges/
+cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/pr4_tlv_metadata_edges/
+cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/pr4_tlv_metadata_edges/
+cargo +nightly fuzz run pr4_tlv_metadata_edges -- -runs=10000
 
 mkdir -p fuzz/corpus/archive_entry_decode
 cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/archive_entry_decode/
@@ -574,11 +631,28 @@ cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/archive_audit/
 cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/archive_audit/
 cargo +nightly fuzz run archive_audit -- -runs=100
 
+mkdir -p fuzz/corpus/parse_lfh
+cp fuzz/seeds/fec_fragmentation/*.bin fuzz/corpus/parse_lfh/
+cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/parse_lfh/
+cp fuzz/seeds/filesystem_metadata_malformed/*.bin fuzz/corpus/parse_lfh/
+cargo +nightly fuzz run parse_lfh -- -runs=100
+
 mkdir -p fuzz/corpus/parse_tlv
 cp fuzz/seeds/cdc_delta/*.bin fuzz/corpus/parse_tlv/
 cp fuzz/seeds/metadata_edge_cases/*.bin fuzz/corpus/parse_tlv/
 cargo +nightly fuzz run parse_tlv -- -runs=100
 ```
+
+## PR4 seed consumption summary
+
+PR4 seed categories and the fuzz targets that consume them:
+
+| Seed category                  | `archive_logical_files` | `pr4_lfh_metadata_edges` | `pr4_tlv_metadata_edges` | `archive_entry_decode` | `archive_audit` | `parse_lfh` / `parse_lfh_wide` | `parse_tlv` / `parse_tlv_wide` |
+|-------------------------------|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| `fec_fragmentation`           | ✓ | ✓ | ✓ | ✓ | - | ✓ | - |
+| `cdc_delta`                   | ✓ | - | ✓ | ✓ | ✓ | - | ✓ |
+| `metadata_edge_cases`         | - | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `filesystem_metadata_malformed` | ✓ | ✓ | - | ✓ | ✓ | - | - |
 
 ## Hand-curated seed inputs
 
