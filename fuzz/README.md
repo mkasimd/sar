@@ -453,6 +453,46 @@ through `sar-transport`.
 Does not cover: real TCP networking, QUIC transport, async runtime, TLS
 exporter material, encrypted entry decryption.
 
+### `transform_pipeline_fuzz`
+
+M12b.5 PR2 transform pipeline read/decode target.
+
+Exercises `ArchiveReader` entry walking and payload decoding against arbitrary
+byte input that may declare any compression algorithm ID.  The fuzzer mutates
+from hand-curated seeds containing valid STORE, DEFLATE, and ZSTD archives to
+reach decompressor initialization and teardown paths, resource-limit enforcement
+before expansion, and reserved or unsupported algorithm ID rejection.
+
+Seeds live in `fuzz/seeds/transform_pipeline/`.
+
+Does not cover: encryption, key providers, delta patches, filesystem
+extraction, stream/session semantics.
+
+## M12b.5 PR2 smoke-run commands
+
+Build the PR2 target:
+
+```bash
+cargo +nightly fuzz build transform_pipeline_fuzz
+```
+
+Run short smoke executions with seed corpus:
+
+```bash
+mkdir -p fuzz/corpus/transform_pipeline_fuzz
+cp fuzz/seeds/transform_pipeline/*.bin fuzz/corpus/transform_pipeline_fuzz/
+cargo +nightly fuzz run transform_pipeline_fuzz -- -runs=100
+```
+
+Also exercise the transform-switching DoS seeds through the existing
+`archive_entry_decode` or `archive_audit` targets:
+
+```bash
+mkdir -p fuzz/corpus/archive_entry_decode
+cp fuzz/seeds/transform_switching_dos/*.bin fuzz/corpus/archive_entry_decode/
+cargo +nightly fuzz run archive_entry_decode -- -runs=100
+```
+
 ## Hand-curated seed inputs
 
 Small deterministic seed inputs live under:
