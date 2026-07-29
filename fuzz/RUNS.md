@@ -538,3 +538,28 @@ This run covers bounded transform-pipeline and transform-switching corpus
 expansion only. It does not claim exhaustive transform coverage, complete
 decompression-bomb coverage, production hardening completion, independent
 security audit completion, or malicious corpus completeness.
+### PR5 extraction-race and profile-rejection corpus status
+
+Date: 2026-07-29  
+Scope: M12b.5 PR5 seed additions for `extraction_race` and `profile_rejection`
+categories.
+
+PR5 adds hand-authored seed archives covering:
+
+- `extraction_race`: multi-entry path ordering, directory/file collisions,
+  duplicate paths, `..` traversal, absolute-path entries, symlink-before-target,
+  symlink traversal targets, and unsafe permission ordering.
+- `profile_rejection`: global-header version values above the supported maximum,
+  reserved-byte violations, and flag conflicts (`NO_INDEX+OPT_PRESENT`,
+  `NO_INDEX+HAS_GLOBAL_CRC32`, `HAS_GLOBAL_EC` without `OPT_PRESENT`, `SIGNED`
+  without `OPT_PRESENT`, reserved KMS mode IDs, flags_size below minimum).
+
+Seeds were added to `fuzz/seeds/extraction_race/` and
+`fuzz/seeds/profile_rejection/`.  Seed shapes were verified to be correctly
+structured via the existing `parse_global_header` and `parse_lfh` parsers.
+
+No long-running campaign was run for PR5. Long-running M12b.5 campaigns
+covering these categories remain maintainer-run ongoing hardening work.
+
+These results do not claim exhaustive coverage, production hardening completion,
+independent security audit completion, or malicious corpus completeness.

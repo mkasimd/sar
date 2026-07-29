@@ -103,4 +103,24 @@ copy_seeds pr4_tlv_metadata_edges \
   metadata_edge_cases \
   fec_fragmentation
 
+# M12b.5 PR5
+# extraction_race seeds: multi-entry, path-ordering, traversal, and symlink shapes.
+# Consumed by archive entry-walking and audit targets.
+copy_seeds archive_entry_decode \
+  extraction_race
+
+copy_seeds archive_audit \
+  extraction_race
+
+copy_seeds archive_logical_files \
+  extraction_race
+
+# profile_rejection seeds: header-level version, reserved-byte, and flag-conflict shapes.
+# Consumed by global-header and high-level structural targets.
+copy_seeds parse_global_header \
+  profile_rejection
+
+copy_seeds archive_structural \
+  profile_rejection
+
 echo "Copied curated seeds into fuzz/corpus/"
