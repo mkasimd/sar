@@ -468,6 +468,26 @@ Seeds live in `fuzz/seeds/transform_pipeline/`.
 Does not cover: encryption, key providers, delta patches, filesystem
 extraction, stream/session semantics.
 
+### `crypto_auth_tls_exporter_negative`
+
+M12b.5 PR3 crypto/auth ordering and TLS_EXPORTER AAD-negative target.
+
+Covers:
+
+- `decode_payload_v2` fail-closed authentication ordering paths for wrong
+  global-header AAD, wrong LFH AAD, bad ciphertext, bad tag, and truncated
+  AEAD-tag inputs.
+- `parse_tls_exporter_kms_payload` negative parsing for malformed or reserved
+  TLS_EXPORTER payload fields.
+- Session-binding mismatch simulation via TLS_EXPORTER context-derived key
+  mismatch to exercise generic authentication-failure handling.
+
+Seeds live in `fuzz/seeds/crypto_auth_ordering/` and
+`fuzz/seeds/tls_exporter_aad_negative/`.
+
+Does not cover: real TLS/QUIC networking, async runtimes, or key-management
+production APIs.
+
 ## M12b.5 PR2 smoke-run commands
 
 Build the PR2 target:
@@ -491,6 +511,23 @@ Also exercise the transform-switching DoS seeds through the existing
 mkdir -p fuzz/corpus/archive_entry_decode
 cp fuzz/seeds/transform_switching_dos/*.bin fuzz/corpus/archive_entry_decode/
 cargo +nightly fuzz run archive_entry_decode -- -runs=100
+```
+
+## M12b.5 PR3 smoke-run commands
+
+Build the PR3 target:
+
+```bash
+cargo +nightly fuzz build crypto_auth_tls_exporter_negative
+```
+
+Run short smoke executions with seed corpus:
+
+```bash
+mkdir -p fuzz/corpus/crypto_auth_tls_exporter_negative
+cp fuzz/seeds/crypto_auth_ordering/*.bin fuzz/corpus/crypto_auth_tls_exporter_negative/
+cp fuzz/seeds/tls_exporter_aad_negative/*.bin fuzz/corpus/crypto_auth_tls_exporter_negative/
+cargo +nightly fuzz run crypto_auth_tls_exporter_negative -- -runs=100
 ```
 
 ## Hand-curated seed inputs

@@ -26,6 +26,9 @@ path = "../crates/sar-transport"
 [dependencies.sar-sparse]
 path = "../crates/sar-sparse"
 
+[dependencies.sar-crypto]
+path = "../crates/sar-crypto"
+
 [[bin]]
 name = "smoke_core"
 path = "fuzz_targets/smoke_core.rs"
@@ -148,6 +151,13 @@ bench = false
 [[bin]]
 name = "transform_pipeline_fuzz"
 path = "fuzz_targets/transform_pipeline_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto_auth_tls_exporter_negative"
+path = "fuzz_targets/crypto_auth_tls_exporter_negative.rs"
 test = false
 doc = false
 bench = false
