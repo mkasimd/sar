@@ -36,7 +36,7 @@ use libfuzzer_sys::fuzz_target;
 use sar_core::SarError;
 use sar_transport::{TransportConfig, TransportHarness, TransportStreamId};
 
-const MAX_CHUNK_BYTES: usize = 64 * 1024;
+const MAX_CHUNK_BYTES: usize = 256 * 1024;
 const MAX_OPS: usize = 256;
 /// Stream IDs used in the harness.  Keep the set small to concentrate
 /// operations on a few streams rather than always opening new ones.
