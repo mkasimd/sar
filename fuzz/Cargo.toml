@@ -168,3 +168,17 @@ path = "fuzz_targets/archive_logical_files.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "pr4_lfh_metadata_edges"
+path = "fuzz_targets/pr4_lfh_metadata_edges.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pr4_tlv_metadata_edges"
+path = "fuzz_targets/pr4_tlv_metadata_edges.rs"
+test = false
+doc = false
+bench = false
