@@ -163,6 +163,12 @@ cargo +nightly fuzz run smoke_core -- -runs=100
 Long-running fuzzing belongs in scheduled, dedicated, or local campaigns, not in
 the default workspace test path.
 
+## Corpus taxonomy
+
+The M12b.5 malicious corpus categories, their purpose, example input shapes,
+expected fail-closed behavior, and current status are documented in
+[`CORPUS.md`](CORPUS.md).
+
 ## Corpus policy
 
 Generated libFuzzer corpora are not committed by default.
