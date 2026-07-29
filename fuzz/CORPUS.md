@@ -158,6 +158,33 @@ large generated payloads.
 
 ---
 
+### `allocator_churn`
+
+**Purpose:** Generate repeated bounded allocation, resize, cleanup, and
+error-path activity through many small archive entries, transform initialization
+cycles, and malformed inputs that fail after bounded intermediate setup.
+
+**Example input shapes:**
+
+- Archives with many small entries that each trigger separate reader-side buffer
+  handling.
+- Archives with many small compressed entries that repeatedly initialize and
+  tear down decompressor state.
+- Inputs that alternate between entries fitting within existing limits and
+  entries rejected by resource limits.
+- Malformed entries whose decode path allocates bounded intermediate state and
+  then returns an error.
+
+**Expected fail-closed behavior:** Every allocation must remain bounded by
+resource limits. Decode errors must clean up intermediate state without panic.
+Repeated allocation and cleanup cycles must not cause unbounded memory growth.
+
+**Current status:** Partially covered by PR2 through many-entry transform seeds,
+`transform_pipeline_fuzz`, `archive_entry_decode`, and `archive_audit`.
+Additional targeted allocator-churn fuzzing may be added later if needed.
+
+---
+
 ### `stream_session`
 
 **Purpose:** Cover streaming and session semantics: frame ordering, session ID
@@ -236,31 +263,6 @@ be detected with checked arithmetic. Out-of-bounds copy operations in a patch
 must be rejected without panic.
 
 **Current status:** seed-only. No dedicated fuzz target yet. Planned for PR4.
-
----
-
-### `stream_session`
-
-**Purpose:** Cover streaming and session semantics: frame ordering, session
-ID collisions, transcript replay, session teardown races, and frames that
-arrive outside the expected lifecycle sequence.
-
-**Example input shapes:**
-- Stream transcripts with duplicate or out-of-order frame sequence numbers.
-- Session open/close frames in reversed order to probe lifecycle state checks.
-- Transcripts referencing a session ID that was never opened.
-- Long transcripts with frames that oscillate between valid and malformed to
-  stress incremental validation.
-
-**Expected fail-closed behavior:** Frames received outside the expected
-session lifecycle must be rejected with a deterministic error. Duplicate
-sequence numbers must be detected and not cause double-processing. Malformed
-transcripts must return errors at the first invalid frame without undetected
-state corruption.
-
-**Current status:** seed-only. Partial overlap with the existing
-`stream_transcript` fuzz target (transcript-level semantic validation). Full
-session lifecycle fuzzing is planned for PR4.
 
 ---
 
