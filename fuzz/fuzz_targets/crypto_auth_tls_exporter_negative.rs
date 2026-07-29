@@ -47,7 +47,7 @@ fn exercise_crypto_auth_ordering(seed: &[u8]) {
 
     let payload = b"pr3-auth-ordering-payload".repeat(16);
     let mut nonce = [0u8; 24];
-    nonce[..12].copy_from_slice(b"pr3-auth-seed");
+    nonce[..12].copy_from_slice(b"pr3-authseed");
 
     let mut global_aad = b"global-header-aad".to_vec();
     let mut lfh_aad = b"lfh-aad-bytes".to_vec();
