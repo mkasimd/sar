@@ -31,8 +31,8 @@ use sar_core::SarError;
 use sar_sparse::SparseExtent;
 
 const MAX_NAME_BYTES: usize = 256;
-const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
-const MAX_EXTENTS: usize = 32;
+const MAX_PAYLOAD_BYTES: usize = 256 * 1024;
+const MAX_EXTENTS: usize = 64;
 const MAX_OPS: usize = 256;
 
 /// One fuzzer-generated operation for the archive writer.
@@ -62,7 +62,13 @@ fn truncate_bytes(v: Vec<u8>, max: usize) -> Vec<u8> {
 }
 
 fn name_from_bytes(v: Vec<u8>) -> String {
-    String::from_utf8_lossy(&truncate_bytes(v, MAX_NAME_BYTES)).into_owned()
+    let mut name = String::from_utf8_lossy(&truncate_bytes(v, MAX_NAME_BYTES)).into_owned();
+
+    while name.len() > MAX_NAME_BYTES {
+        name.pop();
+    } // in case `from_utf8_lossy` expands invalid bytes into replacement chars 
+
+    name
 }
 
 /// Build a valid set of non-overlapping extents whose total data length equals
