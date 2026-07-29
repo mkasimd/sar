@@ -804,8 +804,6 @@ If this milestone document appears to describe library/profile layout differentl
 * ensure the fuzz workspace builds
 * this pass does not claim parser, archive, stream, transform, or malicious-corpus fuzz coverage
 
-# Current and future milestones
-
 ## M12b.2: core parser fuzz targets
 
 * add parser-focused fuzz targets for:
@@ -847,6 +845,8 @@ If this milestone document appears to describe library/profile layout differentl
 * promote useful minimized crash inputs into normal regression tests
 * document unresolved or long-running fuzzing work explicitly
 * this pass establishes initial fuzzing execution only; it does not claim exhaustive fuzzing, production hardening, or security-audit completion
+
+# Current and future milestones
 
 ## M12b.5: extended malicious corpus and long-running fuzzing
 
