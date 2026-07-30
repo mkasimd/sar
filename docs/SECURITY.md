@@ -20,8 +20,6 @@ Do not use this implementation in environments requiring production-grade securi
 
 Related documents:
 
-* `docs/SECURITY_MODEL.md` (threat model and scope boundaries)
-* `docs/CLI_SECURITY.md` (CLI extraction and metadata restoration policy)
 * `docs/CRATE_RESPONSIBILITIES.md` (implementation policy vs wire-format behavior)
 * `docs/COMPATIBILITY.md` (pre-stable compatibility and non-claims)
 * `docs/SPEC_QUESTIONS.md` (open questions, including recovery mapping/alignment context)
@@ -30,6 +28,23 @@ Related documents:
 ## Core security posture
 
 The implementation is designed around fail-closed behavior, bounded parsing, and explicit transform ordering.
+
+Trust boundaries: unless the caller has out-of-band trust, all of the following are treated as untrusted/attacker-controlled:
+
+* archive bytes and stream transcript bytes
+* LFH/TLV metadata, transform metadata (compression/FEC/CDC/delta/sparse), and recovery erasure descriptions
+* filesystem metadata carried in archive entries
+* extraction destination filesystem state (existing files, symlinks, permissions, ownership)
+
+Malformed untrusted input must fail closed. A panic on malformed untrusted input is treated as a bug.
+
+Current defensive assumptions include attackers attempting to:
+
+* trigger parser confusion via malformed, reserved, ambiguous, or unsupported values
+* force oversized allocation or expansion via compressed payloads, sparse/fragment metadata, or repair metadata
+* trigger transform-ordering mistakes around recovery/FEC/decrypt/decompress/patch/sparse phases
+* bypass authentication or integrity checks to obtain plaintext or accepted corrupted output
+* exploit extraction path traversal or metadata restoration hazards during CLI extraction
 
 Current implemented protections include:
 
@@ -44,8 +59,6 @@ Current implemented protections include:
 * secret-buffer and key-provider APIs remain in `sar-crypto`
 * raw keying material is not exposed through public documentation/API contracts
 
-See `docs/SECURITY_MODEL.md` for trusted/untrusted input boundaries, attacker model, parser panic expectations, authentication handling, and ordering constraints.
-
 ## CLI extraction policy and filesystem mutation boundaries
 
 Library parsing/listing/verification/audit paths remain side-effect-free. Filesystem mutation is CLI/application policy, not SAR wire-format behavior.
@@ -55,18 +68,19 @@ Safe extraction defaults are enabled for current CLI extraction paths.
 Extraction lexically rejects:
 
 * absolute paths
-* parent-directory traversal (`..`)
-* empty/current-directory components
-* Windows drive prefixes
-* UNC/verbatim-style paths
+* `..` traversal components
+* empty path components
+* `.` components
+* Windows drive-prefix forms
+* UNC/verbatim-style forms
+* backslash usage in archive paths
+* NUL-byte usage in archive paths
 
 Extraction rejects per-component symlink traversal while resolving destination paths.
 
 Symlink extraction is disabled unless `--allow-symlinks` is provided. Even when enabled, symlink targets must be relative and non-traversing.
 
 Hardlink/device/FIFO/socket extraction behavior is not provided as a general CLI restore path in the current implementation.
-
-See `docs/CLI_SECURITY.md` for extraction-path policy details, platform-specific behavior notes, and known limitations.
 
 ## Extraction staging and mutation safety
 
@@ -87,6 +101,14 @@ Metadata restoration is explicit, opt-in, and implementation-policy-gated.
 * Setuid/setgid/sticky bits are stripped even when permissions are preserved.
 * Timestamp restoration is disabled by default.
 * Platform-specific metadata restoration is best-effort and explicitly policy-gated.
+
+Risk notes when metadata restoration is opted in:
+
+* permission restoration may reintroduce broad file modes if operators opt in
+* UID/GID restoration can map differently across hosts and privilege models
+* timestamp restoration can affect forensic or ordering assumptions in downstream workflows
+* symlink restoration can create follow-on risk if extracted trees are later consumed by privileged tooling
+* platform-specific metadata behavior is best-effort and may differ by host OS/filesystem
 
 ## Archive audit mode
 
@@ -119,7 +141,7 @@ See `docs/API.md`, `docs/CRATE_RESPONSIBILITIES.md`, and `docs/SPEC_QUESTIONS.md
 * M12b bounded local fuzzing is complete, but exhaustive fuzzing and malicious corpus completeness are not claimed
 * CLI extraction currently uses lexical/per-component validation and symlink checks, but is not yet a full `openat`/directory-fd confinement engine on every platform
 * extraction into attacker-writable directories is not recommended
-* metadata restoration can create platform-dependent risk; see `docs/CLI_SECURITY.md`
+* metadata restoration can create platform-dependent risk; see the Filesystem metadata policy section above
 * the implementation has not demonstrated multi-implementation interoperability
 
 ## Reporting security issues
@@ -141,5 +163,5 @@ Please include, privately where possible:
 Planned future work includes:
 
 * M13 internal security audit and remediation work (parser/memory/DoS, crypto/secret handling, transform/resource accounting, extraction/metadata safety, crate/profile boundaries)
-* M14+ profile and binding security-policy design (C ABI, Python, mobile) without claiming stable API/ABI/profile contracts yet
+* M14+ profile and binding security-policy work may define default-deny unsupported/custom feature handling, privileged/unprivileged extraction policies, helper-process isolation expectations, and binding-specific security expectations (C ABI, Python, mobile); no stable profile/API/ABI contract is claimed today
 * continued fuzzing and negative testing as ongoing hardening work
