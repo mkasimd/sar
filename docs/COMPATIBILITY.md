@@ -148,8 +148,8 @@ known gaps list.
 ## Milestone alignment
 
 * M12b: fuzzing and malicious corpus — **complete**
-* M12c.1: documentation and public-claims hardening — **in progress**
-* M12c.2: API inventory and crate-boundary hardening — future
+* M12c.1: documentation and public-claims hardening — **complete**
+* M12c.2: API inventory and crate-boundary hardening — **in progress**
 * M12c.3: security posture documentation — future
 * M13: security audit and remediation — future
 * M14: C ABI and Python module — future

@@ -362,11 +362,34 @@ are present. Key changes:
 - No production-readiness, exhaustive-fuzzing, independent-audit, certification,
   compliance, or stable API/ABI claims are made.
 
+## M12c.2: API inventory and crate-boundary hardening
+
+M12c.2 audited the machine-readable API inventory and crate-boundary documentation.
+Key changes:
+
+- `docs/MACHINE_READABLE_API.json` updated: added missing public APIs for the
+  `sar-archive` recovery module (`ErasureRange`, `ProtectedRange`, `EntryErasure`,
+  `ErasureInput`, `RecoveryMetadata`, `RecoveryPlan`, `RepairReport`,
+  `inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`) and
+  conformance module types/functions.
+- Binding readiness metadata corrected: `c_abi`, `python`, `swift_ios`,
+  `kotlin_java_android`, and `cpp_via_c_abi` changed from `candidate`/`unstable`
+  to `deferred` to accurately reflect that no binding work exists.
+- Pre-stable status notes added to the inventory top-level notes.
+- `docs/API.md` regenerated from updated inventory.
+- `docs/CRATE_RESPONSIBILITIES.md` updated: added recovery/conformance module
+  boundaries, added implementation/profile policy versus wire-format behavior
+  section, and added supporting-crate policy notes.
+- `docs/LIBRARY_LAYOUT.md` updated: added fuzz workspace, generated-artifact
+  notes, and future binding path reminders.
+- Open spec questions remain open and unresolved.
+- No SAR wire-format changes. No public API stabilization claims.
+
 ## Milestone alignment
 
 - M12b: fuzzing and malicious corpus — **complete**
 - M12c.1: documentation and public-claims hardening — **complete**
-- M12c.2: API inventory and crate-boundary hardening — future
+- M12c.2: API inventory and crate-boundary hardening — **in progress**
 - M12c.3: security posture documentation — future
 - M13: security audit and remediation — future
 - M14: C ABI and Python module — future

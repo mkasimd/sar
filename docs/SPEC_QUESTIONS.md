@@ -53,10 +53,17 @@ be moved to the "Resolved" section with an explanation of the decision made.
 ## Future milestone alignment note
 
 * M12c.1: documentation and public-claims hardening — **complete**
-* M12c.2: API inventory and crate-boundary hardening — future
+* M12c.2: API inventory and crate-boundary hardening — **in progress**
 * M12c.3: security posture documentation — future
 * M13: security audit and remediation — future
 * M14: C ABI and Python module — future
 * M15: packaging and release automation — future
 * M16: Swift/iOS and Kotlin/Java Android packages — future
+
+## M12c.2 scope note
+
+M12c.2 performs API inventory and crate-boundary hardening only.
+
+The open spec questions listed above remain open after M12c.2. No new technical
+decisions were made and no open design questions were resolved by inventing answers.
 
