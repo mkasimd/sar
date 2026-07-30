@@ -319,13 +319,56 @@ Writer-side generated VCDIFF/SAR BSDIFF v1 fixtures are now present after
 - Delta/base-hash algorithm signaling remains limited by current spec ambiguity handling.
 - Profile validation helpers are useful but are not a complete standalone conformance oracle.
 - Platform-specific metadata restoration behavior remains policy-gated and best-effort where supported.
-- No stable C ABI/Python/mobile binding surface is implemented in M1-M12a (future milestones).
+- No stable C ABI/Python/mobile binding surface is implemented in M1-M12b (future milestones).
+- Partition/multi-volume conformance coverage is deferred; `sar-partition` is a placeholder.
+- Cold-storage and tape profile vectors remain deferred (see `test-vectors/profiles/README.md`).
+- Independent conformance certification is not claimed.
 
-## Milestone alignment (future)
+## M12b: fuzzing and hardening
 
-- M12b: fuzzing and malicious corpus.
-- M12c: documentation closeout.
-- M13: security audit and remediation.
-- M14: C ABI and Python module.
-- M15: packaging and release automation.
-- M16: Swift/iOS and Kotlin/Java Android packages.
+M12b bounded local fuzzing was completed after M12a. Fuzzing does not replace
+conformance vectors but provides complementary malformed-input coverage.
+
+Key M12b contributions to the conformance posture:
+
+- `fuzz/seeds/` contains hand-curated seed inputs for 12 malicious corpus
+  categories (see `fuzz/CORPUS.md` for the taxonomy).
+- One confirmed fuzz finding (stream transcript integer overflow) was fixed,
+  promoted into a regression test, and validated.
+- Extended local bounded campaigns were run against parser, archive reader,
+  audit, stream transcript, stateful writer, stateful parser, and stateful
+  transport fuzz targets.
+- Exhaustive fuzzing coverage is **not** claimed. Independent security audit
+  completion is **not** claimed. Future campaigns may continue in parallel
+  with later milestones.
+- Generated fuzz corpora and crash artifacts are not committed.
+
+See `fuzz/README.md`, `fuzz/CORPUS.md`, and `fuzz/RUNS.md` for full details.
+
+## M12c.1: documentation and public-claims hardening
+
+M12c.1 audited and updated public documentation to ensure no unsupported claims
+are present. Key changes:
+
+- Stale "long-term fuzzing not complete" language corrected to reflect M12b
+  completion status with explicit "not exhaustive" caveats.
+- `docs/COMPATIBILITY.md` added to document wire-format compatibility goals,
+  Rust API pre-stable status, and deferred functionality including
+  partition/multi-volume support, C ABI, Python bindings, mobile bindings,
+  packaging, and certification.
+- Fuzzing coverage summary and limitations added to `fuzz/README.md`.
+- `docs/SPEC_QUESTIONS.md` updated to record M12b resolution status and
+  M12c.1 scope note.
+- No production-readiness, exhaustive-fuzzing, independent-audit, certification,
+  compliance, or stable API/ABI claims are made.
+
+## Milestone alignment
+
+- M12b: fuzzing and malicious corpus — **complete**
+- M12c.1: documentation and public-claims hardening — **complete**
+- M12c.2: API inventory and crate-boundary hardening — future
+- M12c.3: security posture documentation — future
+- M13: security audit and remediation — future
+- M14: C ABI and Python module — future
+- M15: packaging and release automation — future
+- M16: Swift/iOS and Kotlin/Java Android packages — future

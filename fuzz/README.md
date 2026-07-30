@@ -12,6 +12,114 @@ M12b.1 only establishes the fuzzing workspace and policy. It does not claim
 parser, archive, stream, transform, malicious-corpus, or security-audit
 coverage.
 
+## Current coverage summary (M12b)
+
+The following coverage was established through M12b bounded local fuzzing
+campaigns. Coverage is organized by target and corpus category.
+
+This summary is informational only. No exhaustive coverage, production
+hardening completion, independent security audit completion, or malicious corpus
+completeness is claimed.
+
+### Parser targets
+
+| Target | Coverage area |
+|--------|--------------|
+| `smoke_core` | Global Header parsing workspace-wiring smoke test |
+| `parse_global_header` | Global Header structure, magic/version, flags, optional fields |
+| `parse_lfh` | LFH parsing with flag-dependent optional fields |
+| `parse_lfh_wide` | LFH parsing with wider resource limits |
+| `parse_tlv` | TLV type, value length, count limits, alignment padding |
+| `parse_tlv_wide` | TLV parsing with wider resource limits |
+| `parse_cd_footer` | Central Dictionary and Footer parsing |
+
+### Archive reader/audit targets
+
+| Target | Coverage area |
+|--------|--------------|
+| `archive_structural` | High-level archive structural parsing via `ArchiveReader` |
+| `archive_entry_decode` | Archive entry walking and payload decoding (≤16 entries) |
+| `archive_entry_decode_wide` | Archive entry walking with wider resource limits |
+| `archive_audit` | Archive audit metadata walking (`MetadataOnly`, `ControlEntryPolicy::Reject`) |
+| `archive_audit_wide` | Archive audit walking with wider resource limits |
+| `archive_logical_files` | Logical-file reconstruction, fragment-group reassembly, sparse ordering |
+| `transform_pipeline_fuzz` | Transform read/decode with any declared compression algorithm ID |
+
+### Stream transcript/stateful targets
+
+| Target | Coverage area |
+|--------|--------------|
+| `stream_transcript` | Stream transcript semantic validation |
+| `stream_transcript_declared_lengths` | Large declared transcript lengths, overflow-adjacent values |
+| `archive_writer_state_machine` | `ArchiveWriter` lifecycle state transitions |
+| `stream_archive_parser_state_machine` | `StreamArchiveParser` push/step/finalize state transitions |
+| `transport_tcp_connection_state_machine` | `TransportHarness` TCP-policy in-memory lifecycle transitions |
+
+### Crypto/auth target
+
+| Target | Coverage area |
+|--------|--------------|
+| `crypto_auth_tls_exporter_negative` | AEAD authentication ordering, TLS_EXPORTER/AAD negative cases |
+
+### M12b.5 malicious corpus categories
+
+Seed-backed corpus categories are documented in [`CORPUS.md`](CORPUS.md):
+
+- `transform_pipeline` — transform initialization, resource-limit enforcement, algorithm rejection
+- `transform_switching_dos` — repeated transform setup/teardown, DoS resistance
+- `crypto_auth_ordering` — AEAD tag absence/truncation, auth-before-plaintext enforcement
+- `tls_exporter_aad_negative` — TLS exporter label/context mismatch, AAD derivation failure
+- `decompression_bomb` — decompression expansion beyond resource limits
+- `allocator_churn` — repeated bounded allocation/cleanup cycles
+- `stream_session` — frame ordering, session ID collisions, lifecycle sequence errors
+- `fec_fragmentation` — FEC parity mismatches, fragment gaps, illegal offsets
+- `cdc_delta` — CDC boundary overflows, missing delta bases, out-of-bounds patch offsets
+- `metadata_edge_cases` — maximum-length paths, reserved flags, CD/LFH disagreements
+- `filesystem_metadata_malformed` — path traversal, overflow timestamps, hostile symlinks
+- `extraction_race` — path ordering, directory/file collisions, TOCTOU-adjacent patterns (PR5)
+- `profile_rejection` — version-too-high, reserved bytes, flag conflicts (PR5)
+
+### PR3/PR4 targeted overnight campaign (M12b.5)
+
+A six-hour parallel local campaign was run against PR3/PR4 targets:
+`archive_logical_files`, `crypto_auth_tls_exporter_negative`,
+`pr4_lfh_metadata_edges`, and `pr4_tlv_metadata_edges`.
+Total: approximately 27.7 billion executions. No crash indicators observed.
+
+### PR5 seed-backed categories (M12b.5)
+
+`extraction_race` and `profile_rejection` seeds were added and verified against
+existing entry-walking and global-header targets. No long-running campaigns were
+run specifically for PR5 categories; longer campaigns remain ongoing hardening
+work.
+
+### Fuzz finding
+
+One confirmed finding was found and fixed during M12b.4:
+
+- `stream_transcript` fuzz target found a reproducible integer overflow panic
+  in stream transcript validation. Fixed with checked arithmetic. Minimized
+  62-byte reproducer promoted to a regression test.
+
+Full details, run logs, and result tables are in [`RUNS.md`](RUNS.md).
+
+## Current limitations
+
+- Fuzzing is **not exhaustive**. The covered input space is bounded and depends
+  on libFuzzer mutation and the provided seed corpora.
+- No independent security audit completion is claimed.
+- Generated fuzz corpora and crash artifacts are **not committed**.
+- Future campaigns may continue in parallel with later milestones.
+- Encrypted entry fuzzing requires key material that fuzz targets do not supply.
+  Encrypted entry paths are partially exercised through negative/malformed-input
+  seeds only.
+- Delta patching against external bases is not exercised by fuzz targets.
+- `SessionManager` is not directly fuzzed; session behavior is exercised
+  indirectly through `TransportHarness`.
+- Filesystem extraction is never performed by any fuzz target.
+- No QUIC transport, async runtime, or real TCP networking is used in fuzz targets.
+- Cold-storage/tape profile inputs are not specifically targeted.
+
 ## Run logs and findings
 
 Bounded local fuzzing pass records are kept in [`RUNS.md`](RUNS.md).
