@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 This document reflects the current security posture of the SAR Rust reference implementation.
 
-SAR is experimental and pre-stable. The implementation has not yet completed long-term fuzzing, independent security audit, production hardening, or multi-implementation interoperability validation.
+SAR is experimental and pre-stable. The implementation has not yet completed independent security audit, production hardening, or multi-implementation interoperability validation. Bounded local fuzzing campaigns were completed during M12b; exhaustive fuzzing is not claimed.
 
 Do not use this implementation in environments requiring production-grade security, regulatory assurance, long-term archival guarantees, or security certification.
 
@@ -78,7 +78,7 @@ Stream transcript semantic validation belongs to `sar-stream`, not `sar-archive`
 
 The implementation is not yet independently audited.
 
-M12b fuzzing and malicious-corpus hardening have not yet been completed.
+M12b bounded local fuzzing campaigns are complete. Exhaustive fuzzing coverage, production hardening completion, independent security audit completion, and malicious corpus completeness are not claimed. Future fuzzing campaigns may continue in parallel with later milestones.
 
 CLI extraction currently uses stable lexical/per-component validation and symlink checks. It is not yet a fully `openat`/directory-fd confinement engine on every platform.
 
@@ -104,7 +104,6 @@ Please include, privately where possible:
 
 Planned future work includes:
 
-* M12b fuzzing and malicious-corpus expansion
 * M12c documentation/API/security posture hardening
 * M13 security audit and remediation
 * M14 C ABI / Python binding security profile work
