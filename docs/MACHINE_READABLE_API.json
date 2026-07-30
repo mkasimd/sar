@@ -6,7 +6,9 @@
   "source": "source audit",
   "notes": [
     "This file is the authoritative machine-readable API inventory.",
-    "docs/API.md is generated from this file."
+    "docs/API.md is generated from this file.",
+    "M12c.2 audit: All public APIs in this inventory are pre-stable and experimental. No stable Rust API/ABI guarantee is made. Individual items may carry a 'stable' stability tag reflecting their implementation maturity within this pre-stable codebase, not a public stability commitment. See docs/COMPATIBILITY.md.",
+    "M12c.2 audit: Binding readiness fields reflect future milestone targets, not current implementation status. No C ABI, Python module, Swift/iOS, Kotlin/Java/Android, or C++-via-C-ABI bindings are implemented. All binding paths are deferred. See docs/COMPATIBILITY.md and docs/LIBRARY_LAYOUT.md."
   ],
   "crates": [
     {
@@ -2985,9 +2987,9 @@
         "Milestone 10a stateless forward-only stream parser/writer state model.",
         "Milestone 11a LFH Metadata API Completeness: expanded EntryInput, expanded EntryMetadata, FieldPresence<T> presence model, EntryKind, all metadata structs, complete LFH metadata round-trip.",
         "Milestone 11b Filesystem Metadata Encode/Decode: FieldPresence-typed path_presence/permissions_presence/owner_presence/timestamps_presence in EntryMetadata, symlink_target metadata, symlink payload UTF-8 validation, directory payload validation, IS_SYMLINK->HAS_SYMLINKS validation, strict UTF-8, path/name length validation, deterministic round-trip tests.",
-        "Milestone 11c: Crate-boundary cleanup \u2014 fragment semantic logic moved to sar-fragmentation, sparse semantic logic moved to sar-sparse, loss-tolerant policy helpers added to sar-loss-tolerant, partition deliberately deferred.",
+        "Milestone 11c: Crate-boundary cleanup — fragment semantic logic moved to sar-fragmentation, sparse semantic logic moved to sar-sparse, loss-tolerant policy helpers added to sar-loss-tolerant, partition deliberately deferred.",
         "Milestone 11c-cp (corrective pass): sar_core::fragment module removed (was pure re-exports); semantic sparse re-exports removed from sar_core::sparse (SparseExtent kept as architectural re-export); sar-loss-tolerant integrated into sar-fragmentation; FragmentError::PayloadSizeMismatch and DuplicateIndex added (always fatal); zero-length sparse extents now rejected; write_sparse_map now returns Result<Vec<u8>, SarError> (fail-closed on 32-bit truncation); error conversion bridges updated.",
-        "Milestone 11d: archive API architecture split \u2014 high-level archive reader/writer and stream parser orchestration moved to sar-archive; sar-core now owns canonical wire/status/limits and low-level helpers."
+        "Milestone 11d: archive API architecture split — high-level archive reader/writer and stream parser orchestration moved to sar-archive; sar-core now owns canonical wire/status/limits and low-level helpers."
       ],
       "metadata": {
         "milestones": [
@@ -3233,7 +3235,7 @@
           },
           {
             "name": "ArchiveReader::read_all_logical_files",
-            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted \u2014 not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
+            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
             "metadata": {
               "since_milestone": "8",
               "parameters": [
@@ -3352,8 +3354,8 @@
             },
             "signature": "pub fn ArchiveWriter<W>::write_sparse_entry(&mut self, name: &str, gathered_payload: &[u8], sparse: SparseWriteOptions) -> Result<(), SarError>",
             "errors": [
-              "SarError::Malformed \u2014 sparse flag not set",
-              "SarError::InvalidMap \u2014 overlapping extents, extent beyond logical_size, payload length mismatch"
+              "SarError::Malformed — sparse flag not set",
+              "SarError::InvalidMap — overlapping extents, extent beyond logical_size, payload length mismatch"
             ]
           },
           {
@@ -3419,7 +3421,7 @@
             },
             "signature": "pub fn ArchiveWriter<W>::new_with_cd_metadata(writer: W, options: ArchiveWriterOptions, cd_metadata: Vec<Tlv>) -> Result<Self, SarError>",
             "errors": [
-              "SarError::FlagConflict \u2014 CD metadata supplied for NO_INDEX output",
+              "SarError::FlagConflict — CD metadata supplied for NO_INDEX output",
               "SarError"
             ]
           },
@@ -3754,6 +3756,126 @@
             "errors": [
               "SarError"
             ]
+          },
+          {
+            "name": "inspect_recovery_metadata",
+            "signature": "pub fn inspect_recovery_metadata(archive_bytes: &[u8], limits: &ResourceLimits) -> Result<RecoveryMetadata, SarError>",
+            "description": "Inspects archive-level recovery metadata from raw archive bytes. Parses global header and Central Dictionary, locates RECOVERY TLVs, and computes the protected byte range.",
+            "use_for": "Determining whether archive-level repair is possible before calling plan_archive_repair.",
+            "notes": [
+              "Implementation policy: accepts complete archive as &[u8]. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets.",
+              "Implementation policy: in-memory API only. Streaming repair and external-storage-backed repair remain future work."
+            ],
+            "errors": [
+              "SarError on malformed archive structure"
+            ],
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp",
+              "related_spec_sections": [
+                "9.2"
+              ]
+            }
+          },
+          {
+            "name": "plan_archive_repair",
+            "signature": "pub fn plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput, limits: &ResourceLimits) -> Result<RecoveryPlan, SarError>",
+            "description": "Validates an erasure input and builds an executable repair plan. Returns SarError::RecoveryUnavailable when the archive lacks HAS_GLOBAL_EC, has no RECOVERY TLV, or erasures lie outside the protected range or are not block-aligned.",
+            "use_for": "Building a validated RecoveryPlan before calling repair_archive.",
+            "notes": [
+              "Implementation policy: requires explicit, block-aligned byte erasures. The block-alignment constraint is an implementation restriction due to an open spec question about arbitrary sub-block erasure handling (see docs/SPEC_QUESTIONS.md).",
+              "Implementation policy: in-memory API. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets."
+            ],
+            "errors": [
+              "SarError::RecoveryUnavailable — archive lacks HAS_GLOBAL_EC, no RECOVERY TLV, erasures out of range, or erasures not block-aligned",
+              "SarError on malformed archive structure"
+            ],
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp",
+              "related_spec_sections": [
+                "9.2"
+              ]
+            }
+          },
+          {
+            "name": "repair_archive",
+            "signature": "pub fn repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan, limits: &ResourceLimits) -> Result<(Vec<u8>, RepairReport), SarError>",
+            "description": "Executes a repair plan and returns the repaired archive bytes and a RepairReport. Applies XOR or RS erasure recovery on the protected range. The caller is responsible for writing returned bytes to a temp file and renaming only after structural verification.",
+            "use_for": "Executing an archive-level repair after building a RecoveryPlan from plan_archive_repair.",
+            "notes": [
+              "Implementation policy: in-memory API returning full repaired archive as Vec<u8>. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets.",
+              "Implementation policy: write returned bytes to a temp file and rename to final destination only after structural verification."
+            ],
+            "errors": [
+              "SarError::EcFailed — erasures exceed parity capacity",
+              "SarError::RecoveryUnavailable — repair not supported or TLV not found"
+            ],
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp",
+              "related_spec_sections": [
+                "9.2"
+              ]
+            }
+          },
+          {
+            "name": "run_conformance_check",
+            "signature": "pub fn run_conformance_check(manifest: &ConformanceManifest, archive_bytes: &[u8], limits: &ResourceLimits) -> ConformanceCheckResult",
+            "description": "Runs a conformance check against a single test vector manifest and archive pair. Checks structure, entries, transforms, expected errors, and profile expectations.",
+            "use_for": "Executing conformance test vectors in test suites and CI.",
+            "notes": [
+              "Implementation policy: This is the conformance testing infrastructure API. It is not a wire-format operation.",
+              "Accessible via sar_archive::conformance::run_conformance_check."
+            ],
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "validate_manifest_schema",
+            "signature": "pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchemaResult",
+            "description": "Validates a ConformanceManifest against the schema constraints. Returns a ManifestSchemaResult.",
+            "use_for": "Checking manifest validity before running conformance checks.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "discover_manifests",
+            "signature": "pub fn discover_manifests(test_vectors_dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error>",
+            "description": "Discovers conformance test vector manifests in a directory tree.",
+            "use_for": "Locating all conformance test manifests for a test run.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
           }
         ],
         "types": [
@@ -4441,19 +4563,232 @@
             },
             "kind": "struct",
             "signature": "pub struct ArchiveAuditReport { pub mode: ArchiveAuditMode, pub global_flags: u32, pub entry_count_seen: u64, pub entries: Vec<ArchiveAuditEntryReport>, pub footer_present: bool, pub central_dictionary_present: bool, pub cd_footer_valid: bool, pub recovery: Option<ArchiveAuditRecoverySummary> }"
+          },
+          {
+            "name": "ErasureRange",
+            "kind": "struct",
+            "description": "A byte range that was erased or corrupted, specified as an absolute offset and byte length within the archive.",
+            "use_for": "Specifying archive-level byte erasures for plan_archive_repair.",
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "ProtectedRange",
+            "kind": "struct",
+            "description": "A byte range protected by a FEC TLV, reported for informational purposes. Contains the absolute offset, byte length, and FEC algorithm ID.",
+            "use_for": "Returned by inspect_recovery_metadata to describe the protected range.",
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "EntryErasure",
+            "kind": "struct",
+            "description": "Per-entry erasure specification (reserved for future entry-level repair). Currently not used in archive-level repair.",
+            "use_for": "ErasureInput field for future selective-FEC entry-level repair.",
+            "notes": [
+              "Not used in current archive-level repair; included for future expansion.",
+              "Implementation policy: archive-level repair requires explicit block-aligned erasures. See docs/SPEC_QUESTIONS.md for open spec questions."
+            ],
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "ErasureInput",
+            "kind": "struct",
+            "description": "Erasure input for an archive-level repair operation. Contains per-entry erasures and archive-level byte erasure ranges.",
+            "use_for": "Passed to plan_archive_repair to specify which byte ranges to recover.",
+            "notes": [
+              "Implementation policy: archive-level repair requires explicit, block-aligned byte erasures. Arbitrary sub-block erasure is not supported due to an open spec question (see docs/SPEC_QUESTIONS.md)."
+            ],
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "RecoveryMetadata",
+            "kind": "struct",
+            "description": "Summary of archive-level recovery metadata: HAS_GLOBAL_EC flag status, protected byte range, all RECOVERY TLVs found, and whether repair is possible.",
+            "use_for": "Returned by inspect_recovery_metadata to describe repair feasibility.",
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "RecoveryPlan",
+            "kind": "struct",
+            "description": "A validated repair plan ready for execution, containing the validated erasure input, protected range, and FEC algorithm ID.",
+            "use_for": "Returned by plan_archive_repair and passed to repair_archive.",
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "RepairReport",
+            "kind": "struct",
+            "description": "Summary of a completed repair operation: success flag, repaired byte ranges, degraded flag, and error message on failure.",
+            "use_for": "Returned alongside repaired archive bytes from repair_archive.",
+            "metadata": {
+              "module": "recovery",
+              "path": "src/recovery.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "12a-pre-fuzz-cp"
+            }
+          },
+          {
+            "name": "ConformanceManifest",
+            "kind": "struct",
+            "description": "Top-level conformance test vector manifest (M12a). Describes expected archive entries, transform expectations, error expectations, and profile/outcome expectations for conformance test vectors.",
+            "use_for": "Deserializing conformance test vector manifests for conformance check workflows.",
+            "notes": [
+              "Accessible via sar_archive::conformance::ConformanceManifest. Not re-exported at crate root.",
+              "M12c.2 status: marked internal_public. Used by the conformance test infrastructure. Not a stable user-facing API."
+            ],
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "ConformanceCheckResult",
+            "kind": "struct",
+            "description": "Result of running a conformance check against a single test vector manifest and archive pair.",
+            "use_for": "Returned by run_conformance_check.",
+            "notes": [
+              "Accessible via sar_archive::conformance::ConformanceCheckResult.",
+              "M12c.2 status: marked internal_public. Used by conformance test infrastructure."
+            ],
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "ManifestSchemaResult",
+            "kind": "struct",
+            "description": "Result of validating a ConformanceManifest against the schema constraints.",
+            "use_for": "Returned by validate_manifest_schema.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "VectorKind",
+            "kind": "enum",
+            "description": "Classification of a conformance test vector: positive (archive must parse/verify successfully) or negative (archive must be rejected).",
+            "use_for": "ConformanceManifest field to distinguish positive and negative test vectors.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "ExpectedEntry",
+            "kind": "struct",
+            "description": "Expected entry metadata and payload expectations for a single archive entry in a conformance test vector.",
+            "use_for": "Nested in ConformanceManifest to describe per-entry conformance expectations.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "ExpectedOutcome",
+            "kind": "struct",
+            "description": "Expected outcome for a conformance check: expected SAR status code, expected error kind, and optional extra assertions.",
+            "use_for": "Nested in ConformanceManifest to describe expected parse/validation outcomes.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
           }
         ],
-        "constants": []
+        "constants": [
+          {
+            "name": "MANIFEST_SCHEMA_VERSION",
+            "signature": "pub const MANIFEST_SCHEMA_VERSION: u64 = 1",
+            "description": "Current conformance manifest schema version (1).",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "12a-audit-cp"
+            }
+          }
+        ]
       },
       "notes": [
         "Milestone 11d: archive API architecture split from sar-core. Owns ArchiveReader/ArchiveWriter, entry metadata/input/output types, verification/listing flows, stream parser orchestration, indexed and NO_INDEX archive integration.",
         "Milestone 12a-audit-cp: archive audit primitives with explicit control-entry and payload-audit policies, deterministic machine-readable reports, and inert structural handling for stream transcript containers.",
-        "Milestone 12a-pre-fuzz-cp: archive-level recovery/repair APIs are currently in-memory APIs. They accept complete archive byte slices, inspect or repair bounded protected ranges in memory, and return repaired archive bytes. Callers must enforce ResourceLimits, especially max_archive_size, max_recovery_protected_range, and max_repair_working_set. Streaming repair and external-storage-backed repair for very large archives remain future work."
+        "Milestone 12a-pre-fuzz-cp: archive-level recovery/repair APIs are currently in-memory APIs. They accept complete archive byte slices, inspect or repair bounded protected ranges in memory, and return repaired archive bytes. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets. Streaming repair and external-storage-backed repair for very large archives remain future work.",
+        "Milestone 12a-audit-cp: conformance module (sar_archive::conformance) provides public test vector manifest types and check infrastructure. These types are accessible via the public conformance module but are not re-exported at the crate root and are marked internal_public."
       ],
       "metadata": {
         "milestones": [
           "11d",
-          "12a-audit-cp"
+          "12a-audit-cp",
+          "12a-pre-fuzz-cp"
         ],
         "modules": [
           {
@@ -5600,7 +5935,7 @@
         "functions": [
           {
             "name": "validate_patch_algo_id",
-            "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04\u20130xEF, Unsupported for 0xF0\u20130xFF, and PatchAlgoId for assigned IDs 0x00\u20130x03. Does not apply any patch.",
+            "description": "Validates a raw patch algorithm byte against the SAR registry. Returns ReservedValue for 0x04–0xEF, Unsupported for 0xF0–0xFF, and PatchAlgoId for assigned IDs 0x00–0x03. Does not apply any patch.",
             "metadata": {
               "since_milestone": "9b",
               "parameters": [
@@ -5627,8 +5962,8 @@
             },
             "signature": "pub fn validate_patch_algo_id(id: u8) -> Result<PatchAlgoId, PatchError>",
             "errors": [
-              "PatchError::ReservedValue (0x04\u20130xEF)",
-              "PatchError::Unsupported (0xF0\u20130xFF)"
+              "PatchError::ReservedValue (0x04–0xEF)",
+              "PatchError::Unsupported (0xF0–0xFF)"
             ]
           },
           {
@@ -5887,7 +6222,7 @@
         "types": [
           {
             "name": "PatchAlgoId",
-            "description": "SAR patch algorithm identifiers from spec \u00a78.4. Custom(u8) covers 0xF0\u20130xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
+            "description": "SAR patch algorithm identifiers from spec §8.4. Custom(u8) covers 0xF0–0xFF. STORE_PATCH, VCDIFF, and BSDIFF application are implemented; ZSTD_PATCH remains unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -6057,7 +6392,7 @@
           },
           {
             "name": "PATCH_ALGO_CUSTOM_MIN",
-            "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0\u20130xFF; all return Unsupported.",
+            "description": "Minimum custom patch algorithm ID (0xF0). Custom range: 0xF0–0xFF; all return Unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -6077,7 +6412,7 @@
           },
           {
             "name": "PATCH_ALGO_CUSTOM_MAX",
-            "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0\u20130xFF; all return Unsupported.",
+            "description": "Maximum custom patch algorithm ID (0xFF). Custom range: 0xF0–0xFF; all return Unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -8352,11 +8687,11 @@
   ],
   "metadata": {
     "binding_readiness": {
-      "c_abi": "candidate",
-      "python": "candidate",
-      "swift_ios": "unstable",
-      "kotlin_java_android": "unstable",
-      "cpp_via_c_abi": "candidate",
+      "c_abi": "deferred",
+      "python": "deferred",
+      "swift_ios": "deferred",
+      "kotlin_java_android": "deferred",
+      "cpp_via_c_abi": "deferred",
       "notes": "No foreign-language interfaces are implemented yet. Milestone 14 targets a stable C ABI and Python module for high-level archive operations, configuration, error mapping, and language-binding wrappers. Milestone 15 targets packaging/release automation. Milestone 16 targets Swift/iOS and Kotlin/Java/Android packages after ownership, callback, cancellation, and secret-handling contracts stabilize."
     },
     "security_notes": {
@@ -8398,7 +8733,7 @@
       },
       "arbitrary_byte_erasure_repair": {
         "available": false,
-        "reason": "spec gap \u2014 no normative byte-to-block mapping defined for arbitrary byte erasure positions",
+        "reason": "spec gap — no normative byte-to-block mapping defined for arbitrary byte erasure positions",
         "behavior": "plan_archive_repair returns RecoveryUnavailable for non-block-aligned erasures"
       },
       "cdc": {

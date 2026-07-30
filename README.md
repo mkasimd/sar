@@ -9,7 +9,7 @@ Rust reference implementation for the **SAR Protocol v1.0**.
 
 > **Status: experimental / in development**
 >
-> SAR is under active development and has not yet undergone independent security audit, long-term fuzzing, production hardening, or multi-implementation interoperability testing.
+> SAR is under active development and has not yet undergone independent security audit, production hardening, or multi-implementation interoperability testing. Bounded local fuzzing campaigns were completed during M12b; exhaustive fuzzing is not claimed.
 >
 > Do **not** use this implementation in environments requiring stable production-grade behavior, regulatory assurance, long-term archival guarantees, or security certification.
 
@@ -478,7 +478,7 @@ Important security properties:
 * library parsing does not create files, directories, symlinks, devices, or filesystem metadata side effects
 * `sar-archive` inert audit mode is structural/reporting-only and does not execute stream/session/opcode semantics
 
-This project is still pre-stable and has not yet completed long-term fuzzing, independent security audit, or multi-implementation interoperability validation. Do not treat it as audited production security software.
+This project is still pre-stable and has not yet completed independent security audit or multi-implementation interoperability validation. Bounded local fuzzing campaigns were completed during M12b; exhaustive fuzzing is not claimed. Do not treat it as audited production security software.
 
 For details, see:
 
@@ -535,6 +535,7 @@ Primary documentation files:
 * `docs/MACHINE_READABLE_API.schema.json` - schema for the machine-readable API inventory
 * `docs/API.md` - generated human-readable subset of the API inventory
 * `docs/CONFORMANCE.md` - conformance notes and profile status
+* `docs/COMPATIBILITY.md` - compatibility notes, pre-stable status, and deferred functionality
 * `docs/CRATE_RESPONSIBILITIES.md` - crate ownership boundaries
 * `docs/LIBRARY_LAYOUT.md` - workspace and library layout
 * `docs/MILESTONES.md` - milestone roadmap and completion status
@@ -583,7 +584,7 @@ Notable limitations include:
 
 * no stable production release yet
 * no independent security audit yet
-* long-term fuzzing and malicious-corpus hardening are not complete
+* bounded local fuzzing campaigns have been completed (M12b); exhaustive fuzzing coverage is not claimed
 * multi-implementation interoperability has not been demonstrated
 * public APIs may still change before stabilization
 * no stable C ABI yet
@@ -594,4 +595,3 @@ Notable limitations include:
 * some profile-specific conformance and external audit work remains pending
 
 See the documentation in `docs/` for the detailed and current status.
-

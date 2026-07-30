@@ -21,6 +21,7 @@ Before making substantial changes, consult the documents that define the relevan
 * `docs/MACHINE_READABLE_API.schema.json` - inventory schema
 * `docs/API.md` - generated human-readable subset
 * `docs/CONFORMANCE.md` - conformance status and vector expectations
+* `docs/COMPATIBILITY.md` - compatibility notes, pre-stable status, and deferred functionality
 * `docs/SECURITY.md` - security posture and constraints
 * `docs/MILESTONES.md` - milestone roadmap and implementation status
 * `docs/LIBRARY_LAYOUT.md` - intended future library/profile/binding layout

@@ -893,6 +893,8 @@ If this milestone document appears to describe library/profile layout differentl
 * document deferred functionality, including partition/multi-volume support
 * ensure public documentation does not claim production readiness, exhaustive fuzzing, independent audit, certification, or stable API/ABI guarantees
 
+# Current and future milestones
+
 ## M12c.2: API inventory and crate-boundary hardening
 
 * machine-readable API inventory
