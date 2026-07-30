@@ -846,8 +846,6 @@ If this milestone document appears to describe library/profile layout differentl
 * document unresolved or long-running fuzzing work explicitly
 * this pass establishes initial fuzzing execution only; it does not claim exhaustive fuzzing, production hardening, or security-audit completion
 
-# Current and future milestones
-
 ## M12b.5: extended malicious corpus and long-running fuzzing
 
 * expand transform pipeline fuzzing
@@ -892,6 +890,8 @@ If this milestone document appears to describe library/profile layout differentl
 * document current fuzzing coverage and limitations
 * document deferred functionality, including partition/multi-volume support
 * ensure public documentation does not claim production readiness, exhaustive fuzzing, independent audit, certification, or stable API/ABI guarantees
+
+# Current and future milestones
 
 ## M12c.2: API inventory and crate-boundary hardening
 
