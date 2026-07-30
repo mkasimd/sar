@@ -111,6 +111,7 @@ For the detailed milestone roadmap, see:
 
 * `docs/MILESTONES.md`
 * `docs/API.md`
+* `docs/COMPATIBILITY.md`
 * `docs/CONFORMANCE.md`
 * `docs/SECURITY.md`
 * `docs/MACHINE_READABLE_API.json`
@@ -153,6 +154,7 @@ crates/
 
 docs/
   API.md
+  COMPATIBILITY.md
   CONFORMANCE.md
   CRATE_RESPONSIBILITIES.md
   LIBRARY_LAYOUT.md
@@ -176,7 +178,7 @@ Future foreign-language binding work is planned inside this monorepo rather than
 * `bindings/swift/` for future Swift/iOS bindings
 * `bindings/android/` for future Kotlin/Java Android bindings
 
-These paths are future M14/M16 scope and are not part of the current stable API surface.
+These paths are future M14/M16 scope and are not part of the current public Rust API surface; no stable API/ABI guarantee exists yet.
 
 ## Crate responsibilities
 
@@ -594,4 +596,3 @@ Notable limitations include:
 * some profile-specific conformance and external audit work remains pending
 
 See the documentation in `docs/` for the detailed and current status.
-

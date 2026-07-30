@@ -41,10 +41,9 @@ Resolved items are kept separately to avoid presenting closed work as still open
 
 ## Future milestone alignment note
 
-* M12b: fuzzing and malicious corpus.
+* M12b: fuzzing and malicious corpus completed as an initial/extended hardening phase; see `fuzz/README.md`, `fuzz/CORPUS.md`, and `fuzz/RUNS.md` for current scope/limits.
 * M12c: documentation/API/security posture hardening.
 * M13: security audit and remediation.
 * M14: C ABI and Python module.
 * M15: packaging and release automation.
 * M16: Swift/iOS and Kotlin/Java Android packages.
-

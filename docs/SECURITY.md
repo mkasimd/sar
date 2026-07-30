@@ -78,7 +78,8 @@ Stream transcript semantic validation belongs to `sar-stream`, not `sar-archive`
 
 The implementation is not yet independently audited.
 
-M12b fuzzing and malicious-corpus hardening have not yet been completed.
+M12b fuzzing passes are documented in `fuzz/README.md`, `fuzz/CORPUS.md`, and
+`fuzz/RUNS.md`, but fuzzing remains non-exhaustive and ongoing.
 
 CLI extraction currently uses stable lexical/per-component validation and symlink checks. It is not yet a fully `openat`/directory-fd confinement engine on every platform.
 

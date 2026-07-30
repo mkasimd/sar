@@ -20,6 +20,7 @@ Before making substantial changes, consult the documents that define the relevan
 * `docs/MACHINE_READABLE_API.json` - authoritative inventory
 * `docs/MACHINE_READABLE_API.schema.json` - inventory schema
 * `docs/API.md` - generated human-readable subset
+* `docs/COMPATIBILITY.md` - current compatibility expectations and non-guarantees
 * `docs/CONFORMANCE.md` - conformance status and vector expectations
 * `docs/SECURITY.md` - security posture and constraints
 * `docs/MILESTONES.md` - milestone roadmap and implementation status
@@ -331,4 +332,3 @@ Maintainers may ask for:
 * removal of unsupported claims
 
 This is expected. SAR is intentionally strict about architecture, validation behavior, and public claims.
-

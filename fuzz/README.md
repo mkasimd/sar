@@ -15,6 +15,7 @@ coverage.
 ## Run logs and findings
 
 Bounded local fuzzing pass records are kept in [`RUNS.md`](RUNS.md).
+Corpus coverage summaries and explicit non-claims are tracked in [`CORPUS.md`](CORPUS.md).
 
 Generated `fuzz/corpus/**`, `fuzz/artifacts/**`, and `fuzz/target/**` outputs are not committed. Minimized crash inputs are promoted into normal crate regression tests only after review.
 
