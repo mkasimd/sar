@@ -7,9 +7,25 @@ SPDX-License-Identifier: Apache-2.0
 
 This document reflects the current security posture of the SAR Rust reference implementation.
 
-SAR is experimental and pre-stable. The implementation has not yet completed independent security audit, production hardening, or multi-implementation interoperability validation. Bounded local fuzzing campaigns were completed during M12b; exhaustive fuzzing is not claimed.
+SAR is experimental and pre-stable. The implementation has not completed:
+
+* independent external security audit
+* production-hardening completion
+* certification/compliance activities
+* multi-implementation interoperability validation
+
+Bounded local fuzzing campaigns were completed during M12b. Exhaustive fuzzing is not claimed.
 
 Do not use this implementation in environments requiring production-grade security, regulatory assurance, long-term archival guarantees, or security certification.
+
+Related documents:
+
+* `docs/SECURITY_MODEL.md` (threat model and scope boundaries)
+* `docs/CLI_SECURITY.md` (CLI extraction and metadata restoration policy)
+* `docs/CRATE_RESPONSIBILITIES.md` (implementation policy vs wire-format behavior)
+* `docs/COMPATIBILITY.md` (pre-stable compatibility and non-claims)
+* `docs/SPEC_QUESTIONS.md` (open questions, including recovery mapping/alignment context)
+* `fuzz/README.md`, `fuzz/CORPUS.md`, `fuzz/RUNS.md` (fuzzing coverage and limits)
 
 ## Core security posture
 
@@ -28,9 +44,13 @@ Current implemented protections include:
 * secret-buffer and key-provider APIs remain in `sar-crypto`
 * raw keying material is not exposed through public documentation/API contracts
 
-## Safe extraction defaults and path safety
+See `docs/SECURITY_MODEL.md` for trusted/untrusted input boundaries, attacker model, parser panic expectations, authentication handling, and ordering constraints.
 
-Safe extraction defaults are enabled for CLI extraction paths.
+## CLI extraction policy and filesystem mutation boundaries
+
+Library parsing/listing/verification/audit paths remain side-effect-free. Filesystem mutation is CLI/application policy, not SAR wire-format behavior.
+
+Safe extraction defaults are enabled for current CLI extraction paths.
 
 Extraction lexically rejects:
 
@@ -44,6 +64,10 @@ Extraction rejects per-component symlink traversal while resolving destination p
 
 Symlink extraction is disabled unless `--allow-symlinks` is provided. Even when enabled, symlink targets must be relative and non-traversing.
 
+Hardlink/device/FIFO/socket extraction behavior is not provided as a general CLI restore path in the current implementation.
+
+See `docs/CLI_SECURITY.md` for extraction-path policy details, platform-specific behavior notes, and known limitations.
+
 ## Extraction staging and mutation safety
 
 Extraction creates directories with restrictive staging permissions.
@@ -56,7 +80,7 @@ Metadata application re-checks final path type before applying filesystem metada
 
 ## Filesystem metadata policy
 
-Metadata restoration is explicit and policy-gated.
+Metadata restoration is explicit, opt-in, and implementation-policy-gated.
 
 * `--preserve-permissions`, `--preserve-owner`, and `--preserve-times` are opt-in.
 * UID/GID restoration is disabled by default.
@@ -74,17 +98,29 @@ Explicit inert audit mode can structurally report such entries, but it does not 
 
 Stream transcript semantic validation belongs to `sar-stream`, not `sar-archive`.
 
+## Recovery API and repair limitations
+
+Current archive-level recovery APIs are bounded in-memory APIs over complete archive byte slices.
+
+Current limitations and policy boundaries:
+
+* callers provide `ResourceLimits`; limits are enforced before repair working-set expansion
+* streaming repair and external-storage-backed repair remain future work
+* explicit block-aligned erasure requirements are current implementation policy tied to open spec questions, not a universal SAR v1.0 wire-format rule
+* repair output should be written to a temporary file and renamed only after structural verification
+* recovery availability does not imply authenticity; verification/authentication must still succeed
+
+See `docs/API.md`, `docs/CRATE_RESPONSIBILITIES.md`, and `docs/SPEC_QUESTIONS.md` for current API and policy details.
+
 ## Current limitations and threat-model notes
 
-The implementation is not yet independently audited.
-
-M12b bounded local fuzzing campaigns are complete. Exhaustive fuzzing coverage, production hardening completion, independent security audit completion, and malicious corpus completeness are not claimed. Future fuzzing campaigns may continue in parallel with later milestones.
-
-CLI extraction currently uses stable lexical/per-component validation and symlink checks. It is not yet a fully `openat`/directory-fd confinement engine on every platform.
-
-Extraction into attacker-writable directories is not recommended.
-
-The implementation has not demonstrated multi-implementation interoperability.
+* no independent external security audit has completed
+* production-hardening completion is planned in M13 and is not yet complete
+* M12b bounded local fuzzing is complete, but exhaustive fuzzing and malicious corpus completeness are not claimed
+* CLI extraction currently uses lexical/per-component validation and symlink checks, but is not yet a full `openat`/directory-fd confinement engine on every platform
+* extraction into attacker-writable directories is not recommended
+* metadata restoration can create platform-dependent risk; see `docs/CLI_SECURITY.md`
+* the implementation has not demonstrated multi-implementation interoperability
 
 ## Reporting security issues
 
@@ -104,7 +140,6 @@ Please include, privately where possible:
 
 Planned future work includes:
 
-* M12c documentation/API/security posture hardening
-* M13 security audit and remediation
-* M14 C ABI / Python binding security profile work
-* M15/M16 packaging and mobile binding hardening
+* M13 internal security audit and remediation work (parser/memory/DoS, crypto/secret handling, transform/resource accounting, extraction/metadata safety, crate/profile boundaries)
+* M14+ profile and binding security-policy design (C ABI, Python, mobile) without claiming stable API/ABI/profile contracts yet
+* continued fuzzing and negative testing as ongoing hardening work
