@@ -1,0 +1,191 @@
+name: Security / audit finding
+description: Track parser, memory, DoS, crypto, extraction, recovery, or boundary audit findings.
+title: "audit: "
+labels: ["security-review", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for M13 audit findings and remediation tracking.
+
+        Do not include exploit details, secrets, private keys, credentials, or sensitive archives
+        in a public issue. If the finding may be sensitive, open a minimal issue requesting a
+        private security contact instead.
+
+  - type: input
+    id: finding_id
+    attributes:
+      label: Finding ID
+      description: Use the milestone-specific finding ID if available.
+      placeholder: "M13-PARSER-001"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: source_milestone
+    attributes:
+      label: Source milestone
+      options:
+        - M13a.1 parser / memory / panic / DoS audit
+        - M13a.2 crypto / secret-handling audit
+        - M13a.3 transform / recovery resource-accounting audit
+        - M13a.4 filesystem metadata / extraction safety audit
+        - M13a.5 crate-boundary / transport / FFI-readiness audit
+        - M13a.6 cold-storage / tape resilience audit
+        - M13b remediation
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - parser
+        - memory
+        - panic
+        - DoS / resource exhaustion
+        - ResourceLimits
+        - unsafe usage
+        - fuzzing coverage
+        - cryptography
+        - secret handling
+        - authentication / AEAD
+        - transform ordering
+        - compression / decompression
+        - delta / patching
+        - FEC / recovery
+        - sparse / fragmentation
+        - filesystem extraction
+        - metadata restoration
+        - crate boundary
+        - profile boundary
+        - transport / session
+        - FFI / binding readiness
+        - cold storage / tape resilience
+        - documentation
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Initial severity estimate.
+      options:
+        - blocker
+        - high
+        - medium
+        - low
+        - informational
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status
+      options:
+        - open
+        - fixed
+        - deferred
+        - accepted-risk
+        - needs-investigation
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected
+    attributes:
+      label: Affected files / APIs
+      description: List files, modules, functions, APIs, or docs involved.
+      placeholder: |
+        - crates/sar-core/src/format.rs
+        - sar_core::format::parse_lfh
+        - fuzz/fuzz_targets/parse_lfh.rs
+    validations:
+      required: true
+
+  - type: textarea
+    id: finding
+    attributes:
+      label: Finding
+      description: Describe the issue or observation clearly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk
+      description: Explain the security, reliability, interoperability, or DoS impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Provide code references, tests, fuzz target notes, or reasoning.
+      placeholder: |
+        Evidence:
+        - ...
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Recommended remediation
+      description: Describe the proposed fix or follow-up action.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression_test
+    attributes:
+      label: Regression test needed?
+      options:
+        - "yes"
+        - "no"
+        - "not sure"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: remediation_milestone
+    attributes:
+      label: Suggested remediation milestone
+      options:
+        - M13b.1 parser/resource/security remediation
+        - M13b.2 crypto/transform/recovery remediation
+        - M13b.3 extraction/metadata/filesystem remediation
+        - M13b.4 public API/binding-readiness remediation
+        - later milestone
+        - not applicable
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Add constraints, non-goals, deferral rationale, or links to related issues/PRs.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: This public issue does not contain exploit details that should be reported privately.
+          required: true
+        - label: This public issue does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: false

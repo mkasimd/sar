@@ -1,0 +1,122 @@
+name: Bug report
+description: Report incorrect behavior, parser failures, panics, or regressions.
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        SAR is currently experimental/pre-stable. Please do not include secrets, private keys,
+        credentials, or sensitive archive contents in public issues.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which area appears to be affected?
+      options:
+        - sar-core parser / wire-format handling
+        - sar-archive reader/writer
+        - sar-stream
+        - sar-transport
+        - sar-cli
+        - compression / transforms
+        - crypto / authentication
+        - FEC / recovery
+        - CDC / delta / sparse / fragmentation
+        - fuzzing
+        - documentation
+        - build / CI / tooling
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Briefly describe the problem.
+      placeholder: "Parsing this malformed archive returns ... / panics / accepts invalid input ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide minimal steps to reproduce.
+      placeholder: |
+        1. Run ...
+        2. Use input ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Minimal input or fixture
+      description: |
+        If possible, provide a minimal non-sensitive input, test vector, hex dump,
+        or reproduction snippet. Do not upload secrets or private data.
+      placeholder: "Attach or paste minimized non-sensitive input here."
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: What kind of impact does this appear to have?
+      options:
+        - panic on malformed input
+        - resource exhaustion / DoS
+        - incorrect accept/reject behavior
+        - data corruption
+        - authentication/integrity handling issue
+        - CLI extraction/path handling issue
+        - documentation mismatch
+        - build/test failure
+        - unknown
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Rust version, branch/commit, and command output where relevant.
+      placeholder: |
+        OS:
+        rustc --version:
+        cargo --version:
+        SAR commit:
+        Command:
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I checked that this does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: false
