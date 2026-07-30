@@ -846,6 +846,8 @@ If this milestone document appears to describe library/profile layout differentl
 * document unresolved or long-running fuzzing work explicitly
 * this pass establishes initial fuzzing execution only; it does not claim exhaustive fuzzing, production hardening, or security-audit completion
 
+# Current and future milestones
+
 ## M12b.5: extended malicious corpus and long-running fuzzing
 
 * expand transform pipeline fuzzing
