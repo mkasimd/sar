@@ -1,0 +1,94 @@
+name: Feature request
+description: Suggest a new feature, API, profile, format extension, or tooling improvement.
+title: "feat: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement.
+
+        SAR is currently experimental/pre-stable. Feature requests that affect wire format,
+        public API, profiles, or interoperability need careful milestone placement.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Requested area
+      options:
+        - SAR wire format / specification
+        - sar-core
+        - sar-archive
+        - sar-stream
+        - sar-transport
+        - sar-cli
+        - compression / transforms
+        - crypto / authentication
+        - FEC / recovery
+        - CDC / delta / sparse / fragmentation
+        - conformance vectors
+        - fuzzing
+        - documentation
+        - packaging / release automation
+        - C ABI / Python bindings
+        - mobile bindings
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem would this solve?
+      placeholder: "I want to use SAR for ... but currently ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the proposed behavior or API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe any alternatives or workarounds.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: compatibility
+    attributes:
+      label: Compatibility impact
+      description: Does this affect compatibility?
+      options:
+        - No compatibility impact expected
+        - Public Rust API impact
+        - SAR wire-format/specification impact
+        - CLI behavior impact
+        - Profile/conformance impact
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: milestone
+    attributes:
+      label: Suggested milestone, if known
+      description: Optional. For example M13b, M14, M15, M16, post-v1.
+      placeholder: "M13b / M14 / M15 / post-v1 / not sure"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I understand that SAR is currently experimental/pre-stable.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: false
