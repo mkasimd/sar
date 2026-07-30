@@ -53,7 +53,7 @@ be moved to the "Resolved" section with an explanation of the decision made.
 ## Future milestone alignment note
 
 * M12c.1: documentation and public-claims hardening — **complete**
-* M12c.2: API inventory and crate-boundary hardening — **in progress**
+* M12c.2: API inventory and crate-boundary hardening — **complete**
 * M12c.3: security posture documentation — future
 * M13: security audit and remediation — future
 * M14: C ABI and Python module — future

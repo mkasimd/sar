@@ -14,8 +14,8 @@ for the SAR v1.0 wire format. "Implementation policy" refers to this implementat
 are stricter than, or not mandated by, the wire format.
 
 Key distinction:
-- `specification.md` defines what bytes are valid SAR archives and how compliant implementations
-  must parse and validate them.
+- `specification.md` defines the SAR v1.0 wire format, required validation
+  rules, and interoperability requirements for compliant implementations.
 - Implementation policy (resource limits, rejection thresholds, safe-extraction defaults) may be
   stricter than the wire format requires. Such policies are described here and in the API inventory
   but must not be described as universal SAR wire-format behavior unless the spec says so.
