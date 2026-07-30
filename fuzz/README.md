@@ -630,6 +630,10 @@ cargo +nightly fuzz build parse_lfh
 cargo +nightly fuzz build parse_tlv
 ```
 
+The manual `mkdir`/`cp` commands below show the target/category mapping
+explicitly. For routine local runs, `tools/copy_fuzz_seeds.sh` can be used
+instead to prepare all tracked seed corpora.
+
 Run short smoke executions with seed corpus:
 
 ```bash
@@ -678,7 +682,11 @@ cargo +nightly fuzz run parse_tlv -- -runs=100
 ## M12b.5 PR5 smoke-run commands
 
 PR5 reuses existing targets.  Copy PR5 seeds into the relevant corpus directories
-and run short smoke executions:
+and run short smoke executions.
+
+The manual `mkdir`/`cp` commands below show the target/category mapping
+explicitly. For routine local runs, `tools/copy_fuzz_seeds.sh` can be used
+instead to prepare all tracked seed corpora.
 
 ```bash
 # extraction_race seeds: archive entry-walking targets
@@ -740,5 +748,5 @@ PR5 seed categories and the fuzz targets that consume them:
 Small deterministic seed inputs live under:
 
 ```text
-fuzz/seeds/<target-name>/
+fuzz/seeds/<category-or-target>/
 ```

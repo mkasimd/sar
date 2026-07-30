@@ -482,9 +482,9 @@ completion, or malicious corpus completeness.
   
 ## M12b.5 extended malicious corpus and long-running fuzzing
 
-Date: 2026-07-29  
+Date: 2026-07-29 through 2026-07-30  
 Scope: malicious corpus expansion and targeted local fuzzing for M12b.5  
-Status: in progress
+Status: completed
 
 ### PR2 transform pipeline and transform-switching corpus run
 
@@ -538,6 +538,7 @@ This run covers bounded transform-pipeline and transform-switching corpus
 expansion only. It does not claim exhaustive transform coverage, complete
 decompression-bomb coverage, production hardening completion, independent
 security audit completion, or malicious corpus completeness.
+
 ### PR5 extraction-race and profile-rejection corpus status
 
 Date: 2026-07-29  
@@ -558,8 +559,78 @@ Seeds were added to `fuzz/seeds/extraction_race/` and
 `fuzz/seeds/profile_rejection/`.  Seed shapes were verified to be correctly
 structured via the existing `parse_global_header` and `parse_lfh` parsers.
 
-No long-running campaign was run for PR5. Long-running M12b.5 campaigns
-covering these categories remain maintainer-run ongoing hardening work.
+No long-running campaign was run for the PR5 extraction-race/profile-rejection
+seed categories in this PR. Longer M12b.5 campaigns covering these categories
+remain maintainer-run ongoing hardening work.
 
 These results do not claim exhaustive coverage, production hardening completion,
-independent security audit completion, or malicious corpus completeness.
+independent security audit completion, or malicious corpus completeness..
+
+### PR3/PR4 targeted overnight fuzzing campaign
+
+A six-hour parallel local campaign was run against the PR3 and PR4 M12b.5
+targets.
+
+Run root:
+
+```text
+$HOME/sar-fuzz-runs/m12b5-overnight-20260730-010837
+```
+
+Configuration:
+
+```text
+Started: 2026-07-30T01:08:37+0200
+Ended: 2026-07-30T07:08:40+0200
+Max total time per target: 21600 seconds
+Targets were run in parallel
+Build before run: yes
+```
+
+Targets:
+
+| Target | Max generated input length | Runs | Exit | Result |
+| --- | ---: | ---: | ---: | --- |
+| `archive_logical_files` | 262144 | 327,646,141 | 0 | no crash indicators |
+| `crypto_auth_tls_exporter_negative` | 4096 | 201,819,214 | 0 | no crash indicators |
+| `pr4_lfh_metadata_edges` | 32768 | 18,522,999,206 | 0 | no crash indicators |
+| `pr4_tlv_metadata_edges` | 65536 | 8,600,871,757 | 0 | no crash indicators |
+
+Total campaign executions:
+
+```text
+27,653,336,318
+```
+
+All four targets built successfully and exited successfully. No run reported
+`ERROR:`, `panicked at`, `libFuzzer: deadly signal`, or a crash artifact marker.
+
+This campaign covers targeted PR3/PR4 M12b.5 fuzzing only:
+
+* `crypto_auth_tls_exporter_negative` covers bounded crypto/auth ordering and
+  TLS_EXPORTER/AAD negative cases;
+* `archive_logical_files` covers bounded logical-file reconstruction and
+  lossy/non-lossy archive-reader paths;
+* `pr4_lfh_metadata_edges` covers PR4 LFH metadata edge parsing;
+* `pr4_tlv_metadata_edges` covers PR4 TLV metadata edge parsing.
+
+This campaign does not claim exhaustive fuzzing, complete malicious corpus
+coverage, production hardening completion, independent security audit completion,
+certification, compliance, or stable API/ABI guarantees.
+
+### M12b.5 milestone result
+
+M12b.5 is complete as a milestone: the planned malicious corpus taxonomy,
+seed-backed corpus categories, PR2 transform-pipeline coverage, PR3
+crypto/auth-negative coverage, PR4 metadata/FEC/fragmentation/CDC/delta coverage,
+PR5 extraction-race/profile-rejection seed coverage, seed-copy tooling, and
+bounded local fuzzing records have been added.
+
+Longer fuzzing remains ongoing security-hardening work and may continue in
+parallel with later milestones. Future local, scheduled, or dedicated campaigns
+may extend coverage, add new seeds, or promote newly discovered crash inputs into
+ordinary regression tests.
+
+This milestone completion does not claim exhaustive fuzzing, complete malicious
+corpus coverage, production hardening completion, independent security audit
+completion, certification, compliance, or stable API/ABI guarantees.
