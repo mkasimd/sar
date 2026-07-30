@@ -3763,7 +3763,7 @@
             "description": "Inspects archive-level recovery metadata from raw archive bytes. Parses global header and Central Dictionary, locates RECOVERY TLVs, and computes the protected byte range.",
             "use_for": "Determining whether archive-level repair is possible before calling plan_archive_repair.",
             "notes": [
-              "Implementation policy: accepts complete archive as &[u8]. Callers must enforce ResourceLimits (max_archive_size, max_recovery_protected_range, max_repair_working_set) before passing untrusted input.",
+              "Implementation policy: accepts complete archive as &[u8]. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets.",
               "Implementation policy: in-memory API only. Streaming repair and external-storage-backed repair remain future work."
             ],
             "errors": [
@@ -3788,7 +3788,7 @@
             "use_for": "Building a validated RecoveryPlan before calling repair_archive.",
             "notes": [
               "Implementation policy: requires explicit, block-aligned byte erasures. The block-alignment constraint is an implementation restriction due to an open spec question about arbitrary sub-block erasure handling (see docs/SPEC_QUESTIONS.md).",
-              "Implementation policy: in-memory API. Callers must enforce ResourceLimits before passing untrusted input."
+              "Implementation policy: in-memory API. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets."
             ],
             "errors": [
               "SarError::RecoveryUnavailable — archive lacks HAS_GLOBAL_EC, no RECOVERY TLV, erasures out of range, or erasures not block-aligned",
@@ -3812,7 +3812,7 @@
             "description": "Executes a repair plan and returns the repaired archive bytes and a RepairReport. Applies XOR or RS erasure recovery on the protected range. The caller is responsible for writing returned bytes to a temp file and renaming only after structural verification.",
             "use_for": "Executing an archive-level repair after building a RecoveryPlan from plan_archive_repair.",
             "notes": [
-              "Implementation policy: in-memory API returning full repaired archive as Vec<u8>. Callers must enforce ResourceLimits (max_archive_size, max_repair_working_set) before passing untrusted input.",
+              "Implementation policy: in-memory API returning full repaired archive as Vec<u8>. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets.",
               "Implementation policy: write returned bytes to a temp file and rename to final destination only after structural verification."
             ],
             "errors": [
@@ -4781,7 +4781,7 @@
       "notes": [
         "Milestone 11d: archive API architecture split from sar-core. Owns ArchiveReader/ArchiveWriter, entry metadata/input/output types, verification/listing flows, stream parser orchestration, indexed and NO_INDEX archive integration.",
         "Milestone 12a-audit-cp: archive audit primitives with explicit control-entry and payload-audit policies, deterministic machine-readable reports, and inert structural handling for stream transcript containers.",
-        "Milestone 12a-pre-fuzz-cp: archive-level recovery/repair APIs are currently in-memory APIs. They accept complete archive byte slices, inspect or repair bounded protected ranges in memory, and return repaired archive bytes. Callers must enforce ResourceLimits, especially max_archive_size, max_recovery_protected_range, and max_repair_working_set. Streaming repair and external-storage-backed repair for very large archives remain future work.",
+        "Milestone 12a-pre-fuzz-cp: archive-level recovery/repair APIs are currently in-memory APIs. They accept complete archive byte slices, inspect or repair bounded protected ranges in memory, and return repaired archive bytes. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets. Streaming repair and external-storage-backed repair for very large archives remain future work.",
         "Milestone 12a-audit-cp: conformance module (sar_archive::conformance) provides public test vector manifest types and check infrastructure. These types are accessible via the public conformance module but are not re-exported at the crate root and are marked internal_public."
       ],
       "metadata": {
