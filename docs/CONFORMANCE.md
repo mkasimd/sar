@@ -331,7 +331,7 @@ conformance vectors but provides complementary malformed-input coverage.
 
 Key M12b contributions to the conformance posture:
 
-- `fuzz/seeds/` contains hand-curated seed inputs for 12 malicious corpus
+- `fuzz/seeds/` contains hand-curated seed inputs for 13 malicious corpus
   categories (see `fuzz/CORPUS.md` for the taxonomy).
 - One confirmed fuzz finding (stream transcript integer overflow) was fixed,
   promoted into a regression test, and validated.
