@@ -136,7 +136,8 @@ for the current placeholder status.
 
 ### External security audit
 
-Independent security audit is planned for M13 and has not yet started.
+Internal security audit and remediation work is planned for M13. No independent
+external security audit has started or been completed.
 
 ### Fragment gap and sparse overlap conformance vectors
 
