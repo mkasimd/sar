@@ -111,11 +111,8 @@ For the detailed milestone roadmap, see:
 
 * `docs/MILESTONES.md`
 * `docs/API.md`
-* `docs/CLI_SECURITY.md`
 * `docs/CONFORMANCE.md`
 * `docs/SECURITY.md`
-* `docs/SECURITY_MODEL.md`
-* `docs/SECURITY_PROFILES.md`
 * `docs/MACHINE_READABLE_API.json`
 
 ## What this repository is
@@ -156,15 +153,12 @@ crates/
 
 docs/
   API.md
-  CLI_SECURITY.md
   CONFORMANCE.md
   CRATE_RESPONSIBILITIES.md
   LIBRARY_LAYOUT.md
   MACHINE_READABLE_API.json
   MILESTONES.md
   SECURITY.md
-  SECURITY_MODEL.md
-  SECURITY_PROFILES.md
   SPEC_QUESTIONS.md
 
 test-vectors/
