@@ -1,38 +1,47 @@
 name: Security / audit finding
-description: Track parser, memory, DoS, crypto, extraction, recovery, or boundary audit findings.
+description: Track security-relevant review findings, hardening observations, and audit issues.
 title: "audit: "
-labels: ["security-review", "needs-triage"]
+labels: ["security", "audit", "needs-triage"]
 body:
   - type: markdown
     attributes:
       value: |
-        Use this template for M13 audit findings and remediation tracking.
+        Use this template for security-relevant review findings, audit observations,
+        hardening issues, or suspected security weaknesses.
 
-        Do not include exploit details, secrets, private keys, credentials, or sensitive archives
-        in a public issue. If the finding may be sensitive, open a minimal issue requesting a
-        private security contact instead.
+        Do not include exploit details, secrets, private keys, credentials, or
+        sensitive archive contents in a public issue.
+
+        If the finding may be sensitive, provide only a minimal public summary
+        and use the private security reporting process described in `docs/SECURITY.md`.
+
+        You do not need to know SAR's internal milestone roadmap. Maintainers will
+        assign labels, milestones, priority, and remediation ownership during triage.
 
   - type: input
     id: finding_id
     attributes:
       label: Finding ID
-      description: Use the milestone-specific finding ID if available.
-      placeholder: "M13-PARSER-001"
+      description: Optional. Use an existing finding ID if one already exists.
+      placeholder: "M13-PARSER-001 / external-audit-001 / leave blank"
     validations:
       required: false
 
   - type: dropdown
-    id: source_milestone
+    id: report_source
     attributes:
-      label: Source milestone
+      label: Report source
+      description: Where did this finding come from?
       options:
-        - M13a.1 parser / memory / panic / DoS audit
-        - M13a.2 crypto / secret-handling audit
-        - M13a.3 transform / recovery resource-accounting audit
-        - M13a.4 filesystem metadata / extraction safety audit
-        - M13a.5 crate-boundary / transport / FFI-readiness audit
-        - M13a.6 cold-storage / tape resilience audit
-        - M13b remediation
+        - manual review
+        - local testing
+        - fuzzing
+        - CI failure
+        - dependency/security advisory
+        - external audit
+        - user report
+        - code review
+        - documentation review
         - other
     validations:
       required: true
@@ -41,6 +50,7 @@ body:
     id: area
     attributes:
       label: Area
+      description: Which area appears to be affected?
       options:
         - parser
         - memory
@@ -65,6 +75,9 @@ body:
         - FFI / binding readiness
         - cold storage / tape resilience
         - documentation
+        - API inventory
+        - specification / wire format
+        - not sure
         - other
     validations:
       required: true
@@ -72,46 +85,48 @@ body:
   - type: dropdown
     id: severity
     attributes:
-      label: Severity
-      description: Initial severity estimate.
+      label: Severity estimate
+      description: Initial estimate. Maintainers may adjust during triage.
       options:
         - blocker
         - high
         - medium
         - low
         - informational
+        - not assessed
     validations:
       required: true
 
   - type: dropdown
-    id: status
+    id: security_sensitive
     attributes:
-      label: Status
+      label: Security-sensitive?
+      description: Should detailed reproduction or exploit information be withheld from this public issue?
       options:
-        - open
-        - fixed
-        - deferred
-        - accepted-risk
-        - needs-investigation
+        - not assessed
+        - likely no
+        - possibly yes
+        - yes, details withheld
     validations:
       required: true
 
   - type: textarea
     id: affected
     attributes:
-      label: Affected files / APIs
-      description: List files, modules, functions, APIs, or docs involved.
+      label: Affected files / APIs / behavior
+      description: List files, modules, functions, commands, docs, APIs, or behavior involved if known.
       placeholder: |
         - crates/sar-core/src/format.rs
         - sar_core::format::parse_lfh
         - fuzz/fuzz_targets/parse_lfh.rs
+        - CLI extraction path validation
     validations:
-      required: true
+      required: false
 
   - type: textarea
     id: finding
     attributes:
-      label: Finding
+      label: What was found?
       description: Describe the issue or observation clearly.
     validations:
       required: true
@@ -119,8 +134,8 @@ body:
   - type: textarea
     id: risk
     attributes:
-      label: Risk
-      description: Explain the security, reliability, interoperability, or DoS impact.
+      label: What is the risk?
+      description: Explain the possible security, reliability, interoperability, or DoS impact.
     validations:
       required: true
 
@@ -128,7 +143,7 @@ body:
     id: evidence
     attributes:
       label: Evidence
-      description: Provide code references, tests, fuzz target notes, or reasoning.
+      description: Provide code references, logs, tests, fuzz targets, commands, audit reasoning, or other supporting evidence.
       placeholder: |
         Evidence:
         - ...
@@ -137,17 +152,31 @@ body:
       required: true
 
   - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction or investigation steps
+      description: Provide safe steps to reproduce or investigate. Withhold exploit details if sensitive.
+      placeholder: |
+        1. Run ...
+        2. Inspect ...
+        3. Observe ...
+    validations:
+      required: false
+
+  - type: textarea
     id: remediation
     attributes:
       label: Recommended remediation
-      description: Describe the proposed fix or follow-up action.
+      description: Optional. Describe a possible fix, mitigation, test, or follow-up action.
+      placeholder: "Maintainers may revise this during triage."
     validations:
-      required: true
+      required: false
 
   - type: dropdown
     id: regression_test
     attributes:
       label: Regression test needed?
+      description: Initial estimate. Maintainers may adjust during triage.
       options:
         - "yes"
         - "no"
@@ -155,26 +184,11 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: remediation_milestone
-    attributes:
-      label: Suggested remediation milestone
-      options:
-        - M13b.1 parser/resource/security remediation
-        - M13b.2 crypto/transform/recovery remediation
-        - M13b.3 extraction/metadata/filesystem remediation
-        - M13b.4 public API/binding-readiness remediation
-        - later milestone
-        - not applicable
-        - not sure
-    validations:
-      required: true
-
   - type: textarea
     id: notes
     attributes:
       label: Notes
-      description: Add constraints, non-goals, deferral rationale, or links to related issues/PRs.
+      description: Add constraints, non-goals, private-reporting notes, or links to related issues/PRs.
     validations:
       required: false
 
@@ -186,6 +200,8 @@ body:
         - label: This public issue does not contain exploit details that should be reported privately.
           required: true
         - label: This public issue does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: If the finding appears security-sensitive, sensitive details are withheld from this public issue.
           required: true
         - label: I searched existing issues and did not find a duplicate.
           required: false

@@ -1,0 +1,184 @@
+name: Fuzzing failure
+description: Report cargo-fuzz, libFuzzer, scheduled fuzzing, or external fuzzing failures.
+title: "fuzzing: "
+labels: ["fuzzing", "bug", "needs-investigation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for fuzzing failures from cargo-fuzz, libFuzzer,
+        scheduled GitHub Actions fuzzing, ClusterFuzzLite, OSS-Fuzz, or other fuzzing systems.
+
+        Do not include secrets, private keys, credentials, or sensitive archive contents.
+
+        If the crash appears security-sensitive, provide only a minimal public summary
+        and use the private security reporting process described in `docs/SECURITY.md`.
+
+        You do not need to know SAR's internal milestone roadmap. Maintainers will
+        assign labels, milestones, priority, and remediation ownership during triage.
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Fuzzing source
+      description: Where did this fuzzing failure come from?
+      options:
+        - GitHub Actions weekly fuzzing
+        - GitHub Actions PR fuzz smoke
+        - local cargo-fuzz run
+        - ClusterFuzzLite
+        - OSS-Fuzz
+        - external fuzzer
+        - other
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Fuzz target
+      description: Name of the fuzz target, if known.
+      placeholder: "parse_lfh"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Which area appears to be affected?
+      options:
+        - parser / wire-format handling
+        - archive reader/writer
+        - TLV
+        - Central Dictionary / Footer
+        - stream transcript
+        - transport / session
+        - crypto / authentication
+        - compression / decompression
+        - delta / patching
+        - FEC / recovery
+        - CDC / sparse / fragmentation
+        - filesystem metadata / extraction
+        - ResourceLimits / DoS
+        - API inventory / generated API docs
+        - build / CI / tooling
+        - unknown
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: failure_type
+    attributes:
+      label: Failure type
+      description: What kind of failure was observed?
+      options:
+        - panic
+        - timeout
+        - out-of-memory
+        - sanitizer finding
+        - assertion failure
+        - incorrect accept/reject behavior
+        - crash artifact produced
+        - build failure
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Briefly describe the fuzzing failure.
+      placeholder: "The target panicked on a generated input / timed out / produced a sanitizer finding ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include workflow URL, commit SHA, target, command, exit status, logs, and artifact links.
+      placeholder: |
+        Workflow:
+        Commit:
+        Branch/ref:
+        Target:
+        Command:
+        Exit status:
+        Artifact:
+        Relevant log excerpt:
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Describe how to reproduce the failure locally or in CI, if known.
+      placeholder: |
+        cargo +nightly fuzz run <target> <artifact>
+        cargo +nightly fuzz tmin <target> <artifact>
+    validations:
+      required: false
+
+  - type: textarea
+    id: reproducer_status
+    attributes:
+      label: Reproducer / artifact status
+      description: Describe whether a minimized reproducer exists and where it is stored.
+      placeholder: |
+        Minimized reproducer available: yes/no/not assessed
+        Artifact uploaded: yes/no
+        Artifact location:
+        Promoted to regression test: yes/no
+    validations:
+      required: true
+
+  - type: dropdown
+    id: security_sensitive
+    attributes:
+      label: Security-sensitive?
+      description: Initial assessment. Maintainers may adjust during triage.
+      options:
+        - not assessed
+        - likely no
+        - possibly yes
+        - yes, details withheld
+    validations:
+      required: true
+
+  - type: textarea
+    id: recommended_next_step
+    attributes:
+      label: Recommended next step
+      description: Optional. Suggest a safe next step for investigation or remediation.
+      placeholder: |
+        - Review the failing workflow logs.
+        - Download uploaded fuzz artifacts if present.
+        - Reproduce locally with cargo +nightly fuzz run ...
+        - Minimize with cargo +nightly fuzz tmin ...
+        - Add a normal Rust regression test if confirmed.
+    validations:
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Add any additional context, duplicate links, private-reporting notes, or constraints.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: This public issue does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: If the finding appears security-sensitive, exploit details are withheld from this public issue.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: false
