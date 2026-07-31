@@ -106,10 +106,10 @@ body:
       label: Security-sensitive?
       description: Could this affect security posture, parsing behavior, authentication, extraction, or resource limits?
       options:
-        - likely no
-        - possibly yes
-        - yes
-        - not sure
+        - "likely no"
+        - "possibly yes"
+        - "yes"
+        - "not sure"
     validations:
       required: true
 
