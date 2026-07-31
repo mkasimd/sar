@@ -1,0 +1,245 @@
+name: Weekly fuzzing
+
+on:
+  schedule:
+    # Every Saturday at 03:37 UTC.
+    - cron: "37 3 * * 6"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: weekly-fuzzing
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_TARGETS: >-
+    parse_global_header
+    parse_lfh
+    parse_lfh_wide
+    parse_tlv
+    parse_tlv_wide
+    parse_cd_footer
+    archive_structural
+    archive_entry_decode
+    archive_entry_decode_wide
+    archive_audit
+    archive_audit_wide
+    stream_transcript
+    stream_transcript_declared_lengths
+
+jobs:
+  weekly-fuzzing:
+    name: Weekly bounded fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Restore/cache Rust fuzz build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> fuzz/target
+          shared-key: weekly-fuzzing
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
+          save-if: "true"
+
+      - name: Restore cargo-fuzz binary cache
+        id: cargo-fuzz-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-v1
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+
+      - name: Install cargo-fuzz
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if ! command -v cargo-fuzz >/dev/null 2>&1; then
+            cargo install cargo-fuzz --locked
+          fi
+
+      - name: Save cargo-fuzz binary cache
+        if: steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+          key: ${{ steps.cargo-fuzz-cache.outputs.cache-primary-key }}
+
+      - name: Restore fuzz corpus cache
+        id: fuzz-corpus-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: fuzz/corpus
+          key: ${{ runner.os }}-weekly-fuzz-corpus-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-weekly-fuzz-corpus-
+
+      - name: Prepare seed corpora
+        run: |
+          if [ -f tools/copy_fuzz_seeds.sh ]; then
+            bash tools/copy_fuzz_seeds.sh
+          fi
+
+      - name: Build and run bounded weekly fuzzing
+        id: fuzz
+        run: |
+          set -u -o pipefail
+
+          mkdir -p target/fuzz-weekly-report
+          report="target/fuzz-weekly-report/issue.md"
+          failed=0
+
+          {
+            echo "# Fuzzing failure"
+            echo
+            echo "## Fuzzing source"
+            echo
+            echo "GitHub Actions weekly fuzzing"
+            echo
+            echo "## What happened?"
+            echo
+            echo "A scheduled SAR fuzzing run found at least one failing target."
+            echo
+            echo "## Evidence"
+            echo
+            echo "- Workflow: ${GITHUB_WORKFLOW}"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Ref: ${GITHUB_REF}"
+            echo
+            echo "## Failing targets"
+            echo
+          } > "$report"
+
+          for target in $FUZZ_TARGETS; do
+            echo "::group::Build $target"
+
+            build_log="target/fuzz-weekly-report/${target}-build.log"
+            cargo +nightly fuzz build "$target" 2>&1 | tee "$build_log"
+            build_status=${PIPESTATUS[0]}
+
+            if [ "$build_status" -ne 0 ]; then
+              failed=1
+              echo "- \`$target\` build failed with status \`$build_status\`" >> "$report"
+              echo "::endgroup::"
+              continue
+            fi
+
+            echo "::endgroup::"
+            echo "::group::Fuzz $target"
+
+            run_log="target/fuzz-weekly-report/${target}-run.log"
+
+            # 60 seconds per target keeps the complete run bounded.
+            cargo +nightly fuzz run "$target" -- -max_total_time=60 -timeout=10 2>&1 | tee "$run_log"
+            run_status=${PIPESTATUS[0]}
+
+            if [ "$run_status" -ne 0 ]; then
+              failed=1
+              echo "- \`$target\` fuzz run failed with status \`$run_status\`" >> "$report"
+            fi
+
+            echo "::endgroup::"
+          done
+
+          {
+            echo
+            echo "## Reproducer / artifact status"
+            echo
+            echo "- Minimized reproducer available: not assessed automatically"
+            echo "- Artifact uploaded: see workflow artifacts if present"
+            echo "- Promoted to regression test: no"
+            echo
+            echo "## Security-sensitive?"
+            echo
+            echo "not assessed"
+            echo
+            echo "## Recommended next step"
+            echo
+            echo "- Review the failing workflow logs."
+            echo "- Download uploaded fuzz artifacts if present."
+            echo "- Reproduce locally with \`cargo +nightly fuzz run <target> <artifact>\` where applicable."
+            echo "- Minimize with \`cargo +nightly fuzz tmin <target> <artifact>\` if a crash artifact exists."
+            echo "- Add a normal Rust regression test if the failure is confirmed."
+            echo
+            echo "## Safety checks"
+            echo
+            echo "- This automated public issue should not contain secrets, credentials, private keys, or sensitive archive contents."
+            echo "- If the finding appears security-sensitive after triage, move details to the private security reporting process."
+          } >> "$report"
+
+          if [ "$failed" -ne 0 ]; then
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save fuzz corpus cache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: fuzz/corpus
+          key: ${{ runner.os }}-weekly-fuzz-corpus-${{ github.run_id }}
+
+      - name: Upload fuzz artifacts on failure
+        if: steps.fuzz.outputs.failed == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: weekly-fuzzing-artifacts
+          path: |
+            fuzz/artifacts/
+            target/fuzz-weekly-report/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Create or update fuzzing issue
+        if: steps.fuzz.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          existing_issue="$(
+            gh issue list \
+              --state open \
+              --label fuzzing \
+              --label needs-investigation \
+              --search "weekly fuzzing found a failure in:title" \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$existing_issue" ]; then
+            gh issue comment "$existing_issue" \
+              --body-file target/fuzz-weekly-report/issue.md
+          else
+            gh issue create \
+              --title "fuzzing: weekly fuzzing found a failure" \
+              --label "fuzzing" \
+              --label "bug" \
+              --label "security" \
+              --label "needs-investigation" \
+              --body-file target/fuzz-weekly-report/issue.md
+          fi
+
+      - name: Fail weekly fuzzing
+        if: steps.fuzz.outputs.failed == 'true'
+        run: exit 1

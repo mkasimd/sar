@@ -1,0 +1,126 @@
+name: Fuzz smoke
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - "crates/**"
+      - "fuzz/**"
+      - "tools/copy_fuzz_seeds.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz-smoke.yml"
+
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - "crates/**"
+      - "fuzz/**"
+      - "tools/copy_fuzz_seeds.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz-smoke.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-smoke:
+    name: Fuzz smoke (${{ matrix.fuzz_target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        fuzz_target:
+          - smoke_core
+          - parse_global_header
+          - parse_lfh
+          - parse_tlv
+          - parse_cd_footer
+          - archive_structural
+          - archive_entry_decode
+          - archive_audit
+          - stream_transcript
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Restore/cache Rust fuzz build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            fuzz -> fuzz/target
+          shared-key: fuzz-smoke-${{ matrix.fuzz_target }}
+          cache-workspace-crates: "true"
+          cache-on-failure: "true"
+          save-if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+
+      - name: Restore cargo-fuzz binary cache
+        id: cargo-fuzz-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+          key: ${{ runner.os }}-cargo-fuzz-v1
+          restore-keys: |
+            ${{ runner.os }}-cargo-fuzz-
+
+      - name: Install cargo-fuzz
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          if ! command -v cargo-fuzz >/dev/null 2>&1; then
+            cargo install cargo-fuzz --locked
+          fi
+
+      - name: Save cargo-fuzz binary cache
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.cargo-fuzz-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+          key: ${{ steps.cargo-fuzz-cache.outputs.cache-primary-key }}
+
+      - name: Prepare seed corpora
+        run: |
+          if [ -f tools/copy_fuzz_seeds.sh ]; then
+            bash tools/copy_fuzz_seeds.sh
+          fi
+
+      - name: Build fuzz target
+        run: cargo +nightly fuzz build ${{ matrix.fuzz_target }}
+
+      - name: Run fuzz smoke target
+        run: cargo +nightly fuzz run ${{ matrix.fuzz_target }} -- -runs=100
+
+      - name: Upload fuzz artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-smoke-artifacts-${{ matrix.fuzz_target }}
+          path: |
+            fuzz/artifacts/
+            fuzz/corpus/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -2,10 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - dev
   pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
 
-# The workflow only reads repository contents and pull-request file lists.
 permissions:
   contents: read
   pull-requests: read
@@ -33,38 +38,16 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            function setAllTrue(reason) {
+            function setOutputs(rust, api, reason) {
               core.info(reason);
-              core.setOutput("rust", "true");
-              core.setOutput("api", "true");
+              core.info(`rust=${rust}`);
+              core.info(`api=${api}`);
+              core.setOutput("rust", String(rust));
+              core.setOutput("api", String(api));
             }
 
-            if (context.eventName === "push") {
-              setAllTrue("Push to main: run all CI domains.");
-              return;
-            }
-
-            const pr = context.payload.pull_request;
-            if (!pr) {
-              setAllTrue("Non-PR/non-push event: run all CI domains.");
-              return;
-            }
-
-            const files = await github.paginate(
-              github.rest.pulls.listFiles,
-              {
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: pr.number,
-                per_page: 100
-              }
-            );
-
-            const changed = files.map((file) => file.filename);
-
-            core.info("Changed files:");
-            for (const file of changed) {
-              core.info(`- ${file}`);
+            function unique(values) {
+              return [...new Set(values.filter(Boolean))].sort();
             }
 
             function isRustRelevant(path) {
@@ -100,14 +83,68 @@ jobs:
               );
             }
 
+            async function changedFilesForPullRequest() {
+              const pr = context.payload.pull_request;
+              const files = await github.paginate(
+                github.rest.pulls.listFiles,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  per_page: 100
+                }
+              );
+
+              return files.map((file) => file.filename);
+            }
+
+            function changedFilesForPushPayload() {
+              const commits = context.payload.commits || [];
+              const files = [];
+
+              for (const commit of commits) {
+                files.push(...(commit.added || []));
+                files.push(...(commit.modified || []));
+                files.push(...(commit.removed || []));
+              }
+
+              return files;
+            }
+
+            let changed = [];
+
+            if (context.eventName === "pull_request") {
+              changed = await changedFilesForPullRequest();
+            } else if (context.eventName === "push") {
+              changed = changedFilesForPushPayload();
+
+              if (changed.length === 0) {
+                setOutputs(
+                  true,
+                  true,
+                  "Push event did not expose changed files; running all CI domains."
+                );
+                return;
+              }
+            } else if (context.eventName === "workflow_dispatch") {
+              setOutputs(true, true, "Manual CI run: running all CI domains.");
+              return;
+            } else {
+              setOutputs(true, true, "Unknown event type: running all CI domains.");
+              return;
+            }
+
+            changed = unique(changed);
+
+            core.info("Changed files:");
+            for (const file of changed) {
+              core.info(`- ${file}`);
+            }
+
             const rust = changed.some(isRustRelevant);
             const api = changed.some(isApiRelevant) || rust;
 
-            core.info(`rust=${rust}`);
-            core.info(`api=${api}`);
-
-            core.setOutput("rust", String(rust));
-            core.setOutput("api", String(api));
+            setOutputs(rust, api, "Change classification complete.");
 
   format-lint:
     name: Format / Lint
@@ -118,7 +155,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust stable with rustfmt and clippy
         uses: dtolnay/rust-toolchain@stable
@@ -131,6 +170,7 @@ jobs:
           shared-key: ci-rust-stable
           cache-workspace-crates: "true"
           cache-on-failure: "true"
+          save-if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
@@ -149,7 +189,9 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -160,15 +202,10 @@ jobs:
           shared-key: ci-rust-stable
           cache-workspace-crates: "true"
           cache-on-failure: "true"
+          save-if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
 
       - name: Run workspace tests
         run: cargo test --workspace --all-features --locked
-
-      # NOTE:
-      # The fuzz/ directory does not currently contain a Cargo project.
-      # If fuzzing targets are added under fuzz/ in the future, do not run them
-      # here. Fuzzing is slow, target-dependent, and should be handled in a
-      # dedicated fuzzing workflow or via OSS-Fuzz / cargo-fuzz.
 
   api-inventory-json-checks:
     name: API inventory and JSON checks
@@ -179,23 +216,34 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
 
-      - name: Restore/cache pip downloads
-        uses: actions/cache@v6
+      - name: Restore pip cache
+        id: pip-cache
+        uses: actions/cache/restore@v5
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-jsonschema-v1
+          key: ${{ runner.os }}-pip-jsonschema-v1-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
+            ${{ runner.os }}-pip-jsonschema-v1-
             ${{ runner.os }}-pip-
 
       - name: Install Python validation dependencies
         run: python -m pip install --disable-pip-version-check "jsonschema>=4,<5"
+
+      - name: Save pip cache
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && steps.pip-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ~/.cache/pip
+          key: ${{ steps.pip-cache.outputs.cache-primary-key }}
 
       - name: Check machine-readable API JSON syntax
         run: python -m json.tool docs/MACHINE_READABLE_API.json > /dev/null

@@ -1,0 +1,207 @@
+name: Security / audit finding
+description: Track security-relevant review findings, hardening observations, and audit issues.
+title: "audit: "
+labels: ["security", "audit", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for security-relevant review findings, audit observations,
+        hardening issues, or suspected security weaknesses.
+
+        Do not include exploit details, secrets, private keys, credentials, or
+        sensitive archive contents in a public issue.
+
+        If the finding may be sensitive, provide only a minimal public summary
+        and use the private security reporting process described in `docs/SECURITY.md`.
+
+        You do not need to know SAR's internal milestone roadmap. Maintainers will
+        assign labels, milestones, priority, and remediation ownership during triage.
+
+  - type: input
+    id: finding_id
+    attributes:
+      label: Finding ID
+      description: Optional. Use an existing finding ID if one already exists.
+      placeholder: "M13-PARSER-001 / external-audit-001 / leave blank"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: report_source
+    attributes:
+      label: Report source
+      description: Where did this finding come from?
+      options:
+        - manual review
+        - local testing
+        - fuzzing
+        - CI failure
+        - dependency/security advisory
+        - external audit
+        - user report
+        - code review
+        - documentation review
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which area appears to be affected?
+      options:
+        - parser
+        - memory
+        - panic
+        - DoS / resource exhaustion
+        - ResourceLimits
+        - unsafe usage
+        - fuzzing coverage
+        - cryptography
+        - secret handling
+        - authentication / AEAD
+        - transform ordering
+        - compression / decompression
+        - delta / patching
+        - FEC / recovery
+        - sparse / fragmentation
+        - filesystem extraction
+        - metadata restoration
+        - crate boundary
+        - profile boundary
+        - transport / session
+        - FFI / binding readiness
+        - cold storage / tape resilience
+        - documentation
+        - API inventory
+        - specification / wire format
+        - not sure
+        - other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity estimate
+      description: Initial estimate. Maintainers may adjust during triage.
+      options:
+        - blocker
+        - high
+        - medium
+        - low
+        - informational
+        - not assessed
+    validations:
+      required: true
+
+  - type: dropdown
+    id: security_sensitive
+    attributes:
+      label: Security-sensitive?
+      description: Should detailed reproduction or exploit information be withheld from this public issue?
+      options:
+        - not assessed
+        - likely no
+        - possibly yes
+        - yes, details withheld
+    validations:
+      required: true
+
+  - type: textarea
+    id: affected
+    attributes:
+      label: Affected files / APIs / behavior
+      description: List files, modules, functions, commands, docs, APIs, or behavior involved if known.
+      placeholder: |
+        - crates/sar-core/src/format.rs
+        - sar_core::format::parse_lfh
+        - fuzz/fuzz_targets/parse_lfh.rs
+        - CLI extraction path validation
+    validations:
+      required: false
+
+  - type: textarea
+    id: finding
+    attributes:
+      label: What was found?
+      description: Describe the issue or observation clearly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: What is the risk?
+      description: Explain the possible security, reliability, interoperability, or DoS impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Provide code references, logs, tests, fuzz targets, commands, audit reasoning, or other supporting evidence.
+      placeholder: |
+        Evidence:
+        - ...
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction or investigation steps
+      description: Provide safe steps to reproduce or investigate. Withhold exploit details if sensitive.
+      placeholder: |
+        1. Run ...
+        2. Inspect ...
+        3. Observe ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: remediation
+    attributes:
+      label: Recommended remediation
+      description: Optional. Describe a possible fix, mitigation, test, or follow-up action.
+      placeholder: "Maintainers may revise this during triage."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: regression_test
+    attributes:
+      label: Regression test needed?
+      description: Initial estimate. Maintainers may adjust during triage.
+      options:
+        - "yes"
+        - "no"
+        - "not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Add constraints, non-goals, private-reporting notes, or links to related issues/PRs.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: This public issue does not contain exploit details that should be reported privately.
+          required: true
+        - label: This public issue does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: If the finding appears security-sensitive, sensitive details are withheld from this public issue.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: false

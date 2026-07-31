@@ -1,0 +1,156 @@
+name: Bug report
+description: Report incorrect behavior, parser failures, panics, regressions, or unexpected results.
+title: "bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug.
+
+        SAR is currently experimental/pre-stable. Please do not include secrets,
+        private keys, credentials, or sensitive archive contents in public issues.
+
+        If this may be security-sensitive, provide only a minimal public summary
+        and use the private security reporting process described in `docs/SECURITY.md`.
+
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Which area appears to be affected?
+      options:
+        - parser / wire-format handling
+        - archive reader/writer
+        - stream / transcript handling
+        - transport / session handling
+        - CLI
+        - compression / decompression
+        - crypto / authentication
+        - FEC / recovery
+        - CDC / delta / sparse / fragmentation
+        - conformance vectors
+        - fuzzing
+        - documentation
+        - API inventory / generated API docs
+        - build / CI / tooling
+        - dependencies
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Briefly describe the incorrect behavior.
+      placeholder: "Parsing this archive panics / accepts invalid input / rejects valid input / produces unexpected output ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Describe the expected behavior.
+      placeholder: "The parser should return a deterministic error instead of panicking."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can this be reproduced?
+      description: Provide minimal steps, commands, or code needed to reproduce the issue.
+      placeholder: |
+        1. Check out commit ...
+        2. Run ...
+        3. Use input ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include logs, error messages, panic output, command output, failing tests, or relevant snippets.
+      placeholder: |
+        Command:
+        Output:
+        Backtrace/logs:
+        Relevant file/function:
+    validations:
+      required: true
+
+  - type: textarea
+    id: input
+    attributes:
+      label: Minimal input, fixture, or test case
+      description: |
+        If possible, provide a minimized non-sensitive input, hex dump, test vector,
+        fixture, or reproduction snippet. Do not upload secrets, credentials,
+        private keys, or sensitive archive contents.
+      placeholder: "Attach or paste minimized non-sensitive input here."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      description: What kind of issue does this appear to be?
+      options:
+        - panic on malformed input
+        - resource exhaustion / DoS
+        - incorrect accept/reject behavior
+        - data corruption or wrong output
+        - authentication/integrity handling issue
+        - CLI extraction/path handling issue
+        - conformance mismatch
+        - documentation mismatch
+        - API inventory mismatch
+        - build/test failure
+        - unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: security_sensitive
+    attributes:
+      label: Security-sensitive?
+      description: Initial assessment. Maintainers may adjust during triage.
+      options:
+        - not assessed
+        - likely no
+        - possibly yes
+        - yes, details withheld
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS, Rust version, branch/commit, and command output where relevant.
+      placeholder: |
+        OS:
+        rustc --version:
+        cargo --version:
+        SAR commit:
+        Branch:
+        Command:
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: This public issue does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: If this may be security-sensitive, exploit details are withheld from this public issue.
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: false
