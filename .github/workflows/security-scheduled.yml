@@ -1,0 +1,174 @@
+name: Scheduled security monitoring
+
+on:
+  schedule:
+    # Every Monday at 07:00 UTC.
+    - cron: "0 7 * * 1"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: scheduled-security-monitoring
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  scheduled-security:
+    name: Scheduled dependency security and policy checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore dependency/security caches
+        id: security-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/advisory-db
+            ~/.cache/cargo-deny
+          key: ${{ runner.os }}-scheduled-security-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-scheduled-security-
+            ${{ runner.os }}-security-
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
+
+      - name: Prepare report directory
+        run: mkdir -p target/security-monitoring-report
+
+      - name: Run cargo audit
+        id: cargo-audit
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo audit 2>&1 | tee target/security-monitoring-report/cargo-audit.log
+
+      - name: Run cargo deny
+        id: cargo-deny
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          cargo deny check 2>&1 | tee target/security-monitoring-report/cargo-deny.log
+
+      - name: Save dependency/security caches
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/advisory-db
+            ~/.cache/cargo-deny
+          key: ${{ runner.os }}-scheduled-security-${{ github.run_id }}
+
+      - name: Write issue body
+        if: steps.cargo-audit.outcome == 'failure' || steps.cargo-deny.outcome == 'failure'
+        env:
+          AUDIT_OUTCOME: ${{ steps.cargo-audit.outcome }}
+          DENY_OUTCOME: ${{ steps.cargo-deny.outcome }}
+        run: |
+          cat > target/security-monitoring-report/issue.md <<EOF
+          # Scheduled dependency/security check failure
+
+          ## What happened?
+
+          A scheduled SAR dependency/security monitoring run failed.
+
+          ## Report source
+
+          GitHub Actions scheduled security monitoring
+
+          ## Affected area
+
+          dependencies / build-ci / security
+
+          ## Evidence
+
+          - Workflow: ${GITHUB_WORKFLOW}
+          - Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - Commit: ${GITHUB_SHA}
+          - Ref: ${GITHUB_REF}
+          - cargo audit outcome: ${AUDIT_OUTCOME}
+          - cargo deny outcome: ${DENY_OUTCOME}
+
+          Detailed logs are attached to the workflow run artifacts.
+
+          ## Recommended next step
+
+          - Review \`cargo-audit.log\` and \`cargo-deny.log\`.
+          - Determine whether the failure is caused by a new advisory, dependency-policy violation, registry/index issue, or workflow/tooling issue.
+          - If this is a real advisory or policy failure, update dependencies or document an accepted/deferred risk as appropriate.
+          - If this is a tooling failure, fix the workflow or dependency-check configuration.
+
+          ## Security-sensitive?
+
+          not assessed
+
+          ## Safety checks
+
+          - This automated public issue should not contain secrets, credentials, private keys, or sensitive archive contents.
+          - If follow-up analysis finds sensitive vulnerability details, move details to the private security reporting process.
+          EOF
+
+      - name: Upload security monitoring artifacts
+        if: steps.cargo-audit.outcome == 'failure' || steps.cargo-deny.outcome == 'failure'
+        uses: actions/upload-artifact@v7
+        with:
+          name: scheduled-security-monitoring-report
+          path: target/security-monitoring-report/
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Create or update issue
+        if: steps.cargo-audit.outcome == 'failure' || steps.cargo-deny.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          existing_issue="$(
+            gh issue list \
+              --state open \
+              --label security \
+              --label dependencies \
+              --label needs-investigation \
+              --search "scheduled dependency/security check failure in:title" \
+              --json number \
+              --jq '.[0].number // empty'
+          )"
+
+          if [ -n "$existing_issue" ]; then
+            gh issue comment "$existing_issue" \
+              --body-file target/security-monitoring-report/issue.md
+          else
+            gh issue create \
+              --title "security: scheduled dependency/security check failure" \
+              --label "security" \
+              --label "dependencies" \
+              --label "needs-investigation" \
+              --body-file target/security-monitoring-report/issue.md
+          fi
+
+      - name: Fail scheduled security monitoring
+        if: steps.cargo-audit.outcome == 'failure' || steps.cargo-deny.outcome == 'failure'
+        run: exit 1
