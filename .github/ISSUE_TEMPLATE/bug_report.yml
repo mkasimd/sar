@@ -1,5 +1,5 @@
 name: Bug report
-description: Report incorrect behavior, parser failures, panics, or regressions.
+description: Report incorrect behavior, parser failures, panics, regressions, or unexpected results.
 title: "bug: "
 labels: ["bug", "needs-triage"]
 body:
@@ -8,27 +8,33 @@ body:
       value: |
         Thanks for reporting a bug.
 
-        SAR is currently experimental/pre-stable. Please do not include secrets, private keys,
-        credentials, or sensitive archive contents in public issues.
+        SAR is currently experimental/pre-stable. Please do not include secrets,
+        private keys, credentials, or sensitive archive contents in public issues.
+
+        If this may be security-sensitive, provide only a minimal public summary
+        and use the private security reporting process described in `docs/SECURITY.md`.
 
   - type: dropdown
-    id: area
+    id: affected_area
     attributes:
       label: Affected area
       description: Which area appears to be affected?
       options:
-        - sar-core parser / wire-format handling
-        - sar-archive reader/writer
-        - sar-stream
-        - sar-transport
-        - sar-cli
-        - compression / transforms
+        - parser / wire-format handling
+        - archive reader/writer
+        - stream / transcript handling
+        - transport / session handling
+        - CLI
+        - compression / decompression
         - crypto / authentication
         - FEC / recovery
         - CDC / delta / sparse / fragmentation
+        - conformance vectors
         - fuzzing
         - documentation
+        - API inventory / generated API docs
         - build / CI / tooling
+        - dependencies
         - not sure
     validations:
       required: true
@@ -36,64 +42,89 @@ body:
   - type: textarea
     id: summary
     attributes:
-      label: Summary
-      description: Briefly describe the problem.
-      placeholder: "Parsing this malformed archive returns ... / panics / accepts invalid input ..."
-    validations:
-      required: true
-
-  - type: textarea
-    id: reproduction
-    attributes:
-      label: Reproduction steps
-      description: Provide minimal steps to reproduce.
-      placeholder: |
-        1. Run ...
-        2. Use input ...
-        3. Observe ...
+      label: What happened?
+      description: Briefly describe the incorrect behavior.
+      placeholder: "Parsing this archive panics / accepts invalid input / rejects valid input / produces unexpected output ..."
     validations:
       required: true
 
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
-      description: What should have happened?
+      label: What did you expect?
+      description: Describe the expected behavior.
+      placeholder: "The parser should return a deterministic error instead of panicking."
     validations:
       required: true
 
   - type: textarea
-    id: actual
+    id: reproduction
     attributes:
-      label: Actual behavior
-      description: What happened instead?
+      label: How can this be reproduced?
+      description: Provide minimal steps, commands, or code needed to reproduce the issue.
+      placeholder: |
+        1. Check out commit ...
+        2. Run ...
+        3. Use input ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include logs, error messages, panic output, command output, failing tests, or relevant snippets.
+      placeholder: |
+        Command:
+        Output:
+        Backtrace/logs:
+        Relevant file/function:
     validations:
       required: true
 
   - type: textarea
     id: input
     attributes:
-      label: Minimal input or fixture
+      label: Minimal input, fixture, or test case
       description: |
-        If possible, provide a minimal non-sensitive input, test vector, hex dump,
-        or reproduction snippet. Do not upload secrets or private data.
+        If possible, provide a minimized non-sensitive input, hex dump, test vector,
+        fixture, or reproduction snippet. Do not upload secrets, credentials,
+        private keys, or sensitive archive contents.
       placeholder: "Attach or paste minimized non-sensitive input here."
+    validations:
+      required: false
 
   - type: dropdown
     id: impact
     attributes:
       label: Impact
-      description: What kind of impact does this appear to have?
+      description: What kind of issue does this appear to be?
       options:
         - panic on malformed input
         - resource exhaustion / DoS
         - incorrect accept/reject behavior
-        - data corruption
+        - data corruption or wrong output
         - authentication/integrity handling issue
         - CLI extraction/path handling issue
+        - conformance mismatch
         - documentation mismatch
+        - API inventory mismatch
         - build/test failure
         - unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: security_sensitive
+    attributes:
+      label: Security-sensitive?
+      description: Initial assessment. Maintainers may adjust during triage.
+      options:
+        - not assessed
+        - likely no
+        - possibly yes
+        - yes, details withheld
     validations:
       required: true
 
@@ -107,6 +138,7 @@ body:
         rustc --version:
         cargo --version:
         SAR commit:
+        Branch:
         Command:
     validations:
       required: false
@@ -116,7 +148,9 @@ body:
     attributes:
       label: Pre-submission checks
       options:
-        - label: I checked that this does not contain secrets, credentials, private keys, or sensitive archive contents.
+        - label: This public issue does not contain secrets, credentials, private keys, or sensitive archive contents.
+          required: true
+        - label: If this may be security-sensitive, exploit details are withheld from this public issue.
           required: true
         - label: I searched existing issues and did not find a duplicate.
           required: false

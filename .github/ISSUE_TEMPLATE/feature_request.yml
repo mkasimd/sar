@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest a new feature, API, profile, format extension, or tooling improvement.
+description: Suggest a new feature, improvement, API, profile, format extension, or tooling change.
 title: "feat: "
 labels: ["enhancement", "needs-triage"]
 body:
@@ -8,39 +8,47 @@ body:
       value: |
         Thanks for suggesting an improvement.
 
-        SAR is currently experimental/pre-stable. Feature requests that affect wire format,
-        public API, profiles, or interoperability need careful milestone placement.
+        SAR is currently experimental/pre-stable. Feature requests that affect
+        wire format, public API, profiles, interoperability, security behavior,
+        or conformance expectations need careful review.
+
+        You do not need to know the project's internal milestone roadmap.
+        Maintainers will assign labels, milestones, and priority during triage.
 
   - type: dropdown
-    id: area
+    id: requested_area
     attributes:
       label: Requested area
+      description: Which area is this request mainly about?
       options:
-        - SAR wire format / specification
-        - sar-core
-        - sar-archive
-        - sar-stream
-        - sar-transport
-        - sar-cli
-        - compression / transforms
+        - SAR specification / wire format
+        - parser / wire-format handling
+        - archive reader/writer
+        - stream / transcript handling
+        - transport / session handling
+        - CLI
+        - compression / decompression
         - crypto / authentication
         - FEC / recovery
         - CDC / delta / sparse / fragmentation
         - conformance vectors
         - fuzzing
         - documentation
+        - API inventory / generated API docs
+        - build / CI / tooling
+        - dependencies
         - packaging / release automation
-        - C ABI / Python bindings
-        - mobile bindings
+        - future bindings / FFI
         - other
+        - not sure
     validations:
       required: true
 
   - type: textarea
     id: problem
     attributes:
-      label: Problem or use case
-      description: What problem would this solve?
+      label: What problem or use case does this solve?
+      description: Describe the concrete problem, limitation, or workflow.
       placeholder: "I want to use SAR for ... but currently ..."
     validations:
       required: true
@@ -49,15 +57,29 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: Describe the proposed behavior or API.
+      description: Describe the proposed behavior, API, tooling, documentation, or workflow.
+      placeholder: "It would help if SAR could ..."
     validations:
       required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or examples
+      description: Provide examples, related tools, prior discussion, test cases, or operational context if available.
+      placeholder: |
+        Example workflow:
+        Related issue/PR:
+        Related specification section:
+        Similar behavior in another tool:
+    validations:
+      required: false
 
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Describe any alternatives or workarounds.
+      description: Describe any alternatives, workarounds, or reasons existing behavior is insufficient.
     validations:
       required: false
 
@@ -65,23 +87,31 @@ body:
     id: compatibility
     attributes:
       label: Compatibility impact
-      description: Does this affect compatibility?
+      description: Does this appear to affect compatibility or public behavior?
       options:
-        - No compatibility impact expected
-        - Public Rust API impact
+        - no compatibility impact expected
+        - public Rust API impact
         - SAR wire-format/specification impact
         - CLI behavior impact
-        - Profile/conformance impact
-        - Unsure
+        - conformance/profile impact
+        - documentation-only impact
+        - build/CI/tooling impact
+        - unsure
     validations:
       required: true
 
-  - type: textarea
-    id: milestone
+  - type: dropdown
+    id: security_sensitive
     attributes:
-      label: Suggested milestone, if known
-      description: Optional. For example M13b, M14, M15, M16, post-v1.
-      placeholder: "M13b / M14 / M15 / post-v1 / not sure"
+      label: Security-sensitive?
+      description: Could this affect security posture, parsing behavior, authentication, extraction, or resource limits?
+      options:
+        - likely no
+        - possibly yes
+        - yes
+        - not sure
+    validations:
+      required: true
 
   - type: checkboxes
     id: checks
@@ -89,6 +119,8 @@ body:
       label: Pre-submission checks
       options:
         - label: I understand that SAR is currently experimental/pre-stable.
+          required: true
+        - label: This request does not rely on unsupported production-readiness, certification, compliance, or security-audit claims.
           required: true
         - label: I searched existing issues and did not find a duplicate.
           required: false
