@@ -915,7 +915,7 @@ If this milestone document appears to describe library/profile layout differentl
 
 # Current and future milestones
 
-## M13a.1: parser, memory, panic, and DoS audit - in progress
+## M13a.1: parser, memory, panic, and DoS audit - complete (2026-08-01)
 
 * audit Global Header, LFH, TLV, Central Dictionary, Footer, `ArchiveReader`, and `StreamArchiveParser` structural parsing
 * audit checked arithmetic and input-derived length, size, count, and offset calculations
@@ -929,6 +929,7 @@ If this milestone document appears to describe library/profile layout differentl
 * assign implementation and test remediation to the applicable M13b milestone
 * assign unresolved normative questions to M13a.7
 * do not implement remediation, change protocol behavior, or resolve specification gaps during this audit milestone
+* completion: all 8 audit objectives completed at commit c0f4d6d7ea6a60d8372b5fb2c80c05e0f041c8bf; 12 findings recorded (5 open assigned to M13b.1, 1 confirmed assigned to M13b.1, 1 pending normative resolution assigned to M13a.7, 4 closed with no action, 1 superseded, 1 verified control); open remediation findings are inputs to M13b.1 and do not prevent M13a.1 completion; findings registry at `docs/M13_AUDIT_FINDINGS.json`
 
 ## M13a.2: cryptography and secret-handling audit
 

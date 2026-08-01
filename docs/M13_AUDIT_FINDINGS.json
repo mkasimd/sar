@@ -11,7 +11,8 @@
     {
       "milestone": "M13a.1",
       "title": "Parser, Memory, Panic, and DoS Audit",
-      "status": "in_progress",
+      "status": "complete",
+      "completed_date": "2026-08-01",
       "included_artifacts": [
         "crates/sar-core/src/format.rs",
         "crates/sar-core/src/tlv.rs",
@@ -56,7 +57,7 @@
         "session/transport semantics"
       ],
       "notes": [
-        "All M13a.1 audit objectives are recorded as complete, but final milestone closure remains pending human review.",
+        "All M13a.1 audit objectives are complete.",
         "Conclusions are bounded to the audited functions, files, and paths listed in this scope."
       ],
       "reviewed_commit": "c0f4d6d7ea6a60d8372b5fb2c80c05e0f041c8bf",
