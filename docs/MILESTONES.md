@@ -916,7 +916,7 @@ If this milestone document appears to describe library/profile layout differentl
 * ensure documentation distinguishes current behavior, planned hardening, and future profile policy
 
 
-## M13a.1: parser, memory, panic, and DoS audit
+## M13a.1: parser, memory, panic, and DoS audit — in progress
 
 * audit global header, LFH, TLV, CD, Footer, and archive structural parsing
 * audit checked arithmetic and length/offset calculations
