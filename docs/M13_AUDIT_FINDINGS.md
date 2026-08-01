@@ -572,37 +572,38 @@ Requirement: `required`
 
 #### Summary
 
-The CLI already provides a safer interactive password path via prompt fallback, but current help/docs prominently show `--password` usage and do not consistently warn about argv/environment exposure tradeoffs.
+CLI password input surfaces expose `--password` and `SAR_PASSWORD` without concise warning text, and the README encryption example demonstrates `--password` usage without warning or safer-path guidance.
 
 #### Current Behavior
 
-`load_password()` precedence is explicit CLI `--password`, then `SAR_PASSWORD`, then interactive prompt. `create` only permits password input when encryption is enabled; `extract`/`verify` request a password only for encrypted archives. User-facing guidance and examples still emphasize `--password` and do not consistently communicate exposure differences between argv, shell history, inherited environment variables, and prompt entry.
+`load_password()` precedence is explicit CLI `--password`, then `SAR_PASSWORD`, then interactive prompt. The `Create`, `Extract`, and `Verify` argument definitions expose `--password` without warning/help text, and the README encryption example uses `--password` directly with no exposure warning or interactive-prompt recommendation.
 
 #### Expected Behavior
 
-CLI help and documentation should explicitly document password-source precedence and clearly recommend safer password entry (interactive prompt or equivalent secret-input workflow) over argv/environment channels, including concise exposure warnings.
+CLI-facing help metadata and documentation examples should include concise warnings about argv/environment exposure and recommend safer interactive or managed-secret input paths, while documenting password-source precedence.
 
 #### Impact
 
-The primary gap is operational guidance: operators may default to `--password` or `SAR_PASSWORD` without clear warnings about local exposure surfaces. Exposure likelihood varies by platform, shell, and telemetry tooling; this is a real but lower-severity documentation and usability risk, not a protocol or cryptographic bypass.
+Operators can reasonably treat argv/environment password input as standard usage because these channels are exposed without concise warning text at the option surface and in repository examples. This is a documentation/usability secret-handling risk, not a demonstrated cryptographic bypass.
 
 #### Evidence
 
-* `crates/sar-cli/src/args.rs` (lines 160-161, 176-177, and 198-199): The `Create`, `Extract`, and `Verify` CLI subcommands each accept `#[arg(long)] password: Option<String>`.
+* `crates/sar-cli/src/args.rs` (lines 160-161, 176-177, and 198-199): The `Create`, `Extract`, and `Verify` CLI subcommands each expose `#[arg(long)] password: Option<String>` with no warning/help text attached to those argument declarations.
 * `crates/sar-cli/src/password.rs` (lines 9 and 39-48): `PASSWORD_ENV` is defined as `SAR_PASSWORD`, and `load_password()` prefers the explicit CLI value and then the inherited environment variable before prompting.
+* `README.md` (lines 443-448): The encryption example uses `--password "test-password"` for both `sar create` and `sar extract` without warning text or guidance that interactive prompting is the safer default.
 
 #### Remediation
 
-* Document password-source precedence (`--password` -&gt; `SAR_PASSWORD` -&gt; interactive prompt) in CLI-facing docs and help text references.
+* Document password-source precedence (`--password` -&gt; `SAR_PASSWORD` -&gt; interactive prompt) in CLI-facing docs and help surfaces.
 * Add clear warnings that argv and inherited environment variables can be exposed by host/shell/process tooling, and recommend safer prompt-based or managed-secret workflows.
-* Update examples to avoid implying `--password` is the preferred default path for encrypted workflows.
+* Update encrypted-workflow examples so they do not imply `--password` is the preferred default path.
 
 #### Verification
 
 Requirement: `required`
 
-* CLI-facing documentation and help references explicitly describe password-source precedence and safer recommended usage.
-* Examples for encrypted create/extract/verify workflows no longer imply argv or inherited environment input is the default recommended path.
+* CLI-facing documentation and help surfaces explicitly describe password-source precedence and safer recommended usage.
+* Encrypted-workflow examples no longer imply argv or inherited environment input is the default recommended path.
 * Warnings distinguish argv exposure, shell history risk, and environment inheritance/telemetry risk without asserting identical behavior across all platforms.
 
 ### M13-CRYPTO-003: Secret containers and authentication-failure buffers are zeroized in audited crypto paths
