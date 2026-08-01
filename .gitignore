@@ -16,3 +16,6 @@
 
 # the runner binary
 /tools/fuzz_runner
+
+.venv
+tools/__pycache__

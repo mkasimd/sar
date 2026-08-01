@@ -38,12 +38,20 @@ Optional:
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-import unicodedata
-import difflib
 from pathlib import Path
 from typing import Any
+
+from mdgen import (
+    heading,
+    load_json,
+    md_code,
+    md_escape_cell,
+    md_escape_text,
+    normalize_markdown,
+    to_ascii,
+    write_or_check,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -88,104 +96,6 @@ For crate ownership and architecture boundaries, see `docs/CRATE_RESPONSIBILITIE
 For conformance status, see `docs/CONFORMANCE.md`.
 """
 
-
-UNICODE_REPLACEMENTS = {
-    "\u2010": "-",
-    "\u2011": "-",
-    "\u2012": "-",
-    "\u2013": "-",
-    "\u2014": "-",
-    "\u2015": "-",
-    "\u2212": "-",
-    "\u2018": "'",
-    "\u2019": "'",
-    "\u201a": "'",
-    "\u201b": "'",
-    "\u201c": '"',
-    "\u201d": '"',
-    "\u201e": '"',
-    "\u201f": '"',
-    "\u2026": "...",
-    "\u2190": "<-",
-    "\u2192": "->",
-    "\u2194": "<->",
-    "\u21d2": "=>",
-    "\u2260": "!=",
-    "\u2264": "<=",
-    "\u2265": ">=",
-    "\u00d7": "x",
-    "\u00a0": " ",
-}
-
-
-def to_ascii(value: Any) -> str:
-    """Render a value as ASCII-only text."""
-    if value is None:
-        text = ""
-    elif isinstance(value, bool):
-        text = "true" if value else "false"
-    elif isinstance(value, (int, float)):
-        text = str(value)
-    elif isinstance(value, str):
-        text = value
-    else:
-        text = json.dumps(value, ensure_ascii=True, sort_keys=True)
-
-    for old, new in UNICODE_REPLACEMENTS.items():
-        text = text.replace(old, new)
-
-    text = unicodedata.normalize("NFKD", text)
-    return text.encode("ascii", "replace").decode("ascii")
-
-
-def md_escape_cell(value: Any) -> str:
-    """Escape a value for use inside a Markdown table cell."""
-    text = to_ascii(value)
-    text = text.replace("\\", "\\\\")
-    text = text.replace("|", "\\|")
-    text = text.replace("[", "\\[")
-    text = text.replace("]", "\\]")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
-    text = text.replace("\n", "<br>")
-    return text
-
-
-def md_escape_text(value: Any) -> str:
-    """Escape plain inline Markdown text."""
-    text = to_ascii(value)
-    text = text.replace("\\", "\\\\")
-    text = text.replace("[", "\\[")
-    text = text.replace("]", "\\]")
-    text = text.replace("<", "&lt;")
-    text = text.replace(">", "&gt;")
-    return text
-
-
-def md_code(value: Any) -> str:
-    """Render safe inline code."""
-    text = to_ascii(value).replace("\n", " ")
-    if "`" not in text:
-        return f"`{text}`"
-    return "`` " + text.replace("``", "` `") + " ``"
-
-
-def heading(level: int, title: str) -> str:
-    return f"{'#' * level} {to_ascii(title)}\n\n"
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise SystemExit(f"error: input file not found: {path}") from None
-    except json.JSONDecodeError as exc:
-        raise SystemExit(f"error: invalid JSON in {path}: {exc}") from None
-
-    if not isinstance(data, dict):
-        raise SystemExit(f"error: top-level JSON value must be an object: {path}")
-
-    return data
 
 
 def ensure_schema_v2(data: dict[str, Any]) -> None:
@@ -433,17 +343,7 @@ def render_api_markdown(
             )
         )
 
-    markdown = "".join(parts)
-
-    lines = [line.rstrip() for line in markdown.splitlines()]
-    output = "\n".join(lines).rstrip() + "\n"
-
-    try:
-        output.encode("ascii")
-    except UnicodeEncodeError as exc:
-        raise SystemExit(f"error: generated Markdown contains non-ASCII text: {exc}") from None
-
-    return output
+    return normalize_markdown("".join(parts))
 
 
 def main(argv: list[str]) -> int:
@@ -491,38 +391,12 @@ def main(argv: list[str]) -> int:
         include_unimplemented=args.include_unimplemented,
     )
 
-    if args.check:
-        try:
-            existing = args.output.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            print(f"error: generated file is missing: {args.output}", file=sys.stderr)
-            return 1
-
-        if existing != generated:
-            print(
-                f"error: {args.output} is stale; run `python tools/generate_api_md.py`",
-                file=sys.stderr,
-            )
-            print(file=sys.stderr)
-            print("diff:", file=sys.stderr)
-
-            diff = difflib.unified_diff(
-                existing.splitlines(keepends=True),
-                generated.splitlines(keepends=True),
-                fromfile=str(args.output),
-                tofile=f"{args.output} (generated)",
-                n=3,
-            )
-            sys.stderr.writelines(diff)
-            return 1
-
-        print(f"ok: {args.output} is up to date")
-        return 0
-
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(generated, encoding="utf-8", newline="\n")
-    print(f"generated {args.output.relative_to(REPO_ROOT)}")
-    return 0
+    return write_or_check(
+        output_path=args.output,
+        generated=generated,
+        check=args.check,
+        regenerate_command="python tools/generate_api_md.py",
+    )
 
 
 if __name__ == "__main__":
