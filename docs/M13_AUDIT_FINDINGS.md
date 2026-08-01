@@ -69,7 +69,7 @@ Registry status: `in_progress`
 | `M13a.4-OBJ-01` | `complete` | `observations_only` | Audit archive path validation and normalization behavior |
 | `M13a.4-OBJ-02` | `complete` | `findings_recorded` | Audit output-root confinement and replacement-race behavior |
 | `M13a.4-OBJ-03` | `complete` | `mixed` | Audit symlink target semantics and hardlink handling |
-| `M13a.4-OBJ-04` | `complete` | `observations_only` | Audit permission restoration and directory staging/finalization ordering |
+| `M13a.4-OBJ-04` | `complete` | `mixed` | Audit permission restoration and directory staging/finalization ordering |
 | `M13a.4-OBJ-05` | `complete` | `mixed` | Audit owner and timestamp restoration hazards |
 | `M13a.4-OBJ-06` | `complete` | `observations_only` | Audit platform-specific extraction safety branches |
 | `M13a.4-OBJ-07` | `complete` | `mixed` | Record and classify M13a.4 remediation and normative follow-up |
@@ -98,10 +98,11 @@ Registry status: `in_progress`
 | `M13-CRYPTO-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | Cryptographic dependency selection is narrow and unsupported non-AEAD modes fail closed at dispatch |
 | `M13-EXTRACT-001` | `implementation_spec_mismatch` | `confirmed` | `medium` | `high` | `M13b.3` | Extractor does not enforce canonicalized, directory-relative confinement for final filesystem mutations |
 | `M13-EXTRACT-002` | `positive_observation` | `verified` | `informational` | `low` | `none` | Archive path parsing rejects common traversal and ambiguous host-path forms before joining |
-| `M13-EXTRACT-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | Directory staging and metadata application keep permissions restrictive until content is written |
+| `M13-EXTRACT-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | Staging chmod to 0o700 precedes child extraction; directory metadata finalization is deferred and occurs in reverse-depth order |
 | `M13-EXTRACT-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Current extractor exposes no hardlink creation path |
 | `M13-EXTRACT-005` | `specification_gap` | `pending_normative_resolution` | `not_applicable` | `medium` | `M13a.7` | Symlink target conformance and extraction-safety requirements are not normatively resolved |
 | `M13-EXTRACT-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | Non-Unix builds fail closed for unsupported symlink and metadata restoration requests |
+| `M13-EXTRACT-007` | `implementation_defect` | `confirmed` | `low` | `low` | `M13b.3` | Directory staging uses create-then-chmod sequence leaving a brief umask-dependent visibility window on Unix |
 
 ## Finding Details
 
@@ -786,7 +787,7 @@ An attacker who can influence pre-existing filesystem state for the chosen extra
 
 Requirement: `required`
 
-* Demonstrate that regular-file, sparse-file, and symlink extraction refuse destinations whose resolved path escapes the selected extraction root through pre-existing symlinked prefixes.
+* Demonstrate that regular-file, sparse-file, and symlink extraction refuse or correctly confine destinations when the selected extraction root itself resolves through a pre-existing symlink on the host filesystem; note that symlink parent components within the extraction tree are already rejected by existing path-walking checks (verified in M13-EXTRACT-002) and do not represent the unprotected scenario targeted by this criterion.
 * Demonstrate that path-replacement attempts cannot redirect temporary-file publication or post-write metadata restoration outside the extraction root.
 * Verify that successful extraction still restores in-root content and metadata for compliant archive names after the confinement hardening.
 
@@ -816,7 +817,7 @@ Archive extraction performs explicit lexical validation before joining names to 
 
 Verified during M13a.4: lexical archive-path validation rejects common traversal and ambiguous host-path forms before extraction joins names to the output tree, and existing symlink parents are refused.
 
-### M13-EXTRACT-003: Directory staging and metadata application keep permissions restrictive until content is written
+### M13-EXTRACT-003: Staging chmod to 0o700 precedes child extraction; directory metadata finalization is deferred and occurs in reverse-depth order
 
 | Field | Value |
 | --- | --- |
@@ -829,11 +830,11 @@ Verified during M13a.4: lexical archive-path validation rejects common traversal
 
 #### Summary
 
-New directories are created with restrictive temporary permissions on Unix, pending directory metadata is applied only after child extraction completes, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced.
+On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applies the process umask, typically yielding mode 0o755 with the standard umask of 0o022) and then immediately calls `fs::set_permissions(path, 0o700)` as a separate step. Content extraction for a directory proceeds only after the `set_permissions` call succeeds; if it fails, extraction halts. The initial creation is not atomic with the chmod; a brief window exists before the chmod during which the directory may be accessible at the umask-determined mode (captured in M13-EXTRACT-007). Pending directory metadata is applied only after child extraction completes and in reverse-depth order, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced.
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/paths.rs` (lines 170-178): `create_restrictive_directory()` creates directories and sets mode `0o700` on Unix before any final metadata restoration.
+* `crates/sar-cli/src/extraction/paths.rs` (lines 170-178): `create_restrictive_directory()` calls `fs::create_dir(path)` to create the directory and then calls `fs::set_permissions(path, Permissions::from_mode(0o700))` on Unix. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with the standard umask of 0o022 the effective creation mode is 0o755. The chmod is a separate step and not atomic with creation. Content extraction proceeds only after `set_permissions` returns `Ok(())`; if it returns an error, extraction halts.
 * `crates/sar-cli/src/extraction/metadata.rs` (lines 25-45, 47-70, and 73-99): `apply_file_metadata()` runs only after file publication, skips symlink paths, `finalize_directory_metadata()` applies directory metadata after child extraction in reverse depth order, and `apply_permissions()` masks restored modes with `0o0777`.
 * `crates/sar-cli/tests/cli_metadata_tests.rs` (lines 106-159 and 366-402): CLI tests verify directory permissions are applied after extraction and that restoring `0o4755` results in `0o755` on disk.
 
@@ -841,7 +842,7 @@ New directories are created with restrictive temporary permissions on Unix, pend
 
 `verified_control` - `2026-08-01`
 
-Verified during M13a.4: extraction stages directories restrictively, defers final directory metadata until children are written, skips symlink metadata application, and strips special mode bits from restored permissions.
+Verified during M13a.4: content extraction for a directory proceeds only after `set_permissions(0o700)` succeeds (failing closed on error), final directory metadata is deferred until children are extracted in reverse-depth order, symlink metadata application is skipped, and special mode bits are stripped from restored permissions. The non-atomic create-then-chmod sequence and its brief visibility window are captured in M13-EXTRACT-007.
 
 ### M13-EXTRACT-004: Current extractor exposes no hardlink creation path
 
@@ -929,3 +930,48 @@ Regular-file and directory extraction remain available cross-platform, but non-U
 `verified_control` - `2026-08-01`
 
 Verified during M13a.4: non-Unix builds fail closed for unsupported permission, owner, and symlink restoration requests instead of attempting ambiguous host-specific behavior.
+
+### M13-EXTRACT-007: Directory staging uses create-then-chmod sequence leaving a brief umask-dependent visibility window on Unix
+
+| Field | Value |
+| --- | --- |
+| Type | implementation_defect |
+| Source milestone | M13a.4 |
+| Status | confirmed |
+| Severity | low |
+| Priority | low |
+| Owner | M13b.3 |
+
+#### Summary
+
+On Unix, `create_restrictive_directory()` creates staging directories with `fs::create_dir()`, which inherits the process umask, then calls `fs::set_permissions(path, 0o700)` in a separate step. With the standard umask of 0o022 the directory is initially created at mode 0o755 (owner, group, and world read and execute) before the chmod restricts it to 0o700. During this window, other local principals with access to the parent directory can enter or enumerate the staging directory.
+
+#### Current Behavior
+
+`create_restrictive_directory()` calls `fs::create_dir(path)` followed by `fs::set_permissions(path, Permissions::from_mode(0o700))`. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with a standard umask of 0o022 the effective creation mode is 0o755. The directory is only restricted to 0o700 after the separate `set_permissions` call succeeds.
+
+#### Expected Behavior
+
+Staging directories should be created atomically at mode 0o700 without relying on a post-creation chmod. On Unix this can be achieved by using `std::fs::DirBuilder::new()` with `DirBuilderExt::mode(0o700)`, which passes 0o700 directly to the `mkdir` syscall; since 0o700 has no group or other bits, a reasonable umask does not widen the result.
+
+#### Impact
+
+A local principal with access to the parent directory can observe or enter the newly created staging directory during the window between `fs::create_dir` and `set_permissions`. Although the directory is empty at creation time (archive content is written only after the chmod succeeds), an adversarial local principal could pre-populate the staging directory or observe staging activity on a shared system.
+
+#### Evidence
+
+* `crates/sar-cli/src/extraction/paths.rs` (lines 170-179): `create_restrictive_directory()` calls `fs::create_dir(path)` (which applies the process umask to the default mode of 0o777, typically yielding 0o755 with a standard umask of 0o022) followed by `fs::set_permissions(path, Permissions::from_mode(0o700))` as a separate call. The two calls are not atomic; the directory is transiently accessible at the umask-determined mode before the chmod succeeds.
+
+#### Remediation
+
+* Replace the `fs::create_dir` + `set_permissions` sequence with `std::fs::DirBuilder::new()` using `DirBuilderExt::mode(0o700)` on Unix, which passes mode 0o700 directly to the `mkdir` syscall and eliminates the transient broader-permission state.
+
+#### Verification
+
+Requirement: `required`
+
+* Verify that staging directories are created at mode 0o700 with no intermediate broader mode observable between creation and first use.
+
+#### Relationships
+
+* **Related findings:** `M13-EXTRACT-003`
