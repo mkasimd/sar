@@ -17,8 +17,8 @@ Before making substantial changes, consult the documents that define the relevan
 
 * `specification.md` - SAR Protocol v1.0 wire-format and protocol behavior
 * `docs/CRATE_RESPONSIBILITIES.md` - crate ownership and architectural boundaries
-* `docs/MACHINE_READABLE_API.json` - authoritative inventory
-* `docs/MACHINE_READABLE_API.schema.json` - inventory schema
+* `docs/machine-readable/MACHINE_READABLE_API.json` - authoritative inventory
+* `docs/machine-readable/MACHINE_READABLE_API.schema.json` - inventory schema
 * `docs/API.md` - generated human-readable subset
 * `docs/CONFORMANCE.md` - conformance status and vector expectations
 * `docs/COMPATIBILITY.md` - compatibility notes, pre-stable status, and deferred functionality
@@ -149,8 +149,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 For documentation, API inventory, or conformance-vector changes, also validate JSON files and generated API documentation where practical:
 
 ```bash
-python -m json.tool docs/MACHINE_READABLE_API.json > /dev/null
-python -m json.tool docs/MACHINE_READABLE_API.schema.json > /dev/null
+python -m json.tool docs/machine-readable/MACHINE_READABLE_API.json > /dev/null
+python -m json.tool docs/machine-readable/MACHINE_READABLE_API.schema.json > /dev/null
 python tools/check_api_schema.py
 python tools/generate_api_md.py --check
 python -m json.tool test-vectors/manifest.schema.json > /dev/null
@@ -190,7 +190,7 @@ Avoid duplicating detailed rules from other files unless a short summary is need
 
 When updating public API behavior, check whether these files need updates:
 
-* `docs/MACHINE_READABLE_API.json`
+* `docs/machine-readable/MACHINE_READABLE_API.json`
 * generated `docs/API.md`
 * `README.md`
 
@@ -230,7 +230,7 @@ If a pull request changes public API:
 
 * describe the change
 * explain why it is needed
-* update `docs/MACHINE_READABLE_API.json`
+* update `docs/machine-readable/MACHINE_READABLE_API.json`
 * validate it with `python tools/check_api_schema.py`
 * regenerate `docs/API.md` with `python tools/generate_api_md.py`
 * update README examples if affected
@@ -238,7 +238,7 @@ If a pull request changes public API:
 
 The authoritative API inventory is:
 
-* `docs/MACHINE_READABLE_API.json`
+* `docs/machine-readable/MACHINE_READABLE_API.json`
 
 ## AI-assisted contributions
 

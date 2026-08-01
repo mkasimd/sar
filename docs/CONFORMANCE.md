@@ -367,7 +367,7 @@ are present. Key changes:
 M12c.2 audited the machine-readable API inventory and crate-boundary documentation.
 Key changes:
 
-- `docs/MACHINE_READABLE_API.json` updated: added missing public APIs for the
+- `docs/machine-readable/MACHINE_READABLE_API.json` updated: added missing public APIs for the
   `sar-archive` recovery module (`ErasureRange`, `ProtectedRange`, `EntryErasure`,
   `ErasureInput`, `RecoveryMetadata`, `RecoveryPlan`, `RepairReport`,
   `inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`) and

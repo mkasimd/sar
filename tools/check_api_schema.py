@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Validate docs/MACHINE_READABLE_API.json against docs/MACHINE_READABLE_API.schema.json.
+Validate docs/machine-readable/MACHINE_READABLE_API.json against docs/machine-readable/MACHINE_READABLE_API.schema.json.
 
 Usage from repository root:
 
@@ -12,8 +12,8 @@ Usage from repository root:
 Custom paths:
 
     python tools/check_api_schema.py \
-      --schema docs/MACHINE_READABLE_API.schema.json \
-      --input docs/MACHINE_READABLE_API.json
+      --schema docs/machine-readable/MACHINE_READABLE_API.schema.json \
+      --input docs/machine-readable/MACHINE_READABLE_API.json
 
 This script requires the third-party `jsonschema` package:
 

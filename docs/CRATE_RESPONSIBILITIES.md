@@ -179,6 +179,6 @@ them from the primary re-exported surface. No stability guarantee attaches to ei
 while the implementation remains pre-stable.
 
 ## M12c.2 audit note
-The API inventory (`docs/MACHINE_READABLE_API.json`) was audited in M12c.2.
+The API inventory (`docs/machine-readable/MACHINE_READABLE_API.json`) was audited in M12c.2.
 All public APIs are pre-stable. No stable API/ABI guarantee is made.
 See `docs/COMPATIBILITY.md` for the current pre-stable status statement.

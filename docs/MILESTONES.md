@@ -11,7 +11,7 @@ It is a project-planning and implementation-guidance document, not the wire-form
 
 `specification.md` is the authoritative source of truth for SAR Protocol v1.0 wire-format behavior, validation rules, transform ordering, streaming/session semantics, and transport bindings.
 
-`docs/MACHINE_READABLE_API.json` tracks the current public API surface exposed by the implementation.
+`docs/machine-readable/MACHINE_READABLE_API.json` tracks the current public API surface exposed by the implementation.
 
 `docs/CRATE_RESPONSIBILITIES.md` tracks intended Rust crate ownership boundaries.
 
@@ -19,7 +19,7 @@ It is a project-planning and implementation-guidance document, not the wire-form
 
 If this milestone document conflicts with `specification.md`, `specification.md` wins.
 
-If this milestone document appears to describe APIs differently from `docs/MACHINE_READABLE_API.json`, treat `docs/MACHINE_READABLE_API.json` as the current implementation inventory and update whichever document is stale as part of the relevant milestone.
+If this milestone document appears to describe APIs differently from `docs/machine-readable/MACHINE_READABLE_API.json`, treat `docs/machine-readable/MACHINE_READABLE_API.json` as the current implementation inventory and update whichever document is stale as part of the relevant milestone.
 
 If this milestone document appears to describe crate ownership differently from `docs/CRATE_RESPONSIBILITIES.md`, treat the relevant implementation milestone as responsible for reconciling the two documents.
 
@@ -315,7 +315,7 @@ If this milestone document appears to describe library/profile layout differentl
 * document which currently implemented `sar-core` behavior should eventually delegate to those crates
 * do not move major functionality unless required for tests
 * do not remove marker crates yet
-* update `docs/API.md` and `docs/MACHINE_READABLE_API.json` only if public API descriptions change
+* update `docs/API.md` and `docs/machine-readable/MACHINE_READABLE_API.json` only if public API descriptions change
 * full workspace validation
 
 ## M10i.1: additional-control-stream TLS_EXPORTER AEAD decrypt/auth completion
@@ -384,7 +384,7 @@ If this milestone document appears to describe library/profile layout differentl
   * API callers may explicitly force 64-bit LFH size fields
   * API callers may explicitly require 32-bit LFH size fields and receive a fail-closed error if any value exceeds `u32::MAX`
 * document this policy in `docs/API.md`
-* document this policy in `docs/MACHINE_READABLE_API.json`
+* document this policy in `docs/machine-readable/MACHINE_READABLE_API.json`
 * do not make this policy normative in `specification.md`
 * preserve existing wire format
 * no new protocol features
@@ -454,7 +454,7 @@ If this milestone document appears to describe library/profile layout differentl
 * verify `FragmentError` / `SparseError` conversions to `SarError`
 * update `docs/CRATE_RESPONSIBILITIES.md`
 * update `docs/API.md`
-* update `docs/MACHINE_READABLE_API.json`
+* update `docs/machine-readable/MACHINE_READABLE_API.json`
 * update `docs/MILESTONES.md` only after milestone status is accurate
 * no new protocol features
 * full workspace validation
@@ -487,7 +487,7 @@ If this milestone document appears to describe library/profile layout differentl
   * valid complete contiguous fragment reconstruction
 * fix `docs/API.md` so fragment and sparse helper descriptions match actual ownership and behavior
 * fix `docs/CRATE_RESPONSIBILITIES.md` so `validate_fragment_group`, `reconstruct_fragments`, `validate_sparse_extents`, and `apply_sparse_reconstruction` are described accurately
-* fix `docs/MACHINE_READABLE_API.json` so moved/removed APIs and current signatures are accurate
+* fix `docs/machine-readable/MACHINE_READABLE_API.json` so moved/removed APIs and current signatures are accurate
 * document removed APIs as removed, not as changed return types:
 
   * `sar_core::fragment::*`
@@ -577,7 +577,7 @@ If this milestone document appears to describe library/profile layout differentl
 * preserve M11a/M11b metadata behavior
 * update `docs/CRATE_RESPONSIBILITIES.md`
 * update `docs/API.md`
-* update `docs/MACHINE_READABLE_API.json`
+* update `docs/machine-readable/MACHINE_READABLE_API.json`
 * update `docs/LIBRARY_LAYOUT.md` if the crate split changes intended profile/library boundaries
 * no filesystem restoration
 * no CLI metadata behavior
@@ -634,12 +634,12 @@ If this milestone document appears to describe library/profile layout differentl
 * library parsing remains side-effect-free; only explicit CLI extraction paths perform filesystem mutation
 * update `docs/API.md`
 * update `docs/SECURITY.md`
-* update `docs/MACHINE_READABLE_API.json` if CLI/API surface changes
+* update `docs/machine-readable/MACHINE_READABLE_API.json` if CLI/API surface changes
 
 ## M11f: API inventory, conformance profile, and security-doc refresh
 
 * `docs/API.md` reconciled with post-M11e API/CLI ownership and command flags
-* `docs/MACHINE_READABLE_API.json` reconciled with current ownership and CLI metadata surface
+* `docs/machine-readable/MACHINE_READABLE_API.json` reconciled with current ownership and CLI metadata surface
 * `docs/CONFORMANCE.md` refreshed as implemented-profile coverage with known gaps
 * `docs/SECURITY.md` refreshed for M11e extraction defaults and current confinement limitations
 * `docs/CRATE_RESPONSIBILITIES.md` reconciled with M11d/M11e crate boundaries
@@ -922,7 +922,7 @@ If this milestone document appears to describe library/profile layout differentl
 * audit allocator churn, retained allocations, and repeated initialization
 * audit unsafe-code policy in parser and resource paths
 * review parser and resource fuzz-target coverage, corpus quality, and deterministic boundary-test coverage
-* record findings in `docs/M13_AUDIT_FINDINGS.json`
+* record findings in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
 * classify findings as implementation defects, implementation/specification mismatches, resource risks, fuzzing gaps, test gaps, documentation observations, positive controls, accepted design risks, or specification gaps
 * assign implementation and test remediation to the applicable M13b milestone
 * assign unresolved normative questions to M13a.7
@@ -985,7 +985,7 @@ If this milestone document appears to describe library/profile layout differentl
 * evaluate profile-defined redundant manifest options
 * document compatibility impact for specification-compliant readers
 * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
-* record findings, accepted design risks, and specification gaps in `docs/M13_AUDIT_FINDINGS.json`
+* record findings, accepted design risks, and specification gaps in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
 
 ## M13a.7: specification gap triage and normative resolution
 
@@ -993,7 +993,7 @@ If this milestone document appears to describe library/profile layout differentl
 * confirm that each gap represents missing, ambiguous, or internally inconsistent normative behavior
 * determine the intended interoperable behavior for each confirmed gap
 * update `specification.md` and related normative documentation where required
-* record the normative decision, compatibility impact, and affected implementation areas in `docs/M13_AUDIT_FINDINGS.json`
+* record the normative decision, compatibility impact, and affected implementation areas in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
 * distinguish clarification-only changes from behavioral or wire-format changes
 * define verification expectations after normative resolution
 * assign resulting implementation and test work to the applicable M13b milestone

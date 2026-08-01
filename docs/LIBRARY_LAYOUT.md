@@ -39,7 +39,7 @@ Other top-level directories:
 The following files are generated and must only be updated via their respective tooling commands.
 Do not hand-edit them:
 
-- `docs/API.md` — generated from `docs/MACHINE_READABLE_API.json` by
+- `docs/API.md` — generated from `docs/machine-readable/MACHINE_READABLE_API.json` by
   `python tools/generate_api_md.py`. Always regenerate after editing the JSON inventory.
 
 ## Current ownership highlights
