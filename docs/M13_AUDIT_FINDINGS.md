@@ -32,6 +32,7 @@ Registry status: `in_progress`
 | Scope | Status | Title |
 | --- | --- | --- |
 | `M13a.1` | `complete` | Parser, Memory, Panic, and DoS Audit |
+| `M13a.2` | `complete` | Cryptography and Secret-Handling Audit |
 
 ### M13a.1 Audit Coverage
 
@@ -45,6 +46,20 @@ Registry status: `in_progress`
 | `M13a.1-OBJ-06` | `complete` | `observations_only` | Audit unsafe usage policy |
 | `M13a.1-OBJ-07` | `complete` | `findings_recorded` | Review parser and resource fuzzing coverage and corpus quality |
 | `M13a.1-OBJ-08` | `complete` | `mixed` | Record and classify remediation inputs |
+
+### M13a.2 Audit Coverage
+
+| Objective | Status | Outcome | Title |
+| --- | --- | --- | --- |
+| `M13a.2-OBJ-01` | `complete` | `observations_only` | Audit cryptographic dependency usage |
+| `M13a.2-OBJ-02` | `complete` | `observations_only` | Audit authentication failure behavior |
+| `M13a.2-OBJ-03` | `complete` | `findings_recorded` | Audit TLS_EXPORTER SAR-AEAD key derivation |
+| `M13a.2-OBJ-04` | `complete` | `mixed` | Audit AAD binding behavior |
+| `M13a.2-OBJ-05` | `complete` | `observations_only` | Audit AEAD tag failure behavior |
+| `M13a.2-OBJ-06` | `complete` | `observations_only` | Audit constant-time handling of secret comparisons where comparison is unavoidable |
+| `M13a.2-OBJ-07` | `complete` | `observations_only` | Audit zeroization of exporter-derived material where practical |
+| `M13a.2-OBJ-08` | `complete` | `findings_recorded` | Audit logs, errors, debug APIs, and test helpers for accidental secret exposure |
+| `M13a.2-OBJ-09` | `complete` | `mixed` | Classify and track all supported M13a.2 findings |
 
 ## Findings Index
 
@@ -62,6 +77,12 @@ Registry status: `in_progress`
 | `M13-PARSER-012` | `test_gap` | `superseded` | `informational` | `deferred` | `none` | No deterministic regression test for `audit()` entry-count limit enforcement |
 | `M13-PARSER-014` | `test_gap` | `open` | `informational` | `low` | `M13b.1` | No sparse-map seeds or deterministic tests at near-limit byte and descriptor counts |
 | `M13-PARSER-015` | `documentation_gap` | `closed_no_action` | `informational` | `deferred` | `none` | Fuzz campaign records do not preserve sufficient configuration metadata |
+| `M13-CRYPTO-001` | `implementation_spec_mismatch` | `confirmed` | `low` | `high` | `M13b.2` | `TLS_EXPORTER` KMS payload parsing does not fail closed on unsupported AEAD/hash IDs or mismatched derived key lengths |
+| `M13-CRYPTO-002` | `implementation_defect` | `open` | `medium` | `medium` | `M13b.2` | CLI password handling exposes secrets through command-line arguments and inherited environment variables |
+| `M13-CRYPTO-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret containers and authentication-failure buffers are zeroized in audited crypto paths |
+| `M13-CRYPTO-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Authentication and AEAD tag failures are handled as hard fail-closed errors before downstream processing |
+| `M13-CRYPTO-005` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret-dependent comparisons are limited and use constant-time or library-internal verification paths |
+| `M13-CRYPTO-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | Cryptographic dependency selection is narrow and unsupported non-AEAD modes fail closed at dispatch |
 
 ## Finding Details
 
@@ -480,3 +501,213 @@ The gap affects reproducibility and audit-trail quality only. It does not demons
 `closed_no_action` - `2026-08-01`
 
 Closed with no action in M13a.1. The record is retained only as an audit-evidence limitation; no modification to historical fuzz campaign records is assigned within M13.
+
+### M13-CRYPTO-001: `TLS_EXPORTER` KMS payload parsing does not fail closed on unsupported AEAD/hash IDs or mismatched derived key lengths
+
+| Field | Value |
+| --- | --- |
+| Type | implementation_spec_mismatch |
+| Source milestone | M13a.2 |
+| Status | confirmed |
+| Severity | low |
+| Priority | high |
+| Owner | M13b.2 |
+| Compatibility | rejects_previously_accepted_nonconforming_input |
+
+#### Summary
+
+The `parse_tls_exporter_kms_payload()` helper validates the exporter label, context version, reserved KDF ID, and reserved flags, but it accepts any AEAD algorithm ID, any Global Header hash algorithm ID, and any nonzero `derived_key_length`. The specification requires those values to fail closed when unsupported, reserved, or not matched to the selected AEAD algorithm.
+
+#### Current Behavior
+
+`parse_tls_exporter_kms_payload()` reads `aead_algo_id`, `global_header_hash_algo_id`, and `derived_key_length` into `TlsExporterParams` without checking whether the AEAD or hash IDs are supported or reserved, and without enforcing that `derived_key_length` matches the selected AEAD algorithm. For the currently supported SAR AEAD algorithms, any positive length parses successfully even though the implementation only accepts 32-byte AEAD keys elsewhere.
+
+#### Expected Behavior
+
+TLS_EXPORTER KMS payload parsing must reject unsupported or reserved AEAD and Global Header hash algorithm IDs, and it must reject `derived_key_length` values that do not match the selected SAR AEAD algorithm before producing a parsed TLS_EXPORTER parameter set.
+
+#### Impact
+
+Nonconforming TLS_EXPORTER KMS payloads can survive initial validation and fail later during key derivation or entry processing instead of failing closed at the KMS parsing boundary. The demonstrated impact is a conformance and negative-path hardening defect; no authentication bypass is shown by the audit evidence.
+
+#### Evidence
+
+* `crates/sar-crypto/src/kms/tls_exporter.rs` (lines 147-157): The parser loads `aead_algo_id` and `global_header_hash_algo_id` but performs no registry validation before returning them in `TlsExporterParams`.
+* `crates/sar-crypto/src/kms/tls_exporter.rs` (lines 179-194): The parser rejects only zero `derived_key_length`; it does not enforce the selected AEAD algorithm's required key length.
+* `crates/sar-crypto/src/algorithm.rs` (lines 17-26 and 51-54): The currently supported SAR AEAD algorithms are `AES256_GCM` and `XCHACHA20_POLY`, both using `AEAD_KEY_SIZE = 32`, so a non-32 TLS_EXPORTER key length is inconsistent with the active implementation.
+
+#### Normative Basis
+
+* `specification.md` (Section 5.3.3, Mode 0x04 TLS_EXPORTER table (lines 246-252)): The AEAD Algo ID and Global Header Hash Algo ID fields identify the SAR registries, and Derived Key Length MUST match the selected AEAD algorithm requirements.
+* `specification.md` (Section 18.6.3 (lines 3357-3365)): Unsupported Context Version, Transport Profile ID, Key Usage ID, Global Header Hash Algo ID, AEAD Algo ID, or KDF Algo ID values MUST fail closed, and TLS exporter output length for KDF Algo ID 0x00 must equal Derived Key Length.
+
+#### Remediation
+
+* Reject TLS_EXPORTER KMS payloads whose AEAD algorithm ID or Global Header hash algorithm ID is unsupported or reserved at parse time.
+* Reject TLS_EXPORTER KMS payloads whose `derived_key_length` does not match the selected SAR AEAD algorithm requirements.
+* Preserve existing fail-closed status mapping for malformed, reserved, and unsupported TLS_EXPORTER KMS parameters.
+
+#### Verification
+
+Requirement: `required`
+
+* Add deterministic tests showing that reserved or unsupported TLS_EXPORTER AEAD algorithm IDs are rejected by `parse_tls_exporter_kms_payload()`.
+* Add deterministic tests showing that reserved or unsupported TLS_EXPORTER Global Header hash algorithm IDs are rejected by `parse_tls_exporter_kms_payload()`.
+* Add deterministic tests showing that non-matching TLS_EXPORTER `derived_key_length` values are rejected for the currently supported SAR AEAD algorithms.
+
+### M13-CRYPTO-002: CLI password handling exposes secrets through command-line arguments and inherited environment variables
+
+| Field | Value |
+| --- | --- |
+| Type | implementation_defect |
+| Source milestone | M13a.2 |
+| Status | open |
+| Severity | medium |
+| Priority | medium |
+| Owner | M13b.2 |
+| Compatibility | behavioral_change |
+
+#### Summary
+
+The CLI accepts archive passwords through `--password` arguments and the `SAR_PASSWORD` environment variable. Both channels can leak secrets through process listings, shell history, inherited environments, crash artifacts, or diagnostic collection outside the SAR code itself.
+
+#### Current Behavior
+
+The `create`, `extract`, and `verify` commands each expose a `--password` option storing plaintext in the parsed CLI struct, and `load_password()` also reads `SAR_PASSWORD` directly from the process environment before falling back to a prompt.
+
+#### Expected Behavior
+
+Secret-handling entry points should avoid requiring or encouraging archive passwords to be supplied through command-line arguments or inherited environment variables when safer interactive or non-argv secret-input paths are practical.
+
+#### Impact
+
+Local observers or operational tooling that can inspect process arguments or inherited environment state may recover archive passwords without defeating SAR cryptography. This is a concrete accidental-secret-exposure risk rather than a protocol-level authentication bypass.
+
+#### Evidence
+
+* `crates/sar-cli/src/args.rs` (lines 160-161, 176-177, and 198-199): The `Create`, `Extract`, and `Verify` CLI subcommands each accept `#[arg(long)] password: Option<String>`.
+* `crates/sar-cli/src/password.rs` (lines 9 and 39-48): `PASSWORD_ENV` is defined as `SAR_PASSWORD`, and `load_password()` prefers the explicit CLI value and then the inherited environment variable before prompting.
+
+#### Remediation
+
+* Provide at least one supported password-input path that does not place archive passwords in command-line arguments or inherited environment variables.
+* Ensure CLI secret-entry guidance and defaults do not encourage operators to expose archive passwords through argv or environment state.
+* Preserve existing archive cryptography and protocol semantics while reducing accidental secret exposure from the CLI surface.
+
+#### Verification
+
+Requirement: `required`
+
+* Demonstrate a supported password-input path for create, extract, and verify that does not require passing the archive password in argv or inherited environment variables.
+* Add regression coverage or CLI-level checks ensuring the safer password-input path remains available for encrypted archive workflows.
+
+### M13-CRYPTO-003: Secret containers and authentication-failure buffers are zeroized in audited crypto paths
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.2 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+The audited crypto code consistently wraps passwords, CEKs, and derived keys in zeroizing containers, and the AEAD decrypt paths explicitly clear plaintext work buffers before returning authentication failures.
+
+#### Evidence
+
+* `crates/sar-crypto/src/secret.rs` (lines 4-10): `SecretBytes` and `SecretString` are defined as `Zeroizing<Vec<u8>>` and `Zeroizing<String>`.
+* `crates/sar-crypto/src/aead.rs` (lines 97-103 and 124-130): Both AEAD decrypt branches call `buf.zeroize()` before returning `AuthFailed` on tag verification failure.
+* `crates/sar-crypto/src/kms/pbkdf2.rs` (lines 35-37): PBKDF2 derives the CEK into a `Zeroizing<Vec<u8>>` buffer and returns it as `SecretBytes`.
+* `crates/sar-crypto/src/kms/argon2.rs` (lines 53-56): Argon2 derives the CEK into a `Zeroizing<Vec<u8>>` buffer and returns it as `SecretBytes`.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.2: the audited crypto code uses zeroizing containers for passwords, CEKs, and derived keys, and explicitly clears plaintext work buffers before returning authentication failures.
+
+### M13-CRYPTO-004: Authentication and AEAD tag failures are handled as hard fail-closed errors before downstream processing
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.2 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+The audited archive and transport paths authenticate and decrypt before decompression or session processing, reject post-binding plaintext in TLS_EXPORTER sessions, and propagate tag or key mismatches as hard authentication failures without exposing plaintext.
+
+#### Evidence
+
+* `crates/sar-archive/src/transform.rs` (lines 218-245): `decode_payload_v2()` authenticates and decrypts first and only then calls `decode_payload()` for decompression.
+* `crates/sar-transport/src/lib.rs` (lines 1313-1320 and 1426-1433): TLS_EXPORTER-bound streams reject unencrypted post-binding entries and map additional-control-stream AEAD failures to `SarError::AuthFailed` before forwarding any plaintext.
+* `crates/sar-archive/src/transform.rs` (lines 401-440): `auth_failure_happens_before_decompression()` verifies corrupted ciphertext returns `SarError::AuthFailed` before decompression.
+* `crates/sar-transport/tests/control_stream_aad_tests.rs` (lines 199-231): `aead_failure_does_not_expose_plaintext()` verifies wrong AAD returns `AuthFailed` and never returns plaintext.
+* `crates/sar-transport/tests/tls_exporter_post_binding_tests.rs` (lines 184-315): Post-binding plaintext on both primary and additional QUIC control streams is rejected with authentication failure semantics.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.2: archive and transport call paths treat authentication and AEAD tag failures as hard errors before decompression, session processing, or plaintext release.
+
+### M13-CRYPTO-005: Secret-dependent comparisons are limited and use constant-time or library-internal verification paths
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.2 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+The audited scope does not open-code AEAD tag comparisons, and its explicit digest comparison helper uses `subtle::ConstantTimeEq` after a public length check. No additional meaningfully timing-sensitive secret comparison requiring bespoke handling was identified in the reviewed cryptographic paths.
+
+#### Evidence
+
+* `crates/sar-crypto/src/hash.rs` (lines 94-100): `ct_eq()` returns early only on length mismatch and otherwise delegates digest equality to `subtle::ConstantTimeEq`.
+* `crates/sar-crypto/src/aead.rs` (lines 91-103 and 118-130): AEAD tag verification stays inside `decrypt_inout_detached()` from the crypto libraries rather than using a handwritten byte-by-byte comparison.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.2: the audited cryptographic paths either use a constant-time digest helper or rely on crypto-library tag verification, and no additional meaningfully timing-sensitive secret comparison requiring bespoke handling was identified.
+
+### M13-CRYPTO-006: Cryptographic dependency selection is narrow and unsupported non-AEAD modes fail closed at dispatch
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.2 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+The audited workspace and `sar-crypto` crate use a focused set of high-level crypto dependencies for supported SAR functionality, and algorithm dispatch rejects unsupported or non-AEAD encryption modes instead of silently downgrading to weaker behavior.
+
+#### Evidence
+
+* `Cargo.toml` (lines 37-46): Workspace crypto dependencies are limited to AES-GCM, XChaCha20-Poly1305, SHA-2, BLAKE3, PBKDF2, Argon2, zeroize, subtle, rand_core/getrandom, and HMAC.
+* `crates/sar-crypto/Cargo.toml` (lines 8-18): `sar-crypto` consumes the workspace crypto crates directly and does not enable extra algorithm families beyond the audited SAR surface.
+* `crates/sar-crypto/src/aead.rs` (lines 31-58 and 82-134): Supported AEAD operations are implemented through the libraries' high-level `KeyInit` and `encrypt_inout_detached`/`decrypt_inout_detached` APIs.
+* `crates/sar-crypto/src/algorithm.rs` (lines 57-84): `validate_encr_algo_id()` accepts only plaintext, AES-256-GCM, and XChaCha20-Poly1305; unsupported or reserved encryption IDs fail closed.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.2: the audited SAR crypto surface uses a narrow dependency set and fail-closed algorithm dispatch rather than silently enabling unsupported non-AEAD modes.
