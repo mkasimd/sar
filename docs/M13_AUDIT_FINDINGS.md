@@ -77,8 +77,8 @@ Registry status: `in_progress`
 | `M13-PARSER-012` | `test_gap` | `superseded` | `informational` | `deferred` | `none` | No deterministic regression test for `audit()` entry-count limit enforcement |
 | `M13-PARSER-014` | `test_gap` | `open` | `informational` | `low` | `M13b.1` | No sparse-map seeds or deterministic tests at near-limit byte and descriptor counts |
 | `M13-PARSER-015` | `documentation_gap` | `closed_no_action` | `informational` | `deferred` | `none` | Fuzz campaign records do not preserve sufficient configuration metadata |
-| `M13-CRYPTO-001` | `implementation_spec_mismatch` | `confirmed` | `low` | `high` | `M13b.2` | `TLS_EXPORTER` KMS payload parsing does not fail closed on unsupported AEAD/hash IDs or mismatched derived key lengths |
-| `M13-CRYPTO-002` | `implementation_defect` | `open` | `medium` | `medium` | `M13b.2` | CLI password handling exposes secrets through command-line arguments and inherited environment variables |
+| `M13-CRYPTO-001` | `implementation_spec_mismatch` | `confirmed` | `low` | `high` | `M13b.2` | TLS_EXPORTER KMS unsupported and mismatched parameters are not validated end-to-end |
+| `M13-CRYPTO-002` | `documentation_gap` | `open` | `low` | `medium` | `M13b.2` | CLI password input warnings and guidance do not clearly steer operators away from argv/environment exposure |
 | `M13-CRYPTO-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret containers and authentication-failure buffers are zeroized in audited crypto paths |
 | `M13-CRYPTO-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Authentication and AEAD tag failures are handled as hard fail-closed errors before downstream processing |
 | `M13-CRYPTO-005` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret-dependent comparisons are limited and use constant-time or library-internal verification paths |
@@ -502,7 +502,7 @@ The gap affects reproducibility and audit-trail quality only. It does not demons
 
 Closed with no action in M13a.1. The record is retained only as an audit-evidence limitation; no modification to historical fuzz campaign records is assigned within M13.
 
-### M13-CRYPTO-001: `TLS_EXPORTER` KMS payload parsing does not fail closed on unsupported AEAD/hash IDs or mismatched derived key lengths
+### M13-CRYPTO-001: TLS_EXPORTER KMS unsupported and mismatched parameters are not validated end-to-end
 
 | Field | Value |
 | --- | --- |
@@ -516,72 +516,75 @@ Closed with no action in M13a.1. The record is retained only as an audit-evidenc
 
 #### Summary
 
-The `parse_tls_exporter_kms_payload()` helper validates the exporter label, context version, reserved KDF ID, and reserved flags, but it accepts any AEAD algorithm ID, any Global Header hash algorithm ID, and any nonzero `derived_key_length`. The specification requires those values to fail closed when unsupported, reserved, or not matched to the selected AEAD algorithm.
+`parse_tls_exporter_kms_payload()` accepts any AEAD algorithm ID, any Global Header hash algorithm ID, and any nonzero `derived_key_length`. In-repo TLS_EXPORTER consumers preserve these values in `KmsContext` but do not validate them before operational key use, so unsupported or mismatched parameters are not guaranteed to fail closed as required.
 
 #### Current Behavior
 
-`parse_tls_exporter_kms_payload()` reads `aead_algo_id`, `global_header_hash_algo_id`, and `derived_key_length` into `TlsExporterParams` without checking whether the AEAD or hash IDs are supported or reserved, and without enforcing that `derived_key_length` matches the selected AEAD algorithm. For the currently supported SAR AEAD algorithms, any positive length parses successfully even though the implementation only accepts 32-byte AEAD keys elsewhere.
+`parse_tls_exporter_kms_payload()` validates label/context/KDF-reserved/flags and only rejects zero `derived_key_length`. `aead_algo_id`, `global_header_hash_algo_id`, and nonzero `derived_key_length` are stored in `TlsExporterParams` and flow through `build_kms_context()`/`build_kms_context_for_additional_control()` into `KmsContext::TlsExporter` without in-repo registry or consistency checks. `resolve_cek()` then delegates TLS_EXPORTER handling to `external_key()` and does not validate those fields.
 
 #### Expected Behavior
 
-TLS_EXPORTER KMS payload parsing must reject unsupported or reserved AEAD and Global Header hash algorithm IDs, and it must reject `derived_key_length` values that do not match the selected SAR AEAD algorithm before producing a parsed TLS_EXPORTER parameter set.
+When TLS_EXPORTER KMS parameters are encountered, unsupported or reserved AEAD/hash IDs and derived-length/AEAD mismatches must be rejected on an end-to-end fail-closed path before operational key use or plaintext release, with status mapping consistent with SAR unsupported/reserved/invalid-length handling.
 
 #### Impact
 
-Nonconforming TLS_EXPORTER KMS payloads can survive initial validation and fail later during key derivation or entry processing instead of failing closed at the KMS parsing boundary. The demonstrated impact is a conformance and negative-path hardening defect; no authentication bypass is shown by the audit evidence.
+Unsupported AEAD/hash IDs can currently be accepted as operational KMS metadata without any guaranteed in-repo rejection. For mismatched derived lengths, rejection depends on external provider behavior: a provider that honors the mismatched length can fail later (for example `InvalidLength` at AEAD key-length checks, or `AuthFailed` on the additional-control path due to error mapping), while a provider that ignores the length can proceed without detecting the mismatch. No plaintext-release bypass was demonstrated.
 
 #### Evidence
 
-* `crates/sar-crypto/src/kms/tls_exporter.rs` (lines 147-157): The parser loads `aead_algo_id` and `global_header_hash_algo_id` but performs no registry validation before returning them in `TlsExporterParams`.
-* `crates/sar-crypto/src/kms/tls_exporter.rs` (lines 179-194): The parser rejects only zero `derived_key_length`; it does not enforce the selected AEAD algorithm's required key length.
-* `crates/sar-crypto/src/algorithm.rs` (lines 17-26 and 51-54): The currently supported SAR AEAD algorithms are `AES256_GCM` and `XCHACHA20_POLY`, both using `AEAD_KEY_SIZE = 32`, so a non-32 TLS_EXPORTER key length is inconsistent with the active implementation.
+* `crates/sar-crypto/src/kms/tls_exporter.rs` (lines 147-203): The parser records `aead_algo_id`, `global_header_hash_algo_id`, and nonzero `derived_key_length` without registry validation or AEAD/length consistency enforcement.
+* `crates/sar-archive/src/archive.rs` (lines 3359-3373 and 1452-1462): TLS_EXPORTER payloads are parsed into `KmsParams::TlsExporter` and passed to `resolve_cek`; archive entry decrypt validates LFH `encr_algo_id` and key length at AEAD use but does not validate TLS_EXPORTER AEAD/hash IDs or derived-length consistency.
+* `crates/sar-transport/src/lib.rs` (lines 1449-1453 and 1406-1433): Additional control-stream TLS_EXPORTER context parsing feeds `KmsContext::TlsExporter` for CEK resolution; parser field validation failures are mapped to `AuthFailed`, but unsupported AEAD/hash IDs and nonzero mismatched lengths are not validated in this path.
+* `crates/sar-crypto/src/provider.rs` (lines 29-67): `resolve_cek()` delegates TLS_EXPORTER material to `external_key()` and performs no AEAD/hash/derived-length validation for `KmsParams::TlsExporter`.
+* `crates/sar-crypto/src/aead.rs` (lines 26-27 and 69-70): AEAD operations enforce 32-byte key length at key use, so provider-supplied non-32 keys fail at cryptographic use time rather than TLS_EXPORTER KMS parse time.
 
 #### Normative Basis
 
-* `specification.md` (Section 5.3.3, Mode 0x04 TLS_EXPORTER table (lines 246-252)): The AEAD Algo ID and Global Header Hash Algo ID fields identify the SAR registries, and Derived Key Length MUST match the selected AEAD algorithm requirements.
-* `specification.md` (Section 18.6.3 (lines 3357-3365)): Unsupported Context Version, Transport Profile ID, Key Usage ID, Global Header Hash Algo ID, AEAD Algo ID, or KDF Algo ID values MUST fail closed, and TLS exporter output length for KDF Algo ID 0x00 must equal Derived Key Length.
+* `specification.md` (Section 5.3.3, Mode 0x04 TLS_EXPORTER table (Derived Key Length)): Derived Key Length MUST match the selected AEAD algorithm requirements.
+* `specification.md` (Section 18.6.2 (line 3314)): Unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
+* `specification.md` (Section 18.6.3 (lines 3359 and 3365)): Unsupported or reserved Global Header hash and unsupported AEAD/context/KDF values MUST fail closed.
 
 #### Remediation
 
-* Reject TLS_EXPORTER KMS payloads whose AEAD algorithm ID or Global Header hash algorithm ID is unsupported or reserved at parse time.
-* Reject TLS_EXPORTER KMS payloads whose `derived_key_length` does not match the selected SAR AEAD algorithm requirements.
-* Preserve existing fail-closed status mapping for malformed, reserved, and unsupported TLS_EXPORTER KMS parameters.
+* Enforce end-to-end validation for TLS_EXPORTER AEAD/hash registry values and derived-length/AEAD consistency before those parameters can reach operational key use.
+* Return fail-closed statuses consistent with unsupported/reserved/invalid-length semantics for rejected TLS_EXPORTER parameter combinations.
+* Add deterministic negative tests covering unsupported AEAD IDs, unsupported/reserved hash IDs, and derived-length mismatches for TLS_EXPORTER contexts exercised by in-repo consumers.
 
 #### Verification
 
 Requirement: `required`
 
-* Add deterministic tests showing that reserved or unsupported TLS_EXPORTER AEAD algorithm IDs are rejected by `parse_tls_exporter_kms_payload()`.
-* Add deterministic tests showing that reserved or unsupported TLS_EXPORTER Global Header hash algorithm IDs are rejected by `parse_tls_exporter_kms_payload()`.
-* Add deterministic tests showing that non-matching TLS_EXPORTER `derived_key_length` values are rejected for the currently supported SAR AEAD algorithms.
+* Demonstrate that unsupported/reserved TLS_EXPORTER AEAD and Global Header hash IDs are rejected on a deterministic in-repo end-to-end consumer path.
+* Demonstrate that TLS_EXPORTER derived-length/AEAD mismatches are rejected before operational cryptographic use on in-repo consumer paths.
+* Verify fail-closed status mapping for malformed/reserved/unsupported/invalid-length TLS_EXPORTER parameter failures remains explicit and stable.
 
-### M13-CRYPTO-002: CLI password handling exposes secrets through command-line arguments and inherited environment variables
+### M13-CRYPTO-002: CLI password input warnings and guidance do not clearly steer operators away from argv/environment exposure
 
 | Field | Value |
 | --- | --- |
-| Type | implementation_defect |
+| Type | documentation_gap |
 | Source milestone | M13a.2 |
 | Status | open |
-| Severity | medium |
+| Severity | low |
 | Priority | medium |
 | Owner | M13b.2 |
-| Compatibility | behavioral_change |
+| Compatibility | clarification_only |
 
 #### Summary
 
-The CLI accepts archive passwords through `--password` arguments and the `SAR_PASSWORD` environment variable. Both channels can leak secrets through process listings, shell history, inherited environments, crash artifacts, or diagnostic collection outside the SAR code itself.
+The CLI already provides a safer interactive password path via prompt fallback, but current help/docs prominently show `--password` usage and do not consistently warn about argv/environment exposure tradeoffs.
 
 #### Current Behavior
 
-The `create`, `extract`, and `verify` commands each expose a `--password` option storing plaintext in the parsed CLI struct, and `load_password()` also reads `SAR_PASSWORD` directly from the process environment before falling back to a prompt.
+`load_password()` precedence is explicit CLI `--password`, then `SAR_PASSWORD`, then interactive prompt. `create` only permits password input when encryption is enabled; `extract`/`verify` request a password only for encrypted archives. User-facing guidance and examples still emphasize `--password` and do not consistently communicate exposure differences between argv, shell history, inherited environment variables, and prompt entry.
 
 #### Expected Behavior
 
-Secret-handling entry points should avoid requiring or encouraging archive passwords to be supplied through command-line arguments or inherited environment variables when safer interactive or non-argv secret-input paths are practical.
+CLI help and documentation should explicitly document password-source precedence and clearly recommend safer password entry (interactive prompt or equivalent secret-input workflow) over argv/environment channels, including concise exposure warnings.
 
 #### Impact
 
-Local observers or operational tooling that can inspect process arguments or inherited environment state may recover archive passwords without defeating SAR cryptography. This is a concrete accidental-secret-exposure risk rather than a protocol-level authentication bypass.
+The primary gap is operational guidance: operators may default to `--password` or `SAR_PASSWORD` without clear warnings about local exposure surfaces. Exposure likelihood varies by platform, shell, and telemetry tooling; this is a real but lower-severity documentation and usability risk, not a protocol or cryptographic bypass.
 
 #### Evidence
 
@@ -590,16 +593,17 @@ Local observers or operational tooling that can inspect process arguments or inh
 
 #### Remediation
 
-* Provide at least one supported password-input path that does not place archive passwords in command-line arguments or inherited environment variables.
-* Ensure CLI secret-entry guidance and defaults do not encourage operators to expose archive passwords through argv or environment state.
-* Preserve existing archive cryptography and protocol semantics while reducing accidental secret exposure from the CLI surface.
+* Document password-source precedence (`--password` -&gt; `SAR_PASSWORD` -&gt; interactive prompt) in CLI-facing docs and help text references.
+* Add clear warnings that argv and inherited environment variables can be exposed by host/shell/process tooling, and recommend safer prompt-based or managed-secret workflows.
+* Update examples to avoid implying `--password` is the preferred default path for encrypted workflows.
 
 #### Verification
 
 Requirement: `required`
 
-* Demonstrate a supported password-input path for create, extract, and verify that does not require passing the archive password in argv or inherited environment variables.
-* Add regression coverage or CLI-level checks ensuring the safer password-input path remains available for encrypted archive workflows.
+* CLI-facing documentation and help references explicitly describe password-source precedence and safer recommended usage.
+* Examples for encrypted create/extract/verify workflows no longer imply argv or inherited environment input is the default recommended path.
+* Warnings distinguish argv exposure, shell history risk, and environment inheritance/telemetry risk without asserting identical behavior across all platforms.
 
 ### M13-CRYPTO-003: Secret containers and authentication-failure buffers are zeroized in audited crypto paths
 
