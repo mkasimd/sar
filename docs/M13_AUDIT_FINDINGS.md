@@ -149,7 +149,7 @@ Registry status: `in_progress`
 | `M13-TRANSPORT-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | `InMemoryTransport` enforces TLS_EXPORTER fail-closed behavior at the transport parsing layer for primary and attached control streams |
 | `M13-FFI-001` | `documentation_gap` | `open` | `informational` | `low` | `M13b.4` | `KeyProvider` trait callback model requires a purpose-built stable wrapper for any foreign-language binding |
 | `M13-FFI-002` | `documentation_gap` | `open` | `informational` | `low` | `M13b.4` | `SarError::Io(std::io::Error)` holds a Rust-specific owned type that cannot be directly exposed across a C or Python boundary |
-| `M13-FFI-003` | `documentation_gap` | `open` | `informational` | `low` | `M13b.4` | All QUIC-facing public APIs are `async fn` and cannot be directly bound to C or Python without a Tokio runtime wrapper |
+| `M13-FFI-003` | `documentation_gap` | `open` | `informational` | `low` | `M13b.4` | Public QUIC connection and stream I/O operations are async and require a runtime adapter for synchronous foreign wrappers |
 
 ## Finding Details
 
@@ -1328,23 +1328,23 @@ Verified during M13a.3: the in-memory recovery API documents its limitations and
 | Severity | low |
 | Priority | medium |
 | Owner | M13b.4 |
-| Compatibility | clarification_only |
+| Compatibility | documentation_only |
 
 #### Summary
 
-In `TransportStreamContext::new()`, the `ResourceLimits` passed to `StreamArchiveParser` and `SessionManager` is constructed by copying only `max_active_streams` from `TransportConfig` and applying `ResourceLimits::default()` for every other field. `TransportConfig` provides separate limits for `max_buffered_bytes_per_transport_stream`, `max_active_sar_streams`, and timing windows, but does not expose fields for per-entry output size, in-memory buffer, session memory, fragment count, or other resource-limit axes. Callers who configure `TransportConfig` have no mechanism to adjust these inner limits and no documentation explaining which limits are effective at the transport layer.
+`TransportStreamContext::new()` constructs the transport-layer `ResourceLimits` by copying only `max_active_streams` from `TransportConfig` and applying `ResourceLimits::default()` for every other field. The public transport API does not document this fixed-default boundary contract, so callers may misread `TransportConfig` as a broader resource-limit surface than the transport actually honors.
 
 #### Current Behavior
 
-`TransportStreamContext::new()` constructs `ResourceLimits { max_active_streams: config.max_active_sar_streams, ..ResourceLimits::default() }`, leaving all other `ResourceLimits` fields at their defaults regardless of caller-supplied configuration.
+The transport layer always constructs `ResourceLimits { max_active_streams: config.max_active_sar_streams, ..ResourceLimits::default() }`. `TransportConfig` documents its own fields but does not explain that the remaining parser and session `ResourceLimits` stay fixed at transport defaults.
 
 #### Expected Behavior
 
-`TransportConfig` documentation should state which `ResourceLimits` fields are effectively fixed at their defaults when operating through the transport layer, so callers understand the resource-limit surface they are responsible for overriding or relying on.
+The `TransportConfig` and `InMemoryTransport` documentation should state that the transport layer fixes all inner `ResourceLimits` fields at their defaults except `max_active_streams`, so callers understand the effective transport-layer limit contract.
 
 #### Impact
 
-Library callers supplying custom `TransportConfig` may incorrectly assume that non-stream-count resource limits are also tunable through that struct. Unexpected default limits on entry size, fragment count, or session memory may be silently applied.
+Callers may assume that configuring `TransportConfig` also changes parser or session limits that in fact remain fixed at defaults, leading to incorrect expectations about the transport-layer resource contract.
 
 #### Evidence
 
@@ -1353,8 +1353,8 @@ Library callers supplying custom `TransportConfig` may incorrectly assume that n
 
 #### Remediation
 
-* Document in `TransportConfig` which `ResourceLimits` fields are effectively fixed at their defaults within the transport layer.
-* State clearly that callers cannot tune per-entry, fragment, or session-memory limits through `TransportConfig` in the current design.
+* Document in `TransportConfig` and `InMemoryTransport` that the transport layer fixes all inner `ResourceLimits` fields at their defaults except `max_active_streams`.
+* State the effective transport-layer limit contract without implying that `TransportConfig` currently provides broader parser, fragment, or session-limit configurability.
 
 ### M13-BOUNDARY-002: `validate_archive_profile` is documented as global-header-only and does not provide entry-level algorithm, loss-tolerant, or path-safety enforcement
 
@@ -1370,7 +1370,7 @@ Library callers supplying custom `TransportConfig` may incorrectly assume that n
 
 #### Summary
 
-`validate_archive_profile` checks only global-header flags and explicitly documents that entry-level algorithm ID checks, per-entry `LOSS_TOLERANT` enforcement, and unsafe filesystem metadata rejection are not implemented. No separate entry-level profile-check API exists in `sar-archive`. The `Standard` profile variant returns a placeholder finding rather than enforcing conformance. Callers relying on `validate_archive_profile` alone have incomplete profile assurance for the entry-level requirements of `StaticArchive`, `Package`, `Backup`, and `Standard` profiles. The profile API surface does not guide callers toward completing those checks. This finding is distinct from M13-TRANSFORM-001, which addresses the missing normative algorithm table; the current finding addresses the absence of an entry-level enforcement entry point in the public API.
+`validate_archive_profile` checks only global-header flags and explicitly documents that entry-level algorithm ID checks, per-entry `LOSS_TOLERANT` enforcement, and unsafe filesystem metadata rejection are not implemented. The reviewed public `sar-archive` profile surface contains `ComplianceProfile`, `ProfileReport`, `validate_archive_profile`, and profile name conversion helpers; no reviewed public entry-iterating profile-validation entry point was identified. The `Standard` profile variant returns a placeholder finding rather than enforcing conformance. Callers relying on `validate_archive_profile` alone have incomplete profile assurance for the entry-level requirements of `StaticArchive`, `Package`, `Backup`, and `Standard` profiles. The profile API surface does not guide callers toward completing those checks. This finding is distinct from M13-TRANSFORM-001, which addresses the missing normative algorithm table; the current finding addresses the absence of a reviewed public entry-level enforcement entry point.
 
 #### Current Behavior
 
@@ -1378,7 +1378,7 @@ Library callers supplying custom `TransportConfig` may incorrectly assume that n
 
 #### Expected Behavior
 
-Either an entry-iterating profile-validation API should be documented alongside `validate_archive_profile`, or the function's documentation should prominently describe which profile requirements remain unenforced and direct callers to the layers (extraction layer, entry iteration) that enforce the remaining rules.
+Document a complete public workflow for entry-level profile validation, or provide a public entry-iterating validation entry point that reports the remaining profile checks.
 
 #### Impact
 
@@ -1387,12 +1387,12 @@ A library caller who calls `validate_archive_profile` and observes `compliant: t
 #### Evidence
 
 * `crates/sar-archive/src/profile.rs` (function `validate_archive_profile()`, `Known limitations (M12a)` docstring section): The function documents that entry-level LOSS_TOLERANT checks, algorithm ID checks, and unsafe filesystem metadata rejection are not implemented and that Standard profile validation is a placeholder.
-* `docs/machine-readable/MACHINE_READABLE_API.json` (.crates\[\] | select(.name == "sar-archive") | .api.types\[\] | select(.name == "ComplianceProfile")): Documents the public compliance profile selector; FFI notes state semantics are incomplete for `Standard`.
+* `docs/machine-readable/MACHINE_READABLE_API.json` (.crates\[\] | select(.name == "sar-archive") | {profile_functions: \[.api.functions\[\] | select(.metadata.path == "src/profile.rs") | .name\], profile_types: \[.api.types\[\] | select(.metadata.path == "src/profile.rs") | .name\]}): The public profile inventory enumerates `ComplianceProfile::canonical_name`, `ComplianceProfile::from_canonical_name`, `validate_archive_profile`, `ComplianceProfile`, and `ProfileReport`; no public entry-iterating profile-validation API is listed.
 
 #### Remediation
 
 * Document at the `validate_archive_profile` call site which profile requirements are not covered and which entry-iteration or extraction-layer checks are needed to complete profile enforcement.
-* Consider providing an entry-iterating variant or a profile-check guide in library documentation.
+* Document a complete public workflow for entry-level profile validation, or provide a public entry-iterating validation entry point that reports the remaining profile checks.
 
 ### M13-TRANSPORT-001: Transport inactivity watchdog is caller-driven and the opt-in requirement is not documented in `TransportConfig` or `InMemoryTransport`
 
@@ -1426,7 +1426,7 @@ Callers who configure `inactivity_timeout_ms` but pass `now_ms = None` get no ti
 
 * `crates/sar-transport/src/tcp.rs` (method `TcpSarConnection::process_available()`, `now_ms` parameter documentation): The docstring states that `now_ms` controls heartbeat and watchdog checks and that `None` skips time-based checks, but this opt-in is not restated at the `TransportConfig` or `InMemoryTransport` level.
 * `crates/sar-transport/src/lib.rs` (struct `TransportConfig`, fields `inactivity_timeout_ms`, `heartbeat_min_interval_ms`, `heartbeat_required_interval_ms`): These fields document their value semantics but do not state the caller-side activation requirement.
-* `crates/sar-transport/tests/tcp_buffer_tests.rs` (test function `mock_inactivity_timeout_via_explicit_time`): Test verifies that `check_inactivity` fires only at an explicit time input; no background timer is expected.
+* `crates/sar-transport/tests/tcp_buffer_tests.rs` (test function `mock_inactivity_timeout_via_explicit_time`): The test drives `check_inactivity` with explicit timestamps and verifies that the configured inactivity timeout is evaluated from those supplied values.
 
 #### Remediation
 
@@ -1489,7 +1489,7 @@ After `SESSION_INIT` processing succeeds with `KMS_TLS_EXPORTER` mode, `InMemory
 #### Evidence
 
 * `crates/sar-transport/src/lib.rs` (struct `InMemoryTransport`, field `tls_exporter_bound` and `SESSION_INIT` handling block that calls `tls_exporter_bound.insert()`): The `tls_exporter_bound` set is populated on successful `SESSION_INIT` with `KMS_TLS_EXPORTER`, and the transport subsequently rejects unencrypted entries with `SarError::AuthFailed` before any downstream processing.
-* `crates/sar-transport/tests/tls_exporter_post_binding_tests.rs` (test module `tls_exporter_post_binding_tests`): Integration tests verify that unencrypted entries received after TLS_EXPORTER binding are rejected at the transport layer.
+* `crates/sar-transport/tests/tls_exporter_post_binding_tests.rs` (test `tls_exporter_plaintext_post_binding_capabilities_is_rejected`; test `tls_exporter_additional_control_stream_plaintext_entry_is_rejected`): The first test verifies primary-stream plaintext rejection after TLS_EXPORTER binding, and the second verifies additional-control-stream plaintext rejection after TLS_EXPORTER binding.
 
 #### Resolution
 
@@ -1574,7 +1574,7 @@ Wrapper authors must independently discover the `SarStatus` mapping and message-
 * Specify how `std::io::Error` should be reduced or discarded before the status code is returned to foreign callers.
 * Describe message-buffer ownership semantics for the optional string portion of the error.
 
-### M13-FFI-003: All QUIC-facing public APIs are `async fn` and cannot be directly bound to C or Python without a Tokio runtime wrapper
+### M13-FFI-003: Public QUIC connection and stream I/O operations are async and require a runtime adapter for synchronous foreign wrappers
 
 | Field | Value |
 | --- | --- |
@@ -1588,27 +1588,27 @@ Wrapper authors must independently discover the `SarStatus` mapping and message-
 
 #### Summary
 
-All public QUIC transport methods (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require a Tokio executor. These cannot be directly bound to C or Python without a blocking adapter that owns a Tokio runtime handle, or without an event-loop integration layer. The synchronous TCP binding (`TcpSarConnection`) does not use async and is more amenable to blocking foreign wrappers. The distinction is not documented at the QUIC API level, leaving wrapper authors to discover the executor requirement independently.
+The listed QUIC connection and stream I/O APIs (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require a Tokio executor. These operations cannot be directly exposed through synchronous C or Python wrappers without a blocking adapter or event-loop integration layer. Other QUIC-facing public APIs such as `bind`, `local_addr`, `close`, `feed_stream_bytes`, `local_capabilities`, and TLS-exporter helpers are synchronous, so the gap is limited to the listed QUIC connection and stream I/O APIs. The synchronous TCP binding (`TcpSarConnection`) remains more amenable to blocking foreign wrappers. The runtime requirement is not documented at the affected QUIC APIs.
 
 #### Current Behavior
 
-All QUIC methods are async. No blocking wrapper or Tokio handle is provided. The TCP binding is synchronous and blocking.
+The listed QUIC connection and stream I/O APIs are async. No blocking wrapper or Tokio handle is provided. The TCP binding is synchronous and blocking.
 
 #### Expected Behavior
 
-QUIC API documentation should note the Tokio runtime requirement and state that direct C or Python binding requires a blocking adapter layer or runtime handle. The TCP binding should be identified as the more FFI-amenable synchronous transport option.
+The documentation for the listed QUIC connection and stream I/O APIs should note the Tokio runtime requirement and state that direct C or Python binding requires a blocking adapter layer or runtime handle. The TCP binding should be identified as the more FFI-amenable synchronous transport option.
 
 #### Impact
 
-A naive foreign binding to `QuicSarListener::accept` or `connect_quic` will not compile or execute correctly without a Tokio runtime. The runtime requirement is not surfaced in the public API documentation.
+A naive foreign binding to the listed QUIC connection and stream I/O APIs, such as `QuicSarListener::accept` or `connect_quic`, will not compile or execute correctly without a Tokio runtime. The runtime requirement is not surfaced in the public API documentation.
 
 #### Evidence
 
-* `crates/sar-transport/src/quic/connection.rs` (functions `connect_quic()`, `QuicSarListener::accept()`, `QuicSarConnection::open_sar_stream()`, `QuicSarConnection::accept_sar_stream()`, `QuicSarConnection::write_sar_bytes()`, `QuicSarConnection::read_stream_bytes()`, `QuicSarConnection::flush_pending_control_frames()`): All listed public methods are declared `pub async fn`. Docstrings do not state the Tokio runtime dependency.
+* `crates/sar-transport/src/quic/connection.rs` (functions `connect_quic()`, `QuicSarListener::accept()`, `QuicSarConnection::open_sar_stream()`, `QuicSarConnection::accept_sar_stream()`, `QuicSarConnection::write_sar_bytes()`, `QuicSarConnection::read_stream_bytes()`, `QuicSarConnection::flush_pending_control_frames()`): All listed public methods are declared `pub async fn`. Docstrings do not state the Tokio runtime dependency, while other QUIC-facing public APIs in the same module remain synchronous.
 * `crates/sar-transport/src/tcp.rs` (method `TcpSarConnection::process_available()` and `TcpSarConnection::write_all_sar_bytes()`): Synchronous blocking TCP methods. No async executor is required.
 
 #### Remediation
 
-* Document the Tokio runtime requirement in the QUIC module and on each public async method.
+* Document the Tokio runtime requirement on the listed QUIC connection and stream I/O APIs.
 * Note that `TcpSarConnection` is the synchronous transport option for blocking FFI wrappers.
-* Describe the blocking adapter or runtime handle pattern required for C or Python QUIC integration.
+* Describe the blocking adapter or runtime handle pattern required for synchronous C or Python QUIC integration.
