@@ -3,7 +3,7 @@
   "schema_version": 2,
   "project": "SAR",
   "milestone": "M13",
-  "description": "Machine-readable registry of M13 audit findings and observations for the SAR Rust reference implementation. Covers parser, memory, panic, DoS, fuzzing, and documentation findings and observations from the M13a.1 audit, and cryptography and secret-handling findings and observations from the M13a.2 audit.",
+  "description": "Machine-readable registry of M13 audit findings and observations for the SAR Rust reference implementation. Covers parser, memory, panic, DoS, fuzzing, and documentation findings and observations from the M13a.1 audit, cryptography and secret-handling findings and observations from the M13a.2 audit, and filesystem metadata and extraction safety findings and observations from the M13a.4 audit.",
   "registry_status": "in_progress",
   "source": "mixed audit",
   "generated_markdown": "docs/M13_AUDIT_FINDINGS.md",
@@ -313,6 +313,115 @@
             "M13-CRYPTO-004",
             "M13-CRYPTO-005",
             "M13-CRYPTO-006"
+          ]
+        }
+      ]
+    },
+    {
+      "milestone": "M13a.4",
+      "title": "Filesystem Metadata and Extraction Safety Audit",
+      "status": "complete",
+      "completed_date": "2026-08-01",
+      "included_artifacts": [
+        "specification.md",
+        "crates/sar-cli/src/commands/extract.rs",
+        "crates/sar-cli/src/extraction/paths.rs",
+        "crates/sar-cli/src/extraction/staging.rs",
+        "crates/sar-cli/src/extraction/metadata.rs",
+        "crates/sar-cli/src/extraction/policy.rs",
+        "crates/sar-cli/tests/cli_metadata_tests.rs",
+        "crates/sar-core/src/metadata.rs"
+      ],
+      "excluded_topics": [
+        "general parser, memory, panic, or resource-limit findings already covered by M13a.1",
+        "cryptography and secret-handling findings already covered by M13a.2",
+        "decompressor, patch, transform, sparse, FEC, or recovery resource accounting assigned to M13a.3",
+        "general crate-boundary, public API, transport attack-surface, or FFI-readiness work assigned to M13a.5",
+        "cold-storage or tape-resilience design assigned to M13a.6",
+        "normative resolution of specification gaps assigned to M13a.7",
+        "remediation assigned to M13b milestones"
+      ],
+      "notes": [
+        "M13a.4 records audit coverage and findings only; no remediation is implemented in this scope.",
+        "Open remediation findings do not prevent marking M13a.4 complete while the overall M13 registry remains in progress."
+      ],
+      "reviewed_commit": "71e35d863b6912ba1388b154eef6af36a9db960d",
+      "objectives": [
+        {
+          "id": "M13a.4-OBJ-01",
+          "title": "Audit archive path validation and normalization behavior",
+          "status": "complete",
+          "outcome": "observations_only",
+          "summary": "Archive entry names and symlink parent components are lexically validated before joining to the output tree; absolute, UNC, drive-prefixed, empty, dot, and dot-dot components are rejected, and existing symlink parents are refused.",
+          "related_findings": [
+            "M13-EXTRACT-002"
+          ]
+        },
+        {
+          "id": "M13a.4-OBJ-02",
+          "title": "Audit output-root confinement and replacement-race behavior",
+          "status": "complete",
+          "outcome": "findings_recorded",
+          "summary": "The extractor performs lexical checks but does not canonicalize or hold directory-relative handles for final create, rename, or metadata operations, so output-root symlinks and concurrent path replacement remain security-relevant.",
+          "related_findings": [
+            "M13-EXTRACT-001"
+          ]
+        },
+        {
+          "id": "M13a.4-OBJ-03",
+          "title": "Audit symlink target semantics and hardlink handling",
+          "status": "complete",
+          "outcome": "mixed",
+          "summary": "Hardlink creation is absent from the current entry model and extractor, and symlink extraction stays opt-in, but the specification does not yet resolve whether escaping or absolute symlink targets are conforming archive content or must be rejected for extraction safety.",
+          "related_findings": [
+            "M13-EXTRACT-004",
+            "M13-EXTRACT-005"
+          ]
+        },
+        {
+          "id": "M13a.4-OBJ-04",
+          "title": "Audit permission restoration and directory staging/finalization ordering",
+          "status": "complete",
+          "outcome": "observations_only",
+          "summary": "New directories are staged with a chmod to mode 0o700 that succeeds before any archive content is written (failing closed on error); directory metadata is finalized after child extraction in reverse-depth order; and restored permission modes are masked to ordinary permission bits. The initial creation via `fs::create_dir()` uses the process umask, so the directory exists briefly at a umask-determined mode before the chmod; during that window the directory is empty and other local principals with parent-directory access can observe its existence but cannot write to it under ordinary mode-bit semantics.",
+          "related_findings": [
+            "M13-EXTRACT-003"
+          ]
+        },
+        {
+          "id": "M13a.4-OBJ-05",
+          "title": "Audit owner and timestamp restoration hazards",
+          "status": "complete",
+          "outcome": "mixed",
+          "summary": "Owner and timestamp restoration are opt-in and symlink metadata application is skipped, but the underlying path-based metadata calls inherit the unresolved confinement and race issue tracked separately.",
+          "related_findings": [
+            "M13-EXTRACT-001",
+            "M13-EXTRACT-003"
+          ]
+        },
+        {
+          "id": "M13a.4-OBJ-06",
+          "title": "Audit platform-specific extraction safety branches",
+          "status": "complete",
+          "outcome": "observations_only",
+          "summary": "Non-Unix builds fail closed when symlink extraction or owner or permission restoration is requested, so the Unix-only mutation paths remain the platform-specific extraction surface reviewed here.",
+          "related_findings": [
+            "M13-EXTRACT-006"
+          ]
+        },
+        {
+          "id": "M13a.4-OBJ-07",
+          "title": "Record and classify M13a.4 remediation and normative follow-up",
+          "status": "complete",
+          "outcome": "mixed",
+          "summary": "Implementation remediation is assigned to M13b.3, normative symlink-target clarification is assigned to M13a.7, and verified controls remain owned by none.",
+          "related_findings": [
+            "M13-EXTRACT-001",
+            "M13-EXTRACT-002",
+            "M13-EXTRACT-003",
+            "M13-EXTRACT-004",
+            "M13-EXTRACT-005",
+            "M13-EXTRACT-006"
           ]
         }
       ]
@@ -1304,6 +1413,332 @@
         "decision_type": "verified_control",
         "milestone": "M13a.2",
         "summary": "Verified during M13a.2: the audited SAR crypto surface uses a narrow dependency set and fail-closed algorithm dispatch rather than silently enabling unsupported non-AEAD modes.",
+        "resolved_date": "2026-08-01"
+      }
+    },
+    {
+      "id": "M13-EXTRACT-001",
+      "title": "Extractor does not enforce canonicalized, directory-relative confinement for final filesystem mutations",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.4",
+      "areas": [
+        "filesystem",
+        "path_handling",
+        "extraction",
+        "symlink",
+        "metadata_restoration"
+      ],
+      "status": "confirmed",
+      "severity": "medium",
+      "priority": "high",
+      "confidence": "confirmed",
+      "summary": "The CLI extractor lexically validates archive names and checks existing parent components with `symlink_metadata()`, but it never canonicalizes the selected output root or final target before write, rename, chmod, chown, or timestamp operations. Because those final mutations use ordinary path-based filesystem calls, a pre-existing output-root symlink or a concurrent path-replacement race can redirect extraction effects outside the intended root.",
+      "current_behavior": "`extract_archive()` creates `output_dir` with `create_dir_all()` and then passes the raw path through `prepare_output_file_path()` and `ensure_parent_directory_path()`. Those helpers walk components with `symlink_metadata()` and `create_dir()` checks, but `write_bytes_via_temp()`, `write_sparse_payload_via_temp()`, `finalize_temp_file()`, `extract_symlink_entry()`, `apply_file_metadata()`, and `finalize_directory_metadata()` all perform their final create, rename, remove, chmod, chown, or timestamp operations through ordinary path-based APIs without canonicalizing the resolved target or holding directory-relative handles across the check/use boundary.",
+      "expected_behavior": "Before each filesystem mutation, extraction should resolve and confine the effective target beneath the selected extraction root using symlink-safe canonicalization and/or directory-relative operations so that later path replacement cannot redirect writes or metadata restoration outside the permitted tree.",
+      "impact": "An attacker who can influence pre-existing filesystem state for the chosen extraction destination, or who can concurrently replace path components inside an attacker-writable extraction tree, can redirect file creation, atomic rename, symlink creation, or post-write metadata restoration outside the intended root. If extraction is run with `--preserve-owner`, successful exploitation can also redirect privileged ownership changes to an attacker-chosen target path.",
+      "affected_artifacts": [
+        "crates/sar-cli/src/commands/extract.rs",
+        "crates/sar-cli/src/extraction/paths.rs",
+        "crates/sar-cli/src/extraction/staging.rs",
+        "crates/sar-cli/src/extraction/metadata.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/commands/extract.rs",
+          "locator": "lines 50-68 and 192-224",
+          "description": "`extract_archive()` accepts the caller-supplied `output_dir`, calls `create_dir_all()`, then performs reconstructed-file writes and final directory metadata application through raw `PathBuf` values without canonicalizing the extraction root."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/paths.rs",
+          "locator": "lines 99-179",
+          "description": "`prepare_output_file_path()` and `ensure_parent_directory_path()` join unchecked `output_dir` prefixes with lexical archive components, inspect parents with `symlink_metadata()`, and create directories with `create_dir()`/`set_permissions()`, but never prove the final resolved path remains beneath a canonical root."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/staging.rs",
+          "locator": "lines 16-27, 139-173",
+          "description": "Temporary output paths are derived from the final `Path`, opened with `create_new`, and published with `rename()` using ordinary path resolution; no directory handle or post-resolution confinement check is retained across the check/use window."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/metadata.rs",
+          "locator": "lines 25-70 and 102-154",
+          "description": "File and directory metadata restoration re-checks paths with `symlink_metadata()` but then calls `chown`, `set_file_times`, and `set_permissions` by path, so later replacement can change which inode receives the mutation."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 22.4 Path Security",
+          "description": "Before any write operation, target paths MUST be canonicalized, all symbolic links and segments MUST be resolved, and extraction MUST ensure the final path resides within the intended extraction root."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 22.4 Path Security",
+          "requirement": "Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file."
+        }
+      ],
+      "resolution_owner": "M13b.3",
+      "remediation": {
+        "owner": "M13b.3",
+        "requirements": [
+          "Constrain every extraction write, replacement, symlink creation, and metadata-restoration operation to a canonicalized extraction root so that pre-existing symlinks and later path replacement cannot redirect effects outside the permitted tree.",
+          "Eliminate the identified check/use windows in the extraction path, including temporary-file publication and post-write metadata restoration, or otherwise make those operations resolve against stable directory-relative state.",
+          "Add deterministic hostile-filesystem tests covering pre-existing output-root symlinks or equivalent confined-root setup and path-replacement attempts against both data writes and metadata restoration paths."
+        ]
+      },
+      "compatibility_impact": "preserves_compliant_inputs",
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "Demonstrate that regular-file, sparse-file, and symlink extraction refuse or correctly confine destinations when the selected extraction root itself resolves through a pre-existing symlink on the host filesystem; note that symlink parent components within the extraction tree are already rejected by existing path-walking checks (verified in M13-EXTRACT-002) and do not represent the unprotected scenario targeted by this criterion.",
+          "Demonstrate that path-replacement attempts cannot redirect temporary-file publication or post-write metadata restoration outside the extraction root.",
+          "Verify that successful extraction still restores in-root content and metadata for compliant archive names after the confinement hardening."
+        ],
+        "owner_milestone": "M13b.3"
+      }
+    },
+    {
+      "id": "M13-EXTRACT-002",
+      "title": "Archive path parsing rejects common traversal and ambiguous host-path forms before joining",
+      "finding_type": "positive_observation",
+      "source_milestone": "M13a.4",
+      "areas": [
+        "path_handling",
+        "extraction",
+        "symlink"
+      ],
+      "status": "verified",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "Archive extraction performs explicit lexical validation before joining names to the output tree. Empty names, absolute paths, UNC and verbatim prefixes, backslashes, NUL bytes, empty components, `.` components, `..` traversal, and Windows drive-prefixed components are rejected, and extraction refuses to walk through an existing symlink parent component.",
+      "affected_artifacts": [
+        "crates/sar-cli/src/extraction/paths.rs",
+        "crates/sar-cli/tests/cli_metadata_tests.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/paths.rs",
+          "locator": "lines 52-97 and 141-167",
+          "description": "`validate_relative_archive_path()` rejects absolute, UNC, drive-prefixed, backslash, NUL, empty, `.` and `..` forms, and `ensure_parent_directory_path()` refuses existing symlink parents."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-cli/tests/cli_metadata_tests.rs",
+          "locator": "lines 293-327 and 406-435",
+          "description": "CLI tests cover rejection of `../`, absolute, drive-prefixed, and UNC archive names and rejection of an existing symlink parent component during extraction."
+        }
+      ],
+      "resolution_owner": "none",
+      "compatibility_impact": "none",
+      "verification": {
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "verified_control",
+        "milestone": "M13a.4",
+        "summary": "Verified during M13a.4: lexical archive-path validation rejects common traversal and ambiguous host-path forms before extraction joins names to the output tree, and existing symlink parents are refused.",
+        "resolved_date": "2026-08-01"
+      }
+    },
+    {
+      "id": "M13-EXTRACT-003",
+      "title": "Staging chmod to 0o700 precedes child extraction; directory metadata finalization is deferred and occurs in reverse-depth order",
+      "finding_type": "positive_observation",
+      "source_milestone": "M13a.4",
+      "areas": [
+        "metadata_restoration",
+        "filesystem",
+        "extraction"
+      ],
+      "status": "verified",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applies the process umask, typically yielding mode 0o755 with the standard umask of 0o022) and then calls `fs::set_permissions(path, 0o700)` as a separate step. Content extraction for a directory proceeds only after the `set_permissions` call succeeds; if it fails, extraction halts. Pending directory metadata is applied only after child extraction completes and in reverse-depth order, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced.",
+      "affected_artifacts": [
+        "crates/sar-cli/src/extraction/paths.rs",
+        "crates/sar-cli/src/extraction/metadata.rs",
+        "crates/sar-cli/tests/cli_metadata_tests.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/paths.rs",
+          "locator": "lines 170-178",
+          "description": "`create_restrictive_directory()` calls `fs::create_dir(path)` to create the directory and then calls `fs::set_permissions(path, Permissions::from_mode(0o700))` on Unix. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with the standard umask of 0o022 the effective creation mode is 0o755. The chmod is a separate step and not atomic with creation. Content extraction proceeds only after `set_permissions` returns `Ok(())`; if it returns an error, extraction halts."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/metadata.rs",
+          "locator": "lines 25-45, 47-70, and 73-99",
+          "description": "`apply_file_metadata()` runs only after file publication, skips symlink paths, `finalize_directory_metadata()` applies directory metadata after child extraction in reverse depth order, and `apply_permissions()` masks restored modes with `0o0777`."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-cli/tests/cli_metadata_tests.rs",
+          "locator": "lines 106-159 and 366-402",
+          "description": "CLI tests verify directory permissions are applied after extraction and that restoring `0o4755` results in `0o755` on disk."
+        }
+      ],
+      "resolution_owner": "none",
+      "compatibility_impact": "none",
+      "verification": {
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "verified_control",
+        "milestone": "M13a.4",
+        "summary": "Verified during M13a.4: content extraction for a directory proceeds only after `set_permissions(0o700)` succeeds (failing closed on error), final directory metadata is deferred until children are extracted in reverse-depth order, symlink metadata application is skipped, and special mode bits are stripped from restored permissions. Directory staging uses a create-then-chmod sequence; the initial creation mode is umask-determined (typically 0o755), but the directory is empty and unwritable by other principals during that window, and extraction content is written only after the chmod to 0o700 succeeds.",
+        "resolved_date": "2026-08-01"
+      }
+    },
+    {
+      "id": "M13-EXTRACT-004",
+      "title": "Current extractor exposes no hardlink creation path",
+      "finding_type": "positive_observation",
+      "source_milestone": "M13a.4",
+      "areas": [
+        "hardlink",
+        "extraction"
+      ],
+      "status": "verified",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "The current entry model and CLI extractor handle only regular files, directories, symlinks, and empty areas. No archive entry kind or extraction branch creates hardlinks, so hardlink hazards are absent from the present extraction implementation rather than silently accepted.",
+      "affected_artifacts": [
+        "crates/sar-core/src/metadata.rs",
+        "crates/sar-cli/src/commands/extract.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/metadata.rs",
+          "locator": "lines 89-124",
+          "description": "`EntryKind` contains `RegularFile`, `Directory`, `Symlink`, and `EmptyArea` only; there is no hardlink entry kind."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/commands/extract.rs",
+          "locator": "lines 236-290",
+          "description": "`extract_non_fragment_entry()` matches only directory, symlink, regular-file, and empty-area cases; no hardlink creation path exists."
+        }
+      ],
+      "resolution_owner": "none",
+      "compatibility_impact": "none",
+      "verification": {
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "verified_control",
+        "milestone": "M13a.4",
+        "summary": "Verified during M13a.4: the current SAR CLI extraction surface has no hardlink entry model or hardlink creation branch.",
+        "resolved_date": "2026-08-01"
+      }
+    },
+    {
+      "id": "M13-EXTRACT-005",
+      "title": "Symlink target conformance and extraction-safety requirements are not normatively resolved",
+      "finding_type": "specification_gap",
+      "source_milestone": "M13a.4",
+      "areas": [
+        "symlink",
+        "path_handling",
+        "interoperability",
+        "conformance"
+      ],
+      "status": "pending_normative_resolution",
+      "severity": "not_applicable",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "The specification defines a symlink entry as payload bytes passed to the host symlink-creation utility, but it does not state whether absolute, parent-traversing, or otherwise escaping symlink targets are conforming archive content, whether compliant extractors must preserve such targets verbatim, or whether they must reject them for extraction safety. The current CLI extractor rejects those targets by applying the same relative-path policy used for archive entry names.",
+      "current_behavior": "`extract_symlink_entry()` requires `--allow-symlinks`, retrieves `entry.metadata.symlink_target`, and then calls `validate_relative_archive_path(target)` before creating the link. That rejects absolute paths, parent traversal, empty components, UNC prefixes, drive prefixes, backslashes, and dot segments for symlink targets as well as entry names.",
+      "normative_question": "For SAR v1.0 symlink entries, are absolute or parent-traversing payload targets conforming archive content that a compliant extractor should preserve verbatim, or must compliant extractors reject or rewrite such targets to preserve extraction-root confinement? How does Section 22.4 Path Security apply to symlink target payloads versus the created link pathname?",
+      "affected_artifacts": [
+        "specification.md",
+        "crates/sar-cli/src/commands/extract.rs",
+        "crates/sar-cli/src/extraction/paths.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 15.3 Definition of a symlink file",
+          "description": "The specification says symlink payload data is the target path string and MUST be passed to the host symlink creation utility, but it does not constrain whether the target may be absolute or escaping."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 22.4 Path Security",
+          "description": "Path canonicalization and root confinement are defined for write targets generally, but the section does not explicitly define whether symlink payload targets themselves must satisfy the same confinement policy."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/commands/extract.rs",
+          "locator": "lines 318-347",
+          "description": "`extract_symlink_entry()` gates symlink extraction and rejects any symlink target that fails `validate_relative_archive_path(target)` before calling `symlink(target, &out_path)`."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-cli/tests/cli_metadata_tests.rs",
+          "locator": "lines 331-362",
+          "description": "The CLI test suite codifies the current implementation choice by asserting that a symlink payload of `../escape` is rejected during extraction."
+        }
+      ],
+      "resolution_owner": "M13a.7",
+      "compatibility_impact": "unknown_pending_resolution",
+      "verification": {
+        "test_requirement": "pending_normative_resolution"
+      }
+    },
+    {
+      "id": "M13-EXTRACT-006",
+      "title": "Non-Unix builds fail closed for unsupported symlink and metadata restoration requests",
+      "finding_type": "positive_observation",
+      "source_milestone": "M13a.4",
+      "areas": [
+        "extraction",
+        "metadata_restoration",
+        "filesystem"
+      ],
+      "status": "verified",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "Regular-file and directory extraction remain available cross-platform, but non-Unix builds reject `--preserve-permissions`, `--preserve-owner`, and `--allow-symlinks` instead of attempting partial or platform-reinterpreted restoration behavior.",
+      "affected_artifacts": [
+        "crates/sar-cli/src/extraction/policy.rs",
+        "crates/sar-cli/src/commands/extract.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/extraction/policy.rs",
+          "locator": "lines 14-34",
+          "description": "`validate_extract_metadata_support()` returns `SarError::Unsupported` on non-Unix when permission restoration, owner restoration, or symlink extraction is requested."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-cli/src/commands/extract.rs",
+          "locator": "lines 350-355",
+          "description": "The non-Unix branch of `extract_symlink_entry()` also fails closed with `SarError::Unsupported` instead of attempting host-specific symlink emulation."
+        }
+      ],
+      "resolution_owner": "none",
+      "compatibility_impact": "none",
+      "verification": {
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "verified_control",
+        "milestone": "M13a.4",
+        "summary": "Verified during M13a.4: non-Unix builds fail closed for unsupported permission, owner, and symlink restoration requests instead of attempting ambiguous host-specific behavior.",
         "resolved_date": "2026-08-01"
       }
     }
