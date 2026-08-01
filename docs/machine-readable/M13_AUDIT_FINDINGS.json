@@ -336,6 +336,7 @@
         "crates/sar-fec/src/types.rs",
         "crates/sar-fec/src/xor.rs",
         "crates/sar-fec/src/rs/mod.rs",
+        "crates/sar-fec/src/rs/matrix.rs",
         "crates/sar-fragmentation/src/lib.rs",
         "crates/sar-loss-tolerant/src/lib.rs",
         "crates/sar-archive/src/archive.rs",
@@ -346,7 +347,11 @@
         "crates/sar-core/src/limits.rs",
         "crates/sar-core/src/fec.rs",
         "crates/sar-core/src/lib.rs",
-        "fuzz/fuzz_targets/transform_pipeline_fuzz.rs"
+        "fuzz/fuzz_targets/transform_pipeline_fuzz.rs",
+        "fuzz/Cargo.toml",
+        "fuzz/fuzz_targets/archive_entry_decode.rs",
+        "fuzz/fuzz_targets/archive_entry_decode_wide.rs",
+        "fuzz/fuzz_targets/archive_logical_files.rs"
       ],
       "excluded_topics": [
         "general parser, memory, panic, or resource-limit findings already covered by M13a.1",
@@ -367,7 +372,7 @@
           "title": "Audit decompressor setup limits and decoded output bounds",
           "status": "complete",
           "outcome": "mixed",
-          "summary": "Decompressor decoded output is bounded by max_output_size via copy_bounded before any decompressed byte reaches the caller; algorithm IDs are validated before decoder construction; and the STORE, DEFLATE, and ZSTD paths all route through the same bounded copy path. Decoder internal working memory (library state for Zstd and Deflate) is not tracked by SAR ResourceLimits and its documentation does not mention this distinction; this is recorded as a closed observation.",
+          "summary": "Decompressor decoded output is bounded by max_output_size via copy_bounded before any decompressed byte reaches the caller; algorithm IDs are validated before decoder construction; and the STORE, DEFLATE, and ZSTD paths all route through the same bounded copy path. SAR documentation does not currently state that decoder library-internal working memory is outside the documented ResourceLimits surface; that documentation gap is recorded in M13-TRANSFORM-008.",
           "related_findings": [
             "M13-TRANSFORM-002",
             "M13-TRANSFORM-008"
@@ -378,7 +383,7 @@
           "title": "Audit patch and delta setup limits",
           "status": "complete",
           "outcome": "mixed",
-          "summary": "BSDIFF and VCDIFF limits (patch size, block counts, output size) are correctly derived from unified ResourceLimits via adapter functions before patch application. No fuzz target exercises BSDIFF or VCDIFF application with attacker-controlled base plus patch inputs; that gap is recorded.",
+          "summary": "BSDIFF and VCDIFF limits (patch size, block counts, output size) are correctly derived from unified ResourceLimits via adapter functions before patch application. However, the complete fuzz target inventory does not meaningfully reach BSDIFF or VCDIFF patch application with attacker-controlled base-plus-patch inputs, and no fuzz target reaches the archive-level repair APIs; that narrowed gap is recorded in M13-TRANSFORM-007.",
           "related_findings": [
             "M13-TRANSFORM-003",
             "M13-TRANSFORM-007"
@@ -432,7 +437,7 @@
           "title": "Audit in-memory recovery API limitations",
           "status": "complete",
           "outcome": "mixed",
-          "summary": "The repair_archive API is explicitly documented as an in-memory API and applies max_recovery_protected_range and max_repair_working_set bounds before repair execution. However, the working set calculation omits the repaired output Vec (approximately archive_bytes.len() bytes), underestimating peak retained memory.",
+          "summary": "The repair_archive API is explicitly documented as an in-memory API and applies max_archive_size, max_recovery_protected_range, and a partial max_repair_working_set check before repair execution. The checked formula counts the caller-owned archive input but omits the repaired full-archive output at the repaired-output peak, so total simultaneous retained memory is undercounted.",
           "related_findings": [
             "M13-RECOVERY-001",
             "M13-RECOVERY-003"
@@ -453,7 +458,7 @@
           "title": "Record and classify M13a.3 remediation and normative follow-up",
           "status": "complete",
           "outcome": "mixed",
-          "summary": "Implementation resource risks and fuzzing gaps are assigned to M13b.2. The per-profile algorithm normative gap is assigned to M13a.7. Verified controls and closed observations are owned by none.",
+          "summary": "Implementation resource risks, fuzzing gaps, and documentation remediation identified in M13a.3 are assigned to M13b.2. The per-profile algorithm normative gap is assigned to M13a.7. Verified controls remain owned by none.",
           "related_findings": [
             "M13-RECOVERY-001",
             "M13-TRANSFORM-001",
@@ -1897,7 +1902,7 @@
     },
     {
       "id": "M13-RECOVERY-001",
-      "title": "`repair_archive` working set check omits the `repaired` output buffer allocation",
+      "title": "`repair_archive` undercounts total live memory against `max_repair_working_set` at the repaired-output peak",
       "finding_type": "resource_risk",
       "source_milestone": "M13a.3",
       "areas": [
@@ -1908,9 +1913,9 @@
       "severity": "medium",
       "priority": "medium",
       "confidence": "confirmed",
-      "summary": "In `repair_archive`, the working set estimate sums `archive_bytes.len() + 2 * protected_range.length + tlv_value.len()` bytes and checks that against `max_repair_working_set`. A second check at line 470 checks only `archive_bytes.len()`. The `repaired` output Vec, allocated with capacity `archive_bytes.len()` bytes after both checks, is not included in either estimate. At peak, the process simultaneously holds input archive bytes (X bytes), FEC-recovered protected range (P bytes), and repaired output archive (approximately X bytes), totalling approximately 2X + P bytes. Under default limits (max_archive_size = 16 GiB, max_repair_working_set = 2 GiB), peak can reach approximately 32 GiB + protected_range.length while the check allows only 2 GiB.",
-      "current_behavior": "At lines 414-420 of `crates/sar-archive/src/recovery.rs`, the working set is computed as `archive_bytes.len() + plan.protected_range.length + tlv_value.len() + plan.protected_range.length` and checked against `max_repair_working_set`. A second `check_repair_working_set` at lines 470-473 checks only `archive_bytes.len()`. The `repaired` Vec with capacity `archive_bytes.len()` is then allocated at line 474 without any additional limit check. Peak simultaneously retained memory is: input `archive_bytes` (X bytes) + FEC `recovered` output (P bytes, where P = `protected_range.length`) + `repaired` output archive (approximately X bytes) = approximately 2X + P bytes. The check accounts for only X + 2P + T bytes (where T = `tlv_value.len()`), underestimating peak by approximately X - P - T bytes for any archive larger than its protected range plus TLV data.",
-      "impact": "A caller passing a large archive to `repair_archive` can cause peak retained memory of approximately 2 * archive_bytes.len() + protected_range.length bytes, which is not bounded by `max_repair_working_set`. Under default ResourceLimits (max_archive_size = 16 GiB, max_repair_working_set = 2 GiB), the `repaired` allocation can reach approximately max_archive_size bytes (16 GiB) independent of the configured max_repair_working_set. Callers enforcing max_archive_size before calling repair_archive cannot prevent peak memory from exceeding max_repair_working_set when the archive is larger than max_repair_working_set / 2.",
+      "summary": "In `repair_archive`, the checked working-set formula is `archive_bytes.len() + 2 * protected_range.length + tlv_value.len()`. The live retained allocations at the repaired-output peak are the caller-owned input archive `X`, the recovered protected-range output `P`, and the repaired full-archive output `X`, for an actual simultaneous retained total of `2X + P` bytes. The check therefore omits the repaired output allocation while also counting one non-existent copied protected-range buffer, and it can pass even when total simultaneous retained memory exceeds `max_repair_working_set`.",
+      "current_behavior": "Live-allocation timeline: (1) after `parse_archive_layout`, `repair_archive` retains the caller-owned `archive_bytes` slice (`X` bytes, bounded by `max_archive_size`) and SAR-owned cloned RECOVERY TLV value storage inside `layout.recovery_tlvs` (`R` bytes total across all recovery TLVs, bounded indirectly by `max_cd_bytes`, `max_tlv_count`, `max_tlv_bytes`, and `max_fec_value_bytes`); (2) after selecting the matching TLV and building `erasure_indices`, no copied archive/protected-range buffer is allocated because `protected_bytes` and `tlv_value` are borrows into existing storage, while `erasure_indices` remains live only through the recovery call and is bounded indirectly by `max_recovery_protected_range` and the validated block/symbol size; (3) during FEC recovery, SAR allocates the recovered protected-range output (`P` bytes, bounded by `max_recovery_protected_range`) plus codec-specific temporary vectors that are freed before output rebuilding; (4) when rebuilding the repaired archive, `Vec::with_capacity(archive_bytes.len())` allocates a second full-archive buffer (`X` bytes, the allocation that `max_repair_working_set` is intended to police at this phase) while the caller input slice and recovered protected-range output are still live. The checked formula at lines 414-420 is `X + 2P + T` (where `T = tlv_value.len()`), but the repaired-output peak is `X + P + X = 2X + P`; the undercount at that peak is `X - P - T` bytes whenever `X > P + T`.",
+      "impact": "Because the implementation counts the caller-owned archive input inside the checked formula, the documented/implemented intent of `max_repair_working_set` is to bound total simultaneous retained memory for the in-memory repair operation rather than only SAR-owned incremental allocations. The current check can still pass while that total is exceeded. Concrete passing case: `max_archive_size = 100 MiB`, `max_recovery_protected_range = 32 MiB`, protected range `P = 32 MiB`, archive size `X = 100 MiB`, matching RECOVERY TLV `T = 1 MiB`, and `max_repair_working_set = 165 MiB`. Existing checked estimate: `X + 2P + T = 100 + 64 + 1 = 165 MiB`, so the current check passes. Actual retained memory at the repaired-output peak: caller-owned input `X = 100 MiB` plus SAR-owned recovered protected-range output `P = 32 MiB` plus SAR-owned repaired archive output `X = 100 MiB`, totalling `232 MiB`, which exceeds the 165 MiB working-set bound.",
       "affected_artifacts": [
         "crates/sar-archive/src/recovery.rs",
         "crates/sar-core/src/limits.rs"
@@ -1919,20 +1924,38 @@
         {
           "kind": "source_code",
           "artifact": "crates/sar-archive/src/recovery.rs",
-          "locator": "lines 414-420",
-          "description": "Working set computed as `archive_bytes.len() + plan.protected_range.length + tlv_value.len() + plan.protected_range.length` (input + 2 * protected range + TLV) and checked against `max_repair_working_set`. The `repaired` Vec of capacity `archive_bytes.len()` bytes is not included."
+          "locator": "lines 183-188 and 393-420",
+          "description": "`parse_archive_layout` clones every RECOVERY TLV value into `layout.recovery_tlvs`; `repair_archive` then borrows the matching TLV and computes the checked formula as `archive_bytes.len() + protected_range.length + tlv_value.len() + protected_range.length`. `protected_bytes` is only a slice into `archive_bytes`, so one checked `protected_range.length` term does not correspond to a live copied buffer."
         },
         {
           "kind": "source_code",
           "artifact": "crates/sar-archive/src/recovery.rs",
-          "locator": "lines 470-477",
-          "description": "Second `check_repair_working_set` checks only `archive_bytes.len()` bytes. Immediately after, `Vec::with_capacity(archive_bytes.len())` allocates the full output archive without inclusion in either check. Peak simultaneous allocations are input + recovered + repaired."
+          "locator": "lines 422-487",
+          "description": "`erasure_indices` is built before FEC recovery and then passed by reference into the codec. After recovery returns, `Vec::with_capacity(archive_bytes.len())` allocates the repaired full-archive output while the caller-owned input archive slice and the recovered protected-range output remain live, making the repaired-output peak `archive_bytes.len() + recovered.len() + archive_bytes.len()`."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-fec/src/xor.rs",
+          "locator": "lines 307-385",
+          "description": "XOR recovery allocates `out = vec![0u8; total_data_len]` for the recovered protected-range output, plus temporary `block_buf`, per-stripe erasure vectors, and per-stripe recovered blocks. The temporary vectors are local to recovery and are released before `repair_archive` allocates the repaired full-archive output."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-fec/src/rs/mod.rs",
+          "locator": "lines 404-528",
+          "description": "RS recovery allocates `out = vec![0u8; total_data_len]` for the recovered protected-range output plus temporary symbol buffers, RHS vectors, selected-parity vectors, and recovered-symbol vectors. Those codec temporaries are freed before `repair_archive` allocates the repaired full-archive output, so they are not live at the repaired-output peak."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-fec/src/rs/matrix.rs",
+          "locator": "lines 64-149",
+          "description": "RS matrix inversion/materialization allocates the augmented inversion matrix and result vectors inside recovery. These allocations are local to `recover` and are released before `repair_archive` allocates the repaired full-archive output."
         },
         {
           "kind": "source_code",
           "artifact": "crates/sar-core/src/limits.rs",
-          "locator": "lines 170-177 and 246-252",
-          "description": "`max_repair_working_set` defaults to 2 GiB; `max_archive_size` defaults to 16 GiB. The unaccounted `repaired` allocation can approach `max_archive_size` bytes independently of `max_repair_working_set`."
+          "locator": "lines 171-177 and 675-685",
+          "description": "`max_repair_working_set` is documented as the maximum working-set byte size for archive-level repair operations, and `check_repair_working_set` rejects values only when the supplied byte estimate exceeds that configured limit."
         }
       ],
       "compatibility_impact": "preserves_compliant_inputs",
@@ -1940,16 +1963,16 @@
       "remediation": {
         "owner": "M13b.2",
         "requirements": [
-          "Include the `repaired` output buffer allocation (approximately `archive_bytes.len()` bytes) in the working set estimate before allocating it, so that the sum of input, recovered range, and output bytes is checked against `max_repair_working_set`.",
-          "Ensure the combined peak allocation for input archive, FEC recovered range, and repaired output is bounded by `max_repair_working_set` before any allocation that would cause the total to exceed the limit.",
-          "Add a deterministic test verifying that `repair_archive` returns `LimitExceeded` when the sum of input, recovered range, and output bytes would exceed a configured `max_repair_working_set`."
+          "Recompute the repair working-set check from real concurrent lifetimes: include the caller-owned input archive bytes already counted by the API contract, the recovered protected-range output, and the repaired full-archive output that is allocated with `Vec::with_capacity(archive_bytes.len())`.",
+          "Remove or justify any checked terms that do not correspond to live retained allocations at the phase being bounded (for example, the current extra protected-range term) so the enforced formula matches actual simultaneous retained memory.",
+          "Add a deterministic test that demonstrates a configuration where the current estimate `X + 2P + T` would pass but the corrected live-allocation accounting rejects repair before allocating the repaired archive output."
         ]
       },
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [
-          "Deterministic test verifies `repair_archive` returns `LimitExceeded` when archive_bytes.len() + protected_range.length + archive_bytes.len() exceeds `max_repair_working_set`.",
-          "Successful repair completes when the corrected peak estimate is within the configured limit."
+          "Deterministic test verifies `repair_archive` returns `LimitExceeded` for a case where the old estimate `X + 2P + T` would pass but the repaired-output peak `2X + P` would exceed `max_repair_working_set`.",
+          "Successful repair still completes when the corrected live-allocation estimate remains within the configured limit."
         ],
         "owner_milestone": "M13b.2"
       }
@@ -2267,7 +2290,7 @@
     },
     {
       "id": "M13-TRANSFORM-007",
-      "title": "No fuzz targets exercise BSDIFF or VCDIFF application with attacker-controlled base and patch inputs, or archive-level repair",
+      "title": "No fuzz target meaningfully reaches BSDIFF/VCDIFF patch application or the archive-level repair APIs",
       "finding_type": "fuzzing_gap",
       "source_milestone": "M13a.3",
       "areas": [
@@ -2279,26 +2302,61 @@
       "severity": "low",
       "priority": "low",
       "confidence": "confirmed",
-      "summary": "`transform_pipeline_fuzz.rs` explicitly documents that it does not cover delta patch algorithms requiring a base object. The `archive_entry_decode` fuzz family also omits delta path coverage (returns `BaseMissing` when no `delta_base` is configured). No fuzz target exercises `apply_bsdiff`, `apply_vcdiff`, or `repair_archive` with attacker-controlled base, patch, or archive inputs. Resource limit enforcement in BSDIFF control triple counting, VCDIFF window and instruction counting, and archive repair working set checks therefore lacks fuzz coverage.",
-      "impact": "Off-by-one errors, overflow conditions, or limit evasions in BSDIFF, VCDIFF, or archive repair resource accounting are not exercised by any fuzz target. Without fuzz coverage, such conditions could remain latent through static review and unit tests.",
+      "summary": "The complete fuzz inventory listed in `fuzz/Cargo.toml` contains no target that directly calls `apply_bsdiff`, `apply_vcdiff`, `inspect_recovery_metadata`, `plan_archive_repair`, or `repair_archive`. The relevant archive decode targets (`archive_entry_decode`, `archive_entry_decode_wide`, `archive_logical_files`, and `transform_pipeline_fuzz`) all use `ArchiveReaderOptions::default()` for `delta_base`, so VCDIFF/BSDIFF entries can at most reach the pre-dispatch `BaseMissing` checks and do not meaningfully fuzz patch application with attacker-controlled base-plus-patch inputs. The archive-level repair APIs are not reachable from any current fuzz target.",
+      "impact": "Patch-engine edge cases in `apply_bsdiff` and `apply_vcdiff` and recovery-orchestration edge cases in `inspect_recovery_metadata`, `plan_archive_repair`, and `repair_archive` are not exercised by the current fuzz harness set. Coverage today reaches at most the archive-reader preconditions that reject missing delta bases, leaving parser/resource-accounting interactions inside BSDIFF, VCDIFF, and archive repair dependent on review and deterministic tests alone.",
       "affected_artifacts": [
+        "fuzz/Cargo.toml",
         "fuzz/fuzz_targets/transform_pipeline_fuzz.rs",
+        "fuzz/fuzz_targets/archive_entry_decode.rs",
+        "fuzz/fuzz_targets/archive_entry_decode_wide.rs",
+        "fuzz/fuzz_targets/archive_logical_files.rs",
+        "crates/sar-archive/src/archive.rs",
+        "crates/sar-archive/src/recovery.rs",
         "crates/sar-delta/src/bsdiff.rs",
-        "crates/sar-delta/src/vcdiff.rs",
-        "crates/sar-archive/src/recovery.rs"
+        "crates/sar-delta/src/vcdiff.rs"
       ],
       "evidence": [
         {
           "kind": "fuzz_target",
+          "artifact": "fuzz/Cargo.toml",
+          "locator": "lines 32-185",
+          "description": "The complete fuzz inventory is declared here as 22 cargo-fuzz bins. None of the registered targets is a dedicated BSDIFF, VCDIFF, or archive-repair harness, and no target name corresponds to `inspect_recovery_metadata`, `plan_archive_repair`, or `repair_archive`."
+        },
+        {
+          "kind": "fuzz_target",
           "artifact": "fuzz/fuzz_targets/transform_pipeline_fuzz.rs",
-          "locator": "lines 28-33",
-          "description": "Comment explicitly lists 'Delta patch algorithms requiring a base object' under 'What this target does NOT cover', confirming deliberate exclusion of delta paths from fuzz coverage."
+          "locator": "lines 28-33 and 69-93",
+          "description": "This target explicitly excludes \u201cDelta patch algorithms requiring a base object\u201d and only drives `ArchiveReader` entry walking under bounded limits, so it does not reach BSDIFF/VCDIFF application."
+        },
+        {
+          "kind": "fuzz_target",
+          "artifact": "fuzz/fuzz_targets/archive_entry_decode.rs",
+          "locator": "lines 4-12 and 48-70",
+          "description": "This target documents that it \u201cdoes not require ... external delta bases\u201d and constructs `ArchiveReaderOptions` with `..ArchiveReaderOptions::default()`, so it never supplies `delta_base` while walking entries."
+        },
+        {
+          "kind": "fuzz_target",
+          "artifact": "fuzz/fuzz_targets/archive_entry_decode_wide.rs",
+          "locator": "lines 4-12 and 48-70",
+          "description": "The wide archive-entry target follows the same call path as `archive_entry_decode.rs` with larger limits, but it also leaves `delta_base` unset and therefore cannot meaningfully reach BSDIFF/VCDIFF application."
+        },
+        {
+          "kind": "fuzz_target",
+          "artifact": "fuzz/fuzz_targets/archive_logical_files.rs",
+          "locator": "lines 40-55",
+          "description": "This target drives `ArchiveReader::read_all_logical_files` under default reader options, so any VCDIFF/BSDIFF entry still lacks a supplied delta base."
         },
         {
           "kind": "source_code",
-          "artifact": "crates/sar-delta/src/bsdiff.rs",
-          "locator": "lines 46-94",
-          "description": "`BsdiffLimits` struct with six independent bounds for patch size, control bytes, diff bytes, extra bytes, control triple count, and target size; no dedicated fuzz target calls `apply_bsdiff` with arbitrary base and patch inputs."
+          "artifact": "crates/sar-archive/src/archive.rs",
+          "locator": "lines 629-645 and 1500-1545",
+          "description": "`ArchiveReaderOptions` defaults `delta_base` to `None`. In `ArchiveReader::next_entry`, the VCDIFF and BSDIFF branches return `SarError::BaseMissing` when `delta_base_hash` is all-zero or `self.options.delta_base` is absent, before `apply_vcdiff` or `apply_bsdiff` is called."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-archive/src/recovery.rs",
+          "locator": "lines 209-487",
+          "description": "The archive-level recovery API surface (`inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`) is implemented here as standalone functions rather than through `ArchiveReader`; no current fuzz target calls these functions directly or indirectly."
         }
       ],
       "compatibility_impact": "none",
@@ -2306,8 +2364,9 @@
       "remediation": {
         "owner": "M13b.2",
         "requirements": [
-          "Add a dedicated fuzz target that calls `apply_bsdiff` and `apply_vcdiff` with arbitrary base and patch byte inputs under representative `BsdiffLimits` and `VcdiffLimits`.",
-          "Add a dedicated fuzz target or extend an existing target to exercise `repair_archive` with arbitrary archive bytes and erasure index inputs under bounded `ResourceLimits`."
+          "Add dedicated fuzz coverage for BSDIFF patch application with attacker-controlled base bytes and patch bytes under bounded `BsdiffLimits`.",
+          "Add dedicated fuzz coverage for VCDIFF patch application with attacker-controlled base bytes and patch bytes under bounded `VcdiffLimits`.",
+          "Add a separate archive-repair fuzz target that exercises `inspect_recovery_metadata`, `plan_archive_repair`, and `repair_archive` with bounded `ResourceLimits` and an input model that can vary both archive bytes and erasure descriptions."
         ]
       },
       "verification": {
@@ -2316,7 +2375,7 @@
     },
     {
       "id": "M13-TRANSFORM-008",
-      "title": "Decompressor library-internal working memory is not tracked by SAR `ResourceLimits`",
+      "title": "SAR documentation does not state that decompressor internal memory is outside `ResourceLimits`",
       "finding_type": "documentation_gap",
       "source_milestone": "M13a.3",
       "areas": [
@@ -2324,12 +2383,12 @@
         "resource_limits",
         "documentation"
       ],
-      "status": "closed_no_action",
+      "status": "open",
       "severity": "informational",
-      "priority": "deferred",
+      "priority": "low",
       "confidence": "confirmed",
-      "summary": "`DecompressionOptions.max_output_size` is documented as 'Hard cap for decoded bytes to prevent decompression bombs'. SAR `ResourceLimits` has no field for decompressor library-internal working memory (e.g., the Zstd window buffer or Deflate sliding window). Decoder working memory is managed by the decompression libraries independently of SAR-configured limits. No safety defect was demonstrated: Zstd and Deflate library defaults bound decoder working memory at a size comparable to or smaller than `max_in_memory_buffer` defaults under normal input.",
-      "impact": "Operators reviewing `ResourceLimits` or `DecompressionOptions` cannot determine from the SAR API alone what decoder working memory will be allocated for a given input. Documented limits cover decoded output bytes but not library-internal state. No safety defect was demonstrated under the current default library configuration.",
+      "summary": "`DecompressionOptions.max_output_size` is documented as a decoded-output cap, and SAR constructs both Deflate and Zstd decoders without a SAR-specific decoder-memory budget parameter. The public `ResourceLimits` surface does not expose a field dedicated to decoder library-internal state. Current SAR documentation therefore does not clearly state that decoded output is bounded by SAR limits while decoder-library working memory remains outside any explicitly documented SAR `ResourceLimits` field.",
+      "impact": "Operators and integrators reading the SAR limit surface can tell how decoded output is bounded, but they cannot tell from SAR documentation whether decoder-library internal state is separately bounded, unbounded, or intentionally delegated to dependency defaults. The evidence supports a documentation deficiency, not a demonstrated safety defect.",
       "affected_artifacts": [
         "crates/sar-compression/src/lib.rs",
         "crates/sar-core/src/limits.rs"
@@ -2338,26 +2397,39 @@
         {
           "kind": "source_code",
           "artifact": "crates/sar-compression/src/lib.rs",
-          "locator": "lines 73-77",
-          "description": "`DecompressionOptions` struct documents `max_output_size` as 'Hard cap for decoded bytes to prevent decompression bombs'; no field documents or bounds decompressor library-internal working memory."
+          "locator": "lines 72-76",
+          "description": "`DecompressionOptions` documents only `max_output_size` as a hard cap for decoded bytes to prevent decompression bombs; it does not describe any bound on decoder-library internal memory."
         },
         {
           "kind": "source_code",
           "artifact": "crates/sar-compression/src/lib.rs",
-          "locator": "lines 155-157",
-          "description": "`zstd::stream::Decoder::new(input)` is constructed without any window size or memory limit parameter; decompressor working memory bounds are determined by Zstd library defaults, not by SAR-configured ResourceLimits."
+          "locator": "lines 146-158",
+          "description": "The DEFLATE path constructs `DeflateDecoder::new(input)` and the ZSTD path constructs `zstd::stream::Decoder::new(input)` without passing a SAR-defined decoder-memory limit parameter."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/limits.rs",
+          "locator": "lines 106-119",
+          "description": "`ResourceLimits` documents decoded-entry, per-buffer, and total-pipeline bounds, but it does not define a decoder-library-memory-specific field or document such memory as covered by an existing field."
         }
       ],
       "compatibility_impact": "documentation_only",
-      "resolution_owner": "none",
+      "resolution_owner": "M13b.2",
       "verification": {
-        "test_requirement": "not_required"
+        "test_requirement": "not_required",
+        "acceptance_criteria": [
+          "Public SAR documentation distinguishes decoded-output limits from decoder-library internal working memory.",
+          "Documentation identifies whether decoder-library internal memory is delegated to dependency defaults or governed by a future SAR-specific limit."
+        ],
+        "owner_milestone": "M13b.2"
       },
-      "resolution": {
-        "decision_type": "closed_no_action",
-        "milestone": "M13a.3",
-        "summary": "Closed with no action in M13a.3: library-internal decompressor working memory is bounded by Zstd and Deflate library defaults, not by SAR-configured limits. No safety defect was demonstrated. The observation is retained as a documentation note.",
-        "resolved_date": "2026-08-01"
+      "remediation": {
+        "owner": "M13b.2",
+        "requirements": [
+          "Document in the public compression/recovery API surface that `max_output_size` bounds decoded output bytes only.",
+          "Document that DEFLATE/ZSTD decoder library-internal working memory is not currently represented by a dedicated SAR `ResourceLimits` field.",
+          "If a future SAR-specific decoder-memory control is added, document which field governs it and how it interacts with decoded-output limits."
+        ]
       }
     },
     {
@@ -2427,7 +2499,7 @@
       "severity": "informational",
       "priority": "low",
       "confidence": "confirmed",
-      "summary": "The `repair_archive` API is explicitly documented as an in-memory-only API and states that callers must enforce `max_archive_size`, `max_recovery_protected_range`, and `max_repair_working_set` before passing untrusted archives. `check_archive_size` is called in `parse_archive_layout`, `check_recovery_protected_range` is called in `inspect_recovery_metadata`, and `check_repair_working_set` is called before FEC recovery and before output allocation. The working set accounting gap (omitting the repaired output allocation) is separately tracked in M13-RECOVERY-001.",
+      "summary": "The `repair_archive` API is explicitly documented as an in-memory-only API and states that callers must enforce `max_archive_size`, `max_recovery_protected_range`, and `max_repair_working_set` before passing untrusted archives. `check_archive_size` is called in `parse_archive_layout`, `check_recovery_protected_range` is called in `inspect_recovery_metadata`, and `check_repair_working_set` is called before FEC recovery and again before output allocation. Those checks provide only a partial repair working-set bound because the repaired-output peak accounting gap is tracked separately in M13-RECOVERY-001.",
       "notes": [
         "The working set calculation underestimates peak by approximately archive_bytes.len() bytes; see M13-RECOVERY-001."
       ],
@@ -2457,7 +2529,7 @@
       "resolution": {
         "decision_type": "verified_control",
         "milestone": "M13a.3",
-        "summary": "Verified during M13a.3: the in-memory recovery API documents its limitations and applies archive-size, protected-range, and partial working-set bounds; the working set accounting gap is tracked separately in M13-RECOVERY-001.",
+        "summary": "Verified during M13a.3: the in-memory recovery API documents its limitations and applies archive-size, protected-range, and partial working-set bounds; the repaired-output peak accounting gap is tracked separately in M13-RECOVERY-001.",
         "resolved_date": "2026-08-01"
       }
     }
