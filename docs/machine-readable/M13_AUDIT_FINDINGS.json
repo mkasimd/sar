@@ -2416,12 +2416,7 @@
       "compatibility_impact": "documentation_only",
       "resolution_owner": "M13b.2",
       "verification": {
-        "test_requirement": "not_required",
-        "acceptance_criteria": [
-          "Public SAR documentation distinguishes decoded-output limits from decoder-library internal working memory.",
-          "Documentation identifies whether decoder-library internal memory is delegated to dependency defaults or governed by a future SAR-specific limit."
-        ],
-        "owner_milestone": "M13b.2"
+        "test_requirement": "not_required"
       },
       "remediation": {
         "owner": "M13b.2",
