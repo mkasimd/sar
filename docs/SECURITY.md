@@ -158,6 +158,11 @@ Please include, privately where possible:
 * whether the issue affects parsing, extraction, crypto/authentication, transport/session behavior, or resource exhaustion
 * whether the issue requires malicious input, malformed archives, hostile filesystem state, or network interaction
 
+## M13 audit findings
+
+M13a.1 parser, memory, panic, and DoS audit is in progress.  Tracked findings
+are recorded in `docs/M13_AUDIT_FINDINGS.md`.
+
 ## Future security work
 
 Planned future work includes:

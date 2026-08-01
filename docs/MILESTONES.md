@@ -846,8 +846,6 @@ If this milestone document appears to describe library/profile layout differentl
 * document unresolved or long-running fuzzing work explicitly
 * this pass establishes initial fuzzing execution only; it does not claim exhaustive fuzzing, production hardening, or security-audit completion
 
-# Current and future milestones
-
 ## M12b.5: extended malicious corpus and long-running fuzzing
 
 * expand transform pipeline fuzzing
@@ -893,8 +891,6 @@ If this milestone document appears to describe library/profile layout differentl
 * document deferred functionality, including partition/multi-volume support
 * ensure public documentation does not claim production readiness, exhaustive fuzzing, independent audit, certification, or stable API/ABI guarantees
 
-# Current and future milestones
-
 ## M12c.2: API inventory and crate-boundary hardening
 
 * machine-readable API inventory
@@ -915,17 +911,22 @@ If this milestone document appears to describe library/profile layout differentl
 * update `SECURITY.md` where security posture changed
 * ensure documentation distinguishes current behavior, planned hardening, and future profile policy
 
+# Current and future milestones
 
 ## M13a.1: parser, memory, panic, and DoS audit
 
-* audit global header, LFH, TLV, CD, Footer, and archive structural parsing
-* audit checked arithmetic and length/offset calculations
-* audit `ResourceLimits` coverage
-* audit panic/DoS behavior
-* audit allocator-churn and repeated-initialization risks
-* audit unsafe usage policy
-* review fuzzing coverage and corpus quality for parser/resource targets
-* record findings as tracked remediation items
+* audit Global Header, LFH, TLV, Central Dictionary, Footer, `ArchiveReader`, and `StreamArchiveParser` structural parsing
+* audit checked arithmetic and input-derived length, size, count, and offset calculations
+* audit `ResourceLimits` coverage and enforcement points
+* audit panic and denial-of-service behavior
+* audit allocator churn, retained allocations, and repeated initialization
+* audit unsafe-code policy in parser and resource paths
+* review parser and resource fuzz-target coverage, corpus quality, and deterministic boundary-test coverage
+* record findings in `docs/M13_AUDIT_FINDINGS.json`
+* classify findings as implementation defects, implementation/specification mismatches, resource risks, fuzzing gaps, test gaps, documentation observations, positive controls, accepted design risks, or specification gaps
+* assign implementation and test remediation to the applicable M13b milestone
+* assign unresolved normative questions to M13a.7
+* do not implement remediation, change protocol behavior, or resolve specification gaps during this audit milestone
 
 ## M13a.2: cryptography and secret-handling audit
 
@@ -984,43 +985,72 @@ If this milestone document appears to describe library/profile layout differentl
 * evaluate profile-defined redundant manifest options
 * document compatibility impact for specification-compliant readers
 * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
+* record findings, accepted design risks, and specification gaps in `docs/M13_AUDIT_FINDINGS.json`
 
-## M13b.1: parser/resource/security remediation
+## M13a.7: specification gap triage and normative resolution
 
-* address high-priority findings from parser, memory, panic, and DoS audit
-* address high-value fuzzing findings from parser/resource targets
-* strengthen invariants
-* reduce attack surface
-* add regression tests for fixed findings
-* preserve existing conformance behavior unless a deliberate breaking change is documented
+* review every M13 finding classified as a specification gap
+* confirm that each gap represents missing, ambiguous, or internally inconsistent normative behavior
+* determine the intended interoperable behavior for each confirmed gap
+* update `specification.md` and related normative documentation where required
+* record the normative decision, compatibility impact, and affected implementation areas in `docs/M13_AUDIT_FINDINGS.json`
+* distinguish clarification-only changes from behavioral or wire-format changes
+* define verification expectations after normative resolution
+* assign resulting implementation and test work to the applicable M13b milestone
+* do not implement code remediation in this milestone
+* do not silently resolve specification gaps through implementation choices
 
-## M13b.2: crypto, transform, and recovery remediation
+## M13b.1: parser, resource, and parser-fuzzing remediation
 
-* address high-priority cryptography and secret-handling findings
-* address transform resource-accounting findings
-* address delta/patch setup limit findings
-* address recovery bounds and metadata validation findings
-* harden secret-handling and error-reporting paths
-* add regression tests for fixed findings
+* implement approved remediation from M13a.1 parser, memory, panic, denial-of-service, resource-limit, checked-arithmetic, and parser-fuzzing findings
+* implement parser-related remediation resulting from M13a.7 normative decisions
+* enforce approved limits at the correct allocation, retention, iteration, and parsing boundaries
+* fix confirmed parser/specification mismatches
+* strengthen fail-closed parser behavior where required by the specification
+* add deterministic regression and boundary tests required by the findings registry
+* improve parser and resource fuzz-target coverage where assigned
+* preserve compliant inputs unless a reviewed compatibility change is explicitly recorded
+* update finding status, verification evidence, and resolution records after remediation
+* do not modify unrelated protocol, cryptographic, transform, extraction, transport, or public-API behavior
+
+## M13b.2: cryptography, transform, and recovery remediation
+
+* implement approved remediation from M13a.2 and M13a.3
+* implement cryptography, transform, recovery, sparse, FEC, and related remediation resulting from M13a.7 normative decisions
+* address cryptographic dependency, authentication, key-derivation, AAD-binding, tag-failure, secret-comparison, zeroization, logging, and error-reporting findings
+* address decompressor, patch, delta, sparse, FEC, recovery, and profile-specific resource-accounting findings
+* enforce approved setup, metadata, output-size, and algorithm-switching limits
+* add deterministic regression tests and targeted fuzzing required by the findings registry
+* preserve compliant behavior unless a reviewed compatibility change is explicitly recorded
+* update finding status, verification evidence, and resolution records after remediation
+* do not modify unrelated extraction, filesystem, transport, binding, or public-API behavior
 
 ## M13b.3: extraction, metadata, and filesystem remediation
 
-* address metadata restoration findings
-* address path traversal / symlink / hardlink findings
-* harden extraction staging and metadata restoration paths
-* add regression tests for fixed findings
+* implement approved remediation from M13a.4
+* implement extraction and filesystem remediation resulting from M13a.7 normative decisions
+* address path traversal, path normalization, symlink, hardlink, replacement-race, UID/GID, permission, staging, and metadata-ordering findings
+* harden platform-specific extraction and metadata-restoration behavior
 * preserve fail-closed extraction behavior
+* add deterministic regression tests and platform-specific tests required by the findings registry
+* update finding status, verification evidence, and resolution records after remediation
+* do not modify unrelated parser, cryptographic, transform, transport, binding, or public-API behavior
 
-## M13b.4: public API and binding-readiness remediation
+## M13b.4: boundary, transport, public API, and binding-readiness remediation
 
-* remove duplicated logic where it affects stability or safety
-* simplify risky abstractions
-* harden crate boundaries
-* harden profile/library boundaries
-* triage extended fuzzing findings and decide whether any specific high-severity findings must block binding/package milestones
-* prepare stable public API surface candidates
-* prepare C ABI/Python architecture using security-audit findings available at that point
-* preserve monorepo layout when preparing C ABI/Python architecture
+* implement approved remediation from M13a.5
+* implement crate-boundary, profile-boundary, transport, session, public-API, and binding-related remediation resulting from M13a.7 normative decisions
+* harden crate and profile boundaries
+* harden transport and session-facing attack surfaces
+* remove duplicated logic where it creates a confirmed safety, stability, or maintenance risk
+* simplify risky abstractions identified by the audit
+* resolve public Rust API layout and stability hazards
+* decide which APIs remain Rust-only and which are candidates for stable C or Python bindings
+* prepare C ABI and Python binding architecture using completed audit findings
+* preserve the monorepo layout
+* add regression tests required by the findings registry
+* update finding status, verification evidence, and resolution records after remediation
+* do not begin binding or package release work unless separately authorized
 
 
 ## M14a.1: C ABI profile and shared-library layout design
