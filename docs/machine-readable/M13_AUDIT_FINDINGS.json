@@ -583,6 +583,150 @@
           ]
         }
       ]
+    },
+    {
+      "milestone": "M13a.5",
+      "title": "Crate-Boundary, Profile-Boundary, Transport, and FFI-Readiness Audit",
+      "status": "complete",
+      "completed_date": "2026-08-01",
+      "reviewed_commit": "0c6e4dd5bcdd2cd189353248b48b5ed656455a98",
+      "included_artifacts": [
+        "specification.md",
+        "docs/machine-readable/MACHINE_READABLE_API.json",
+        "crates/sar-transport/src/lib.rs",
+        "crates/sar-transport/src/tcp.rs",
+        "crates/sar-transport/src/quic/connection.rs",
+        "crates/sar-transport/src/quic/config.rs",
+        "crates/sar-transport/src/quic/identity.rs",
+        "crates/sar-transport/tests/heartbeat_watchdog_tests.rs",
+        "crates/sar-transport/tests/tcp_buffer_tests.rs",
+        "crates/sar-transport/tests/tls_exporter_post_binding_tests.rs",
+        "crates/sar-stream/src/lib.rs",
+        "crates/sar-stream/src/session.rs",
+        "crates/sar-stream/src/protocol.rs",
+        "crates/sar-stream/src/transcript.rs",
+        "crates/sar-archive/src/profile.rs",
+        "crates/sar-archive/src/archive.rs",
+        "crates/sar-archive/src/stream.rs",
+        "crates/sar-archive/src/lib.rs",
+        "crates/sar-archive/tests/pr5_profile_rejection_tests.rs",
+        "crates/sar-crypto/src/lib.rs",
+        "crates/sar-crypto/src/provider.rs",
+        "crates/sar-core/src/error.rs",
+        "crates/sar-core/src/limits.rs"
+      ],
+      "excluded_topics": [
+        "re-audit of M13a.1 through M13a.4 topics except where creating a distinct crate, profile, transport, or FFI boundary issue",
+        "M13a.6 cold-storage and tape-resilience design",
+        "M13a.7 normative resolution of specification gaps",
+        "all remediation and binding implementation",
+        "ABI design, repr(C) additions, crate restructuring, protocol changes, profile-rule changes, and API-inventory changes",
+        "sar-cli except where it exposes library-facing boundaries"
+      ],
+      "notes": [
+        "M13a.5 records audit coverage and findings only; no remediation is implemented in this scope.",
+        "Open remediation findings do not prevent marking M13a.5 complete while the overall M13 registry remains in progress.",
+        "Findings M13-CRYPTO-001 and M13-CRYPTO-004 are cross-referenced from transport/session objectives but not duplicated.",
+        "M13-TRANSFORM-001 is cross-referenced from the profile objective but not duplicated."
+      ],
+      "objectives": [
+        {
+          "id": "M13a.5-OBJ-01",
+          "title": "Crate-boundary attack surface",
+          "status": "complete",
+          "outcome": "findings_recorded",
+          "summary": "The primary crate-boundary risk identified is that `TransportConfig` propagates only `max_active_streams` into the `ResourceLimits` used by `StreamArchiveParser` and `SessionManager` inside `InMemoryTransport`, leaving all other limits at their defaults. This boundary contract is undocumented. All library crates carry `#![forbid(unsafe_code)]` at the crate level. No cross-crate ownership, aliasing, or lifetime assumption risks were found beyond the documented `KeyProvider` trait-object callback model addressed in FFI objectives.",
+          "related_findings": [
+            "M13-BOUNDARY-001"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-02",
+          "title": "Profile and library-layout attack surface",
+          "status": "complete",
+          "outcome": "mixed",
+          "summary": "`validate_archive_profile` is explicitly documented as global-header-only and does not enforce entry-level algorithm restrictions, per-entry LOSS_TOLERANT presence, or unsafe path rejection. No alternative entry-iterating profile-check API exists in `sar-archive`. The `Standard` profile variant is a placeholder. The normative algorithm restriction tables that would back per-entry algorithm enforcement remain unresolved and are tracked in M13-TRANSFORM-001. Profile state is not carried through the transport or session layer; callers must apply profile validation separately. No additional profile-bypass paths or unsafe component compositions were found.",
+          "related_findings": [
+            "M13-BOUNDARY-002",
+            "M13-TRANSFORM-001"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-03",
+          "title": "Transport and session attack surface",
+          "status": "complete",
+          "outcome": "mixed",
+          "summary": "The transport inactivity watchdog is caller-opt-in and the activation requirement is not documented at the `TransportConfig` level. `QuicSarConnection::feed_stream_bytes` requires a follow-up `flush_pending_control_frames` call to emit outbound control frames, but this ordering requirement is absent from the public method docstring. Both are documentation gaps. A positive control was confirmed: `InMemoryTransport` enforces fail-closed behavior for TLS_EXPORTER-bound sessions at the transport parsing layer, rejecting unencrypted entries before any downstream processing. TLS_EXPORTER KMS parameter validation and AEAD fail-closed behavior are tracked in M13-CRYPTO-001 and M13-CRYPTO-004 respectively and are not duplicated here.",
+          "related_findings": [
+            "M13-TRANSPORT-001",
+            "M13-TRANSPORT-002",
+            "M13-TRANSPORT-003",
+            "M13-CRYPTO-001",
+            "M13-CRYPTO-004"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-04",
+          "title": "FFI-readiness risks",
+          "status": "complete",
+          "outcome": "findings_recorded",
+          "summary": "Three FFI-readiness gaps were identified: (1) the `KeyProvider` trait callback model requires a purpose-built stable wrapper for any foreign binding because it uses Rust-specific trait objects, `Send + Sync` bounds, and zeroizing secret containers; (2) `SarError::Io(std::io::Error)` is not ABI-stable and must be mapped to `SarStatus` codes before crossing a language boundary; (3) all QUIC public APIs are `async fn` and require a Tokio runtime adapter for C or Python integration, while the TCP binding is synchronous and more amenable to blocking wrappers. None of these is a security finding; all are documentation gaps requiring remediation in M13b.4.",
+          "related_findings": [
+            "M13-FFI-001",
+            "M13-FFI-002",
+            "M13-FFI-003"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-05",
+          "title": "Public Rust APIs exposing unstable layout, ownership, or lifetime assumptions",
+          "status": "complete",
+          "outcome": "observations_only",
+          "summary": "No public SAR API was found to assume stable layout, stable discriminants, or ABI-stable struct representations. No `repr(C)`, `transmute`, `from_raw`, `into_raw`, `offset_of`, `size_of`, or `align_of` usage was found in any library crate. All struct and enum definitions use default Rust representation. Owned-value semantics are used uniformly at API boundaries; no reference-aliasing or unsound-lifetime assumptions were identified. The absence of layout stability claims is consistent with the API inventory's `readiness: candidate` status for most types.",
+          "related_findings": [
+            "M13-TRANSFORM-006"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-06",
+          "title": "APIs that should remain Rust-only",
+          "status": "complete",
+          "outcome": "observations_only",
+          "summary": "`SecretBytes` and `SecretString` (sar-crypto) should remain Rust-only because they are zeroizing containers whose ownership and destruction semantics cannot be safely transferred across a foreign boundary. `BinaryWriter` and `ParseCursor` (sar-core) are internal parsing and writing helpers not intended as stable surface; they are marked `candidate: false` in the API inventory. `StreamArchiveParser`, `StreamWriteState`, `StreamStep`, `StreamEvent`, and `StreamArchiveSummary` (sar-archive) are marked `not_ready` in the inventory and depend on `Box<dyn KeyProvider>` and generic I/O that require purpose-built wrappers before any foreign exposure. No additional Rust-only classification beyond the API inventory's existing recommendations was required.",
+          "related_findings": [
+            "M13-FFI-001"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-07",
+          "title": "APIs potentially suitable for future C or Python wrappers",
+          "status": "complete",
+          "outcome": "observations_only",
+          "summary": "Plausible wrapper candidates with ordinary conversion include: `SarStatus` (ready integer enum), `GlobalFlags` (uint32 bitmask), simple metadata structs (`EntryKind`, `EntryPermissionMetadata`, `EntryTimestampMetadata`, `EntryCompressionMetadata`), `ResourceLimits` (flat config struct), `CompressionAlgorithm`, and `validate_archive_profile` paired with `ComplianceProfile`. Candidates requiring a purpose-built stable wrapper include: `ArchiveReader`/`ArchiveWriter` (generic I/O; need opaque handles and owned-buffer operations), `SessionManager` (complex state machine; suitable only through explicit create/step/destroy lifecycle), `KeyProvider` (blocked by M13-FFI-001), and QUIC APIs (blocked by M13-FFI-003). `SarError` requires the `SarStatus` mapping described in M13-FFI-002 before use in any wrapper. APIs that should remain Rust-only for concrete reasons are classified in OBJ-06.",
+          "related_findings": [
+            "M13-FFI-001",
+            "M13-FFI-002",
+            "M13-FFI-003"
+          ]
+        },
+        {
+          "id": "M13a.5-OBJ-08",
+          "title": "Classification and ownership of all supported findings",
+          "status": "complete",
+          "outcome": "mixed",
+          "summary": "All M13a.5 actionable findings (M13-BOUNDARY-001, M13-PROFILE-001, M13-TRANSPORT-001, M13-TRANSPORT-002, M13-FFI-001, M13-FFI-002, M13-FFI-003) are documentation gaps assigned to M13b.4. M13-TRANSPORT-003 is a verified positive control with no remediation owner. Cross-referenced findings from M13a.2 and M13a.3 (M13-CRYPTO-001, M13-CRYPTO-004, M13-TRANSFORM-001) retain their original ownership and lifecycle. No remediation was assigned to M13a.5.",
+          "related_findings": [
+            "M13-BOUNDARY-001",
+            "M13-BOUNDARY-002",
+            "M13-TRANSPORT-001",
+            "M13-TRANSPORT-002",
+            "M13-TRANSPORT-003",
+            "M13-FFI-001",
+            "M13-FFI-002",
+            "M13-FFI-003"
+          ]
+        }
+      ]
     }
   ],
   "findings": [
@@ -2529,6 +2673,413 @@
         "summary": "Verified during M13a.3: the in-memory recovery API documents its limitations and applies archive-size, protected-range, and partial working-set bounds; the repaired-output peak accounting gap is tracked separately in M13-RECOVERY-001.",
         "resolved_date": "2026-08-01"
       }
+    },
+    {
+      "id": "M13-BOUNDARY-001",
+      "title": "`TransportConfig` propagates only `max_active_streams` to the `ResourceLimits` used by `StreamArchiveParser` and `SessionManager`",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "crate_boundary",
+        "resource_limits",
+        "documentation"
+      ],
+      "status": "open",
+      "severity": "low",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "In `TransportStreamContext::new()`, the `ResourceLimits` passed to `StreamArchiveParser` and `SessionManager` is constructed by copying only `max_active_streams` from `TransportConfig` and applying `ResourceLimits::default()` for every other field. `TransportConfig` provides separate limits for `max_buffered_bytes_per_transport_stream`, `max_active_sar_streams`, and timing windows, but does not expose fields for per-entry output size, in-memory buffer, session memory, fragment count, or other resource-limit axes. Callers who configure `TransportConfig` have no mechanism to adjust these inner limits and no documentation explaining which limits are effective at the transport layer.",
+      "current_behavior": "`TransportStreamContext::new()` constructs `ResourceLimits { max_active_streams: config.max_active_sar_streams, ..ResourceLimits::default() }`, leaving all other `ResourceLimits` fields at their defaults regardless of caller-supplied configuration.",
+      "expected_behavior": "`TransportConfig` documentation should state which `ResourceLimits` fields are effectively fixed at their defaults when operating through the transport layer, so callers understand the resource-limit surface they are responsible for overriding or relying on.",
+      "impact": "Library callers supplying custom `TransportConfig` may incorrectly assume that non-stream-count resource limits are also tunable through that struct. Unexpected default limits on entry size, fragment count, or session memory may be silently applied.",
+      "affected_artifacts": [
+        "crates/sar-transport/src/lib.rs",
+        "crates/sar-core/src/limits.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/lib.rs",
+          "locator": "function `TransportStreamContext::new()`, `ResourceLimits` struct construction with `..ResourceLimits::default()`",
+          "description": "Only `max_active_streams` is taken from `config.max_active_sar_streams`; all other `ResourceLimits` fields use defaults, which is not documented in `TransportConfig` or `InMemoryTransport`."
+        },
+        {
+          "kind": "documentation",
+          "artifact": "crates/sar-transport/src/lib.rs",
+          "locator": "struct `TransportConfig`, field `max_active_sar_streams`",
+          "description": "The field documents only its own limit, without stating that corresponding `ResourceLimits` fields for per-entry memory, output size, or session limits are unaffected by `TransportConfig`."
+        }
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Document in `TransportConfig` which `ResourceLimits` fields are effectively fixed at their defaults within the transport layer.",
+          "State clearly that callers cannot tune per-entry, fragment, or session-memory limits through `TransportConfig` in the current design."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
+    },
+    {
+      "id": "M13-BOUNDARY-002",
+      "title": "`validate_archive_profile` is documented as global-header-only and does not provide entry-level algorithm, loss-tolerant, or path-safety enforcement",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "profile_boundary",
+        "documentation",
+        "conformance"
+      ],
+      "status": "open",
+      "severity": "low",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "`validate_archive_profile` checks only global-header flags and explicitly documents that entry-level algorithm ID checks, per-entry `LOSS_TOLERANT` enforcement, and unsafe filesystem metadata rejection are not implemented. No separate entry-level profile-check API exists in `sar-archive`. The `Standard` profile variant returns a placeholder finding rather than enforcing conformance. Callers relying on `validate_archive_profile` alone have incomplete profile assurance for the entry-level requirements of `StaticArchive`, `Package`, `Backup`, and `Standard` profiles. The profile API surface does not guide callers toward completing those checks. This finding is distinct from M13-TRANSFORM-001, which addresses the missing normative algorithm table; the current finding addresses the absence of an entry-level enforcement entry point in the public API.",
+      "current_behavior": "`validate_archive_profile` documents in its docstring that entry-level LOSS_TOLERANT presence, algorithm ID restrictions, and unsafe path rejection are unimplemented. The `Standard` variant pushes a placeholder finding instead of validating conformance.",
+      "expected_behavior": "Either an entry-iterating profile-validation API should be documented alongside `validate_archive_profile`, or the function's documentation should prominently describe which profile requirements remain unenforced and direct callers to the layers (extraction layer, entry iteration) that enforce the remaining rules.",
+      "impact": "A library caller who calls `validate_archive_profile` and observes `compliant: true` may incorrectly conclude that all profile requirements are satisfied for `StaticArchive`, `Package`, `Backup`, or `Telemetry`. Missing entry-level enforcement is not surfaced as a limitation at the call site.",
+      "affected_artifacts": [
+        "crates/sar-archive/src/profile.rs",
+        "crates/sar-archive/src/lib.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-archive/src/profile.rs",
+          "locator": "function `validate_archive_profile()`, `Known limitations (M12a)` docstring section",
+          "description": "The function documents that entry-level LOSS_TOLERANT checks, algorithm ID checks, and unsafe filesystem metadata rejection are not implemented and that Standard profile validation is a placeholder."
+        },
+        {
+          "kind": "documentation",
+          "artifact": "docs/machine-readable/MACHINE_READABLE_API.json",
+          "locator": ".crates[] | select(.name == \"sar-archive\") | .api.types[] | select(.name == \"ComplianceProfile\")",
+          "description": "Documents the public compliance profile selector; FFI notes state semantics are incomplete for `Standard`."
+        }
+      ],
+      "notes": [
+        "The missing normative algorithm restriction tables are tracked separately in M13-TRANSFORM-001. This finding concerns the API boundary: no entry-level profile enforcement entry point exists in the public library API."
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Document at the `validate_archive_profile` call site which profile requirements are not covered and which entry-iteration or extraction-layer checks are needed to complete profile enforcement.",
+          "Consider providing an entry-iterating variant or a profile-check guide in library documentation."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
+    },
+    {
+      "id": "M13-TRANSPORT-001",
+      "title": "Transport inactivity watchdog is caller-driven and the opt-in requirement is not documented in `TransportConfig` or `InMemoryTransport`",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "transport",
+        "documentation"
+      ],
+      "status": "open",
+      "severity": "low",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "`TransportConfig` exposes `heartbeat_min_interval_ms`, `heartbeat_required_interval_ms`, and `inactivity_timeout_ms`, but watchdog evaluation is performed only when callers explicitly supply `now_ms` to `TcpSarConnection::process_available` or call `InMemoryTransport::check_inactivity` directly. Passing `now_ms = None` skips all time-based checks silently. The opt-in requirement is documented in `TcpSarConnection::process_available` but not in `TransportConfig`, `InMemoryTransport`, or the QUIC connection APIs. Callers reading only the configuration struct may believe the timeout is enforced automatically.",
+      "current_behavior": "Watchdog evaluation requires explicit `now_ms = Some(...)` input in every `process_available` call, or explicit `check_inactivity` invocation. No background thread or timer is used. Calls with `now_ms = None` skip all time-based checks.",
+      "expected_behavior": "`TransportConfig` documentation should state that timeout fields are effective only when callers supply explicit timestamps, and that no background enforcement occurs. `InMemoryTransport` documentation should describe the required caller-side watchdog polling pattern.",
+      "impact": "Callers who configure `inactivity_timeout_ms` but pass `now_ms = None` get no timeout enforcement. The misconfiguration is silent.",
+      "affected_artifacts": [
+        "crates/sar-transport/src/lib.rs",
+        "crates/sar-transport/src/tcp.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/tcp.rs",
+          "locator": "method `TcpSarConnection::process_available()`, `now_ms` parameter documentation",
+          "description": "The docstring states that `now_ms` controls heartbeat and watchdog checks and that `None` skips time-based checks, but this opt-in is not restated at the `TransportConfig` or `InMemoryTransport` level."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/lib.rs",
+          "locator": "struct `TransportConfig`, fields `inactivity_timeout_ms`, `heartbeat_min_interval_ms`, `heartbeat_required_interval_ms`",
+          "description": "These fields document their value semantics but do not state the caller-side activation requirement."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-transport/tests/tcp_buffer_tests.rs",
+          "locator": "test function `mock_inactivity_timeout_via_explicit_time`",
+          "description": "Test verifies that `check_inactivity` fires only at an explicit time input; no background timer is expected."
+        }
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Add documentation to `TransportConfig` stating that timeout and heartbeat fields are effective only when callers supply explicit timestamps.",
+          "Document the expected polling pattern for `check_inactivity` in `InMemoryTransport` and `QuicSarConnection` where applicable."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
+    },
+    {
+      "id": "M13-TRANSPORT-002",
+      "title": "`QuicSarConnection::feed_stream_bytes` accumulates outbound control frames but the required follow-up `flush_pending_control_frames` call is not documented in the public method",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "transport",
+        "session",
+        "documentation"
+      ],
+      "status": "open",
+      "severity": "low",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "`QuicSarConnection::feed_stream_bytes` processes inbound bytes and serialises outbound `SESSION_ACK` and `SESSION_STATUS` frames into an internal `pending_control_bytes` buffer. These bytes are NOT written to the wire by `feed_stream_bytes`. Callers must call `flush_pending_control_frames` after each `feed_stream_bytes` call to emit queued control frames. The required ordering is documented only in the private `pending_control_bytes` field comment; it is absent from the public `feed_stream_bytes` docstring. Callers who do not read the source may silently drop outbound control frames on the affected QUIC stream.",
+      "current_behavior": "`feed_stream_bytes` accumulates outbound frames in `pending_control_bytes` but does not flush them. The flush obligation is documented in the private field comment only.",
+      "expected_behavior": "The `feed_stream_bytes` docstring should state that callers must call `flush_pending_control_frames` after each invocation when bidirectional control is enabled.",
+      "impact": "Callers who omit the `flush_pending_control_frames` step silently drop outbound `SESSION_ACK` and `SESSION_STATUS` frames, breaking bidirectional session control without any error return.",
+      "affected_artifacts": [
+        "crates/sar-transport/src/quic/connection.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/quic/connection.rs",
+          "locator": "struct `QuicSarConnection`, private field `pending_control_bytes` comment",
+          "description": "The private field comment states: 'Callers must flush these via `flush_pending_control_frames` after each call to `feed_stream_bytes`.' This requirement is not surfaced in the public method docstring."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/quic/connection.rs",
+          "locator": "method `QuicSarConnection::feed_stream_bytes()`",
+          "description": "The public docstring does not mention the flush requirement or reference `flush_pending_control_frames`."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/quic/connection.rs",
+          "locator": "method `QuicSarConnection::flush_pending_control_frames()`",
+          "description": "Async method that drains `pending_control_bytes` to the QUIC stream send side. Must be called after `feed_stream_bytes` to emit outbound control frames."
+        }
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Add a `flush_pending_control_frames` call requirement to the `feed_stream_bytes` docstring, specifying that callers must flush after each invocation when bidirectional control is active."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
+    },
+    {
+      "id": "M13-TRANSPORT-003",
+      "title": "`InMemoryTransport` enforces TLS_EXPORTER fail-closed behavior at the transport parsing layer for primary and attached control streams",
+      "finding_type": "positive_observation",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "transport",
+        "authentication"
+      ],
+      "status": "verified",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "After `SESSION_INIT` processing succeeds with `KMS_TLS_EXPORTER` mode, `InMemoryTransport` inserts the SAR Stream ID into `tls_exporter_bound`. All subsequent entries on the primary stream and on attached QUIC control streams are rejected with `SarError::AuthFailed` if `EntryMode::ENCRYPTED` is not set. The transport never falls back to plaintext after binding. This extends the AEAD-level fail-closed control recorded in M13-CRYPTO-004 to the transport session boundary, providing a defense-in-depth check that does not depend on downstream AEAD decryption succeeding.",
+      "affected_artifacts": [
+        "crates/sar-transport/src/lib.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/lib.rs",
+          "locator": "struct `InMemoryTransport`, field `tls_exporter_bound` and `SESSION_INIT` handling block that calls `tls_exporter_bound.insert()`",
+          "description": "The `tls_exporter_bound` set is populated on successful `SESSION_INIT` with `KMS_TLS_EXPORTER`, and the transport subsequently rejects unencrypted entries with `SarError::AuthFailed` before any downstream processing."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-transport/tests/tls_exporter_post_binding_tests.rs",
+          "locator": "test module `tls_exporter_post_binding_tests`",
+          "description": "Integration tests verify that unencrypted entries received after TLS_EXPORTER binding are rejected at the transport layer."
+        }
+      ],
+      "notes": [
+        "This is a transport-layer defense-in-depth control. The AEAD-level fail-closed behavior is recorded separately in M13-CRYPTO-004."
+      ],
+      "compatibility_impact": "none",
+      "resolution_owner": "none",
+      "verification": {
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "verified_control",
+        "milestone": "M13a.5",
+        "summary": "Verified during M13a.5: `InMemoryTransport` populates `tls_exporter_bound` after `SESSION_INIT` and rejects unencrypted entries at the transport layer with `SarError::AuthFailed`.",
+        "resolved_date": "2026-08-01"
+      }
+    },
+    {
+      "id": "M13-FFI-001",
+      "title": "`KeyProvider` trait callback model requires a purpose-built stable wrapper for any foreign-language binding",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "ffi_readiness",
+        "public_api",
+        "documentation"
+      ],
+      "status": "open",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "The `KeyProvider` trait is a required parameter for encryption-capable archive reading (`ArchiveReader::with_key_provider`, `StreamArchiveParser::with_key_provider`) and for transport-layer key provisioning in `InMemoryTransport::with_key_provider`. The trait requires `Send + Sync` and uses Rust-specific callback semantics: methods return `Result<Option<SecretBytes | SecretString>, SarCryptoError>`. A foreign-language binding cannot implement this trait directly because it requires a stable callback ABI, foreign-side memory ownership of `SecretBytes`/`SecretString` across the call boundary, and mapping of `SarCryptoError` to a stable error type. A purpose-built stable wrapper API is required that accepts foreign function pointers and manages key-material ownership and destruction without exposing zeroizing containers to foreign callers. The API inventory acknowledges this requirement in the `KeyProvider` FFI notes.",
+      "current_behavior": "Encryption-capable archive and transport APIs require a `Box<dyn KeyProvider>` or `Arc<dyn KeyProvider>`. No stable callback-to-trait adapter is provided.",
+      "expected_behavior": "Library documentation should identify `KeyProvider` as the primary FFI boundary blocker for encryption-capable APIs and describe the required wrapper design: foreign function pointer model, key-material ownership, and destruction semantics.",
+      "impact": "A naive C or Python binding to `ArchiveReader::with_key_provider` or `InMemoryTransport::with_key_provider` is not possible without an intermediate Rust-side adapter layer. The absence of documentation leaves wrapper authors to discover this limitation independently.",
+      "affected_artifacts": [
+        "crates/sar-crypto/src/provider.rs",
+        "crates/sar-archive/src/archive.rs",
+        "crates/sar-archive/src/stream.rs",
+        "crates/sar-transport/src/lib.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-crypto/src/provider.rs",
+          "locator": "trait `KeyProvider`, trait bounds `Send + Sync`, method return types `Result<Option<SecretBytes>, SarCryptoError>` and `Result<Option<SecretString>, SarCryptoError>`",
+          "description": "The trait requires `Send + Sync` and returns Rust-specific owned secret containers. No extern-fn or callback-pointer interface is provided."
+        },
+        {
+          "kind": "documentation",
+          "artifact": "docs/machine-readable/MACHINE_READABLE_API.json",
+          "locator": ".crates[] | select(.name == \"sar-crypto\") | .api.types[] | select(.name == \"KeyProvider\")",
+          "description": "API inventory marks `KeyProvider` as `readiness: unstable` with note that a dedicated callback design is required for Milestone 12."
+        }
+      ],
+      "notes": [
+        "`SecretBytes` and `SecretString` are Rust-specific zeroizing containers marked `candidate: false` in the API inventory. Key material returned via a foreign callback must be owned and destroyed by the Rust wrapper without crossing the FFI boundary as a raw pointer to these types."
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Document `KeyProvider` as the primary FFI blocker for encryption-capable archive and transport APIs.",
+          "Describe the required wrapper design: foreign function pointer callback, key-material ownership transfer model, and destruction/zeroization responsibility."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
+    },
+    {
+      "id": "M13-FFI-002",
+      "title": "`SarError::Io(std::io::Error)` holds a Rust-specific owned type that cannot be directly exposed across a C or Python boundary",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "ffi_readiness",
+        "error_handling",
+        "documentation"
+      ],
+      "status": "open",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "`SarError` is the primary error type returned by all public SAR library APIs. Its `Io` variant holds a `std::io::Error`, which is a Rust-specific owned type that is not ABI-stable and whose internal representation may vary by Rust version and platform. A stable C or Python wrapper must map `SarError` to an integer status code (the `SarStatus` numeric code system is already designed for this purpose) and optionally a caller-owned message buffer, discarding the `std::io::Error` before crossing the language boundary. The API inventory notes for `SarError` document this as a preference but do not specify the mapping requirement. No stable wrapper exists.",
+      "current_behavior": "`SarError` variants include `Io(std::io::Error)`, `NotFound(&'static str)`, and others, none of which are ABI-stable or safely exposable to foreign callers.",
+      "expected_behavior": "Library documentation and wrapper design guidance should specify the canonical `SarStatus`-based numeric mapping for `SarError`, the expected message-buffer ownership model, and that `std::io::Error` is discarded or reduced to a string before crossing the FFI boundary.",
+      "impact": "Wrapper authors must independently discover the `SarStatus` mapping and message-ownership conventions. The mapping is not currently documented at the `SarError` or `SarStatus` level.",
+      "affected_artifacts": [
+        "crates/sar-core/src/error.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/error.rs",
+          "locator": "enum `SarError`, variant `Io(#[from] io::Error)` and `NotFound(&'static str)`",
+          "description": "`SarError` includes a `std::io::Error` variant and string-slice variants. Neither is ABI-stable or safely passable to foreign callers."
+        },
+        {
+          "kind": "documentation",
+          "artifact": "docs/machine-readable/MACHINE_READABLE_API.json",
+          "locator": ".crates[] | select(.name == \"sar-core\") | .api.types[] | select(.name == \"SarError\")",
+          "description": "API inventory notes: 'Prefer mapping to a stable status enum plus opaque message buffers for FFI.' The specific mapping to `SarStatus` codes is not documented."
+        }
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Document the canonical `SarStatus`-based numeric mapping from `SarError` variants for use in stable wrapper APIs.",
+          "Specify how `std::io::Error` should be reduced or discarded before the status code is returned to foreign callers.",
+          "Describe message-buffer ownership semantics for the optional string portion of the error."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
+    },
+    {
+      "id": "M13-FFI-003",
+      "title": "All QUIC-facing public APIs are `async fn` and cannot be directly bound to C or Python without a Tokio runtime wrapper",
+      "finding_type": "documentation_gap",
+      "source_milestone": "M13a.5",
+      "areas": [
+        "ffi_readiness",
+        "transport",
+        "documentation"
+      ],
+      "status": "open",
+      "severity": "informational",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "All public QUIC transport methods (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require a Tokio executor. These cannot be directly bound to C or Python without a blocking adapter that owns a Tokio runtime handle, or without an event-loop integration layer. The synchronous TCP binding (`TcpSarConnection`) does not use async and is more amenable to blocking foreign wrappers. The distinction is not documented at the QUIC API level, leaving wrapper authors to discover the executor requirement independently.",
+      "current_behavior": "All QUIC methods are async. No blocking wrapper or Tokio handle is provided. The TCP binding is synchronous and blocking.",
+      "expected_behavior": "QUIC API documentation should note the Tokio runtime requirement and state that direct C or Python binding requires a blocking adapter layer or runtime handle. The TCP binding should be identified as the more FFI-amenable synchronous transport option.",
+      "impact": "A naive foreign binding to `QuicSarListener::accept` or `connect_quic` will not compile or execute correctly without a Tokio runtime. The runtime requirement is not surfaced in the public API documentation.",
+      "affected_artifacts": [
+        "crates/sar-transport/src/quic/connection.rs",
+        "crates/sar-transport/src/tcp.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/quic/connection.rs",
+          "locator": "functions `connect_quic()`, `QuicSarListener::accept()`, `QuicSarConnection::open_sar_stream()`, `QuicSarConnection::accept_sar_stream()`, `QuicSarConnection::write_sar_bytes()`, `QuicSarConnection::read_stream_bytes()`, `QuicSarConnection::flush_pending_control_frames()`",
+          "description": "All listed public methods are declared `pub async fn`. Docstrings do not state the Tokio runtime dependency."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-transport/src/tcp.rs",
+          "locator": "method `TcpSarConnection::process_available()` and `TcpSarConnection::write_all_sar_bytes()`",
+          "description": "Synchronous blocking TCP methods. No async executor is required."
+        }
+      ],
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Document the Tokio runtime requirement in the QUIC module and on each public async method.",
+          "Note that `TcpSarConnection` is the synchronous transport option for blocking FFI wrappers.",
+          "Describe the blocking adapter or runtime handle pattern required for C or Python QUIC integration."
+        ]
+      },
+      "compatibility_impact": "clarification_only",
+      "verification": {
+        "test_requirement": "not_required"
+      }
     }
   ],
   "metadata": {
@@ -2539,7 +3090,8 @@
       "JSON is the authoritative structured representation; Markdown synchronization is handled separately.",
       "Open implementation, resource, fuzzing, and test findings are remediation inputs for the applicable M13b milestone.",
       "Specification gaps remain pending normative resolution in M13a.7.",
-      "M13a.3 transform and recovery resource-accounting findings are included."
+      "M13a.3 transform and recovery resource-accounting findings are included.",
+      "M13a.5 crate-boundary, profile-boundary, transport, and FFI-readiness audit findings are included."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }
