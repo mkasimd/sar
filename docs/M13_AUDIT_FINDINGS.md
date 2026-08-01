@@ -33,6 +33,7 @@ Registry status: `in_progress`
 | --- | --- | --- |
 | `M13a.1` | `complete` | Parser, Memory, Panic, and DoS Audit |
 | `M13a.2` | `complete` | Cryptography and Secret-Handling Audit |
+| `M13a.3` | `complete` | Transform and Recovery Resource-Accounting Audit |
 | `M13a.4` | `complete` | Filesystem Metadata and Extraction Safety Audit |
 
 ### M13a.1 Audit Coverage
@@ -61,6 +62,20 @@ Registry status: `in_progress`
 | `M13a.2-OBJ-07` | `complete` | `observations_only` | Audit zeroization of exporter-derived material where practical |
 | `M13a.2-OBJ-08` | `complete` | `findings_recorded` | Audit logs, errors, debug APIs, and test helpers for accidental secret exposure |
 | `M13a.2-OBJ-09` | `complete` | `mixed` | Classify and track all supported M13a.2 findings |
+
+### M13a.3 Audit Coverage
+
+| Objective | Status | Outcome | Title |
+| --- | --- | --- | --- |
+| `M13a.3-OBJ-01` | `complete` | `mixed` | Audit decompressor setup limits and decoded output bounds |
+| `M13a.3-OBJ-02` | `complete` | `mixed` | Audit patch and delta setup limits |
+| `M13a.3-OBJ-03` | `complete` | `mixed` | Audit algorithm-switching and profile-based algorithm restrictions |
+| `M13a.3-OBJ-04` | `complete` | `observations_only` | Audit delta target-size and output-size invariants |
+| `M13a.3-OBJ-05` | `complete` | `observations_only` | Audit sparse reconstruction limits |
+| `M13a.3-OBJ-06` | `complete` | `observations_only` | Audit FEC and recovery metadata bounds |
+| `M13a.3-OBJ-07` | `complete` | `mixed` | Audit in-memory recovery API limitations |
+| `M13a.3-OBJ-08` | `complete` | `findings_recorded` | Audit profile-specific strict-mode rejection behavior |
+| `M13a.3-OBJ-09` | `complete` | `mixed` | Record and classify M13a.3 remediation and normative follow-up |
 
 ### M13a.4 Audit Coverage
 
@@ -102,6 +117,17 @@ Registry status: `in_progress`
 | `M13-EXTRACT-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Current extractor exposes no hardlink creation path |
 | `M13-EXTRACT-005` | `specification_gap` | `pending_normative_resolution` | `not_applicable` | `medium` | `M13a.7` | Symlink target conformance and extraction-safety requirements are not normatively resolved |
 | `M13-EXTRACT-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | Non-Unix builds fail closed for unsupported symlink and metadata restoration requests |
+| `M13-RECOVERY-001` | `resource_risk` | `open` | `medium` | `medium` | `M13b.2` | `repair_archive` working set check omits the `repaired` output buffer allocation |
+| `M13-TRANSFORM-001` | `specification_gap` | `pending_normative_resolution` | `not_applicable` | `medium` | `M13a.7` | Per-profile normative algorithm restriction tables are not defined in the specification |
+| `M13-TRANSFORM-002` | `positive_observation` | `verified` | `informational` | `low` | `none` | Decompressor decoded output is bounded by `max_output_size` before any output reaches the caller |
+| `M13-TRANSFORM-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | BSDIFF and VCDIFF resource limits are correctly derived from unified `ResourceLimits` and enforced before allocation |
+| `M13-TRANSFORM-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Sparse reconstruction allocates output bounded by `max_decoded_entry_size` and `max_allocation_bytes` before any allocation |
+| `M13-TRANSFORM-005` | `positive_observation` | `verified` | `informational` | `low` | `none` | Fragment group validation enforces count, span, and loss-tolerant gap limits before reassembly allocation |
+| `M13-TRANSFORM-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | All audited transform and recovery crates forbid unsafe code at the crate level |
+| `M13-TRANSFORM-007` | `fuzzing_gap` | `open` | `low` | `low` | `M13b.2` | No fuzz targets exercise BSDIFF or VCDIFF application with attacker-controlled base and patch inputs, or archive-level repair |
+| `M13-TRANSFORM-008` | `documentation_gap` | `closed_no_action` | `informational` | `deferred` | `none` | Decompressor library-internal working memory is not tracked by SAR `ResourceLimits` |
+| `M13-RECOVERY-002` | `positive_observation` | `verified` | `informational` | `low` | `none` | FEC value byte length and parity allocation are bounded before codec construction |
+| `M13-RECOVERY-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | In-memory recovery API documents limitations and applies archive-size, protected-range, and partial working-set bounds |
 
 ## Finding Details
 
@@ -929,3 +955,329 @@ Regular-file and directory extraction remain available cross-platform, but non-U
 `verified_control` - `2026-08-01`
 
 Verified during M13a.4: non-Unix builds fail closed for unsupported permission, owner, and symlink restoration requests instead of attempting ambiguous host-specific behavior.
+
+### M13-RECOVERY-001: `repair_archive` working set check omits the `repaired` output buffer allocation
+
+| Field | Value |
+| --- | --- |
+| Type | resource_risk |
+| Source milestone | M13a.3 |
+| Status | open |
+| Severity | medium |
+| Priority | medium |
+| Owner | M13b.2 |
+| Compatibility | preserves_compliant_inputs |
+
+#### Summary
+
+In `repair_archive`, the working set estimate sums `archive_bytes.len() + 2 * protected_range.length + tlv_value.len()` bytes and checks that against `max_repair_working_set`. A second check at line 470 checks only `archive_bytes.len()`. The `repaired` output Vec, allocated with capacity `archive_bytes.len()` bytes after both checks, is not included in either estimate. At peak, the process simultaneously holds input archive bytes (X bytes), FEC-recovered protected range (P bytes), and repaired output archive (approximately X bytes), totalling approximately 2X + P bytes. Under default limits (max_archive_size = 16 GiB, max_repair_working_set = 2 GiB), peak can reach approximately 32 GiB + protected_range.length while the check allows only 2 GiB.
+
+#### Current Behavior
+
+At lines 414-420 of `crates/sar-archive/src/recovery.rs`, the working set is computed as `archive_bytes.len() + plan.protected_range.length + tlv_value.len() + plan.protected_range.length` and checked against `max_repair_working_set`. A second `check_repair_working_set` at lines 470-473 checks only `archive_bytes.len()`. The `repaired` Vec with capacity `archive_bytes.len()` is then allocated at line 474 without any additional limit check. Peak simultaneously retained memory is: input `archive_bytes` (X bytes) + FEC `recovered` output (P bytes, where P = `protected_range.length`) + `repaired` output archive (approximately X bytes) = approximately 2X + P bytes. The check accounts for only X + 2P + T bytes (where T = `tlv_value.len()`), underestimating peak by approximately X - P - T bytes for any archive larger than its protected range plus TLV data.
+
+#### Impact
+
+A caller passing a large archive to `repair_archive` can cause peak retained memory of approximately 2 * archive_bytes.len() + protected_range.length bytes, which is not bounded by `max_repair_working_set`. Under default ResourceLimits (max_archive_size = 16 GiB, max_repair_working_set = 2 GiB), the `repaired` allocation can reach approximately max_archive_size bytes (16 GiB) independent of the configured max_repair_working_set. Callers enforcing max_archive_size before calling repair_archive cannot prevent peak memory from exceeding max_repair_working_set when the archive is larger than max_repair_working_set / 2.
+
+#### Evidence
+
+* `crates/sar-archive/src/recovery.rs` (lines 414-420): Working set computed as `archive_bytes.len() + plan.protected_range.length + tlv_value.len() + plan.protected_range.length` (input + 2 * protected range + TLV) and checked against `max_repair_working_set`. The `repaired` Vec of capacity `archive_bytes.len()` bytes is not included.
+* `crates/sar-archive/src/recovery.rs` (lines 470-477): Second `check_repair_working_set` checks only `archive_bytes.len()` bytes. Immediately after, `Vec::with_capacity(archive_bytes.len())` allocates the full output archive without inclusion in either check. Peak simultaneous allocations are input + recovered + repaired.
+* `crates/sar-core/src/limits.rs` (lines 170-177 and 246-252): `max_repair_working_set` defaults to 2 GiB; `max_archive_size` defaults to 16 GiB. The unaccounted `repaired` allocation can approach `max_archive_size` bytes independently of `max_repair_working_set`.
+
+#### Remediation
+
+* Include the `repaired` output buffer allocation (approximately `archive_bytes.len()` bytes) in the working set estimate before allocating it, so that the sum of input, recovered range, and output bytes is checked against `max_repair_working_set`.
+* Ensure the combined peak allocation for input archive, FEC recovered range, and repaired output is bounded by `max_repair_working_set` before any allocation that would cause the total to exceed the limit.
+* Add a deterministic test verifying that `repair_archive` returns `LimitExceeded` when the sum of input, recovered range, and output bytes would exceed a configured `max_repair_working_set`.
+
+#### Verification
+
+Requirement: `required`
+
+* Deterministic test verifies `repair_archive` returns `LimitExceeded` when archive_bytes.len() + protected_range.length + archive_bytes.len() exceeds `max_repair_working_set`.
+* Successful repair completes when the corrected peak estimate is within the configured limit.
+
+### M13-TRANSFORM-001: Per-profile normative algorithm restriction tables are not defined in the specification
+
+| Field | Value |
+| --- | --- |
+| Type | specification_gap |
+| Source milestone | M13a.3 |
+| Status | pending_normative_resolution |
+| Severity | not_applicable |
+| Priority | medium |
+| Owner | M13a.7 |
+| Compatibility | unknown_pending_resolution |
+
+#### Summary
+
+The specification requires (Section 2340) that implementations return `SAR_ERR_UNSUPPORTED` for algorithm IDs not supported by the selected profile. However, the specification does not define per-profile normative algorithm restriction tables for compression, delta, FEC, sparse, or recovery algorithms. Without these tables, implementations cannot consistently enforce profile-specific algorithm constraints. `validate_archive_profile` in `crates/sar-archive/src/profile.rs` documents this as a known limitation.
+
+#### Current Behavior
+
+`validate_archive_profile` in `crates/sar-archive/src/profile.rs` validates only global-flag constraints per profile (NO_INDEX, ENCRYPTED). Its documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The specification (Section 2340) states that algorithm IDs not supported by the selected profile MUST return SAR_ERR_UNSUPPORTED, but the specification provides no per-profile algorithm allowlist.
+
+#### Normative Question
+
+Which specific compression, delta, FEC, sparse, and recovery algorithm IDs are allowed or disallowed by each named compliance profile (MinimalInteroperableArchive, StaticArchive, Package, StreamPackage, Backup, Telemetry, LiveMedia, Standard)? At what point in archive processing (archive open, global-header parse, or per-entry decode) must profile-level algorithm validation occur to be considered conformant? How should implementations report profile violations detected during per-entry decode (SAR_ERR_UNSUPPORTED vs. SAR_ERR_PROFILE_VIOLATION)?
+
+#### Evidence
+
+* `specification.md` (line 2340): Normative requirement: 'If an implementation supports a feature but encounters an assigned algorithm identifier that is not implemented by the selected profile, it MUST return SAR_ERR_UNSUPPORTED.' No per-profile algorithm table is provided in the specification.
+* `crates/sar-archive/src/profile.rs` (lines 118-132): `validate_archive_profile` documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The function validates only NO_INDEX and ENCRYPTED global flags per profile.
+
+#### Verification
+
+Requirement: `pending_normative_resolution`
+
+### M13-TRANSFORM-002: Decompressor decoded output is bounded by `max_output_size` before any output reaches the caller
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+All three decompression algorithms (STORE, DEFLATE, ZSTD) route through `copy_bounded`, which checks a running decoded-byte counter using `checked_add` before each 8 192-byte write and returns `LimitExceeded` before writing any chunk that would exceed `max_output_size`. The `decode_payload` function additionally rejects inputs whose `expected_output_size` exceeds `max_output_size` before constructing any decompressor. Algorithm IDs are validated via `CompressionAlgorithm::from_id` before decoder construction, failing closed for reserved and unsupported IDs.
+
+#### Evidence
+
+* `crates/sar-compression/src/lib.rs` (lines 168-192): `copy_bounded` maintains a running decoded-byte counter with `u64::try_from` and `checked_add` overflow guards and returns `LimitExceeded` before writing any 8 192-byte chunk that would cause the total to exceed `max_output_size`.
+* `crates/sar-compression/src/lib.rs` (lines 138-166): `decode_stream` dispatches STORE to `copy_bounded` directly, and wraps both `DeflateDecoder` and `zstd::stream::Decoder` in `copy_bounded` for DEFLATE and ZSTD, ensuring all three paths enforce the same output bound.
+* `crates/sar-archive/src/transform.rs` (lines 172-178): `decode_payload` returns `LimitExceeded` when `expected_output_size > max_output_size` before constructing any decompressor.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: decoded output for all three compression algorithms is bounded by max_output_size via copy_bounded before any output reaches the caller; the limit is enforced using checked arithmetic before each write.
+
+### M13-TRANSFORM-003: BSDIFF and VCDIFF resource limits are correctly derived from unified `ResourceLimits` and enforced before allocation
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+`bsdiff_limits_from_resource_limits` and `vcdiff_limits_from_resource_limits` in `crates/sar-archive/src/archive.rs` map all relevant ResourceLimits fields to their algorithm-specific structs before patch application. BsdiffLimits covers patch size, control bytes, diff bytes, extra bytes, control triple count, and reconstructed target size. VcdiffLimits covers patch size, window count, instruction count, and output size. Both patch algorithms additionally verify that reconstructed output length equals the declared target size, failing closed on any mismatch. All limit checks in the application paths use early-return error paths before allocating or growing buffers.
+
+#### Evidence
+
+* `crates/sar-archive/src/archive.rs` (lines 3543-3568): `bsdiff_limits_from_resource_limits` and `vcdiff_limits_from_resource_limits` map ResourceLimits fields to BsdiffLimits and VcdiffLimits; `max_in_memory_buffer` bounds the compressed patch size, `max_decoded_entry_size` bounds target output.
+* `crates/sar-delta/src/bsdiff.rs` (lines 117-123): `apply_bsdiff` checks `patch_len > limits.max_patch_size` as its first operation before any allocation or parsing; downstream limit checks use early-return error paths before each growth operation.
+* `crates/sar-delta/src/vcdiff.rs` (struct VcdiffLimits and apply_vcdiff entry): `VcdiffLimits` documents default bounds for patch size (256 MiB), window count (4 096), instruction count (65 536), and output size (max_decoded_entry_size); all are checked before the corresponding allocation or loop iteration.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: BSDIFF and VCDIFF limits are derived from unified ResourceLimits and enforced before allocations and loop iterations in both patch application paths; output length is verified against the declared target size.
+
+### M13-TRANSFORM-004: Sparse reconstruction allocates output bounded by `max_decoded_entry_size` and `max_allocation_bytes` before any allocation
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+`apply_sparse_reconstruction` checks `logical_size` against both `max_decoded_entry_size` and `max_allocation_bytes` (via `SparseLimits`) before allocating the output Vec. Extent validation uses `checked_add` for offset-plus-length arithmetic with explicit overflow detection. Extents must be non-overlapping, in ascending offset order, and within `logical_size`; zero-length extents, out-of-bounds extents, excess descriptor count, and excess payload bytes are all rejected before the output is returned. `SparseLimits` is derived from `ResourceLimits` via `sparse_limits()` using the tighter of `max_in_memory_buffer` and `max_total_pipeline_memory`.
+
+#### Evidence
+
+* `crates/sar-sparse/src/lib.rs` (lines 192-201): `apply_sparse_reconstruction` calls `limits.check_decoded_entry_size(logical_size)` and `limits.allocation_len(logical_size)` before `vec![0u8; logical_size_usize]`, bounding output allocation by both limits.
+* `crates/sar-sparse/src/lib.rs` (lines 137-173): `validate_sparse_extents` checks descriptor count limit, rejects zero-length extents, uses `checked_add` for `offset + length`, rejects out-of-bounds extents, rejects overlapping extents, and rejects excess payload bytes after all extents are consumed.
+* `crates/sar-core/src/limits.rs` (lines 733-745): `sparse_limits()` sets `max_allocation_bytes` as `min(max_in_memory_buffer, max_total_pipeline_memory)` to apply the tighter of the two limits.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: sparse reconstruction output is bounded by max_decoded_entry_size and max_allocation_bytes before allocation; extent validation uses checked arithmetic and fails closed for all malformed extent descriptors.
+
+### M13-TRANSFORM-005: Fragment group validation enforces count, span, and loss-tolerant gap limits before reassembly allocation
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+`validate_fragment_group` and `reconstruct_fragments` enforce `max_fragment_count`, `max_fragment_group_span`, `max_decoded_entry_size`, `max_loss_tolerant_gap`, and `max_allocation_bytes` (via `FragmentLimits`) before any reassembly allocation. Descriptor field arithmetic uses checked operations. Duplicate fragment indices and payload-size mismatches fail immediately regardless of the LOSS_TOLERANT flag. `FragmentLimits` is derived from `ResourceLimits` via `fragment_limits()` using `min(max_in_memory_buffer, max_total_pipeline_memory)` for allocation bounds.
+
+#### Evidence
+
+* `crates/sar-fragmentation/src/lib.rs` (lines 70-152): `FragmentLimits` with five bounds; `check_fragment_count`, `check_fragment_group_span`, `check_decoded_entry_size`, `check_loss_tolerant_gap`, and `allocation_len` all return `LimitExceeded` before accessing the guarded resource.
+* `crates/sar-core/src/limits.rs` (lines 718-731): `fragment_limits()` sets `max_allocation_bytes` as `min(max_in_memory_buffer, max_total_pipeline_memory)`, applying the tighter of the per-buffer and pipeline-wide limits.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: fragment group validation enforces all five FragmentLimits fields before reassembly allocation; fatal error paths for duplicate indices and payload-size mismatches are not suppressed by the LOSS_TOLERANT flag.
+
+### M13-TRANSFORM-006: All audited transform and recovery crates forbid unsafe code at the crate level
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+All six transform and recovery crates in the M13a.3 audit scope declare `#![forbid(unsafe_code)]` at the crate level: `sar-compression`, `sar-delta`, `sar-sparse`, `sar-fec`, `sar-fragmentation`, and `sar-loss-tolerant`. No unsafe blocks, raw pointer dereferences, `from_raw_parts`, or `MaybeUninit` were found in any audited transform or recovery implementation path. Memory access is bounds-checked throughout via standard Rust slice indexing and checked arithmetic.
+
+#### Evidence
+
+* `crates/sar-compression/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-delta/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-sparse/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-fec/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-fragmentation/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-loss-tolerant/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: all six audited transform and recovery crates forbid unsafe code at the crate level; no unsafe blocks, raw pointer dereferences, or MaybeUninit were found in any transform or recovery implementation path.
+
+### M13-TRANSFORM-007: No fuzz targets exercise BSDIFF or VCDIFF application with attacker-controlled base and patch inputs, or archive-level repair
+
+| Field | Value |
+| --- | --- |
+| Type | fuzzing_gap |
+| Source milestone | M13a.3 |
+| Status | open |
+| Severity | low |
+| Priority | low |
+| Owner | M13b.2 |
+
+#### Summary
+
+`transform_pipeline_fuzz.rs` explicitly documents that it does not cover delta patch algorithms requiring a base object. The `archive_entry_decode` fuzz family also omits delta path coverage (returns `BaseMissing` when no `delta_base` is configured). No fuzz target exercises `apply_bsdiff`, `apply_vcdiff`, or `repair_archive` with attacker-controlled base, patch, or archive inputs. Resource limit enforcement in BSDIFF control triple counting, VCDIFF window and instruction counting, and archive repair working set checks therefore lacks fuzz coverage.
+
+#### Impact
+
+Off-by-one errors, overflow conditions, or limit evasions in BSDIFF, VCDIFF, or archive repair resource accounting are not exercised by any fuzz target. Without fuzz coverage, such conditions could remain latent through static review and unit tests.
+
+#### Evidence
+
+* `fuzz/fuzz_targets/transform_pipeline_fuzz.rs` (lines 28-33): Comment explicitly lists 'Delta patch algorithms requiring a base object' under 'What this target does NOT cover', confirming deliberate exclusion of delta paths from fuzz coverage.
+* `crates/sar-delta/src/bsdiff.rs` (lines 46-94): `BsdiffLimits` struct with six independent bounds for patch size, control bytes, diff bytes, extra bytes, control triple count, and target size; no dedicated fuzz target calls `apply_bsdiff` with arbitrary base and patch inputs.
+
+#### Remediation
+
+* Add a dedicated fuzz target that calls `apply_bsdiff` and `apply_vcdiff` with arbitrary base and patch byte inputs under representative `BsdiffLimits` and `VcdiffLimits`.
+* Add a dedicated fuzz target or extend an existing target to exercise `repair_archive` with arbitrary archive bytes and erasure index inputs under bounded `ResourceLimits`.
+
+### M13-TRANSFORM-008: Decompressor library-internal working memory is not tracked by SAR `ResourceLimits`
+
+| Field | Value |
+| --- | --- |
+| Type | documentation_gap |
+| Source milestone | M13a.3 |
+| Status | closed_no_action |
+| Severity | informational |
+| Priority | deferred |
+| Owner | none |
+| Compatibility | documentation_only |
+
+#### Summary
+
+`DecompressionOptions.max_output_size` is documented as 'Hard cap for decoded bytes to prevent decompression bombs'. SAR `ResourceLimits` has no field for decompressor library-internal working memory (e.g., the Zstd window buffer or Deflate sliding window). Decoder working memory is managed by the decompression libraries independently of SAR-configured limits. No safety defect was demonstrated: Zstd and Deflate library defaults bound decoder working memory at a size comparable to or smaller than `max_in_memory_buffer` defaults under normal input.
+
+#### Impact
+
+Operators reviewing `ResourceLimits` or `DecompressionOptions` cannot determine from the SAR API alone what decoder working memory will be allocated for a given input. Documented limits cover decoded output bytes but not library-internal state. No safety defect was demonstrated under the current default library configuration.
+
+#### Evidence
+
+* `crates/sar-compression/src/lib.rs` (lines 73-77): `DecompressionOptions` struct documents `max_output_size` as 'Hard cap for decoded bytes to prevent decompression bombs'; no field documents or bounds decompressor library-internal working memory.
+* `crates/sar-compression/src/lib.rs` (lines 155-157): `zstd::stream::Decoder::new(input)` is constructed without any window size or memory limit parameter; decompressor working memory bounds are determined by Zstd library defaults, not by SAR-configured ResourceLimits.
+
+#### Resolution
+
+`closed_no_action` - `2026-08-01`
+
+Closed with no action in M13a.3: library-internal decompressor working memory is bounded by Zstd and Deflate library defaults, not by SAR-configured limits. No safety defect was demonstrated. The observation is retained as a documentation note.
+
+### M13-RECOVERY-002: FEC value byte length and parity allocation are bounded before codec construction
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+`parse_lfh_fec_value` and `validate_recovery_tlv` both call `check_fec_value_bytes` on the raw FEC value bytes before dispatching to the codec. XOR and RS codecs independently enforce a 256 MiB `MAX_PARITY_SIZE` constant on parity data allocation. Stripe count, group count, and parity length products use `checked_mul` and `checked_add` throughout both codecs. Unsupported and reserved FEC algorithm IDs are rejected by `validate_fec_algo_id` before any value parsing.
+
+#### Evidence
+
+* `crates/sar-core/src/fec.rs` (lines 144 and 183): `limits.check_fec_value_bytes(value.len())` called in both `validate_recovery_tlv` and `parse_lfh_fec_value` before codec dispatch, bounding FEC value bytes before any codec allocation.
+* `crates/sar-fec/src/xor.rs` (lines 30-31 and 246-250): `MAX_PARITY_SIZE` constant of 256 MiB; `encode_recovery` returns `LimitExceeded` when `pl > MAX_PARITY_SIZE`, bounding XOR parity allocation to 256 MiB.
+* `crates/sar-fec/src/rs/mod.rs` (lines 51-52 and 117-128): `MAX_PARITY_SIZE` constant of 256 MiB for RS; `parity_data_len` uses `checked_mul` for stripe_count * group_count and returns `Overflow` on product overflow before any parity allocation.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: FEC value byte length is bounded by check_fec_value_bytes before codec construction; parity allocation is independently bounded by MAX_PARITY_SIZE in both XOR and RS codecs; arithmetic uses checked operations throughout.
+
+### M13-RECOVERY-003: In-memory recovery API documents limitations and applies archive-size, protected-range, and partial working-set bounds
+
+| Field | Value |
+| --- | --- |
+| Type | positive_observation |
+| Source milestone | M13a.3 |
+| Status | verified |
+| Severity | informational |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+The `repair_archive` API is explicitly documented as an in-memory-only API and states that callers must enforce `max_archive_size`, `max_recovery_protected_range`, and `max_repair_working_set` before passing untrusted archives. `check_archive_size` is called in `parse_archive_layout`, `check_recovery_protected_range` is called in `inspect_recovery_metadata`, and `check_repair_working_set` is called before FEC recovery and before output allocation. The working set accounting gap (omitting the repaired output allocation) is separately tracked in M13-RECOVERY-001.
+
+#### Evidence
+
+* `crates/sar-archive/src/recovery.rs` (lines 13-26): Module documentation explicitly states in-memory API limitations and instructs callers to enforce `max_archive_size`, `max_recovery_protected_range`, and `max_repair_working_set` before passing untrusted archives.
+* `crates/sar-archive/src/recovery.rs` (lines 147-148 and 221): `check_archive_size` called in `parse_archive_layout`; `check_recovery_protected_range` called in `inspect_recovery_metadata`; `check_repair_working_set` called at lines 414-420 and 470-473 before FEC recovery and output allocation.
+
+#### Resolution
+
+`verified_control` - `2026-08-01`
+
+Verified during M13a.3: the in-memory recovery API documents its limitations and applies archive-size, protected-range, and partial working-set bounds; the working set accounting gap is tracked separately in M13-RECOVERY-001.
