@@ -1,18 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:sar:m13-audit-findings:schema:2",
+  "$id": "urn:sar:m13-audit-findings:schema:1",
   "title": "SAR M13 audit findings registry",
-  "description": "Strict machine-readable registry for SAR M13 audit findings, specification gaps, observations, decisions, remediation tracking, and closure evidence.",
+  "description": "Strict machine-readable registry for SAR M13 audit findings, specification gaps, observations, resolutions, and remediation tracking.",
   "type": "object",
   "required": [
-    "$schema",
     "schema_version",
     "project",
     "milestone",
     "description",
     "registry_status",
     "source",
-    "generated_markdown",
     "audit_scopes",
     "findings"
   ],
@@ -20,11 +18,11 @@
   "properties": {
     "$schema": {
       "type": "string",
-      "const": "urn:sar:m13-audit-findings:schema:2"
+      "const": "urn:sar:m13-audit-findings:schema:1"
     },
     "schema_version": {
       "type": "integer",
-      "const": 2
+      "const": 1
     },
     "project": {
       "type": "string",
@@ -45,7 +43,7 @@
     },
     "generated_markdown": {
       "type": "string",
-      "const": "docs/M13_AUDIT_FINDINGS.md"
+      "pattern": "^docs/M13_AUDIT_FINDINGS\\.md$"
     },
     "audit_scopes": {
       "type": "array",
@@ -78,7 +76,7 @@
     },
     "finding_id": {
       "type": "string",
-      "pattern": "^M13-(?:PARSER|CRYPTO|TRANSFORM|RECOVERY|EXTRACT|BOUNDARY|TRANSPORT|FFI|COLD|SPEC)-[0-9]{3}$"
+      "pattern": "^M13-(?:PARSER|CRYPTO|TRANSFORM|EXTRACT|BOUNDARY|COLD|SPEC)-[0-9]{3}$"
     },
     "milestone_id": {
       "type": "string",
@@ -112,8 +110,7 @@
         "planned",
         "in_progress",
         "complete",
-        "deferred",
-        "cancelled"
+        "deferred"
       ]
     },
     "finding_type": {
@@ -142,35 +139,22 @@
         "wire_format",
         "interoperability",
         "cryptography",
-        "authentication",
         "secret_handling",
         "transform",
-        "compression",
-        "delta",
-        "sparse",
-        "fec",
         "recovery",
         "filesystem",
-        "metadata_restoration",
-        "path_handling",
-        "symlink",
-        "hardlink",
         "extraction",
         "crate_boundary",
         "profile_boundary",
         "transport",
-        "session",
         "ffi_readiness",
-        "public_api",
         "cold_storage",
         "tape",
         "fuzzing",
         "testing",
         "documentation",
-        "compatibility",
-        "conformance",
-        "logging",
-        "error_handling"
+        "api",
+        "compatibility"
       ]
     },
     "finding_status": {
@@ -224,12 +208,9 @@
       "enum": [
         "none",
         "documentation_only",
-        "clarification_only",
-        "preserves_compliant_inputs",
-        "rejects_previously_accepted_nonconforming_input",
-        "source_compatible",
-        "source_breaking",
-        "behavioral_change",
+        "behavior_clarification",
+        "backward_compatible",
+        "potentially_breaking",
         "wire_incompatible",
         "unknown_pending_resolution"
       ]
@@ -254,10 +235,8 @@
         "implementation_change",
         "specification_change",
         "documentation_change",
-        "test_change",
-        "fuzzing_change",
+        "test_or_fuzz_change",
         "accepted_risk",
-        "verified_control",
         "closed_no_action",
         "superseded"
       ]
@@ -273,12 +252,6 @@
     "resolution_owner": {
       "type": "string",
       "enum": [
-        "M13a.1",
-        "M13a.2",
-        "M13a.3",
-        "M13a.4",
-        "M13a.5",
-        "M13a.6",
         "M13a.7",
         "M13b.1",
         "M13b.2",
@@ -334,14 +307,6 @@
         "completed_date": {
           "type": "string",
           "format": "date"
-        },
-        "started_date": {
-          "type": "string",
-          "format": "date"
-        },
-        "reviewed_commit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{7,40}$"
         }
       },
       "allOf": [
@@ -384,13 +349,6 @@
           "$ref": "#/$defs/non_empty_string"
         },
         "description": {
-          "$ref": "#/$defs/non_empty_string"
-        },
-        "commit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{7,40}$"
-        },
-        "reproduction": {
           "$ref": "#/$defs/non_empty_string"
         }
       }
@@ -506,7 +464,8 @@
       "required": [
         "decision_type",
         "milestone",
-        "summary"
+        "summary",
+        "references"
       ],
       "additionalProperties": false,
       "properties": {
@@ -521,17 +480,15 @@
         },
         "references": {
           "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
           "items": {
             "$ref": "#/$defs/artifact_path"
-          },
-          "uniqueItems": true
+          }
         },
         "resolved_date": {
           "type": "string",
           "format": "date"
-        },
-        "rationale": {
-          "$ref": "#/$defs/non_empty_string"
         }
       }
     },
@@ -561,9 +518,6 @@
         },
         "supersedes": {
           "$ref": "#/$defs/finding_id_array"
-        },
-        "superseded_by": {
-          "$ref": "#/$defs/finding_id_array"
         }
       }
     },
@@ -584,7 +538,7 @@
         "evidence",
         "compatibility_impact",
         "resolution_owner",
-        "verification"
+        "regression_test"
       ],
       "additionalProperties": false,
       "properties": {
@@ -665,6 +619,9 @@
         "resolution_owner": {
           "$ref": "#/$defs/resolution_owner"
         },
+        "regression_test": {
+          "$ref": "#/$defs/regression_test"
+        },
         "remediation": {
           "$ref": "#/$defs/remediation"
         },
@@ -681,20 +638,6 @@
             "$ref": "#/$defs/non_empty_string"
           },
           "default": []
-        },
-        "verification": {
-          "$ref": "#/$defs/verification"
-        },
-        "risk_acceptance_rationale": {
-          "$ref": "#/$defs/non_empty_string"
-        },
-        "risk_acceptance_conditions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/non_empty_string"
-          },
-          "minItems": 1,
-          "uniqueItems": true
         }
       },
       "allOf": [
@@ -733,20 +676,10 @@
               },
               "compatibility_impact": {
                 "enum": [
-                  "clarification_only",
-                  "behavioral_change",
+                  "behavior_clarification",
+                  "potentially_breaking",
                   "wire_incompatible",
                   "unknown_pending_resolution"
-                ]
-              },
-              "verification": {
-                "properties": {
-                  "test_requirement": {
-                    "const": "pending_normative_resolution"
-                  }
-                },
-                "required": [
-                  "test_requirement"
                 ]
               }
             },
@@ -761,7 +694,10 @@
           "if": {
             "properties": {
               "finding_type": {
-                "const": "implementation_spec_mismatch"
+                "enum": [
+                  "implementation_defect",
+                  "implementation_spec_mismatch"
+                ]
               }
             },
             "required": [
@@ -773,48 +709,8 @@
               "current_behavior",
               "expected_behavior",
               "impact",
-              "normative_basis"
-            ],
-            "properties": {
-              "normative_basis": {
-                "minItems": 1
-              },
-              "severity": {
-                "enum": [
-                  "blocker",
-                  "high",
-                  "medium",
-                  "low"
-                ]
-              },
-              "resolution_owner": {
-                "enum": [
-                  "M13b.1",
-                  "M13b.2",
-                  "M13b.3",
-                  "M13b.4",
-                  "pending_triage"
-                ]
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "finding_type": {
-                "const": "implementation_defect"
-              }
-            },
-            "required": [
-              "finding_type"
-            ]
-          },
-          "then": {
-            "required": [
-              "current_behavior",
-              "expected_behavior",
-              "impact"
+              "normative_basis",
+              "remediation"
             ],
             "properties": {
               "severity": {
@@ -830,45 +726,7 @@
                   "M13b.1",
                   "M13b.2",
                   "M13b.3",
-                  "M13b.4",
-                  "pending_triage"
-                ]
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "finding_type": {
-                "const": "resource_risk"
-              }
-            },
-            "required": [
-              "finding_type"
-            ]
-          },
-          "then": {
-            "required": [
-              "current_behavior",
-              "impact"
-            ],
-            "properties": {
-              "severity": {
-                "enum": [
-                  "blocker",
-                  "high",
-                  "medium",
-                  "low"
-                ]
-              },
-              "resolution_owner": {
-                "enum": [
-                  "M13b.1",
-                  "M13b.2",
-                  "M13b.3",
-                  "M13b.4",
-                  "pending_triage"
+                  "M13b.4"
                 ]
               }
             }
@@ -905,14 +763,14 @@
               "resolution_owner": {
                 "const": "none"
               },
-              "verification": {
+              "regression_test": {
                 "properties": {
-                  "test_requirement": {
-                    "const": "not_required"
+                  "required": {
+                    "const": "no"
                   }
                 },
                 "required": [
-                  "test_requirement"
+                  "required"
                 ]
               }
             },
@@ -927,66 +785,7 @@
                   "required": [
                     "normative_question"
                   ]
-                },
-                {
-                  "required": [
-                    "risk_acceptance_rationale"
-                  ]
                 }
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "finding_type": {
-                "const": "accepted_design_risk"
-              }
-            },
-            "required": [
-              "finding_type"
-            ]
-          },
-          "then": {
-            "required": [
-              "current_behavior",
-              "impact",
-              "risk_acceptance_rationale",
-              "risk_acceptance_conditions",
-              "resolution"
-            ],
-            "properties": {
-              "status": {
-                "const": "accepted_risk"
-              },
-              "severity": {
-                "enum": [
-                  "blocker",
-                  "high",
-                  "medium",
-                  "low"
-                ]
-              },
-              "resolution_owner": {
-                "const": "none"
-              },
-              "resolution": {
-                "properties": {
-                  "decision_type": {
-                    "const": "accepted_risk"
-                  }
-                },
-                "required": [
-                  "decision_type",
-                  "milestone",
-                  "summary"
-                ]
-              }
-            },
-            "not": {
-              "required": [
-                "remediation"
               ]
             }
           }
@@ -1008,7 +807,8 @@
           },
           "then": {
             "required": [
-              "impact"
+              "impact",
+              "remediation"
             ],
             "properties": {
               "severity": {
@@ -1016,23 +816,6 @@
                   "low",
                   "informational"
                 ]
-              },
-              "resolution_owner": {
-                "enum": [
-                  "M13a.1",
-                  "M13a.2",
-                  "M13a.3",
-                  "M13a.4",
-                  "M13a.5",
-                  "M13a.6",
-                  "M13a.7",
-                  "M13b.1",
-                  "M13b.2",
-                  "M13b.3",
-                  "M13b.4",
-                  "none",
-                  "pending_triage"
-                ]
               }
             }
           }
@@ -1041,53 +824,7 @@
           "if": {
             "properties": {
               "status": {
-                "enum": [
-                  "open",
-                  "confirmed",
-                  "blocked",
-                  "remediation_in_progress"
-                ]
-              },
-              "finding_type": {
-                "enum": [
-                  "implementation_defect",
-                  "implementation_spec_mismatch",
-                  "resource_risk",
-                  "fuzzing_gap",
-                  "test_gap",
-                  "documentation_gap"
-                ]
-              }
-            },
-            "required": [
-              "status",
-              "finding_type"
-            ]
-          },
-          "then": {
-            "required": [
-              "remediation"
-            ],
-            "properties": {
-              "resolution_owner": {
-                "not": {
-                  "const": "none"
-                }
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "enum": [
-                  "resolved",
-                  "closed_no_action",
-                  "accepted_risk",
-                  "verified",
-                  "superseded"
-                ]
+                "const": "resolved"
               }
             },
             "required": [
@@ -1097,74 +834,7 @@
           "then": {
             "required": [
               "resolution"
-            ],
-            "not": {
-              "required": [
-                "remediation"
-              ]
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "closed_no_action"
-              }
-            },
-            "required": [
-              "status"
             ]
-          },
-          "then": {
-            "properties": {
-              "resolution_owner": {
-                "const": "none"
-              },
-              "resolution": {
-                "properties": {
-                  "decision_type": {
-                    "const": "closed_no_action"
-                  }
-                },
-                "required": [
-                  "decision_type",
-                  "milestone",
-                  "summary"
-                ]
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "status": {
-                "const": "verified"
-              }
-            },
-            "required": [
-              "status"
-            ]
-          },
-          "then": {
-            "properties": {
-              "resolution_owner": {
-                "const": "none"
-              },
-              "resolution": {
-                "properties": {
-                  "decision_type": {
-                    "const": "verified_control"
-                  }
-                },
-                "required": [
-                  "decision_type",
-                  "milestone",
-                  "summary"
-                ]
-              }
-            }
           }
         },
         {
@@ -1181,31 +851,7 @@
           "then": {
             "required": [
               "relationships"
-            ],
-            "properties": {
-              "resolution": {
-                "properties": {
-                  "decision_type": {
-                    "const": "superseded"
-                  }
-                },
-                "required": [
-                  "decision_type",
-                  "milestone",
-                  "summary"
-                ]
-              },
-              "relationships": {
-                "required": [
-                  "superseded_by"
-                ],
-                "properties": {
-                  "superseded_by": {
-                    "minItems": 1
-                  }
-                }
-              }
-            }
+            ]
           }
         }
       ]
@@ -1229,94 +875,8 @@
             "$ref": "#/$defs/non_empty_string"
           },
           "default": []
-        },
-        "source_commit": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{7,40}$"
         }
       }
-    },
-    "test_requirement": {
-      "type": "string",
-      "enum": [
-        "required",
-        "not_required",
-        "pending_normative_resolution"
-      ]
-    },
-    "verification": {
-      "type": "object",
-      "required": [
-        "test_requirement"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "test_requirement": {
-          "$ref": "#/$defs/test_requirement"
-        },
-        "acceptance_criteria": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/non_empty_string"
-          },
-          "uniqueItems": true
-        },
-        "owner_milestone": {
-          "$ref": "#/$defs/milestone_id"
-        },
-        "evidence_artifacts": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/artifact_path"
-          },
-          "uniqueItems": true
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "test_requirement": {
-                "const": "required"
-              }
-            },
-            "required": [
-              "test_requirement"
-            ]
-          },
-          "then": {
-            "required": [
-              "acceptance_criteria",
-              "owner_milestone"
-            ],
-            "properties": {
-              "acceptance_criteria": {
-                "minItems": 1
-              }
-            }
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "test_requirement": {
-                "const": "pending_normative_resolution"
-              }
-            },
-            "required": [
-              "test_requirement"
-            ]
-          },
-          "then": {
-            "not": {
-              "required": [
-                "owner_milestone"
-              ]
-            }
-          }
-        }
-      ]
     }
   }
 }
-
