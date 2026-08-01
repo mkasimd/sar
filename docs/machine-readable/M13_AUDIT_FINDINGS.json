@@ -382,11 +382,10 @@
           "id": "M13a.4-OBJ-04",
           "title": "Audit permission restoration and directory staging/finalization ordering",
           "status": "complete",
-          "outcome": "mixed",
-          "summary": "Directory content extraction proceeds only after a chmod to mode 0o700 succeeds (failing closed on error); however, the initial creation via `fs::create_dir()` uses the process umask, producing a brief visibility window at a broader mode before the chmod. Directory metadata is finalized after child extraction in reverse-depth order, and restored permission modes are masked to ordinary permission bits.",
+          "outcome": "observations_only",
+          "summary": "New directories are staged with a chmod to mode 0o700 that succeeds before any archive content is written (failing closed on error); directory metadata is finalized after child extraction in reverse-depth order; and restored permission modes are masked to ordinary permission bits. The initial creation via `fs::create_dir()` uses the process umask, so the directory exists briefly at a umask-determined mode before the chmod; during that window the directory is empty and other local principals with parent-directory access can observe its existence but cannot write to it under ordinary mode-bit semantics.",
           "related_findings": [
-            "M13-EXTRACT-003",
-            "M13-EXTRACT-007"
+            "M13-EXTRACT-003"
           ]
         },
         {
@@ -422,8 +421,7 @@
             "M13-EXTRACT-003",
             "M13-EXTRACT-004",
             "M13-EXTRACT-005",
-            "M13-EXTRACT-006",
-            "M13-EXTRACT-007"
+            "M13-EXTRACT-006"
           ]
         }
       ]
@@ -1562,7 +1560,7 @@
       "severity": "informational",
       "priority": "low",
       "confidence": "confirmed",
-      "summary": "On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applies the process umask, typically yielding mode 0o755 with the standard umask of 0o022) and then immediately calls `fs::set_permissions(path, 0o700)` as a separate step. Content extraction for a directory proceeds only after the `set_permissions` call succeeds; if it fails, extraction halts. The initial creation is not atomic with the chmod; a brief window exists before the chmod during which the directory may be accessible at the umask-determined mode (captured in M13-EXTRACT-007). Pending directory metadata is applied only after child extraction completes and in reverse-depth order, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced.",
+      "summary": "On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applies the process umask, typically yielding mode 0o755 with the standard umask of 0o022) and then calls `fs::set_permissions(path, 0o700)` as a separate step. Content extraction for a directory proceeds only after the `set_permissions` call succeeds; if it fails, extraction halts. Pending directory metadata is applied only after child extraction completes and in reverse-depth order, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced.",
       "affected_artifacts": [
         "crates/sar-cli/src/extraction/paths.rs",
         "crates/sar-cli/src/extraction/metadata.rs",
@@ -1596,7 +1594,7 @@
       "resolution": {
         "decision_type": "verified_control",
         "milestone": "M13a.4",
-        "summary": "Verified during M13a.4: content extraction for a directory proceeds only after `set_permissions(0o700)` succeeds (failing closed on error), final directory metadata is deferred until children are extracted in reverse-depth order, symlink metadata application is skipped, and special mode bits are stripped from restored permissions. The non-atomic create-then-chmod sequence and its brief visibility window are captured in M13-EXTRACT-007.",
+        "summary": "Verified during M13a.4: content extraction for a directory proceeds only after `set_permissions(0o700)` succeeds (failing closed on error), final directory metadata is deferred until children are extracted in reverse-depth order, symlink metadata application is skipped, and special mode bits are stripped from restored permissions. Directory staging uses a create-then-chmod sequence; the initial creation mode is umask-determined (typically 0o755), but the directory is empty and unwritable by other principals during that window, and extraction content is written only after the chmod to 0o700 succeeds.",
         "resolved_date": "2026-08-01"
       }
     },
@@ -1742,55 +1740,6 @@
         "milestone": "M13a.4",
         "summary": "Verified during M13a.4: non-Unix builds fail closed for unsupported permission, owner, and symlink restoration requests instead of attempting ambiguous host-specific behavior.",
         "resolved_date": "2026-08-01"
-      }
-    },
-    {
-      "id": "M13-EXTRACT-007",
-      "title": "Directory staging uses create-then-chmod sequence leaving a brief umask-dependent visibility window on Unix",
-      "finding_type": "implementation_defect",
-      "source_milestone": "M13a.4",
-      "areas": [
-        "filesystem",
-        "extraction"
-      ],
-      "status": "confirmed",
-      "severity": "low",
-      "priority": "low",
-      "confidence": "confirmed",
-      "summary": "On Unix, `create_restrictive_directory()` creates staging directories with `fs::create_dir()`, which inherits the process umask, then calls `fs::set_permissions(path, 0o700)` in a separate step. With the standard umask of 0o022 the directory is initially created at mode 0o755 (owner, group, and world read and execute) before the chmod restricts it to 0o700. During this window, other local principals with access to the parent directory can enter or enumerate the staging directory.",
-      "current_behavior": "`create_restrictive_directory()` calls `fs::create_dir(path)` followed by `fs::set_permissions(path, Permissions::from_mode(0o700))`. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with a standard umask of 0o022 the effective creation mode is 0o755. The directory is only restricted to 0o700 after the separate `set_permissions` call succeeds.",
-      "expected_behavior": "Staging directories should be created atomically at mode 0o700 without relying on a post-creation chmod. On Unix this can be achieved by using `std::fs::DirBuilder::new()` with `DirBuilderExt::mode(0o700)`, which passes 0o700 directly to the `mkdir` syscall; since 0o700 has no group or other bits, a reasonable umask does not widen the result.",
-      "impact": "A local principal with access to the parent directory can observe or enter the newly created staging directory during the window between `fs::create_dir` and `set_permissions`. Although the directory is empty at creation time (archive content is written only after the chmod succeeds), an adversarial local principal could pre-populate the staging directory or observe staging activity on a shared system.",
-      "affected_artifacts": [
-        "crates/sar-cli/src/extraction/paths.rs"
-      ],
-      "evidence": [
-        {
-          "kind": "source_code",
-          "artifact": "crates/sar-cli/src/extraction/paths.rs",
-          "locator": "lines 170-179",
-          "description": "`create_restrictive_directory()` calls `fs::create_dir(path)` (which applies the process umask to the default mode of 0o777, typically yielding 0o755 with a standard umask of 0o022) followed by `fs::set_permissions(path, Permissions::from_mode(0o700))` as a separate call. The two calls are not atomic; the directory is transiently accessible at the umask-determined mode before the chmod succeeds."
-        }
-      ],
-      "resolution_owner": "M13b.3",
-      "compatibility_impact": "none",
-      "remediation": {
-        "owner": "M13b.3",
-        "requirements": [
-          "Replace the `fs::create_dir` + `set_permissions` sequence with `std::fs::DirBuilder::new()` using `DirBuilderExt::mode(0o700)` on Unix, which passes mode 0o700 directly to the `mkdir` syscall and eliminates the transient broader-permission state."
-        ]
-      },
-      "verification": {
-        "test_requirement": "required",
-        "acceptance_criteria": [
-          "Verify that staging directories are created at mode 0o700 with no intermediate broader mode observable between creation and first use."
-        ],
-        "owner_milestone": "M13b.3"
-      },
-      "relationships": {
-        "related_findings": [
-          "M13-EXTRACT-003"
-        ]
       }
     }
   ],
