@@ -44,13 +44,13 @@ The public Rust API is **pre-stable** and **experimental**.
 
 No stable API/ABI guarantee is made for the current implementation.
 
-Public APIs may change before stabilization. See `docs/MACHINE_READABLE_API.json`
+Public APIs may change before stabilization. See `docs/machine-readable/MACHINE_READABLE_API.json`
 for the current API inventory. API inventory work and any stabilization decisions
 belong to M12c.2 and later milestones.
 
 Contributors and consumers should not depend on current API shapes remaining
 unchanged. Changes that affect public API surfaces should update
-`docs/MACHINE_READABLE_API.json` and regenerate `docs/API.md` as described in
+`docs/machine-readable/MACHINE_READABLE_API.json` and regenerate `docs/API.md` as described in
 `CONTRIBUTING.md`.
 
 ## C ABI compatibility

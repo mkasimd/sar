@@ -51,7 +51,7 @@ bug fix
 * [ ] Does not weaken fail-closed behavior.
 * [ ] Does not weaken authentication, transform ordering, or resource-limit behavior.
 * [ ] Does not make unsupported production, compliance, certification, or security-audit claims.
-* [ ] If public APIs changed, `docs/MACHINE_READABLE_API.json` was updated, schema-validated, and `docs/API.md` was regenerated.
+* [ ] If public APIs changed, `docs/machine-readable/MACHINE_READABLE_API.json` was updated, schema-validated, and `docs/API.md` was regenerated.
 
 ## Tests / validation
 
@@ -66,8 +66,8 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 Additional validation, if applicable:
 
 ```bash
-python -m json.tool docs/MACHINE_READABLE_API.json > /dev/null
-python -m json.tool docs/MACHINE_READABLE_API.schema.json > /dev/null
+python -m json.tool docs/machine-readable/MACHINE_READABLE_API.json > /dev/null
+python -m json.tool docs/machine-readable/MACHINE_READABLE_API.schema.json > /dev/null
 python tools/check_api_schema.py
 python tools/generate_api_md.py --check
 python -m json.tool test-vectors/manifest.schema.json > /dev/null

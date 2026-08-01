@@ -160,8 +160,10 @@ Please include, privately where possible:
 
 ## M13 audit findings
 
-M13a.1 parser, memory, panic, and DoS audit is in progress.  Tracked findings
-are recorded in `docs/M13_AUDIT_FINDINGS.md`.
+The M13a.1 parser, memory, panic, and DoS audit is complete. The authoritative
+machine-readable findings registry is
+`docs/machine-readable/M13_AUDIT_FINDINGS.json`. The generated human-readable
+report is `docs/M13_AUDIT_FINDINGS.md`.
 
 ## Future security work
 
