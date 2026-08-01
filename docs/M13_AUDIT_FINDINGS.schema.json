@@ -74,7 +74,7 @@
     "artifact_path": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+$"
     },
     "finding_id": {
       "type": "string",
@@ -262,14 +262,6 @@
         "superseded"
       ]
     },
-    "regression_test_requirement": {
-      "type": "string",
-      "enum": [
-        "yes",
-        "no",
-        "pending_normative_resolution"
-      ]
-    },
     "resolution_owner": {
       "type": "string",
       "enum": [
@@ -295,7 +287,8 @@
         "title",
         "status",
         "included_artifacts",
-        "excluded_topics"
+        "excluded_topics",
+        "objectives"
       ],
       "additionalProperties": false,
       "properties": {
@@ -332,16 +325,22 @@
           "default": []
         },
         "completed_date": {
-          "type": "string",
-          "format": "date"
+          "$ref": "#/$defs/iso_date"
         },
         "started_date": {
-          "type": "string",
-          "format": "date"
+          "$ref": "#/$defs/iso_date"
         },
         "reviewed_commit": {
           "type": "string",
           "pattern": "^[0-9a-f]{7,40}$"
+        },
+        "objectives": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/audit_objective"
+          }
         }
       },
       "allOf": [
@@ -358,8 +357,23 @@
           },
           "then": {
             "required": [
-              "completed_date"
-            ]
+              "completed_date",
+              "reviewed_commit"
+            ],
+            "properties": {
+              "objectives": {
+                "items": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "complete",
+                        "not_applicable"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       ]
@@ -415,63 +429,6 @@
         }
       }
     },
-    "regression_test": {
-      "type": "object",
-      "required": [
-        "required"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "required": {
-          "$ref": "#/$defs/regression_test_requirement"
-        },
-        "scope": {
-          "$ref": "#/$defs/non_empty_string"
-        },
-        "owner_milestone": {
-          "$ref": "#/$defs/milestone_id"
-        }
-      },
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "required": {
-                "const": "yes"
-              }
-            },
-            "required": [
-              "required"
-            ]
-          },
-          "then": {
-            "required": [
-              "scope",
-              "owner_milestone"
-            ]
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "required": {
-                "const": "pending_normative_resolution"
-              }
-            },
-            "required": [
-              "required"
-            ]
-          },
-          "then": {
-            "not": {
-              "required": [
-                "owner_milestone"
-              ]
-            }
-          }
-        }
-      ]
-    },
     "remediation": {
       "type": "object",
       "required": [
@@ -506,7 +463,8 @@
       "required": [
         "decision_type",
         "milestone",
-        "summary"
+        "summary",
+        "resolved_date"
       ],
       "additionalProperties": false,
       "properties": {
@@ -527,13 +485,42 @@
           "uniqueItems": true
         },
         "resolved_date": {
-          "type": "string",
-          "format": "date"
+          "$ref": "#/$defs/iso_date"
         },
         "rationale": {
           "$ref": "#/$defs/non_empty_string"
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "decision_type": {
+                "enum": [
+                  "documentation_change",
+                  "fuzzing_change",
+                  "implementation_change",
+                  "specification_change",
+                  "test_change"
+                ]
+              }
+            },
+            "required": [
+              "decision_type"
+            ]
+          },
+          "then": {
+            "required": [
+              "references"
+            ],
+            "properties": {
+              "references": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
     },
     "finding_id_array": {
       "type": "array",
@@ -738,23 +725,75 @@
                   "wire_incompatible",
                   "unknown_pending_resolution"
                 ]
-              },
-              "verification": {
-                "properties": {
-                  "test_requirement": {
-                    "const": "pending_normative_resolution"
-                  }
-                },
-                "required": [
-                  "test_requirement"
-                ]
               }
             },
             "not": {
               "required": [
                 "remediation"
               ]
-            }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "draft",
+                        "confirmed",
+                        "pending_normative_resolution",
+                        "blocked"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "verification": {
+                      "properties": {
+                        "test_requirement": {
+                          "const": "pending_normative_resolution"
+                        }
+                      },
+                      "required": [
+                        "test_requirement"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "status": {
+                      "enum": [
+                        "resolved",
+                        "superseded"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status"
+                  ]
+                },
+                "then": {
+                  "properties": {
+                    "verification": {
+                      "properties": {
+                        "test_requirement": {
+                          "const": "not_required"
+                        }
+                      },
+                      "required": [
+                        "test_requirement"
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
           }
         },
         {
@@ -1215,8 +1254,7 @@
       "additionalProperties": false,
       "properties": {
         "last_updated": {
-          "type": "string",
-          "format": "date"
+          "$ref": "#/$defs/iso_date"
         },
         "branch": {
           "type": "string",
@@ -1300,6 +1338,34 @@
           "if": {
             "properties": {
               "test_requirement": {
+                "const": "not_required"
+              }
+            },
+            "required": [
+              "test_requirement"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "acceptance_criteria"
+                  ]
+                },
+                {
+                  "required": [
+                    "owner_milestone"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "test_requirement": {
                 "const": "pending_normative_resolution"
               }
             },
@@ -1309,14 +1375,274 @@
           },
           "then": {
             "not": {
-              "required": [
-                "owner_milestone"
+              "anyOf": [
+                {
+                  "required": [
+                    "acceptance_criteria"
+                  ]
+                },
+                {
+                  "required": [
+                    "owner_milestone"
+                  ]
+                }
               ]
             }
           }
         }
       ]
+    },
+    "audit_objective_status": {
+      "type": "string",
+      "enum": [
+        "planned",
+        "in_progress",
+        "complete",
+        "deferred",
+        "not_applicable",
+        "cancelled"
+      ]
+    },
+    "audit_objective_outcome": {
+      "type": "string",
+      "enum": [
+        "not_assessed",
+        "no_findings",
+        "findings_recorded",
+        "observations_only",
+        "mixed",
+        "not_applicable"
+      ]
+    },
+    "audit_objective": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "status",
+        "outcome",
+        "summary",
+        "related_findings"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^M13a\\.[1-7]-OBJ-[0-9]{2}$"
+        },
+        "title": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "status": {
+          "$ref": "#/$defs/audit_objective_status"
+        },
+        "outcome": {
+          "$ref": "#/$defs/audit_objective_outcome"
+        },
+        "summary": {
+          "$ref": "#/$defs/non_empty_string"
+        },
+        "related_findings": {
+          "$ref": "#/$defs/finding_id_array"
+        },
+        "notes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/non_empty_string"
+          },
+          "default": []
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "planned"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "not_assessed"
+              },
+              "related_findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "in_progress"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "not_assessed",
+                  "findings_recorded",
+                  "observations_only",
+                  "mixed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "complete"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "no_findings",
+                  "findings_recorded",
+                  "observations_only",
+                  "mixed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "deferred"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "not_assessed"
+              },
+              "related_findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "cancelled"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "not_assessed"
+              },
+              "related_findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "not_applicable"
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "outcome": {
+                "const": "not_applicable"
+              },
+              "related_findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "findings_recorded",
+                  "observations_only",
+                  "mixed"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "related_findings": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "enum": [
+                  "not_assessed",
+                  "no_findings",
+                  "not_applicable"
+                ]
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "properties": {
+              "related_findings": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "iso_date": {
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$"
     }
   }
 }
-
