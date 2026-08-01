@@ -18,11 +18,11 @@ production-readiness is made.
 
 ## Contents
 
-- [M13a.1 — Parser, Memory, Panic, and DoS Audit](#m13a1--parser-memory-panic-and-dos-audit)
+- [M13a.1 - Parser, Memory, Panic, and DoS Audit](#m13a1---parser-memory-panic-and-dos-audit)
 
 ---
 
-## M13a.1 — Parser, Memory, Panic, and DoS Audit
+## M13a.1 - Parser, Memory, Panic, and DoS Audit
 
 **Scope:** global header, LFH, TLV, Central Dictionary, Footer, and archive
 structural parsing; checked arithmetic and length/offset calculations;
@@ -38,8 +38,12 @@ quality review.
 - `crates/sar-core/src/io.rs`
 - `crates/sar-core/src/sparse.rs`
 - `crates/sar-core/src/lib.rs`
+- `crates/sar-core/src/fec.rs` (recovery TLV classification and limit-checked paths)
+- `crates/sar-core/src/metadata.rs` (LFH metadata types; no allocation paths; reviewed and out of scope for parser findings)
 - `crates/sar-archive/src/lib.rs`
 - `crates/sar-archive/src/archive.rs` (parser/resource interaction paths)
+- `crates/sar-archive/src/stream.rs` (StreamArchiveParser push-parse state machine; parser/resource behavior; reviewed, no additional findings beyond those below)
+- `crates/sar-archive/src/recovery.rs` (parser-facing interface paths only; repair algorithm internals reserved for M13a.3)
 - `fuzz/fuzz_targets/parse_global_header.rs`
 - `fuzz/fuzz_targets/parse_lfh.rs`
 - `fuzz/fuzz_targets/parse_lfh_wide.rs`
@@ -51,6 +55,8 @@ quality review.
 - `fuzz/fuzz_targets/archive_audit_wide.rs`
 - `fuzz/fuzz_targets/archive_entry_decode.rs`
 - `fuzz/fuzz_targets/archive_entry_decode_wide.rs`
+- `fuzz/fuzz_targets/archive_logical_files.rs`
+- `fuzz/fuzz_targets/stream_archive_parser_state_machine.rs`
 - `fuzz/fuzz_targets/pr4_lfh_metadata_edges.rs`
 - `fuzz/fuzz_targets/pr4_tlv_metadata_edges.rs`
 - `fuzz/README.md`
@@ -66,7 +72,7 @@ quality review.
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-core/src/format.rs` — `global_header_flags_bytes()`
+  * `crates/sar-core/src/format.rs` - `global_header_flags_bytes()`
 * Finding:
   `global_header_flags_bytes()` constructs the global-header AAD bytes for AEAD
   computation.  Line 918 uses a direct `as u16` cast to encode the flags size:
@@ -86,9 +92,9 @@ quality review.
   `max_global_flags_bytes` is set above `u16::MAX`.  Not exploitable under
   default limits.
 * Evidence:
-  `crates/sar-core/src/format.rs:918` — `let flags_size = header.flags_bytes.len() as u16;`
+  `crates/sar-core/src/format.rs:918` - `let flags_size = header.flags_bytes.len() as u16;`
   The same function elsewhere uses `u16::try_from(...)` for size encoding (e.g.,
-  `write_global_header` at line 346–347), so the inconsistency is clear.
+  `write_global_header` at line 346-347), so the inconsistency is clear.
 * Recommended remediation:
   Replace `as u16` with `u16::try_from(header.flags_bytes.len()).map_err(|_| ...)`
   and return an error rather than silently truncating.
@@ -108,141 +114,171 @@ quality review.
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-archive/src/archive.rs` — `ArchiveReader::audit()`
+  * `crates/sar-archive/src/archive.rs` - `ArchiveReader::audit()`
 * Finding:
-  The `audit()` forward-scan loop (lines ~1205–1351) pushes one
+  The `audit()` forward-scan loop (lines ~1205-1351) pushes one
   `ArchiveAuditEntryReport` struct into the `entries: Vec<_>` on each iteration
-  without calling `limits.check_entry_count()`.  In contrast,
+  without first calling `limits.check_entry_count()`.  In contrast,
   `parse_central_dictionary()` calls `limits.check_entry_count()` before
   allocating the offset Vec.
 
   For indexed archives, `data_end` is set to `cd_offset`, which limits
-  traversal.  But for `NO_INDEX` archives, `data_end == file_len`, and
+  traversal.  For `NO_INDEX` archives, `data_end == file_len`, and
   `max_archive_size` is the only structural bound.  An adversary supplying a
-  crafted `NO_INDEX` archive with many minimal-length entries (header\_size = 4
-  bytes minimum, payload\_size = 0) could force the `entries` Vec to grow
-  proportional to archive size before any entry-count limit is applied.
+  crafted `NO_INDEX` archive with many minimal-length entries could force the
+  `entries` Vec to grow proportional to archive size before any entry-count limit
+  is applied.
 
-  With the default `max_archive_size = 16 GiB` and the minimum advance of 4
-  bytes per entry (header\_size only, payload\_size = 0), the theoretical
-  maximum `entries` length is approximately `16 GiB / 4 B ≈ 4 × 10⁹`.  Each
-  `ArchiveAuditEntryReport` struct carries multiple heap-allocated `Option<String>`
-  and `Option<Vec<u8>>` fields.  Actual OOM impact depends on
-  heap growth patterns but could be significant well before the theoretical
-  maximum is reached.
+  The minimum parseable LFH with no optional global flags set consists of the
+  always-present fixed fields: Header Size (4 B) + Entry Mode (2 B) + Stream ID
+  (2 B) + Sequence No (2 B) + Uncompressed Size (4 B) + Payload Size (4 B) +
+  Name Length (2 B) = 20 bytes.  With payload_size = 0 and name_length = 0, the
+  minimum archive advance per entry is 20 bytes.  With the default
+  `max_archive_size = 16 GiB`, the theoretical maximum number of entries before
+  the entry-count check would apply is approximately `16 GiB / 20 B ~ 858
+  million`.  Each `ArchiveAuditEntryReport` carries several heap-allocated
+  `Option<String>` and `Option<Vec<u8>>` fields; actual OOM impact depends on
+  heap growth patterns but could be significant well below the theoretical
+  maximum.
 
-  `next_entry()` has the same issue for direct sequential reading.
+  These paths must be analyzed separately:
+
+  * `audit()` retains one `ArchiveAuditEntryReport` per scanned entry in the
+    `entries: Vec<_>` without any pre-push entry-count check.  This is the
+    primary concern.
+  * `verify()` accumulates `offsets: Vec<u64>` (8 bytes per offset) by calling
+    `next_entry()` in a loop.  `verify()` is applicable only to indexed archives,
+    where `data_end = cd_offset`, so the traversal is bounded by the CD offset
+    rather than the full archive size.  The missing `check_entry_count` pre-push
+    call is a policy inconsistency but the structural exposure is smaller.
+  * `next_entry()` advances by one entry per call and does not accumulate a
+    retained collection of prior entries.  Its callers are responsible for
+    bounding iteration.  The missing entry-count check in `next_entry()` means
+    callers that loop without their own counter are not protected by the limit.
 * Risk:
-  Denial of service through unbounded `entries` Vec allocation against a
-  `NO_INDEX` archive (or any archive whose `data_end` is large).  The attack
-  requires the adversary to supply a large archive or control the archive source.
+  Denial of service through unbounded `entries` Vec growth against a `NO_INDEX`
+  archive.  The attack requires the adversary to control the archive source.
 * Evidence:
-  `crates/sar-archive/src/archive.rs:1205–1351` — no `check_entry_count` call
-  in the loop body.
-  `crates/sar-core/src/format.rs:827` — `limits.check_entry_count(file_count_usize)?;`
+  `crates/sar-archive/src/archive.rs:1205-1351` - no `check_entry_count` call
+  in the `audit()` loop body before `entries.push(...)`.
+  `crates/sar-core/src/format.rs:827` - `limits.check_entry_count(file_count_usize)?;`
   is present in `parse_central_dictionary()` but not replicated in the
-  data-area scan.
+  data-area scan paths.
 * Recommended remediation:
-  Insert `self.options.limits.check_entry_count(entries.len())?` inside the
-  `audit()` loop (and analogously in `next_entry()` or its callers) after each
-  push to `entries`.  An incremental checked-add of a running count before
-  pushing is preferred over checking `.len()` to avoid the checked-add
-  overhead being confused with an allocator check.
+  In the `audit()` loop, maintain a checked running count and call
+  `self.options.limits.check_entry_count(entry_count)?` before each
+  `entries.push(...)`.  A running counter incremented with `checked_add` before
+  the push is preferred so the check fires before memory is allocated.
+  Apply the same pre-push limit check in `verify()` for consistency.
+  For `next_entry()`, consider whether a per-call count check (via a stored
+  counter on the reader) is appropriate for callers that do not maintain their
+  own limit.
 * Regression test needed: yes
 * Suggested remediation milestone: M13b.1
 * Notes:
-  The `verify()` forward-scan builds an `offsets: Vec<u64>` with the same
-  structural gap, but `verify()` then cross-checks the result against the CD
-  entry count.  An attack against `verify()` via a NO_INDEX archive is not
-  applicable because NO_INDEX archives have no CD.  However, the pattern should
-  be made consistent.
+  The `verify()` exposure is smaller than `audit()` because `verify()` only
+  applies to indexed archives (bounded by `cd_offset`) and stores only 8-byte
+  offsets rather than full report structs.  The primary remediation target is
+  `audit()`.
 
 ---
 
-## M13-PARSER-003: TLV type IDs 0x05–0x0F are silently accepted by `classify_type`
+## M13-PARSER-003: TLV type IDs 0x05-0x0F are accepted in violation of the specification
 
 * Area: parser
 * Severity: medium
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-core/src/tlv.rs` — `classify_type()` / `parse_tlvs()`
+  * `crates/sar-core/src/tlv.rs` - `classify_type()` / `parse_tlvs()`
 * Finding:
-  The `classify_type()` function in `tlv.rs` covers specific TLV type ranges
-  with explicit arms but leaves type IDs `0x05..=0x0F` (11 values) to the
-  wildcard `_ => Ok(())` arm.  All explicitly covered ranges appear intentional
-  (assigned, reserved-rejected, or unsupported-rejected).  The range 0x05–0x0F
-  has no specification-assigned meaning and no explicit comment explaining why
-  it is accepted.
+  The specification (`specification.md` section on TLV type registry, line 1074)
+  explicitly reserves TLV type IDs in the range `0x05..=0x0F`:
+  ```
+  | 0x05 - 0x0F | RESERVED | Reserved for future use. |
+  ```
+  The specification requires that reserved values produce `SAR_ERR_RESERVED_VALUE`.
 
-  If the specification reserves these IDs for future use and requires parsers to
-  reject them, the current code is fail-open for these type IDs.  TLVs carrying
-  these IDs would be parsed, accumulated, and returned without error.  This could
-  allow crafted archives to inject unrecognized TLV metadata that higher-level
-  code does not handle, potentially bypassing TLV-dispatch safety checks.
+  The `classify_type()` function in `tlv.rs` covers all other ranges with
+  explicit arms (0x00 rejected, 0x01-0x04 accepted, 0x10-0x1F FEC dispatch,
+  0x20-0x2F unsupported, 0x30-0x3F accepted, 0x40/0x41/0x4F CDC accepted,
+  0x42-0x4E reserved CDC rejected, 0x50-0xFF reserved rejected) but leaves
+  IDs `0x05..=0x0F` to the wildcard `_ => Ok(())` arm.  As a result, TLVs
+  carrying these reserved IDs are parsed, accumulated, and returned without error.
 * Risk:
-  Fail-open for potentially reserved TLV type IDs.  Unknown/reserved TLVs being
-  silently accepted may allow metadata injection or bypass of TLV-level security
-  checks in future protocol versions.
+  The parser is fail-open for reserved TLV type IDs 0x05-0x0F, in direct
+  violation of the specification.  Archives supplying these IDs pass TLV
+  validation silently.  Higher-level code that does not enumerate or validate
+  TLV type IDs may accept metadata it was not designed to handle.
 * Evidence:
-  `crates/sar-core/src/tlv.rs:28–43` — `classify_type()` match arms.
+  `specification.md:1074` - explicit RESERVED designation for 0x05-0x0F.
+  `crates/sar-core/src/tlv.rs:28-43` - `classify_type()` wildcard arm accepts
+  0x05-0x0F without error.
   Ranges covered:
-  - 0x00 → rejected (reserved)
-  - 0x01–0x04 → accepted
-  - 0x10–0x1F → dispatched to FEC module
-  - 0x20–0x2F → rejected (unsupported SIGNATURE TLVs)
-  - 0x30–0x3F → accepted
-  - 0x40, 0x41, 0x4F → accepted (CDC)
-  - 0x42–0x4E → rejected (reserved CDC)
-  - 0x50–0xFF → rejected (reserved)
-  - `_` → accepted (covers 0x05–0x0F silently)
+  - 0x00 -> rejected (reserved)
+  - 0x01-0x04 -> accepted
+  - 0x10-0x1F -> dispatched to FEC module
+  - 0x20-0x2F -> rejected (unsupported SIGNATURE TLVs)
+  - 0x30-0x3F -> accepted
+  - 0x40, 0x41, 0x4F -> accepted (CDC)
+  - 0x42-0x4E -> rejected (reserved CDC)
+  - 0x50-0xFF -> rejected (reserved)
+  - `_` -> accepted (covers 0x05-0x0F in violation of the specification)
 * Recommended remediation:
-  Cross-reference the SAR wire-format specification for the assigned status of
-  type IDs 0x05–0x0F.  If they are reserved, replace the wildcard arm with an
-  explicit `0x05..=0x0F => Err(SarError::ReservedValue(...))` arm and update
-  the wildcard to be unreachable or panic in debug.  If they are intentionally
-  accepted for forward compatibility, add a comment documenting this policy and
-  rename the wildcard arm clearly.
+  Add an explicit arm `0x05..=0x0F => Err(SarError::ReservedValue("TLV type
+  IDs 0x05-0x0F are reserved"))` before the wildcard, and change the wildcard
+  to `unreachable!()` or an explicit exhaustive pattern covering any remaining
+  unhandled bytes.  Do not use `panic!()` or debug-only assertions as the sole
+  rejection mechanism in an input-controlled parser path.
 * Regression test needed: yes
 * Suggested remediation milestone: M13b.1
 * Notes:
-  The specification (`specification.md`) is authoritative.  The audit does not
-  resolve whether 0x05–0x0F is reserved or forward-compatible; the finding is
-  that the parser accepts them without explicit justification in the code.
+  The specification is authoritative.  The fix is straightforward: add the
+  missing reserved-range arm.  The wildcard should become unreachable once all
+  byte values are explicitly handled.
 
 ---
 
-## M13-PARSER-004: `GlobalFlags::from_bits_truncate` silently drops unknown flag bits
+## M13-PARSER-004: `GlobalFlags::from_bits_truncate` silently drops unknown bits in the first 32 flag bits
 
 * Area: parser
-* Severity: medium
+* Severity: low
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-core/src/format.rs` — `parse_global_header()`
-  * `crates/sar-archive/src/archive.rs` — `ArchiveReader::read_global_header()`
+  * `crates/sar-core/src/format.rs` - `parse_global_header()`
+  * `crates/sar-archive/src/archive.rs` - `ArchiveReader::read_global_header()`
 * Finding:
   Both `parse_global_header()` (format.rs line 241) and
   `ArchiveReader::read_global_header()` (archive.rs line 904) call
-  `GlobalFlags::from_bits_truncate()` to parse the raw 32-bit flags field.
+  `GlobalFlags::from_bits_truncate()` to parse the raw 32-bit flags word.
   `from_bits_truncate` silently discards any bits that do not correspond to a
-  defined flag constant.  As a result, if an archive sets bits corresponding to
-  currently undefined/reserved positions (e.g., bits 6, 7, 11–15, 21–23, 31),
-  the parser silently ignores them and proceeds.
+  defined flag constant.  The defined bits are 0-5, 8-10, 16-20, and 24-30.
+  Bits 6, 7, 11-15, 21-23, and 31 are currently undefined and are silently
+  cleared.
 
-  If the SAR v1.0 specification requires that reserved flag bits be zero (as is
-  common in binary format specifications for forward-compatibility control), the
-  parser is fail-open for reserved flag values.  A future parser version that
-  assigns meaning to one of these bits would be unable to distinguish a v1.0
-  archive that legitimately had those bits zero from a malformed v1.0 archive
-  that had them set.
+  The specification (section 5.2) does not contain an explicit "reserved bits
+  MUST be zero" requirement for the 32-bit global flags word, unlike the
+  session-layer flags (section 10.x) which carry an explicit MUST requirement.
+  However, `from_bits_truncate` is fail-open: archives setting unrecognized bits
+  in the first 32 bits are accepted without any warning or error.  The project's
+  general conformance posture is fail-closed for reserved and unsupported values.
 
-  Additionally, `validate_global_flags()` only checks a small number of specific
-  flag combinations and does not enforce that reserved bits are zero.
+  There is a second related issue: the global flags field is variable-length
+  (at least 4 bytes, governed by the `Flags Size` field).  Bytes 5 and beyond
+  in `flags_bytes` are stored but their content is not validated.  The
+  specification does not define semantics for bytes beyond the first 4, so
+  whether nonzero extension bytes should be accepted or rejected is not resolved
+  by the specification.
+
+  `validate_global_flags()` checks specific flag-combination conflicts but does
+  not reject unrecognized bits in either the first 32 bits or in extension bytes.
 * Risk:
-  Archives with reserved flag bits set are silently accepted.  This is a
-  fail-open behavior that may introduce interoperability hazards and allow
-  crafted archives to probe parser behavior by setting undefined flag bits.
+  Archives with unrecognized bits set in the first 32 global flag bits are
+  silently accepted, which is inconsistent with the general fail-closed posture
+  of the implementation.  Extension bytes beyond byte 4 are not validated.
+  Neither issue has a confirmed MUST violation in the current specification, but
+  both create interoperability and forward-compatibility ambiguity.
 * Evidence:
   `crates/sar-core/src/format.rs:241`:
   ```rust
@@ -252,25 +288,29 @@ quality review.
   ```rust
   let flags = GlobalFlags::from_bits_truncate(u32::from_le_bytes(low));
   ```
-  `crates/sar-core/src/flags.rs:175–201` — `validate_global_flags()` checks
-  only specific combinations; does not reject reserved bits.
+  `crates/sar-core/src/flags.rs:175-201` - `validate_global_flags()` checks
+  only specific flag combinations; does not reject unrecognized bits.
 * Recommended remediation:
-  Cross-reference the SAR wire-format specification to determine whether reserved
-  flag bits must be zero.  If so, replace `from_bits_truncate` with
-  `from_bits(...).ok_or(SarError::ReservedValue("unknown global flag bits"))` or
-  compute the mask of defined bits and check that `raw_flags & !DEFINED_MASK == 0`.
-  Add a `validate_global_flags` check for this invariant.
+  For the first 32-bit word: replace `from_bits_truncate` with a check that
+  `raw_flags & !DEFINED_BITS_MASK == 0` and return `SarError::ReservedValue` on
+  nonzero undefined bits.  This aligns with the implementation's general policy
+  of fail-closed behavior.  Add the check to `validate_global_flags`.
+  For extension bytes: add a check that all bytes beyond byte 3 are zero, or
+  document explicitly why nonzero extension bytes are intentionally preserved.
 * Regression test needed: yes
 * Suggested remediation milestone: M13b.1
 * Notes:
-  This does not affect existing conformance tests because those tests only supply
-  valid flag values.  The fuzz corpus category `profile_rejection` includes seeds
-  with reserved flag combinations, but those seeds target flag-conflict logic in
-  `validate_global_flags`, not the bit-truncation behavior itself.
+  Replacing `from_bits_truncate` alone does not address extension bytes beyond
+  byte 4, since `from_bits_truncate` only operates on the first 4 bytes.
+  Both the reserved-bit and extension-byte behaviors require separate targeted
+  fixes in `parse_global_header` and `read_global_header`.  Severity is low
+  because the specification does not explicitly require rejection of unknown bits
+  in global flags (unlike session flags), but fail-open acceptance is
+  inconsistent with project conformance posture.
 
 ---
 
-## M13-PARSER-005: `parse_lfh` fuzz target covers only 8 of the relevant global flag combinations
+## M13-PARSER-005: `parse_lfh` fuzz targets omit several LFH-layout-affecting global flags
 
 * Area: fuzzing
 * Severity: low
@@ -281,44 +321,44 @@ quality review.
   * `fuzz/fuzz_targets/parse_lfh_wide.rs`
 * Finding:
   The `parse_lfh` fuzz target uses the first byte of the fuzz input as an 8-bit
-  flag selector to derive `GlobalFlags`.  The selector maps bits 0–7 to:
-  SIZE\_64BIT, HAS\_PATH, SPARSE\_FILES, SELECTIVE\_FEC, HAS\_PERMS, EXT\_UID\_GID,
-  EXT\_TIME, FILE\_FRAGMENTATION.
+  flag selector.  The selector maps bits 0-7 to 8 individual `GlobalFlags`
+  constants (SIZE_64BIT, HAS_PATH, SPARSE_FILES, SELECTIVE_FEC, HAS_PERMS,
+  EXT_UID_GID, EXT_TIME, FILE_FRAGMENTATION), which means the target can
+  exercise all 256 combinations of those 8 flags.
 
-  The following global flags that affect LFH field layout are not included in the
-  selector:
-  - `COMPRESSED` (adds Comp Algo ID)
-  - `HAS_DELTA` (adds Patch Algo ID + Delta Base Hash)
-  - `ENCRYPTED` (adds Encr Algo ID + IV/Nonce)
-  - `CDC_SUPPORT` (adds CDC Algo ID)
-  - `PER_FILE_CRC` (adds File CRC32)
-  - `DEDUPLICATION` (adds Content Hash)
-  - `HAS_SYMLINKS` (affects entry-kind resolution, no LFH size change but semantic)
+  The following global flags that add fixed-length fields to the physical LFH
+  layout are not included in the selector and are never set:
+  - `COMPRESSED` (adds 1 B: Comp Algo ID)
+  - `HAS_DELTA` (adds 1 B Patch Algo ID + 32 B Delta Base Hash = 33 B total)
+  - `ENCRYPTED` (adds 1 B Encr Algo ID + 24 B IV/Nonce = 25 B total)
+  - `CDC_SUPPORT` (adds 1 B: CDC Algo ID)
+  - `PER_FILE_CRC` (adds 4 B: File CRC32)
+  - `DEDUPLICATION` (adds 32 B: Content Hash)
 
-  These fields—particularly `ENCRYPTED` (adds 1 + 24 = 25 bytes) and `HAS_DELTA`
-  (adds 1 + 32 = 33 bytes)—introduce significant additional fixed-length fields
-  into the LFH.  The `parse_lfh_wide` target has the same flag-selector design
-  and the same coverage gap.
+  `HAS_SYMLINKS` (bit 26) does not add any field to the LFH physical layout
+  (it is absent from `compute_lfh_size`) and affects only per-entry semantic
+  interpretation.  It is correctly omitted from the layout-affecting list.
 
-  Without these flags being fuzzed, the parser paths for those optional fields
-  (e.g., `iv_nonce` copy, `delta_base_hash` copy, `comp_algo_id` byte) are never
-  exercised by these targets.
+  Without these flags in the selector, the parser paths for the corresponding
+  optional fields (iv_nonce copy, delta_base_hash copy, comp_algo_id byte, etc.)
+  are never exercised by `parse_lfh` or `parse_lfh_wide`.
 * Risk:
-  Parser paths for ENCRYPTED, COMPRESSED, HAS\_DELTA, CDC\_SUPPORT, PER\_FILE\_CRC,
-  and DEDUPLICATION LFH optional fields are not covered by `parse_lfh` or
-  `parse_lfh_wide`.  Bugs in those paths would not be detected by these fuzz
-  targets.  Coverage is partially compensated by `archive_entry_decode`,
-  `archive_audit`, and `pr4_lfh_metadata_edges`, but the dedicated parse-layer
-  targets do not exercise all optional fields.
+  Parser paths for ENCRYPTED, HAS_DELTA, COMPRESSED, CDC_SUPPORT, PER_FILE_CRC,
+  and DEDUPLICATION LFH optional fields are not covered by the dedicated
+  `parse_lfh` or `parse_lfh_wide` targets.  Bugs in those paths would not be
+  detected by these targets.  Coverage is partially compensated by
+  `archive_entry_decode`, `archive_audit`, and `pr4_lfh_metadata_edges`, but
+  the dedicated parse-layer targets do not exercise all optional fields.
 * Evidence:
-  `fuzz/fuzz_targets/parse_lfh.rs:22–51` — `lfh_flags()` function covers 8 flags
-  (bits 0–7) but omits COMPRESSED, HAS\_DELTA, ENCRYPTED, CDC\_SUPPORT,
-  PER\_FILE\_CRC, DEDUPLICATION, HAS\_SYMLINKS.
+  `fuzz/fuzz_targets/parse_lfh.rs:22-51` - `lfh_flags()` function covers 8
+  flags (bits 0-7 of selector) but omits COMPRESSED, HAS_DELTA, ENCRYPTED,
+  CDC_SUPPORT, PER_FILE_CRC, DEDUPLICATION.
+  `fuzz/fuzz_targets/parse_lfh_wide.rs:22-51` - same `lfh_flags()` design.
 * Recommended remediation:
-  Extend `lfh_flags()` to use a wider selector (e.g., 16-bit) covering all
-  global flags that affect LFH field layout, or add a second `lfh_flags_full()`
-  variant that also enables ENCRYPTED, COMPRESSED, HAS\_DELTA, CDC\_SUPPORT,
-  PER\_FILE\_CRC, DEDUPLICATION.  Apply the same extension to `parse_lfh_wide`.
+  Extend `lfh_flags()` to use a wider selector (e.g., a `u16`) covering all
+  global flags that add physical fields to the LFH layout, or add a separate
+  variant that also enables ENCRYPTED, COMPRESSED, HAS_DELTA, CDC_SUPPORT,
+  PER_FILE_CRC, and DEDUPLICATION.  Apply the same extension to `parse_lfh_wide`.
 * Regression test needed: no
 * Suggested remediation milestone: M13b.1
 * Notes:
@@ -342,19 +382,19 @@ quality review.
   The `archive_structural` fuzz target creates an `ArchiveReader` and calls
   `reader.read_global_header()` only.  It does not proceed to call
   `next_entry()`, `verify()`, or `audit()`.  As a result, the archive
-  structural-parsing paths beyond the global header—specifically the entry-walking
-  loop, payload offset arithmetic, and entry-level ResourceLimits enforcement—are
-  not exercised by this target.
+  structural-parsing paths beyond the global header - specifically the entry-walking
+  loop, payload offset arithmetic, and entry-level ResourceLimits enforcement -
+  are not exercised by this target.
 
   These paths are covered by `archive_entry_decode` and `archive_audit`, but the
-  `archive_structural` target's name implies broader structural coverage.
+  `archive_structural` target name implies broader structural coverage.
 * Risk:
   Reduced clarity about fuzz coverage scope.  No immediate parser-safety gap
   because `archive_entry_decode` and `archive_audit` provide complementary
   coverage, but a dedicated structural target that only reads the global header
   may miss structural interactions found in the entry-walking phase.
 * Evidence:
-  `fuzz/fuzz_targets/archive_structural.rs:44–56` — only `reader.read_global_header()` is called.
+  `fuzz/fuzz_targets/archive_structural.rs:44-56` - only `reader.read_global_header()` is called.
 * Recommended remediation:
   Extend `archive_structural` to also call `next_entry()` in a loop until `None`
   is returned or an error occurs, using `MetadataOnly` policy to avoid payload
@@ -371,15 +411,15 @@ quality review.
 
 ---
 
-## M13-PARSER-007: no `unsafe` code in parser/resource paths (informational)
+## M13-PARSER-007: no `unsafe` code in parser/resource paths
 
 * Area: unsafe
 * Severity: informational
-* Status: accepted-risk
+* Status: verified
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-core/src/lib.rs` — `#![forbid(unsafe_code)]`
-  * `crates/sar-archive/src/lib.rs` — `#![forbid(unsafe_code)]`
+  * `crates/sar-core/src/lib.rs` - `#![forbid(unsafe_code)]`
+  * `crates/sar-archive/src/lib.rs` - `#![forbid(unsafe_code)]`
 * Finding:
   Both `sar-core` and `sar-archive` use `#![forbid(unsafe_code)]` at the crate
   level.  A search of all `.rs` files in `crates/sar-core/src/` and
@@ -390,8 +430,8 @@ quality review.
 * Risk:
   None.  This is an audit observation confirming the policy is enforced.
 * Evidence:
-  `crates/sar-core/src/lib.rs:3` — `#![forbid(unsafe_code)]`
-  `crates/sar-archive/src/lib.rs:4` — `#![forbid(unsafe_code)]`
+  `crates/sar-core/src/lib.rs:3` - `#![forbid(unsafe_code)]`
+  `crates/sar-archive/src/lib.rs:4` - `#![forbid(unsafe_code)]`
   Grep for `unsafe|from_raw_parts|MaybeUninit` across both crates: zero results
   in parser/resource paths.
 * Recommended remediation: none
@@ -404,231 +444,149 @@ quality review.
 
 ---
 
-## M13-PARSER-008: `ResourceLimits::unlimited()` is public with no `#[cfg(test)]` guard
+## M13-PARSER-008: `ResourceLimits::unlimited()` public without documentation of production-use risk
 
-* Area: ResourceLimits / DoS
+* Area: ResourceLimits / API design
 * Severity: low
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-core/src/limits.rs` — `ResourceLimits::unlimited()`
+  * `crates/sar-core/src/limits.rs` - `ResourceLimits::unlimited()`
 * Finding:
   `ResourceLimits::unlimited()` is a public `#[must_use]` function that returns a
   `ResourceLimits` with every field set to `u64::MAX` or `usize::MAX`, effectively
   disabling all parser, allocation, and structural limits.  The doc comment warns
-  "Use only in controlled test environments", but the function is publicly
-  accessible from production code without any compile-time barrier.
+  "Use only in controlled test environments", but the warning is in prose and is
+  not enforced structurally.
 
   If a caller accidentally uses `ResourceLimits::unlimited()` in production (e.g.,
   copy-pasting from a test helper), all resource limits are silently disabled,
-  enabling unbounded allocation, unlimited TLV counts, unlimited entry counts, and
-  other unchecked paths on malformed input.
+  enabling unbounded allocation, unlimited TLV counts, and unlimited entry counts
+  on malformed input.
+
+  Note: restricting this function to `#[cfg(test)]` would not be sufficient to
+  protect downstream crates.  Dependency crates are compiled with their own
+  `cfg(test)` attribute context, which does not propagate to integration tests or
+  external tools compiled against the crate.  A `#[cfg(test)]` restriction in
+  `sar-core` would not prevent an external integration test from calling
+  `ResourceLimits::unlimited()` using a release build of the crate.  Any naming
+  or visibility change to this function would constitute a public API change.
 * Risk:
-  Accidental production use disables all resource-limit protections, potentially
-  enabling any DoS path that limits would otherwise prevent.  No exploit is
-  possible in correctly configured callers, but the public API surface is
-  error-prone.
+  Accidental production use disables all resource-limit protections.  No exploit
+  is possible in correctly configured callers, but the public API surface
+  increases the risk of misuse.  This is an API discoverability and documentation
+  risk rather than a confirmed vulnerability in the current codebase.
 * Evidence:
-  `crates/sar-core/src/limits.rs:274–312` — `ResourceLimits::unlimited()` function
-  is fully public and has no `#[cfg(test)]` or `#[doc(hidden)]` attribute.
+  `crates/sar-core/src/limits.rs:274-312` - `ResourceLimits::unlimited()` is
+  fully public with only a prose warning in the doc comment.
 * Recommended remediation:
-  Either add `#[cfg(any(test, fuzzing))]` to `ResourceLimits::unlimited()` to
-  restrict it to test/fuzz contexts, or add a prominent naming convention such as
-  `unlimited_for_testing_only()` and apply `#[doc(hidden)]` to reduce API
-  discoverability in production use.  If the function is needed for benchmarking
-  or performance testing outside of unit tests, document this explicitly and add
-  a safety note to the function signature.
+  Strengthen the documentation to prominently describe the risk, expected use
+  cases (benchmarks, offline testing, fuzzing), and the consequences of
+  production use.  Consider adding a naming convention (e.g., a companion
+  `unlimited_unsecured()` with a stronger warning) or `#[doc(hidden)]` to reduce
+  discoverability in generated API documentation.  Any renaming is a public API
+  change and must be treated as such.
 * Regression test needed: no
 * Suggested remediation milestone: M13b.1
 * Notes:
   All fuzz targets currently use `ResourceLimits::default()` or explicitly
   bounded limits, not `ResourceLimits::unlimited()`.  The risk is accidental
-  misuse rather than a fuzz-target coverage gap.
+  misuse rather than a gap in the current fuzz-target configuration.
 
 ---
 
-## M13-PARSER-009: cumulative TLV allocation not explicitly bounded as a single ceiling
+## M13-PARSER-009: TLV allocation duplication factor not documented in `ResourceLimits`
 
-* Area: memory / ResourceLimits / DoS
-* Severity: low
-* Status: open
-* Source milestone: M13a.1
-* Affected files/APIs:
-  * `crates/sar-core/src/tlv.rs` — `parse_tlvs()`
-  * `crates/sar-core/src/limits.rs` — `ResourceLimits`
-* Finding:
-  `parse_tlvs()` enforces per-TLV limits (`max_tlv_bytes` per value, `max_tlv_count`
-  total count) but there is no single cumulative limit on the total bytes
-  allocated across all TLV values in one `parse_tlvs()` call.
-
-  With default limits (`max_tlv_count = 1024`, `max_tlv_bytes = 1 MiB`), a
-  crafted archive may allocate up to `1024 × 1 MiB = 1 GiB` per `parse_tlvs()`
-  invocation before the count limit is hit.  This allocation happens for any
-  block that includes global-metadata TLVs (CD metadata) and is bounded by the
-  CD region size (`max_cd_bytes`), but the interaction between the CD limit and
-  the TLV allocation total is not explicit.
-
-  Note: The `check_allocation_bytes` call in `parse_central_dictionary()` (line
-  816) gates the raw metadata blob size (total `meta_size` bytes), not individual
-  TLV parsed values.  Within that blob, TLV count and per-value limits apply.
-  The chain of checks is: `check_allocation_bytes(meta_size)` then
-  `parse_tlvs(meta_bytes, limits)` — this is correct, but the interaction between
-  `max_in_memory_buffer` (CD blob) and cumulative TLV value allocations
-  (potentially 1 GiB under defaults) is not documented.
-* Risk:
-  Under default limits, a single archive with a maximum-allowed CD metadata blob
-  may trigger up to ~1 GiB of TLV value allocations.  This is intentional
-  (limits are configurable), but the multiplicative interaction of
-  `max_tlv_count` × `max_tlv_bytes` is not documented in either `ResourceLimits`
-  or `parse_tlvs()`.
-* Evidence:
-  `crates/sar-core/src/tlv.rs:46–89` — `parse_tlvs()` does not maintain a
-  running cumulative allocation counter.
-  `crates/sar-core/src/limits.rs:92–98` — `max_tlv_bytes` and `max_tlv_count`
-  are separate fields with no documented interaction.
-* Recommended remediation:
-  Document in `ResourceLimits` that the effective maximum TLV allocation per
-  `parse_tlvs()` invocation is `max_tlv_count × max_tlv_bytes`.  Optionally, add
-  a `max_total_tlv_bytes` field or a runtime check within `parse_tlvs()` that
-  tracks cumulative value bytes allocated and enforces a separate ceiling.
-* Regression test needed: no
-* Suggested remediation milestone: M13b.1
-* Notes:
-  The default ceiling of 1 GiB total TLV allocation per block is intentional and
-  calibrated.  The finding is about documentation and explicitness of the
-  interaction, not an immediate safety risk.
-
----
-
-## M13-PARSER-010: `archive_global_header_read` allocates header buffer without upper bound on combined optional field sizes
-
-* Area: memory / parser
-* Severity: low
-* Status: open
-* Source milestone: M13a.1
-* Affected files/APIs:
-  * `crates/sar-archive/src/archive.rs` — `ArchiveReader::read_global_header()`
-* Finding:
-  `ArchiveReader::read_global_header()` builds a `header_bytes: Vec<u8>` by
-  appending slices from multiple reads (fixed prefix, flags buf, optional
-  partition descriptor, optional KMS payload).  The initial `Vec::with_capacity`
-  on line 896 is:
-  ```rust
-  Vec::with_capacity(8 + flags_size + 96 + 5)
-  ```
-  This capacity hint does not include the KMS payload length (up to
-  `max_kms_payload_bytes`).  Although `Vec` automatically resizes, the initial
-  capacity hint may be significantly smaller than the actual header for large KMS
-  payloads.  This is not a safety issue (the Vec grows correctly), but the
-  inconsistency suggests the capacity hint was written without accounting for the
-  KMS extension.
-
-  More importantly, when both `PARTITIONED_ARCHIVE` and `ENCRYPTED` are set, the
-  combined header_bytes vector contains 4 bytes magic + 1 version + 1 reserved +
-  2 flags_size + flags_bytes + 96 partition descriptor + 1 KMS mode + 4 KMS
-  payload_len + payload.  The entire buffer is then passed to
-  `parse_global_header()` for a second parse.  There is no explicit upper-bound
-  check on the total header bytes before the second parse call.  The individual
-  field limits (`max_global_flags_bytes`, `max_kms_payload_bytes`) bound the
-  components, so the total is implicitly bounded, but no single limit guards
-  `header_bytes.len()` as a whole.
-* Risk:
-  Minor: no unchecked allocation path exists because each component is guarded
-  by its own limit.  The implicit total is bounded by the sum of component
-  limits, which under defaults is at most ~65 535 + 96 + 5 + 65 536 ≈ 131 KB.
-  The finding is a clarity/documentation gap rather than a safety gap.
-* Evidence:
-  `crates/sar-archive/src/archive.rs:896` — capacity hint omits KMS payload.
-  `crates/sar-archive/src/archive.rs:930` — `parse_global_header(&header_bytes, ...)`
-  parses the combined buffer.
-* Recommended remediation:
-  Update the capacity hint to include the KMS payload length.  Optionally, add a
-  comment that the total header bytes are bounded by the sum of component limits.
-* Regression test needed: no
-* Suggested remediation milestone: M13b.1
-* Notes:
-  This is a low-priority clarity issue.  No memory safety risk is present.
-
----
-
-## M13-PARSER-011: dead defensive KMS/partition-descriptor conflict checks in `parse_global_header`
-
-* Area: parser
+* Area: memory / ResourceLimits / documentation
 * Severity: informational
-* Status: accepted-risk
+* Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `crates/sar-core/src/format.rs` — `parse_global_header()`
+  * `crates/sar-core/src/tlv.rs` - `parse_tlvs()`
+  * `crates/sar-core/src/limits.rs` - `ResourceLimits`
 * Finding:
-  `parse_global_header()` contains two defensive conflict checks (lines 288–296):
-  ```rust
-  if !flags.contains(GlobalFlags::ENCRYPTED) && kms.is_some() {
-      return Err(SarError::FlagConflict(...));
-  }
-  if !flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) && partition_descriptor.is_some() {
-      return Err(SarError::FlagConflict(...));
-  }
-  ```
-  These checks are structurally unreachable because `kms` is only assigned
-  `Some(...)` when `flags.contains(GlobalFlags::ENCRYPTED)` is true (line 272),
-  and `partition_descriptor` is only assigned `Some(...)` when
-  `flags.contains(GlobalFlags::PARTITIONED_ARCHIVE)` is true (line 244).  The
-  inverse conditions cannot be true given the control flow above.
+  `parse_tlvs()` enforces per-TLV limits (`max_tlv_bytes` per value,
+  `max_tlv_count` total count) and is always called inside
+  `parse_central_dictionary()` after a `check_allocation_bytes(meta_size)` call
+  that bounds the total CD metadata blob.  The TLV value bytes in the parsed
+  output are copies from the input `meta_bytes` slice, so the sum of all TLV
+  value lengths cannot exceed `meta_size`.
+
+  The effective ceiling on TLV value allocation is therefore bounded by the
+  enclosing `check_allocation_bytes` and `max_cd_bytes` (default 256 MiB), not
+  by `max_tlv_count * max_tlv_bytes` in isolation.  Under default limits:
+  - CD metadata blob: bounded by `min(meta_size, max_in_memory_buffer)` = at
+    most 1 GiB, further constrained by `max_cd_bytes` = 256 MiB.
+  - TLV value copies: sum <= meta_size, because values are copied from the blob.
+  - Peak memory: raw metadata buffer + cloned TLV value buffers <= 2 * meta_size
+    <= 2 * 256 MiB = 512 MiB under default limits.
+
+  This interaction is not documented in `ResourceLimits`, making it non-obvious
+  that the per-TLV limits are secondary to the enclosing CD allocation limit.
 * Risk:
-  None.  Dead defensive code does not affect security or correctness.  A future
-  refactor that changes the control flow could silently remove protection without
-  noticing the dead checks.
+  The memory behavior is already bounded by existing limits; no safety gap
+  exists.  The finding is a documentation clarity observation about how the
+  limits interact and about the 2x duplication factor during parsing.
 * Evidence:
-  `crates/sar-core/src/format.rs:244–286` — conditional field parsing.
-  `crates/sar-core/src/format.rs:288–296` — dead defensive checks.
+  `crates/sar-core/src/format.rs:813-820` - `check_allocation_bytes(meta_size)`
+  called before `parse_tlvs(meta_bytes, limits)`.
+  `crates/sar-core/src/limits.rs:92-98` - `max_tlv_bytes` and `max_tlv_count`
+  documented without mentioning the enclosing CD limit interaction.
 * Recommended remediation:
-  Either remove the dead checks and rely on the structural impossibility, or add
-  `debug_assert!` variants that fire in test builds but are elided in release.
-  Adding a comment explaining that these checks are defensive-in-depth against
-  future refactoring is also acceptable.
+  Add a comment or doc update to `ResourceLimits` explaining that the effective
+  maximum TLV allocation per `parse_tlvs()` call is bounded by the enclosing
+  `check_allocation_bytes` / `max_cd_bytes` limit, and that peak memory during
+  CD parsing is at most 2x the CD metadata blob size due to the raw buffer and
+  cloned TLV value copies coexisting briefly.
 * Regression test needed: no
 * Suggested remediation milestone: M13b.1
 * Notes:
-  This is informational only.  No remediation urgency.
+  No new limit field is needed.  The clarification is documentation-only.
 
 ---
 
-## M13-PARSER-012: `archive_structural` and entry-decode fuzz targets use narrow `max_entry_count`
+## M13-PARSER-012: `archive_entry_decode` and `archive_audit` fuzz targets use narrow `max_entry_count`
 
 * Area: fuzzing / ResourceLimits
 * Severity: low
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
-  * `fuzz/fuzz_targets/archive_structural.rs`
   * `fuzz/fuzz_targets/archive_audit.rs`
+  * `fuzz/fuzz_targets/archive_audit_wide.rs`
   * `fuzz/fuzz_targets/archive_entry_decode.rs`
+  * `fuzz/fuzz_targets/archive_entry_decode_wide.rs`
 * Finding:
-  The `archive_entry_decode` and `archive_audit` fuzz targets configure
-  `max_entry_count: 16`.  This is appropriate for performance during fuzzing, but
-  it limits coverage of the entry-walking limit enforcement paths themselves.
-  Specifically, the path where `check_entry_count` triggers a `LimitExceeded`
-  error during CD parsing is not exercised at higher counts, and interactions
-  between a large declared CD entry count and the `entries` Vec growth (see
-  M13-PARSER-002) are not exposed with this limit.
+  The `archive_audit` and `archive_entry_decode` fuzz targets configure
+  `max_entry_count: 16`.  This is appropriate for fuzzing performance, but it
+  limits coverage of entry-walking limit enforcement paths.  Specifically, the
+  path where `check_entry_count` triggers a `LimitExceeded` error during CD
+  parsing is not exercised at higher counts, and the M13-PARSER-002 missing
+  entry-count check in `audit()` would not be triggered by existing targets
+  operating within `max_entry_count: 16`.
 
-  Wide targets (`archive_audit_wide`, `archive_entry_decode_wide`) do use wider
-  resource limits, but their `max_entry_count` configurations have not been
-  verified to be meaningfully wider than the standard targets in the audited
-  sources.
+  The wide targets do use larger values: `archive_audit_wide` configures
+  `max_entry_count: 64`, and `archive_entry_decode_wide` configures
+  `max_entry_count: 128`.  These widen the entry-count boundary but remain well
+  below the default `max_entry_count: 1 000 000`, so the limit enforcement path
+  at realistic production values is not exercised.
+
+  Note: `archive_structural` does not call `next_entry()` or `audit()` and its
+  `max_entry_count: 16` setting is not relevant to entry-walking coverage.
 * Risk:
-  Reduced fuzzer exploration of entry-count boundary conditions.  The M13-PARSER-002
-  audit finding (missing `check_entry_count` in audit loop) would not be
-  triggered by existing fuzz targets operating within `max_entry_count: 16`.
+  Reduced fuzzer exploration of entry-count boundary conditions.  The
+  M13-PARSER-002 finding (missing `check_entry_count` in `audit()` loop) would
+  not be triggered by fuzz targets operating within their configured limit.
 * Evidence:
-  `fuzz/fuzz_targets/archive_audit.rs:26` — `max_entry_count: 16`
-  `fuzz/fuzz_targets/archive_entry_decode.rs` — same config structure.
+  `fuzz/fuzz_targets/archive_audit.rs:25` - `max_entry_count: 16`
+  `fuzz/fuzz_targets/archive_audit_wide.rs:25` - `max_entry_count: 64`
+  `fuzz/fuzz_targets/archive_entry_decode.rs:25` - `max_entry_count: 16`
+  `fuzz/fuzz_targets/archive_entry_decode_wide.rs:25` - `max_entry_count: 128`
 * Recommended remediation:
-  Once M13-PARSER-002 is remediated, add a fuzz target variant (or use the wide
-  target) with a higher `max_entry_count` (e.g., 10 000) and verify the limit
-  enforcement path is covered.  Alternatively, add a regression test that
+  After M13-PARSER-002 is remediated, add a deterministic regression test that
   verifies `audit()` returns `LimitExceeded` when entry count exceeds the
-  configured limit.
+  configured limit.  Consider a wide target variant with a higher
+  `max_entry_count` (e.g., 10 000) to exercise the limit enforcement path.
 * Regression test needed: yes (after M13-PARSER-002 fix)
 * Suggested remediation milestone: M13b.1
 * Notes:
@@ -637,56 +595,7 @@ quality review.
 
 ---
 
-## M13-PARSER-013: `parse_lfh` trailing-field end check may produce misleading error for flag/size mismatches
-
-* Area: parser
-* Severity: low
-* Status: open
-* Source milestone: M13a.1
-* Affected files/APIs:
-  * `crates/sar-core/src/format.rs` — `parse_lfh()`
-* Finding:
-  `parse_lfh()` performs two cross-checks against the declared `header_size`:
-  1. Line 614: checks that the computed trailing-field end equals `header_size`.
-  2. Lines 675–677: calls `compute_lfh_size()` and compares the result to
-     `header_size_u32`.
-
-  Check 1 uses the accumulated position of the header cursor after reading
-  all variable-length fields (name, path, sparse map, FEC value) and verifies
-  that they exactly fill the declared header size.  Check 2 re-derives the
-  expected size from flags and parsed field lengths.  Both checks serve the same
-  structural invariant but from different directions.
-
-  If an LFH is malformed such that the declared `header_size` is larger than the
-  sum of required fields (e.g., padding bytes injected between fields), check 1
-  (line 614) would fail with `InvalidLength("computed LFH trailing field size
-  does not match Header Size")` — which is correct.  However, if the flags are
-  correct and the payload bytes are present but `header_size` is declared too
-  small to accommodate them (triggering a `Truncated` from `hdr_cursor` reads),
-  the error message may be less diagnostic than ideal.
-
-  This is a minor diagnostic clarity issue, not a safety issue.
-* Risk:
-  Diagnostic only.  Parser is fail-closed on malformed input; the specific error
-  variant returned in mismatched flag/size combinations may be less informative
-  for debugging.
-* Evidence:
-  `crates/sar-core/src/format.rs:606–618` — trailing-end check.
-  `crates/sar-core/src/format.rs:675–678` — `compute_lfh_size` cross-check.
-* Recommended remediation:
-  Consider adding the parsed `flags` bitmask to the `InvalidLength` error
-  context, or a separate `ParseCursor::require_empty()` check that asserts no
-  unread bytes remain at the end of `hdr_cursor`.  Lower priority than structural
-  findings.
-* Regression test needed: no
-* Suggested remediation milestone: M13b.1
-* Notes:
-  The double cross-check pattern (lines 614 and 675–677) provides redundant
-  structural validation.  The redundancy is intentional and valuable.
-
----
-
-## M13-PARSER-014: no `archive_entry_decode` fuzz seed for maximum-size sparse map entries
+## M13-PARSER-014: no sparse-map seeds at near-limit byte and descriptor counts
 
 * Area: fuzzing / ResourceLimits
 * Severity: low
@@ -699,88 +608,119 @@ quality review.
 * Finding:
   The malicious corpus categories documented in `CORPUS.md` include
   `fec_fragmentation` and `metadata_edge_cases` categories, but no dedicated
-  corpus category or seed specifically targets maximum-size sparse maps combined
-  with the `check_sparse_map_bytes` and `check_sparse_descriptor_count` resource
-  limits.  The `pr4_lfh_metadata_edges` target exercises LFH metadata edge cases
+  corpus category or seed specifically targets the `check_sparse_map_bytes` and
+  `check_sparse_descriptor_count` resource limits near their default values.
+  The `pr4_lfh_metadata_edges` target exercises LFH metadata edge cases
   (including sparse) but sparse-map seeds with near-limit byte counts and
   descriptor counts are not explicitly documented.
 
-  The `max_sparse_map_bytes` default is 8 MiB (≈ 500 000 extents) and
-  `max_sparse_descriptors` default is 524 288.  Archives with sparse maps near
-  these limits are high-value regression test candidates.
+  The `max_sparse_map_bytes` default is 8 MiB and `max_sparse_descriptors`
+  default is 524 288.  Archives with sparse maps near these limits are high-value
+  deterministic regression test candidates, but the appropriate seed size for
+  fuzzing should be small (using deliberately reduced fuzz-target limits such as
+  `max_sparse_map_bytes: 512` as configured in `parse_lfh.rs`), not multi-megabyte
+  production-scale files.
 * Risk:
   Sparse-map parsing paths near configured limits are not explicitly covered
-  by fuzz seeds.  The `parse_sparse_map` function (in `crates/sar-core/src/sparse.rs`)
-  includes a guard against unsafe allocation sizes, but boundary conditions
-  near `max_sparse_descriptors` may not be hit by existing corpus inputs.
+  by fuzz seeds or deterministic regression tests.  The `parse_sparse_map`
+  function (in `crates/sar-core/src/sparse.rs`) includes a guard against unsafe
+  allocation sizes, but boundary conditions near `max_sparse_descriptors` are
+  not hit by existing corpus inputs or regression tests.
 * Evidence:
-  `fuzz/CORPUS.md` — no dedicated sparse-map corpus category.
-  `fuzz/fuzz_targets/parse_lfh.rs:9–19` — limits: `max_sparse_map_bytes: 512`.
-  `crates/sar-core/src/sparse.rs:52` — guard: `count > isize::MAX as usize / std::mem::size_of::<SparseExtent>()`.
+  `fuzz/CORPUS.md` - no dedicated sparse-map corpus category.
+  `fuzz/fuzz_targets/parse_lfh.rs:9-19` - limits: `max_sparse_map_bytes: 512`.
+  `crates/sar-core/src/sparse.rs:52` - guard: `count > isize::MAX as usize / std::mem::size_of::<SparseExtent>()`.
 * Recommended remediation:
-  Add seeds to the `fec_fragmentation` or `metadata_edge_cases` corpus category
-  (or a new `sparse_map_edges` category) with sparse maps at:
+  Add small seed files for the `pr4_lfh_metadata_edges` or `parse_lfh` targets
+  using reduced limits (e.g., `max_sparse_descriptors: 4`) with sparse maps at:
   - 0 extents (empty map)
   - 1 extent (minimum)
-  - near `max_sparse_descriptors` (boundary test)
-  - exactly `max_sparse_map_bytes` (size limit boundary)
-  Add a regression test verifying `check_sparse_descriptor_count` fires at
-  the configured limit.
+  - exactly at the fuzz-target configured limit (boundary test)
+  Add a deterministic regression test verifying `check_sparse_descriptor_count`
+  fires at the configured limit using production/default boundary values in a
+  unit test (not as an oversized corpus seed).  Do not use multi-megabyte seed
+  files for boundary testing; use reduced-limit deterministic tests instead.
 * Regression test needed: yes
 * Suggested remediation milestone: M13b.1
 * Notes:
   The `pr4_lfh_metadata_edges` target provides partial coverage for this area.
-  This finding specifically addresses seed corpus completeness near the
-  resource-limit boundary values.
+  This finding specifically addresses seed corpus completeness and the need for
+  deterministic regression tests at resource-limit boundary values.
 
 ---
 
-## M13-PARSER-015: fuzzing campaign gap — `archive_logical_files` and `pr4_*` targets never run against `ResourceLimits::default()` at near-limit values
+## M13-PARSER-015: wide fuzz targets not run with documented near-default limits; exact limits absent from RUNS.md
 
-* Area: fuzzing / ResourceLimits
+* Area: fuzzing / ResourceLimits / documentation
 * Severity: low
 * Status: open
 * Source milestone: M13a.1
 * Affected files/APIs:
   * `fuzz/RUNS.md`
   * `fuzz/fuzz_targets/archive_logical_files.rs`
-  * `fuzz/fuzz_targets/pr4_lfh_metadata_edges.rs`
-  * `fuzz/fuzz_targets/pr4_tlv_metadata_edges.rs`
+  * `fuzz/fuzz_targets/parse_lfh_wide.rs`
+  * `fuzz/fuzz_targets/parse_tlv_wide.rs`
+  * `fuzz/fuzz_targets/archive_audit_wide.rs`
+  * `fuzz/fuzz_targets/archive_entry_decode_wide.rs`
 * Finding:
-  The M12b.5 PR3/PR4 overnight fuzzing campaign ran `pr4_lfh_metadata_edges`,
-  `pr4_tlv_metadata_edges`, and `archive_logical_files` with custom low limits
-  (as appropriate for fuzz performance).  However, these targets have not been
-  run with limits close to `ResourceLimits::default()` values (e.g.,
-  `max_path_bytes: 65535`, `max_tlv_bytes: 1 MiB`), which would expose
-  off-by-one and large-allocation boundary conditions at realistic production
-  configurations.
+  The wide fuzz targets are configured in source as follows (from direct source
+  inspection):
+  - `parse_lfh_wide`: `max_lfh_header_bytes: 1 MiB`, `max_path_bytes: 64 KiB`,
+    `max_sparse_map_bytes: 256 KiB`, `max_fec_value_bytes: 256 KiB`
+  - `parse_tlv_wide`: `max_tlv_bytes: 1 MiB` (= default), `max_tlv_count: 4 096`
+    (4x default)
+  - `archive_audit_wide`: `max_archive_size: 1 MiB`, `max_entry_count: 64`,
+    `max_tlv_bytes: 64 KiB`
+  - `archive_entry_decode_wide`: `max_archive_size: 1 MiB`,
+    `max_entry_count: 128`, `max_tlv_bytes: 64 KiB`
+  - `archive_logical_files`: `max_archive_size: 64 KiB`,
+    `max_entry_count: 32`, `max_tlv_bytes: 4 KiB`
 
-  Wide fuzz targets (`parse_lfh_wide`, `parse_tlv_wide`) use larger limits but
-  their specific limit values are not documented in `RUNS.md`, making it
-  difficult to determine what range they actually cover.
+  `RUNS.md` records execution counts for `parse_lfh_wide` (M12b.4: > 21 B
+  executions combined), `parse_tlv_wide` (M12b.4: > 16 B combined), and
+  `archive_audit_wide` (M12b.4/M12b.5: > 3.6 B), but does not state the
+  configured limit values for these campaigns.
+
+  `archive_logical_files` is referenced in the M12b.5 campaign but its limits
+  are not documented in `RUNS.md`.
+
+  As a result:
+  - The configured limits for past campaigns are known from source but are not
+    in the campaign record.
+  - For `parse_lfh_wide` and `parse_tlv_wide`, the wide limits are close to or
+    equal to production defaults for some fields but not for others (e.g.,
+    `max_path_bytes: 64 KiB` vs. default 65 535; `max_entry_count: 64` vs.
+    default 1 000 000).
+  - No campaign record exists for any target at `max_entry_count` close to the
+    production default of 1 000 000.
+  - Exact off-by-one and large-allocation conditions at true production-default
+    boundary values remain untested by documented campaigns.
 * Risk:
-  Bugs that only manifest near production-scale resource limits (e.g., a
-  1 MiB TLV value, a 65 535-byte path) are not exercised.  Such bugs could
-  include off-by-one errors in limit checks, unexpected allocation patterns,
-  or errors that trigger only at large values.
+  Bugs that only manifest near production-scale resource limits (e.g., near
+  1 000 000 entry count, 65 535-byte path) are not covered by documented
+  fuzzing campaigns.  The primary issue is that past campaign limit
+  configurations are not in `RUNS.md`, making audit trail incomplete.
 * Evidence:
-  `fuzz/RUNS.md` — no campaign records for near-default-limit fuzzing of
-  parser/resource targets.
-  `fuzz/fuzz_targets/parse_lfh_wide.rs`, `parse_tlv_wide.rs` — limits are wider
-  but exact values are not in RUNS.md.
+  `fuzz/RUNS.md` - no limit configuration documented for wide-target campaigns.
+  `fuzz/fuzz_targets/parse_lfh_wide.rs` - limits confirmed from source.
+  `fuzz/fuzz_targets/parse_tlv_wide.rs` - limits confirmed from source.
+  `fuzz/fuzz_targets/archive_audit_wide.rs` - limits confirmed from source.
+  `fuzz/fuzz_targets/archive_entry_decode_wide.rs` - limits confirmed from source.
+  `fuzz/fuzz_targets/archive_logical_files.rs` - limits confirmed from source.
 * Recommended remediation:
-  Run at least one short fuzzing campaign for `parse_lfh_wide`, `parse_tlv_wide`,
-  `archive_audit_wide`, and `archive_entry_decode_wide` with limits set close to
-  `ResourceLimits::default()` values, and document the campaign in `RUNS.md`.
-  This would cover production-scale boundary conditions not reached by tight-limit
-  targets.
+  Update `RUNS.md` to document the configured limit values for each past
+  campaign.  Run at least one short deterministic test (not a fuzzing campaign)
+  for each major parser with limits set to exact `ResourceLimits::default()`
+  values, using boundary-value inputs generated to hit each limit exactly.
+  Document these tests separately from fuzz campaigns.
 * Regression test needed: no
 * Suggested remediation milestone: M13b.1
 * Notes:
-  The M12b.4 overnight campaign ran `parse_lfh_wide` for 2.4 B executions and
-  `parse_tlv_wide` for 307 M executions.  Their exact limit configurations are
-  not in `RUNS.md`, so whether they represent near-default coverage is unknown
-  from the audit record.
+  The M12b.4 overnight campaign ran `parse_lfh_wide` for > 21 B executions and
+  `parse_tlv_wide` for > 16 B executions combined.  Their exact limit
+  configurations are known from source but are not in `RUNS.md`, so whether
+  they represent near-default coverage cannot be determined from the campaign
+  record alone.
 
 ---
 
@@ -790,26 +730,51 @@ quality review.
 |----|-------|----------|--------|
 | M13-PARSER-001 | Unchecked `as u16` cast in `global_header_flags_bytes` | low | open |
 | M13-PARSER-002 | `audit()` data-area scan lacks entry-count limit check | medium | open |
-| M13-PARSER-003 | TLV type IDs 0x05–0x0F silently accepted | medium | open |
-| M13-PARSER-004 | `GlobalFlags::from_bits_truncate` silently drops unknown flag bits | medium | open |
-| M13-PARSER-005 | `parse_lfh` fuzz target covers only 8 global flag combinations | low | open |
+| M13-PARSER-003 | TLV type IDs 0x05-0x0F accepted in violation of specification | medium | open |
+| M13-PARSER-004 | `GlobalFlags::from_bits_truncate` silently drops unknown flag bits | low | open |
+| M13-PARSER-005 | `parse_lfh` fuzz targets omit several LFH-layout-affecting global flags | low | open |
 | M13-PARSER-006 | `archive_structural` fuzz target only calls `read_global_header` | low | open |
-| M13-PARSER-007 | No `unsafe` code in parser/resource paths (informational) | informational | accepted-risk |
-| M13-PARSER-008 | `ResourceLimits::unlimited()` lacks test-only guard | low | open |
-| M13-PARSER-009 | Cumulative TLV allocation not explicitly bounded as single ceiling | low | open |
-| M13-PARSER-010 | Header-buffer capacity hint omits KMS payload length | low | open |
-| M13-PARSER-011 | Dead defensive KMS/partition conflict checks in `parse_global_header` | informational | accepted-risk |
-| M13-PARSER-012 | Fuzz targets use narrow `max_entry_count` (16) | low | open |
-| M13-PARSER-013 | `parse_lfh` trailing-field check produces imprecise error diagnostics | low | open |
+| M13-PARSER-007 | No `unsafe` code in parser/resource paths | informational | verified |
+| M13-PARSER-008 | `ResourceLimits::unlimited()` lacks documentation of production-use risk | low | open |
+| M13-PARSER-009 | TLV allocation duplication factor not documented in `ResourceLimits` | informational | open |
+| M13-PARSER-012 | `archive_audit` fuzz targets use narrow `max_entry_count` | low | open |
 | M13-PARSER-014 | No sparse-map seeds at near-limit byte and descriptor counts | low | open |
-| M13-PARSER-015 | No near-default-limits fuzzing campaign record for wide targets | low | open |
+| M13-PARSER-015 | Wide target limits not documented in RUNS.md; no near-default-limit campaign record | low | open |
 
 **Counts by severity:**
 - blocker: 0
 - high: 0
-- medium: 3 (M13-PARSER-002, M13-PARSER-003, M13-PARSER-004)
-- low: 10 (M13-PARSER-001, M13-PARSER-005 through M13-PARSER-010, M13-PARSER-012 through M13-PARSER-015)
-- informational: 2 (M13-PARSER-007, M13-PARSER-011)
+- medium: 2 (M13-PARSER-002, M13-PARSER-003)
+- low: 8 (M13-PARSER-001, M13-PARSER-004, M13-PARSER-005, M13-PARSER-006, M13-PARSER-008, M13-PARSER-012, M13-PARSER-014, M13-PARSER-015)
+- informational: 2 (M13-PARSER-007, M13-PARSER-009)
+
+---
+
+## Informational observations
+
+The following items were reviewed but do not rise to the level of tracked security
+findings.  They are retained here for completeness.
+
+### IO-001: dead defensive conflict checks in `parse_global_header`
+
+`parse_global_header()` contains two defensive conflict checks (lines 288-296)
+that are structurally unreachable given the control flow immediately above them:
+`kms` is only assigned `Some(...)` when `ENCRYPTED` is set, and
+`partition_descriptor` is only assigned `Some(...)` when `PARTITIONED_ARCHIVE`
+is set.  The inverse conditions cannot be true.  The checks do not affect
+correctness and would catch future refactoring regressions, but they may cause
+confusion because they appear to guard conditions that cannot arise in the current
+code.  No action needed; a comment clarifying their defensive-in-depth purpose
+would be sufficient.
+
+### IO-002: `read_global_header` capacity hint omits KMS payload length
+
+The `Vec::with_capacity(8 + flags_size + 96 + 5)` hint in
+`ArchiveReader::read_global_header()` (line 896) does not include the KMS
+payload length.  The `Vec` grows correctly when the KMS payload is appended, so
+this is a minor clarity issue with no memory or safety consequence.  Under
+default limits the total header is at most approximately 131 KB.  No action
+needed beyond optionally updating the hint to include the KMS payload length.
 
 ---
 
@@ -818,21 +783,24 @@ quality review.
 The following areas were reviewed and found well-handled with no specific findings
 beyond those above:
 
-**Checked arithmetic:** All length/offset arithmetic in `parse_global_header`,
-`parse_lfh`, `parse_tlvs`, `parse_central_dictionary`, `parse_footer`, and
-`ArchiveReader` uses `checked_add`, `checked_sub`, `checked_mul`, or
-`u*::try_from(...)` throughout.  Direct `as` casts are used only in the case
-documented in M13-PARSER-001 and in test-only code.  The `ParseCursor`
-abstraction gates all byte-slice reads with checked index arithmetic.
+**Checked arithmetic:** In the audited functions and paths -
+`parse_global_header`, `parse_lfh`, `parse_tlvs`, `parse_central_dictionary`,
+`parse_footer`, `ArchiveReader`, and `StreamArchiveParser` - length and offset
+arithmetic uses `checked_add`, `checked_sub`, `checked_mul`, or
+`u*::try_from(...)` throughout.  No additional input-derived narrowing conversion
+requiring a finding was identified in the reviewed parser paths.  The `ParseCursor`
+abstraction gates all byte-slice reads with checked index arithmetic.  The only
+unchecked `as` cast identified in parser paths is documented in M13-PARSER-001.
 
-**`ResourceLimits` enforcement:** `check_lfh_header_bytes`, `check_path_bytes`,
-`check_global_flags_bytes`, `check_kms_payload_bytes`, `check_tlv_bytes`,
-`check_tlv_count`, `check_cd_bytes`, `check_allocation_bytes`, `check_entry_count`
-(in CD parsing), `check_sparse_map_bytes`, `check_sparse_descriptor_count`,
-`check_fec_value_bytes`, and `allocation_len` are all called before the
-corresponding allocations in the parser paths audited.  No allocation was found
-to occur before its limit check, except as documented in M13-PARSER-002 for
-the audit/next\_entry entry-count gap.
+**`ResourceLimits` enforcement:** In the audited parser paths,
+`check_lfh_header_bytes`, `check_path_bytes`, `check_global_flags_bytes`,
+`check_kms_payload_bytes`, `check_tlv_bytes`, `check_tlv_count`, `check_cd_bytes`,
+`check_allocation_bytes`, `check_entry_count` (in CD parsing),
+`check_sparse_map_bytes`, `check_sparse_descriptor_count`,
+`check_fec_value_bytes`, and `allocation_len` are called before the corresponding
+allocations.  No additional allocation-before-limit issue was identified in the
+reviewed parser paths, except as documented in M13-PARSER-002 for the
+`audit()` entry-count gap.
 
 **Footer parsing:** `parse_footer()` is minimal (8 bytes, single u64 read) and
 has no arithmetic risk.  The offset bounds are checked in the `ArchiveReader`
@@ -843,21 +811,29 @@ checked in `verify()` and structurally guarded at read time.  The `data_end`
 boundary for indexed archives is set to `cd_offset`, preventing entry-walking
 from reading into the CD region.
 
-**Panic resistance:** No `unwrap()`, `expect(...)`, `panic!()`, `todo!()`, or
-`unreachable!()` macros were found in the `sar-core` or `sar-archive` parser
-paths (excluding test code and dead-code unreachable patterns in transform.rs
-test helpers).  All error paths return `Err(SarError::...)`.
+**Panic resistance:** In the `sar-core` and `sar-archive` parser paths reviewed,
+no `unwrap()`, `expect(...)`, `panic!()`, `todo!()`, or `unreachable!()` macros
+were found outside of test code and dead-code patterns in transform.rs test
+helpers.  All error paths return `Err(SarError::...)`.
 
-**Allocator churn:** `parse_tlvs`, `parse_lfh`, and `parse_central_dictionary`
-allocate `Vec<u8>` per call bounded by per-field limits.  No O(n²) or O(n×m)
-allocation patterns were identified in the parser hot paths.  Repeated
-initialization/teardown churn is bounded by per-entry and per-archive limits.
+**Allocator churn:** In the audited parser hot paths, `parse_tlvs`, `parse_lfh`,
+and `parse_central_dictionary` allocate `Vec<u8>` per call bounded by per-field
+limits.  No additional O(n^2) or O(n*m) allocation pattern was identified in
+the reviewed parser paths.  Repeated initialization/teardown churn is bounded by
+per-entry and per-archive limits.
+
+**StreamArchiveParser:** The `StreamArchiveParser` push-parse state machine
+(`crates/sar-archive/src/stream.rs`) was reviewed for parser-facing length,
+count, allocation, panic, and structural behavior.  It delegates to the same
+`parse_global_header` and `parse_lfh` functions reviewed above.  No additional
+parser-safety issues were identified beyond those already covered by existing
+findings.  It is exercised by `stream_archive_parser_state_machine.rs`.
 
 **Fuzzing coverage (well-covered areas):**
 - Global header magic/version/flags: covered by `parse_global_header` (M12b.4:
   > 12 B executions, overnight campaign).
-- LFH field layout (8 flag combinations): covered by `parse_lfh` / `parse_lfh_wide`
-  (M12b.4: > 21 B executions combined).
+- LFH field layout (8 flag combinations from selector): covered by `parse_lfh` /
+  `parse_lfh_wide` (M12b.4: > 21 B executions combined).
 - TLV type/length/count/padding: covered by `parse_tlv` / `parse_tlv_wide`
   (M12b.4: > 16 B executions combined).
 - CD + Footer: covered by `parse_cd_footer` (M12b.4: > 13 B executions).
@@ -869,6 +845,6 @@ initialization/teardown churn is bounded by per-entry and per-archive limits.
 
 ---
 
-*Document last updated: M13a.1 audit completion.*
+*Document last updated during M13a.1 audit review.*
 *This document does not claim exhaustive audit coverage, production hardening completion,
 independent external audit completion, certification, compliance, or stable API/ABI guarantees.*
