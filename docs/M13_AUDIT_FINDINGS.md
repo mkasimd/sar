@@ -149,7 +149,7 @@ Registry status: `in_progress`
 
 #### Current Behavior
 
-Line 918 of format.rs casts `header.flags_bytes.len()` (a usize) to u16 using `as u16` without a checked conversion. When `max_global_flags_bytes` is set above u16::MAX or `ResourceLimits::unlimited()` is in effect, the cast silently truncates, producing incorrect AAD bytes for AEAD computation.
+`global_header_flags_bytes()` casts `header.flags_bytes.len()` (a usize) to u16 using `as u16` without a checked conversion. When `max_global_flags_bytes` is set above u16::MAX or `ResourceLimits::unlimited()` is in effect, the cast silently truncates, producing incorrect AAD bytes for AEAD computation.
 
 #### Expected Behavior
 
@@ -161,8 +161,8 @@ Silent truncation at AAD construction would cause AEAD authentication to fail fo
 
 #### Evidence
 
-* `crates/sar-core/src/format.rs` (line 918): `let flags_size = header.flags_bytes.len() as u16;` - unchecked narrowing conversion from usize to u16
-* `crates/sar-core/src/format.rs` (lines 346-347): `write_global_header` uses `u16::try_from(...)` for size encoding at the same location; the inconsistency is clear.
+* `crates/sar-core/src/format.rs` (function `global_header_flags_bytes()`, assignment to `flags_size`): `let flags_size = header.flags_bytes.len() as u16;` - unchecked narrowing conversion from usize to u16
+* `crates/sar-core/src/format.rs` (function `write_global_header()`, checked conversion of Global Flags byte length): `write_global_header` uses `u16::try_from(...)` for size encoding at the same location; the inconsistency is clear.
 
 #### Remediation
 
@@ -200,8 +200,8 @@ For attacker-controlled archives, retained report memory and scan CPU can grow l
 
 #### Evidence
 
-* `crates/sar-archive/src/archive.rs` (lines 1205-1351): No `check_entry_count` call in the `audit()` loop body before `entries.push(...)`.
-* `crates/sar-core/src/format.rs` (line 827): `limits.check_entry_count(file_count_usize)?;` is present in `parse_central_dictionary()` but not replicated in the data-area scan paths.
+* `crates/sar-archive/src/archive.rs` (method `ArchiveReader::audit()`, data-area scan loop before `entries.push(...)`): No `check_entry_count` call in the `audit()` loop body before `entries.push(...)`.
+* `crates/sar-core/src/format.rs` (function `parse_central_dictionary()`, `check_entry_count(...)` validation): `limits.check_entry_count(file_count_usize)?;` is present in `parse_central_dictionary()` but not replicated in the data-area scan paths.
 
 #### Remediation
 
@@ -245,12 +245,12 @@ The parser accepts values that the specification designates as reserved and maps
 
 #### Evidence
 
-* `specification.md` (line 1074, TLV type registry): Explicit RESERVED designation for TLV type IDs 0x05-0x0F. The specification requires reserved values produce SAR_ERR_RESERVED_VALUE.
-* `crates/sar-core/src/tlv.rs` (lines 28-43): `classify_type()` wildcard arm accepts 0x05-0x0F without error; gap in explicit range coverage.
+* `specification.md` (Section 9.1 `Metadata Type Registry (SAR_G_META)`, table row `0x05 - 0x0F`): Explicit RESERVED designation for TLV type IDs 0x05-0x0F. The specification requires reserved values produce SAR_ERR_RESERVED_VALUE.
+* `crates/sar-core/src/tlv.rs` (function `classify_type()`, wildcard match arm covering `0x05-0x0F`): `classify_type()` wildcard arm accepts 0x05-0x0F without error; gap in explicit range coverage.
 
 #### Normative Basis
 
-* `specification.md` (line 1074): TLV type IDs 0x05-0x0F are RESERVED. Reserved values must produce SAR_ERR_RESERVED_VALUE.
+* `specification.md` (Section 9.1 `Metadata Type Registry (SAR_G_META)`, table row `0x05 - 0x0F`): TLV type IDs 0x05-0x0F are RESERVED. Reserved values must produce SAR_ERR_RESERVED_VALUE.
 
 #### Remediation
 
@@ -289,9 +289,9 @@ Both `parse_global_header()` and `ArchiveReader::read_global_header()` call `Glo
 
 #### Evidence
 
-* `crates/sar-core/src/format.rs` (line 241): `GlobalFlags::from_bits_truncate(u32::from_le_bytes(low))` silently drops undefined bits.
-* `crates/sar-archive/src/archive.rs` (line 904): `GlobalFlags::from_bits_truncate(u32::from_le_bytes(low))` - same pattern in reader path.
-* `crates/sar-core/src/flags.rs` (lines 175-201): `validate_global_flags()` checks only specific flag combinations; does not reject unrecognized bits.
+* `crates/sar-core/src/format.rs` (function `parse_global_header()`, `GlobalFlags::from_bits_truncate(...)` and `validate_global_flags(...)`): `GlobalFlags::from_bits_truncate(u32::from_le_bytes(low))` silently drops undefined bits.
+* `crates/sar-archive/src/archive.rs` (method `ArchiveReader::read_global_header()`, `GlobalFlags::from_bits_truncate(...)` and `validate_global_flags(...)`): `GlobalFlags::from_bits_truncate(u32::from_le_bytes(low))` - same pattern in reader path.
+* `crates/sar-core/src/flags.rs` (function `validate_global_flags()`, undefined-bit and extension-byte validation rules): `validate_global_flags()` checks only specific flag combinations; does not reject unrecognized bits.
 * `specification.md` (section 5.2): No explicit MUST-be-zero requirement for undefined bits in the 32-bit Global Flags word.
 
 #### Verification
@@ -319,8 +319,8 @@ Parser paths for ENCRYPTED, HAS_DELTA, COMPRESSED, CDC_SUPPORT, PER_FILE_CRC, an
 
 #### Evidence
 
-* `fuzz/fuzz_targets/parse_lfh.rs` (lines 22-51): `lfh_flags()` function covers 8 flags (bits 0-7 of selector) but omits COMPRESSED, HAS_DELTA, ENCRYPTED, CDC_SUPPORT, PER_FILE_CRC, DEDUPLICATION.
-* `fuzz/fuzz_targets/parse_lfh_wide.rs` (lines 22-51): Same `lfh_flags()` design as parse_lfh.rs; same omissions.
+* `fuzz/fuzz_targets/parse_lfh.rs` (function `lfh_flags()`): `lfh_flags()` function covers 8 flags (bits 0-7 of selector) but omits COMPRESSED, HAS_DELTA, ENCRYPTED, CDC_SUPPORT, PER_FILE_CRC, DEDUPLICATION.
+* `fuzz/fuzz_targets/parse_lfh_wide.rs` (function `lfh_flags()`): Same `lfh_flags()` design as parse_lfh.rs; same omissions.
 
 #### Remediation
 
@@ -349,7 +349,7 @@ Reduced clarity about fuzz coverage scope. No confirmed parser-safety gap: entry
 
 #### Evidence
 
-* `fuzz/fuzz_targets/archive_structural.rs` (lines 44-56): Only `reader.read_global_header()` is called; no `next_entry()`, `verify()`, or `audit()` calls.
+* `fuzz/fuzz_targets/archive_structural.rs` (fuzz harness entry point, `ArchiveReaderOptions` struct update with `..ArchiveReaderOptions::default()`, and sole `read_global_header()` call): Only `reader.read_global_header()` is called; no `next_entry()`, `verify()`, or `audit()` calls.
 
 #### Resolution
 
@@ -374,8 +374,8 @@ Both `sar-core` and `sar-archive` use `#![forbid(unsafe_code)]` at the crate lev
 
 #### Evidence
 
-* `crates/sar-core/src/lib.rs` (line 3): `#![forbid(unsafe_code)]` at crate level.
-* `crates/sar-archive/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` at crate level.
+* `crates/sar-core/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` at crate level.
+* `crates/sar-archive/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` at crate level.
 
 #### Resolution
 
@@ -405,7 +405,7 @@ Accidental use on untrusted input would remove resource protections, but the aud
 
 #### Evidence
 
-* `crates/sar-core/src/limits.rs` (lines 274-312): `ResourceLimits::unlimited()` is fully public with a prose warning in the doc comment.
+* `crates/sar-core/src/limits.rs` (associated function `ResourceLimits::unlimited()` and its documentation comment): `ResourceLimits::unlimited()` is fully public with a prose warning in the doc comment.
 
 #### Resolution
 
@@ -435,8 +435,8 @@ Documentation clarity observation about how limits interact across call paths. N
 
 #### Evidence
 
-* `crates/sar-core/src/format.rs` (lines 813-820): `check_allocation_bytes(meta_size)` called before `parse_tlvs(meta_bytes, limits)` in `parse_central_dictionary`.
-* `crates/sar-core/src/limits.rs` (lines 92-98): `max_tlv_bytes` and `max_tlv_count` documented without mentioning the enclosing CD limit interaction.
+* `crates/sar-core/src/format.rs` (function `parse_central_dictionary()`, metadata allocation check before TLV parsing): `check_allocation_bytes(meta_size)` called before `parse_tlvs(meta_bytes, limits)` in `parse_central_dictionary`.
+* `crates/sar-core/src/limits.rs` (struct `ResourceLimits`, fields `max_tlv_bytes` and `max_tlv_count`): `max_tlv_bytes` and `max_tlv_count` documented without mentioning the enclosing CD limit interaction.
 
 #### Resolution
 
@@ -465,8 +465,8 @@ Tracking the same future regression test in two findings would duplicate ownersh
 
 #### Evidence
 
-* `fuzz/fuzz_targets/archive_audit.rs` (line 25): `max_entry_count: 16` - does not cause limit enforcement in audit() because the check is missing.
-* `fuzz/fuzz_targets/archive_audit_wide.rs` (line 25): `max_entry_count: 64` - wider limit but same structural issue.
+* `fuzz/fuzz_targets/archive_audit.rs` (fuzz harness entry point, explicit `max_entry_count` assignment in `fuzz_limits()`): `max_entry_count: 16` - does not cause limit enforcement in audit() because the check is missing.
+* `fuzz/fuzz_targets/archive_audit_wide.rs` (fuzz harness entry point, explicit `max_entry_count` assignment in `fuzz_limits()`): `max_entry_count: 64` - wider limit but same structural issue.
 
 #### Relationships
 
@@ -500,9 +500,9 @@ Without deterministic boundary tests, off-by-one behavior in sparse-map byte and
 
 #### Evidence
 
-* `fuzz/CORPUS.md` (corpus categories): No dedicated sparse-map corpus category for near-limit byte and descriptor counts.
-* `fuzz/fuzz_targets/parse_lfh.rs` (lines 9-19): Limits include `max_sparse_map_bytes: 512` - appropriate reduced limit for fuzz targets.
-* `crates/sar-core/src/sparse.rs` (line 52): Guard: `count > isize::MAX as usize / std::mem::size_of::<SparseExtent>()` prevents unsafe allocations.
+* `fuzz/CORPUS.md` (section `Categories`, sparse-map and metadata corpus category entries): No dedicated sparse-map corpus category for near-limit byte and descriptor counts.
+* `fuzz/fuzz_targets/parse_lfh.rs` (function `parser_limits()`, sparse-map and descriptor limit configuration): Limits include `max_sparse_map_bytes: 512` - appropriate reduced limit for fuzz targets.
+* `crates/sar-core/src/sparse.rs` (function `parse_sparse_map()`, sparse descriptor allocation guard before `Vec::with_capacity(count)`): Guard: `count > isize::MAX as usize / std::mem::size_of::<SparseExtent>()` prevents unsafe allocations.
 
 #### Remediation
 
@@ -539,7 +539,7 @@ The gap affects reproducibility and audit-trail quality only. It does not demons
 
 #### Evidence
 
-* `fuzz/RUNS.md` (historical campaign records): Campaign records do not consistently include the tested commit and relevant ResourceLimits configuration needed to reconstruct a run.
+* `fuzz/RUNS.md` (section `M12b.5 extended malicious corpus and long-running fuzzing` -&gt; `PR3/PR4 targeted overnight fuzzing campaign`, recorded run metadata table): Campaign records do not consistently include the tested commit and relevant ResourceLimits configuration needed to reconstruct a run.
 
 #### Resolution
 
@@ -577,17 +577,17 @@ Unsupported AEAD/hash IDs can currently be accepted as operational KMS metadata 
 
 #### Evidence
 
-* `crates/sar-crypto/src/kms/tls_exporter.rs` (lines 147-203): The parser records `aead_algo_id`, `global_header_hash_algo_id`, and nonzero `derived_key_length` without registry validation or AEAD/length consistency enforcement.
-* `crates/sar-archive/src/archive.rs` (lines 3359-3373 and 1452-1462): TLS_EXPORTER payloads are parsed into `KmsParams::TlsExporter` and passed to `resolve_cek`; archive entry decrypt validates LFH `encr_algo_id` and key length at AEAD use but does not validate TLS_EXPORTER AEAD/hash IDs or derived-length consistency.
-* `crates/sar-transport/src/lib.rs` (lines 1449-1453 and 1406-1433): Additional control-stream TLS_EXPORTER context parsing feeds `KmsContext::TlsExporter` for CEK resolution; parser field validation failures are mapped to `AuthFailed`, but unsupported AEAD/hash IDs and nonzero mismatched lengths are not validated in this path.
-* `crates/sar-crypto/src/provider.rs` (lines 29-67): `resolve_cek()` delegates TLS_EXPORTER material to `external_key()` and performs no AEAD/hash/derived-length validation for `KmsParams::TlsExporter`.
-* `crates/sar-crypto/src/aead.rs` (lines 26-27 and 69-70): AEAD operations enforce 32-byte key length at key use, so provider-supplied non-32 keys fail at cryptographic use time rather than TLS_EXPORTER KMS parse time.
+* `crates/sar-crypto/src/kms/tls_exporter.rs` (function `parse_tls_exporter_kms_payload()`, unsupported and reserved parameter validation): The parser records `aead_algo_id`, `global_header_hash_algo_id`, and nonzero `derived_key_length` without registry validation or AEAD/length consistency enforcement.
+* `crates/sar-archive/src/archive.rs` (function `build_kms_context()`, TLS_EXPORTER branch using `parse_tls_exporter_kms_payload()`): TLS_EXPORTER payloads are parsed into `KmsParams::TlsExporter` and passed to `resolve_cek`; archive entry decrypt validates LFH `encr_algo_id` and key length at AEAD use but does not validate TLS_EXPORTER AEAD/hash IDs or derived-length consistency.
+* `crates/sar-transport/src/lib.rs` (functions `build_kms_context_for_additional_control()` and `decrypt_additional_control_payload()`, TLS_EXPORTER additional-control handling): Additional control-stream TLS_EXPORTER context parsing feeds `KmsContext::TlsExporter` for CEK resolution; parser field validation failures are mapped to `AuthFailed`, but unsupported AEAD/hash IDs and nonzero mismatched lengths are not validated in this path.
+* `crates/sar-crypto/src/provider.rs` (function `resolve_cek()`): `resolve_cek()` delegates TLS_EXPORTER material to `external_key()` and performs no AEAD/hash/derived-length validation for `KmsParams::TlsExporter`.
+* `crates/sar-crypto/src/aead.rs` (functions `aead_encrypt()` and `aead_decrypt()`, `AEAD_KEY_SIZE` validation): AEAD operations enforce 32-byte key length at key use, so provider-supplied non-32 keys fail at cryptographic use time rather than TLS_EXPORTER KMS parse time.
 
 #### Normative Basis
 
 * `specification.md` (Section 5.3.3, Mode 0x04 TLS_EXPORTER table (Derived Key Length)): Derived Key Length MUST match the selected AEAD algorithm requirements.
-* `specification.md` (Section 18.6.2 (line 3314)): Unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
-* `specification.md` (Section 18.6.3 (lines 3359 and 3365)): Unsupported or reserved Global Header hash and unsupported AEAD/context/KDF values MUST fail closed.
+* `specification.md` (Section 18.6.2 `TLS_EXPORTER KMS Requirements`, requirement `unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed`): Unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
+* `specification.md` (Section 18.6.3 `Exporter Label and Context`, `Global Header Hash Algo ID` fail-closed requirement): Unsupported or reserved Global Header hash and unsupported AEAD/context/KDF values MUST fail closed.
 
 #### Remediation
 
@@ -633,9 +633,9 @@ Operators can reasonably treat argv/environment password input as standard usage
 
 #### Evidence
 
-* `crates/sar-cli/src/args.rs` (lines 160-161, 176-177, and 198-199): The `Create`, `Extract`, and `Verify` CLI subcommands each expose `#[arg(long)] password: Option<String>` with no warning/help text attached to those argument declarations.
-* `crates/sar-cli/src/password.rs` (lines 9 and 39-48): `PASSWORD_ENV` is defined as `SAR_PASSWORD`, and `load_password()` prefers the explicit CLI value and then the inherited environment variable before prompting.
-* `README.md` (lines 443-448): The encryption example uses `--password "test-password"` for both `sar create` and `sar extract` without warning text or guidance that interactive prompting is the safer default.
+* `crates/sar-cli/src/args.rs` (enum `Command`, `Create`, `Extract`, and `Verify` `password` arguments): The `Create`, `Extract`, and `Verify` CLI subcommands each expose `#[arg(long)] password: Option<String>` with no warning/help text attached to those argument declarations.
+* `crates/sar-cli/src/password.rs` (function `load_password()`, explicit argument then `SAR_PASSWORD` environment variable then prompt precedence): `PASSWORD_ENV` is defined as `SAR_PASSWORD`, and `load_password()` prefers the explicit CLI value and then the inherited environment variable before prompting.
+* `README.md` (heading path `CLI` -&gt; `Encryption example`): The encryption example uses `--password "test-password"` for both `sar create` and `sar extract` without warning text or guidance that interactive prompting is the safer default.
 
 #### Remediation
 
@@ -668,10 +668,10 @@ The audited crypto code consistently wraps passwords, CEKs, and derived keys in 
 
 #### Evidence
 
-* `crates/sar-crypto/src/secret.rs` (lines 4-10): `SecretBytes` and `SecretString` are defined as `Zeroizing<Vec<u8>>` and `Zeroizing<String>`.
-* `crates/sar-crypto/src/aead.rs` (lines 97-103 and 124-130): Both AEAD decrypt branches call `buf.zeroize()` before returning `AuthFailed` on tag verification failure.
-* `crates/sar-crypto/src/kms/pbkdf2.rs` (lines 35-37): PBKDF2 derives the CEK into a `Zeroizing<Vec<u8>>` buffer and returns it as `SecretBytes`.
-* `crates/sar-crypto/src/kms/argon2.rs` (lines 53-56): Argon2 derives the CEK into a `Zeroizing<Vec<u8>>` buffer and returns it as `SecretBytes`.
+* `crates/sar-crypto/src/secret.rs` (type aliases `SecretBytes` and `SecretString`): `SecretBytes` and `SecretString` are defined as `Zeroizing<Vec<u8>>` and `Zeroizing<String>`.
+* `crates/sar-crypto/src/aead.rs` (function `aead_decrypt()`, auth-failure branches that zeroize temporary plaintext buffers): Both AEAD decrypt branches call `buf.zeroize()` before returning `AuthFailed` on tag verification failure.
+* `crates/sar-crypto/src/kms/pbkdf2.rs` (function `derive_key()`, `Zeroizing::new(vec![0u8; AEAD_KEY_SIZE])` CEK buffer): PBKDF2 derives the CEK into a `Zeroizing<Vec<u8>>` buffer and returns it as `SecretBytes`.
+* `crates/sar-crypto/src/kms/argon2.rs` (function `derive_key()`, `Zeroizing::new(vec![0u8; AEAD_KEY_SIZE])` CEK buffer): Argon2 derives the CEK into a `Zeroizing<Vec<u8>>` buffer and returns it as `SecretBytes`.
 
 #### Resolution
 
@@ -696,11 +696,11 @@ The audited archive and transport paths authenticate and decrypt before decompre
 
 #### Evidence
 
-* `crates/sar-archive/src/transform.rs` (lines 218-245): `decode_payload_v2()` authenticates and decrypts first and only then calls `decode_payload()` for decompression.
-* `crates/sar-transport/src/lib.rs` (lines 1313-1320 and 1426-1433): TLS_EXPORTER-bound streams reject unencrypted post-binding entries and map additional-control-stream AEAD failures to `SarError::AuthFailed` before forwarding any plaintext.
-* `crates/sar-archive/src/transform.rs` (lines 401-440): `auth_failure_happens_before_decompression()` verifies corrupted ciphertext returns `SarError::AuthFailed` before decompression.
-* `crates/sar-transport/tests/control_stream_aad_tests.rs` (lines 199-231): `aead_failure_does_not_expose_plaintext()` verifies wrong AAD returns `AuthFailed` and never returns plaintext.
-* `crates/sar-transport/tests/tls_exporter_post_binding_tests.rs` (lines 184-315): Post-binding plaintext on both primary and additional QUIC control streams is rejected with authentication failure semantics.
+* `crates/sar-archive/src/transform.rs` (function `decode_payload_v2()`, AEAD authentication before decompression): `decode_payload_v2()` authenticates and decrypts first and only then calls `decode_payload()` for decompression.
+* `crates/sar-transport/src/lib.rs` (functions `decrypt_additional_control_payload()` and `build_kms_context_for_additional_control()`, fail-closed AEAD handling): TLS_EXPORTER-bound streams reject unencrypted post-binding entries and map additional-control-stream AEAD failures to `SarError::AuthFailed` before forwarding any plaintext.
+* `crates/sar-archive/src/transform.rs` (test `auth_failure_happens_before_decompression`): `auth_failure_happens_before_decompression()` verifies corrupted ciphertext returns `SarError::AuthFailed` before decompression.
+* `crates/sar-transport/tests/control_stream_aad_tests.rs` (test `aead_failure_does_not_expose_plaintext`): `aead_failure_does_not_expose_plaintext()` verifies wrong AAD returns `AuthFailed` and never returns plaintext.
+* `crates/sar-transport/tests/tls_exporter_post_binding_tests.rs` (tests `tls_exporter_plaintext_post_binding_capabilities_is_rejected`, `tls_exporter_plaintext_post_binding_ack_is_rejected`, and `tls_exporter_plaintext_post_binding_status_is_rejected`): Post-binding plaintext on both primary and additional QUIC control streams is rejected with authentication failure semantics.
 
 #### Resolution
 
@@ -725,8 +725,8 @@ The audited scope does not open-code AEAD tag comparisons, and its explicit dige
 
 #### Evidence
 
-* `crates/sar-crypto/src/hash.rs` (lines 94-100): `ct_eq()` returns early only on length mismatch and otherwise delegates digest equality to `subtle::ConstantTimeEq`.
-* `crates/sar-crypto/src/aead.rs` (lines 91-103 and 118-130): AEAD tag verification stays inside `decrypt_inout_detached()` from the crypto libraries rather than using a handwritten byte-by-byte comparison.
+* `crates/sar-crypto/src/hash.rs` (function `ct_eq()`): `ct_eq()` returns early only on length mismatch and otherwise delegates digest equality to `subtle::ConstantTimeEq`.
+* `crates/sar-crypto/src/aead.rs` (function `aead_decrypt()`, library-authenticated tag verification branches): AEAD tag verification stays inside `decrypt_inout_detached()` from the crypto libraries rather than using a handwritten byte-by-byte comparison.
 
 #### Resolution
 
@@ -751,10 +751,10 @@ The audited workspace and `sar-crypto` crate use a focused set of high-level cry
 
 #### Evidence
 
-* `Cargo.toml` (lines 37-46): Workspace crypto dependencies are limited to AES-GCM, XChaCha20-Poly1305, SHA-2, BLAKE3, PBKDF2, Argon2, zeroize, subtle, rand_core/getrandom, and HMAC.
-* `crates/sar-crypto/Cargo.toml` (lines 8-18): `sar-crypto` consumes the workspace crypto crates directly and does not enable extra algorithm families beyond the audited SAR surface.
-* `crates/sar-crypto/src/aead.rs` (lines 31-58 and 82-134): Supported AEAD operations are implemented through the libraries' high-level `KeyInit` and `encrypt_inout_detached`/`decrypt_inout_detached` APIs.
-* `crates/sar-crypto/src/algorithm.rs` (lines 57-84): `validate_encr_algo_id()` accepts only plaintext, AES-256-GCM, and XChaCha20-Poly1305; unsupported or reserved encryption IDs fail closed.
+* `Cargo.toml` (workspace `[workspace.dependencies]` cryptographic dependency entries): Workspace crypto dependencies are limited to AES-GCM, XChaCha20-Poly1305, SHA-2, BLAKE3, PBKDF2, Argon2, zeroize, subtle, rand_core/getrandom, and HMAC.
+* `crates/sar-crypto/Cargo.toml` (package `[dependencies]` section): `sar-crypto` consumes the workspace crypto crates directly and does not enable extra algorithm families beyond the audited SAR surface.
+* `crates/sar-crypto/src/aead.rs` (functions `aead_encrypt()` and `aead_decrypt()`, algorithm dispatch and unsupported branch): Supported AEAD operations are implemented through the libraries' high-level `KeyInit` and `encrypt_inout_detached`/`decrypt_inout_detached` APIs.
+* `crates/sar-crypto/src/algorithm.rs` (functions `validate_encr_algo_id()` and `validate_kms_mode_id()`): `validate_encr_algo_id()` accepts only plaintext, AES-256-GCM, and XChaCha20-Poly1305; unsupported or reserved encryption IDs fail closed.
 
 #### Resolution
 
@@ -792,15 +792,15 @@ An attacker who can influence pre-existing filesystem state for the chosen extra
 
 #### Evidence
 
-* `crates/sar-cli/src/commands/extract.rs` (lines 50-68 and 192-224): `extract_archive()` accepts the caller-supplied `output_dir`, calls `create_dir_all()`, then performs reconstructed-file writes and final directory metadata application through raw `PathBuf` values without canonicalizing the extraction root.
-* `crates/sar-cli/src/extraction/paths.rs` (lines 99-179): `prepare_output_file_path()` and `ensure_parent_directory_path()` join unchecked `output_dir` prefixes with lexical archive components, inspect parents with `symlink_metadata()`, and create directories with `create_dir()`/`set_permissions()`, but never prove the final resolved path remains beneath a canonical root.
-* `crates/sar-cli/src/extraction/staging.rs` (lines 16-27, 139-173): Temporary output paths are derived from the final `Path`, opened with `create_new`, and published with `rename()` using ordinary path resolution; no directory handle or post-resolution confinement check is retained across the check/use window.
-* `crates/sar-cli/src/extraction/metadata.rs` (lines 25-70 and 102-154): File and directory metadata restoration re-checks paths with `symlink_metadata()` but then calls `chown`, `set_file_times`, and `set_permissions` by path, so later replacement can change which inode receives the mutation.
-* `specification.md` (Section 22.4 Path Security): Before any write operation, target paths MUST be canonicalized, all symbolic links and segments MUST be resolved, and extraction MUST ensure the final path resides within the intended extraction root.
+* `crates/sar-cli/src/commands/extract.rs` (function `extract_archive()`, extraction orchestration and final `finalize_directory_metadata(...)` call): `extract_archive()` accepts the caller-supplied `output_dir`, calls `create_dir_all()`, then performs reconstructed-file writes and final directory metadata application through raw `PathBuf` values without canonicalizing the extraction root.
+* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()`, `prepare_output_file_path()`, and `ensure_parent_directory_path()`): `prepare_output_file_path()` and `ensure_parent_directory_path()` join unchecked `output_dir` prefixes with lexical archive components, inspect parents with `symlink_metadata()`, and create directories with `create_dir()`/`set_permissions()`, but never prove the final resolved path remains beneath a canonical root.
+* `crates/sar-cli/src/extraction/staging.rs` (functions `write_bytes_via_temp()`, `write_sparse_payload_via_temp()`, and `finalize_temp_file()`): Temporary output paths are derived from the final `Path`, opened with `create_new`, and published with `rename()` using ordinary path resolution; no directory handle or post-resolution confinement check is retained across the check/use window.
+* `crates/sar-cli/src/extraction/metadata.rs` (functions `apply_file_metadata()`, `finalize_directory_metadata()`, `apply_permissions()`, `apply_owner()`, and `apply_timestamps()`): File and directory metadata restoration re-checks paths with `symlink_metadata()` but then calls `chown`, `set_file_times`, and `set_permissions` by path, so later replacement can change which inode receives the mutation.
+* `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Before any write operation, target paths MUST be canonicalized, all symbolic links and segments MUST be resolved, and extraction MUST ensure the final path resides within the intended extraction root.
 
 #### Normative Basis
 
-* `specification.md` (Section 22.4 Path Security): Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
+* `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
 
 #### Remediation
 
@@ -833,8 +833,8 @@ Archive extraction performs explicit lexical validation before joining names to 
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/paths.rs` (lines 52-97 and 141-167): `validate_relative_archive_path()` rejects absolute, UNC, drive-prefixed, backslash, NUL, empty, `.` and `..` forms, and `ensure_parent_directory_path()` refuses existing symlink parents.
-* `crates/sar-cli/tests/cli_metadata_tests.rs` (lines 293-327 and 406-435): CLI tests cover rejection of `../`, absolute, drive-prefixed, and UNC archive names and rejection of an existing symlink parent component during extraction.
+* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()` and `ensure_parent_directory_path()`, traversal and symlink-parent rejection): `validate_relative_archive_path()` rejects absolute, UNC, drive-prefixed, backslash, NUL, empty, `.` and `..` forms, and `ensure_parent_directory_path()` refuses existing symlink parents.
+* `crates/sar-cli/tests/cli_metadata_tests.rs` (tests `hostile_paths_are_rejected` and `extraction_rejects_existing_symlink_parent_component`): CLI tests cover rejection of `../`, absolute, drive-prefixed, and UNC archive names and rejection of an existing symlink parent component during extraction.
 
 #### Resolution
 
@@ -859,9 +859,9 @@ On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applie
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/paths.rs` (lines 170-178): `create_restrictive_directory()` calls `fs::create_dir(path)` to create the directory and then calls `fs::set_permissions(path, Permissions::from_mode(0o700))` on Unix. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with the standard umask of 0o022 the effective creation mode is 0o755. The chmod is a separate step and not atomic with creation. Content extraction proceeds only after `set_permissions` returns `Ok(())`; if it returns an error, extraction halts.
-* `crates/sar-cli/src/extraction/metadata.rs` (lines 25-45, 47-70, and 73-99): `apply_file_metadata()` runs only after file publication, skips symlink paths, `finalize_directory_metadata()` applies directory metadata after child extraction in reverse depth order, and `apply_permissions()` masks restored modes with `0o0777`.
-* `crates/sar-cli/tests/cli_metadata_tests.rs` (lines 106-159 and 366-402): CLI tests verify directory permissions are applied after extraction and that restoring `0o4755` results in `0o755` on disk.
+* `crates/sar-cli/src/extraction/paths.rs` (function `create_restrictive_directory()`, staging directory mode `0o700`): `create_restrictive_directory()` calls `fs::create_dir(path)` to create the directory and then calls `fs::set_permissions(path, Permissions::from_mode(0o700))` on Unix. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with the standard umask of 0o022 the effective creation mode is 0o755. The chmod is a separate step and not atomic with creation. Content extraction proceeds only after `set_permissions` returns `Ok(())`; if it returns an error, extraction halts.
+* `crates/sar-cli/src/extraction/metadata.rs` (function `finalize_directory_metadata()`, reverse-depth ordering and deferred directory metadata application): `apply_file_metadata()` runs only after file publication, skips symlink paths, `finalize_directory_metadata()` applies directory metadata after child extraction in reverse depth order, and `apply_permissions()` masks restored modes with `0o0777`.
+* `crates/sar-cli/tests/cli_metadata_tests.rs` (tests `create_archives_directories_and_extract_applies_directory_permissions` and `preserve_permissions_strips_setuid_bits_by_default`): CLI tests verify directory permissions are applied after extraction and that restoring `0o4755` results in `0o755` on disk.
 
 #### Resolution
 
@@ -886,8 +886,8 @@ The current entry model and CLI extractor handle only regular files, directories
 
 #### Evidence
 
-* `crates/sar-core/src/metadata.rs` (lines 89-124): `EntryKind` contains `RegularFile`, `Directory`, `Symlink`, and `EmptyArea` only; there is no hardlink entry kind.
-* `crates/sar-cli/src/commands/extract.rs` (lines 236-290): `extract_non_fragment_entry()` matches only directory, symlink, regular-file, and empty-area cases; no hardlink creation path exists.
+* `crates/sar-core/src/metadata.rs` (enum `EntryKind`): `EntryKind` contains `RegularFile`, `Directory`, `Symlink`, and `EmptyArea` only; there is no hardlink entry kind.
+* `crates/sar-cli/src/commands/extract.rs` (function `extract_non_fragment_entry()`, entry-kind dispatch without hardlink branch): `extract_non_fragment_entry()` matches only directory, symlink, regular-file, and empty-area cases; no hardlink creation path exists.
 
 #### Resolution
 
@@ -923,8 +923,8 @@ For SAR v1.0 symlink entries, are absolute or parent-traversing payload targets 
 
 * `specification.md` (Section 15.3 Definition of a symlink file): The specification says symlink payload data is the target path string and MUST be passed to the host symlink creation utility, but it does not constrain whether the target may be absolute or escaping.
 * `specification.md` (Section 22.4 Path Security): Path canonicalization and root confinement are defined for write targets generally, but the section does not explicitly define whether symlink payload targets themselves must satisfy the same confinement policy.
-* `crates/sar-cli/src/commands/extract.rs` (lines 318-347): `extract_symlink_entry()` gates symlink extraction and rejects any symlink target that fails `validate_relative_archive_path(target)` before calling `symlink(target, &out_path)`.
-* `crates/sar-cli/tests/cli_metadata_tests.rs` (lines 331-362): The CLI test suite codifies the current implementation choice by asserting that a symlink payload of `../escape` is rejected during extraction.
+* `crates/sar-cli/src/commands/extract.rs` (function `extract_symlink_entry()`, symlink-target path validation and extraction guards): `extract_symlink_entry()` gates symlink extraction and rejects any symlink target that fails `validate_relative_archive_path(target)` before calling `symlink(target, &out_path)`.
+* `crates/sar-cli/tests/cli_metadata_tests.rs` (test `unsafe_symlink_targets_are_rejected`): The CLI test suite codifies the current implementation choice by asserting that a symlink payload of `../escape` is rejected during extraction.
 
 #### Verification
 
@@ -947,8 +947,8 @@ Regular-file and directory extraction remain available cross-platform, but non-U
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/policy.rs` (lines 14-34): `validate_extract_metadata_support()` returns `SarError::Unsupported` on non-Unix when permission restoration, owner restoration, or symlink extraction is requested.
-* `crates/sar-cli/src/commands/extract.rs` (lines 350-355): The non-Unix branch of `extract_symlink_entry()` also fails closed with `SarError::Unsupported` instead of attempting host-specific symlink emulation.
+* `crates/sar-cli/src/extraction/policy.rs` (function `validate_extract_metadata_support()`, non-Unix fail-closed policy checks): `validate_extract_metadata_support()` returns `SarError::Unsupported` on non-Unix when permission restoration, owner restoration, or symlink extraction is requested.
+* `crates/sar-cli/src/commands/extract.rs` (function `extract_symlink_entry()`, `#[cfg(not(unix))]` unsupported-path rejection): The non-Unix branch of `extract_symlink_entry()` also fails closed with `SarError::Unsupported` instead of attempting host-specific symlink emulation.
 
 #### Resolution
 
@@ -970,11 +970,11 @@ Verified during M13a.4: non-Unix builds fail closed for unsupported permission, 
 
 #### Summary
 
-In `repair_archive`, the checked working-set formula is `archive_bytes.len() + 2 * protected_range.length + tlv_value.len()` (`X + 2P + T`). Tracing source-visible ownership at the point where `Vec::with_capacity(archive_bytes.len())` executes (line 474): the caller-owned input archive slice (`X` bytes), the SAR-owned cloned RECOVERY TLV storage in `layout.recovery_tlvs` (`R` bytes, still in lexical scope and not dropped), the `erasure_indices` vector (`E` bytes, built before the codec call and still in scope), and the recovered protected-range output (`P` bytes) are all live when the repaired full-archive output (`X` bytes) is allocated. The minimum proven repaired-output peak is therefore at least `2X + P`; including all source-visible retained allocations the peak is at least `2X + P + R + E`. The checked formula `X + 2P + T` omits the repaired output `X`, omits the majority of `R` and all of `E`, and includes a second `protected_range.length` term that does not correspond to any source-visible live allocation at the repaired-output peak; the formula therefore does not match the source-visible repaired-output lifetime set and can pass even when total simultaneous retained memory exceeds `max_repair_working_set`.
+In `repair_archive`, the checked working-set formula is `archive_bytes.len() + 2 * protected_range.length + tlv_value.len()` (`X + 2P + T`). Tracing source-visible ownership at the point where `Vec::with_capacity(archive_bytes.len())` executes (during repaired output allocation in `repair_archive()`): the caller-owned input archive slice (`X` bytes), the SAR-owned cloned RECOVERY TLV storage in `layout.recovery_tlvs` (`R` bytes, still in lexical scope and not dropped), the `erasure_indices` vector (`E` bytes, built before the codec call and still in scope), and the recovered protected-range output (`P` bytes) are all live when the repaired full-archive output (`X` bytes) is allocated. The minimum proven repaired-output peak is therefore at least `2X + P`; including all source-visible retained allocations the peak is at least `2X + P + R + E`. The checked formula `X + 2P + T` omits the repaired output `X`, omits the majority of `R` and all of `E`, and includes a second `protected_range.length` term that does not correspond to any source-visible live allocation at the repaired-output peak; the formula therefore does not match the source-visible repaired-output lifetime set and can pass even when total simultaneous retained memory exceeds `max_repair_working_set`.
 
 #### Current Behavior
 
-Source-visible ownership and drop boundaries in `repair_archive`: (1) `parse_archive_layout` returns an owned `ArchiveLayout` bound to `layout`; `layout.recovery_tlvs` is a `Vec<(u8, Vec<u8>)>` that clones every RECOVERY TLV value from the Central Dictionary (`R` bytes total, bounded indirectly by `max_cd_bytes`, `max_tlv_count`, `max_tlv_bytes`, and `max_fec_value_bytes`); `layout` is not moved or explicitly dropped before the function returns, so the cloned TLV storage remains allocated for the full duration of `repair_archive`. (2) `tlv_value` (the matching TLV's value) is a borrow (`&[u8]`) into `layout.recovery_tlvs`-a borrow ending does not free the backing owned allocation. `protected_bytes` is a borrow into `archive_bytes`-no independent copy is made. `erasure_indices` is an owned `Vec<Erasure>` (`E` bytes) built before the codec call and passed by reference into `recover()`; it is not explicitly dropped after the codec returns and remains in lexical scope at line 474, so it is live at the repaired-output peak. (3) During FEC recovery, SAR allocates the recovered protected-range output (`P` bytes, bounded by `max_recovery_protected_range`) as the `recovered` `Vec<u8>`; codec-internal temporaries (scratch vectors, matrix buffers, stripe-level allocations) are owned entirely inside the `recover()` call and are freed before it returns. (4) `Vec::with_capacity(archive_bytes.len())` at line 474 allocates the repaired full-archive output (`X` bytes). At that point the source-visible live allocations are: caller-owned archive slice backing (`X`), `layout.recovery_tlvs` (`R`), `erasure_indices` (`E`), and `recovered` (`P`). Minimum proven repaired-output peak (unavoidable buffers): `2X + P` (caller input + recovered output + repaired output). Full source-visible repaired-output peak (all owned heap allocations still live in `repair_archive`): at least `2X + P + R + E`. The checked formula at lines 414-420 is `X + 2P + T` (where `T = tlv_value.len()`, a property of the matching TLV already counted within `R`). The formula does not match the source-visible repaired-output lifetime set: it omits the repaired output `X`, omits most of `R` (capturing only the single matching TLV size `T` rather than all cloned TLVs), omits `E`, and includes a second `protected_range.length` term (line 418) that does not correspond to any source-visible live allocation at the repaired-output peak. A merely unused variable does not establish an audit-visible deallocation guarantee; `layout` and `erasure_indices` are live until they leave scope or are explicitly dropped.
+Source-visible ownership and drop boundaries in `repair_archive`: (1) `parse_archive_layout` returns an owned `ArchiveLayout` bound to `layout`; `layout.recovery_tlvs` is a `Vec<(u8, Vec<u8>)>` that clones every RECOVERY TLV value from the Central Dictionary (`R` bytes total, bounded indirectly by `max_cd_bytes`, `max_tlv_count`, `max_tlv_bytes`, and `max_fec_value_bytes`); `layout` is not moved or explicitly dropped before the function returns, so the cloned TLV storage remains allocated for the full duration of `repair_archive`. (2) `tlv_value` (the matching TLV's value) is a borrow (`&[u8]`) into `layout.recovery_tlvs`-a borrow ending does not free the backing owned allocation. `protected_bytes` is a borrow into `archive_bytes`-no independent copy is made. `erasure_indices` is an owned `Vec<Erasure>` (`E` bytes) built before the codec call and passed by reference into `recover()`; it is not explicitly dropped after the codec returns and remains in lexical scope at the repaired-output allocation step in `repair_archive()`, so it is live at the repaired-output peak. (3) During FEC recovery, SAR allocates the recovered protected-range output (`P` bytes, bounded by `max_recovery_protected_range`) as the `recovered` `Vec<u8>`; codec-internal temporaries (scratch vectors, matrix buffers, stripe-level allocations) are owned entirely inside the `recover()` call and are freed before it returns. (4) `Vec::with_capacity(archive_bytes.len())` at the repaired-output allocation step in `repair_archive()` allocates the repaired full-archive output (`X` bytes). At that repaired-output allocation step the source-visible live allocations are: caller-owned archive slice backing (`X`), `layout.recovery_tlvs` (`R`), `erasure_indices` (`E`), and `recovered` (`P`). Minimum proven repaired-output peak (unavoidable buffers): `2X + P` (caller input + recovered output + repaired output). Full source-visible repaired-output peak (all owned heap allocations still live in `repair_archive`): at least `2X + P + R + E`. The checked formula at the initial working-set check in `repair_archive()` is `X + 2P + T` (where `T = tlv_value.len()`, a property of the matching TLV already counted within `R`). The formula does not match the source-visible repaired-output lifetime set: it omits the repaired output `X`, omits most of `R` (capturing only the single matching TLV size `T` rather than all cloned TLVs), omits `E`, and includes a second `protected_range.length` term (the second `protected_range.length` term) that does not correspond to any source-visible live allocation at the repaired-output peak. A merely unused variable does not establish an audit-visible deallocation guarantee; `layout` and `erasure_indices` are live until they leave scope or are explicitly dropped.
 
 #### Impact
 
@@ -984,19 +984,19 @@ Concrete example: `max_archive_size = 100 MiB`, `max_recovery_protected_range = 
 
 #### Evidence
 
-* `crates/sar-archive/src/recovery.rs` (lines 183-188 and 393-420): `parse_archive_layout` clones every RECOVERY TLV value into `layout.recovery_tlvs` (a `Vec<(u8, Vec<u8>)>`). In `repair_archive`, `layout` is an owned local variable that is never moved out or explicitly dropped, so the cloned TLV storage (`R` bytes total across all recovery TLVs) remains allocated for the entire function lifetime. `tlv_value` is a `&[u8]` borrow into that storage; a borrow ending does not free the backing allocation. The checked formula at lines 414-420 computes `archive_bytes.len() + protected_range.length + tlv_value.len() + protected_range.length`; the second `protected_range.length` term (line 418) does not correspond to any source-visible live allocation at the repaired-output peak, and the formula therefore does not match the source-visible repaired-output lifetime set.
-* `crates/sar-archive/src/recovery.rs` (lines 422-487): `erasure_indices` (a `Vec<Erasure>`, `E` bytes) is built at lines 424-435 before the codec call, passed by shared reference into `recover()`, and never explicitly dropped after the match block; it remains in lexical scope at line 474 and is therefore live at the repaired-output peak. `layout` (retaining `recovery_tlvs`, `R` bytes) is likewise in scope throughout. `Vec::with_capacity(archive_bytes.len())` at line 474 allocates the repaired full-archive output while the caller input slice, `layout.recovery_tlvs`, `erasure_indices`, and the recovered protected-range output are all live. The minimum proven repaired-output peak is `archive_bytes.len() + recovered.len() + archive_bytes.len()` = `2X + P`; the full source-visible peak is at least `2X + P + R + E`.
-* `crates/sar-fec/src/xor.rs` (lines 307-385): XOR recovery allocates `out = vec![0u8; total_data_len]` for the recovered protected-range output, plus temporary `block_buf`, per-stripe erasure vectors, and per-stripe recovered blocks. The temporary vectors are local to recovery and are released before `repair_archive` allocates the repaired full-archive output.
-* `crates/sar-fec/src/rs/mod.rs` (lines 404-528): RS recovery allocates `out = vec![0u8; total_data_len]` for the recovered protected-range output plus temporary symbol buffers, RHS vectors, selected-parity vectors, and recovered-symbol vectors. Those codec temporaries are freed before `repair_archive` allocates the repaired full-archive output, so they are not live at the repaired-output peak.
-* `crates/sar-fec/src/rs/matrix.rs` (lines 64-149): RS matrix inversion/materialization allocates the augmented inversion matrix and result vectors inside recovery. These allocations are local to `recover` and are released before `repair_archive` allocates the repaired full-archive output.
-* `crates/sar-core/src/limits.rs` (lines 171-177 and 675-685): `max_repair_working_set` is documented as the maximum working-set byte size for archive-level repair operations, and `check_repair_working_set` rejects values only when the supplied byte estimate exceeds that configured limit.
+* `crates/sar-archive/src/recovery.rs` (function `parse_archive_layout()`, cloning of RECOVERY TLV values into `layout.recovery_tlvs`, and function `repair_archive()`, existing working-set estimate before FEC recovery): `parse_archive_layout` clones every RECOVERY TLV value into `layout.recovery_tlvs` (a `Vec<(u8, Vec<u8>)>`). In `repair_archive`, `layout` is an owned local variable that is never moved out or explicitly dropped, so the cloned TLV storage (`R` bytes total across all recovery TLVs) remains allocated for the entire function lifetime. `tlv_value` is a `&[u8]` borrow into that storage; a borrow ending does not free the backing allocation. The checked formula in `repair_archive()` computes `archive_bytes.len() + protected_range.length + tlv_value.len() + protected_range.length`; the second `protected_range.length` term (the second `protected_range.length` term) does not correspond to any source-visible live allocation at the repaired-output peak, and the formula therefore does not match the source-visible repaired-output lifetime set.
+* `crates/sar-archive/src/recovery.rs` (function `repair_archive()`, construction and lifetime of `erasure_indices`, and allocation of repaired output with `Vec::with_capacity(archive_bytes.len())`): `erasure_indices` (a `Vec<Erasure>`, `E` bytes) is built before the codec call before the codec call, passed by shared reference into `recover()`, and never explicitly dropped after the match block; it remains in lexical scope during repaired-output allocation and is therefore live at the repaired-output peak. `layout` (retaining `recovery_tlvs`, `R` bytes) is likewise in scope throughout. `Vec::with_capacity(archive_bytes.len())` during repaired-output allocation allocates the repaired full-archive output while the caller input slice, `layout.recovery_tlvs`, `erasure_indices`, and the recovered protected-range output are all live. The minimum proven repaired-output peak is `archive_bytes.len() + recovered.len() + archive_bytes.len()` = `2X + P`; the full source-visible peak is at least `2X + P + R + E`.
+* `crates/sar-fec/src/xor.rs` (XOR codec `recover()` implementation, recovered output and codec-local temporaries): XOR recovery allocates `out = vec![0u8; total_data_len]` for the recovered protected-range output, plus temporary `block_buf`, per-stripe erasure vectors, and per-stripe recovered blocks. The temporary vectors are local to recovery and are released before `repair_archive` allocates the repaired full-archive output.
+* `crates/sar-fec/src/rs/mod.rs` (Reed-Solomon codec `recover()` implementation, recovered output and codec-local temporaries): RS recovery allocates `out = vec![0u8; total_data_len]` for the recovered protected-range output plus temporary symbol buffers, RHS vectors, selected-parity vectors, and recovered-symbol vectors. Those codec temporaries are freed before `repair_archive` allocates the repaired full-archive output, so they are not live at the repaired-output peak.
+* `crates/sar-fec/src/rs/matrix.rs` (function `invert()` used by Reed-Solomon recovery): RS matrix inversion/materialization allocates the augmented inversion matrix and result vectors inside recovery. These allocations are local to `recover` and are released before `repair_archive` allocates the repaired full-archive output.
+* `crates/sar-core/src/limits.rs` (struct `ResourceLimits`, field `max_repair_working_set`, and method `check_repair_working_set()`): `max_repair_working_set` is documented as the maximum working-set byte size for archive-level repair operations, and `check_repair_working_set` rejects values only when the supplied byte estimate exceeds that configured limit.
 
 #### Remediation
 
 * Calculate the repair working-set bound from the intended working-set semantics and source-visible concurrent lifetimes at each checked phase: at the repaired-output peak the unavoidable concurrent allocations are the caller-owned input archive (`X`), the recovered protected-range output (`P`), and the repaired full-archive output (`X`); the minimum proven bound is therefore `2X + P`.
 * The source-visible peak also includes `layout.recovery_tlvs` (`R` bytes) and `erasure_indices` (`E` bytes), which remain live unless explicitly dropped before output allocation; the implementation may choose to bound `R + E` explicitly, drop them before `Vec::with_capacity`, or account for them in the checked formula.
 * Avoid relying on optimizer-driven early deallocation: a merely unused owned variable does not guarantee audit-visible deallocation before the next phase.
-* Remove or justify any checked terms that do not correspond to source-visible live allocations at the bounded phase (for example, the second `protected_range.length` term at line 418), so the enforced formula does not undercount simultaneous retained memory.
+* Remove or justify any checked terms that do not correspond to source-visible live allocations at the bounded phase (for example, the second `protected_range.length` term in the current formula), so the enforced formula does not undercount simultaneous retained memory.
 * Add a deterministic test that demonstrates a configuration where the current estimate `X + 2P + T` passes but the corrected minimum repaired-output peak `2X + P` exceeds `max_repair_working_set`, causing `check_repair_working_set` to reject repair before allocating the repaired archive output.
 
 #### Verification
@@ -1020,11 +1020,11 @@ Requirement: `required`
 
 #### Summary
 
-The specification requires (Section 2340) that implementations return `SAR_ERR_UNSUPPORTED` for algorithm IDs not supported by the selected profile. However, the specification does not define per-profile normative algorithm restriction tables for compression, delta, FEC, sparse, or recovery algorithms. Without these tables, implementations cannot consistently enforce profile-specific algorithm constraints. `validate_archive_profile` in `crates/sar-archive/src/profile.rs` documents this as a known limitation.
+The specification requires (Section 12.4 `Unsupported Features`) that implementations return `SAR_ERR_UNSUPPORTED` for algorithm IDs not supported by the selected profile. However, the specification does not define per-profile normative algorithm restriction tables for compression, delta, FEC, sparse, or recovery algorithms. Without these tables, implementations cannot consistently enforce profile-specific algorithm constraints. `validate_archive_profile` in `crates/sar-archive/src/profile.rs` documents this as a known limitation.
 
 #### Current Behavior
 
-`validate_archive_profile` in `crates/sar-archive/src/profile.rs` validates only global-flag constraints per profile (NO_INDEX, ENCRYPTED). Its documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The specification (Section 2340) states that algorithm IDs not supported by the selected profile MUST return SAR_ERR_UNSUPPORTED, but the specification provides no per-profile algorithm allowlist.
+`validate_archive_profile` in `crates/sar-archive/src/profile.rs` validates only global-flag constraints per profile (NO_INDEX, ENCRYPTED). Its documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The specification (Section 12.4 `Unsupported Features`) states that algorithm IDs not supported by the selected profile MUST return SAR_ERR_UNSUPPORTED, but the specification provides no per-profile algorithm allowlist.
 
 #### Normative Question
 
@@ -1032,8 +1032,8 @@ Which specific compression, delta, FEC, sparse, and recovery algorithm IDs are a
 
 #### Evidence
 
-* `specification.md` (line 2340): Normative requirement: 'If an implementation supports a feature but encounters an assigned algorithm identifier that is not implemented by the selected profile, it MUST return SAR_ERR_UNSUPPORTED.' No per-profile algorithm table is provided in the specification.
-* `crates/sar-archive/src/profile.rs` (lines 118-132): `validate_archive_profile` documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The function validates only NO_INDEX and ENCRYPTED global flags per profile.
+* `specification.md` (Section 12.4 `Unsupported Features`, assigned algorithm identifier not implemented by selected profile): Normative requirement: 'If an implementation supports a feature but encounters an assigned algorithm identifier that is not implemented by the selected profile, it MUST return SAR_ERR_UNSUPPORTED.' No per-profile algorithm table is provided in the specification.
+* `crates/sar-archive/src/profile.rs` (function `validate_archive_profile()`, documented algorithm-check limitation): `validate_archive_profile` documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The function validates only NO_INDEX and ENCRYPTED global flags per profile.
 
 #### Verification
 
@@ -1056,9 +1056,9 @@ All three decompression algorithms (STORE, DEFLATE, ZSTD) route through `copy_bo
 
 #### Evidence
 
-* `crates/sar-compression/src/lib.rs` (lines 168-192): `copy_bounded` maintains a running decoded-byte counter with `u64::try_from` and `checked_add` overflow guards and returns `LimitExceeded` before writing any 8 192-byte chunk that would cause the total to exceed `max_output_size`.
-* `crates/sar-compression/src/lib.rs` (lines 138-166): `decode_stream` dispatches STORE to `copy_bounded` directly, and wraps both `DeflateDecoder` and `zstd::stream::Decoder` in `copy_bounded` for DEFLATE and ZSTD, ensuring all three paths enforce the same output bound.
-* `crates/sar-archive/src/transform.rs` (lines 172-178): `decode_payload` returns `LimitExceeded` when `expected_output_size > max_output_size` before constructing any decompressor.
+* `crates/sar-compression/src/lib.rs` (function `copy_bounded()`, decoded-output cap enforcement before writes): `copy_bounded` maintains a running decoded-byte counter with `u64::try_from` and `checked_add` overflow guards and returns `LimitExceeded` before writing any 8 192-byte chunk that would cause the total to exceed `max_output_size`.
+* `crates/sar-compression/src/lib.rs` (function `decode_stream()`, bounded decoding through `copy_bounded(...)`): `decode_stream` dispatches STORE to `copy_bounded` directly, and wraps both `DeflateDecoder` and `zstd::stream::Decoder` in `copy_bounded` for DEFLATE and ZSTD, ensuring all three paths enforce the same output bound.
+* `crates/sar-archive/src/transform.rs` (function `decode_payload_v2()`, decompression options with `max_output_size`): `decode_payload` returns `LimitExceeded` when `expected_output_size > max_output_size` before constructing any decompressor.
 
 #### Resolution
 
@@ -1083,8 +1083,8 @@ Verified during M13a.3: decoded output for all three compression algorithms is b
 
 #### Evidence
 
-* `crates/sar-archive/src/archive.rs` (lines 3543-3568): `bsdiff_limits_from_resource_limits` and `vcdiff_limits_from_resource_limits` map ResourceLimits fields to BsdiffLimits and VcdiffLimits; `max_in_memory_buffer` bounds the compressed patch size, `max_decoded_entry_size` bounds target output.
-* `crates/sar-delta/src/bsdiff.rs` (lines 117-123): `apply_bsdiff` checks `patch_len > limits.max_patch_size` as its first operation before any allocation or parsing; downstream limit checks use early-return error paths before each growth operation.
+* `crates/sar-archive/src/archive.rs` (method `ArchiveReader::next_entry()`, BSDIFF and VCDIFF dispatch branches): `bsdiff_limits_from_resource_limits` and `vcdiff_limits_from_resource_limits` map ResourceLimits fields to BsdiffLimits and VcdiffLimits; `max_in_memory_buffer` bounds the compressed patch size, `max_decoded_entry_size` bounds target output.
+* `crates/sar-delta/src/bsdiff.rs` (function `apply_bsdiff()`, `BsdiffLimits`-bounded allocation and output checks): `apply_bsdiff` checks `patch_len > limits.max_patch_size` as its first operation before any allocation or parsing; downstream limit checks use early-return error paths before each growth operation.
 * `crates/sar-delta/src/vcdiff.rs` (struct VcdiffLimits and apply_vcdiff entry): `VcdiffLimits` documents default bounds for patch size (256 MiB), window count (4 096), instruction count (65 536), and output size (max_decoded_entry_size); all are checked before the corresponding allocation or loop iteration.
 
 #### Resolution
@@ -1110,9 +1110,9 @@ Verified during M13a.3: BSDIFF and VCDIFF limits are derived from unified Resour
 
 #### Evidence
 
-* `crates/sar-sparse/src/lib.rs` (lines 192-201): `apply_sparse_reconstruction` calls `limits.check_decoded_entry_size(logical_size)` and `limits.allocation_len(logical_size)` before `vec![0u8; logical_size_usize]`, bounding output allocation by both limits.
-* `crates/sar-sparse/src/lib.rs` (lines 137-173): `validate_sparse_extents` checks descriptor count limit, rejects zero-length extents, uses `checked_add` for `offset + length`, rejects out-of-bounds extents, rejects overlapping extents, and rejects excess payload bytes after all extents are consumed.
-* `crates/sar-core/src/limits.rs` (lines 733-745): `sparse_limits()` sets `max_allocation_bytes` as `min(max_in_memory_buffer, max_total_pipeline_memory)` to apply the tighter of the two limits.
+* `crates/sar-sparse/src/lib.rs` (function `apply_sparse_reconstruction()`, bounded output allocation): `apply_sparse_reconstruction` calls `limits.check_decoded_entry_size(logical_size)` and `limits.allocation_len(logical_size)` before `vec![0u8; logical_size_usize]`, bounding output allocation by both limits.
+* `crates/sar-sparse/src/lib.rs` (function `validate_sparse_extents()`, descriptor and span validation before reconstruction): `validate_sparse_extents` checks descriptor count limit, rejects zero-length extents, uses `checked_add` for `offset + length`, rejects out-of-bounds extents, rejects overlapping extents, and rejects excess payload bytes after all extents are consumed.
+* `crates/sar-core/src/limits.rs` (method `ResourceLimits::sparse_limits()`): `sparse_limits()` sets `max_allocation_bytes` as `min(max_in_memory_buffer, max_total_pipeline_memory)` to apply the tighter of the two limits.
 
 #### Resolution
 
@@ -1137,8 +1137,8 @@ Verified during M13a.3: sparse reconstruction output is bounded by max_decoded_e
 
 #### Evidence
 
-* `crates/sar-fragmentation/src/lib.rs` (lines 70-152): `FragmentLimits` with five bounds; `check_fragment_count`, `check_fragment_group_span`, `check_decoded_entry_size`, `check_loss_tolerant_gap`, and `allocation_len` all return `LimitExceeded` before accessing the guarded resource.
-* `crates/sar-core/src/limits.rs` (lines 718-731): `fragment_limits()` sets `max_allocation_bytes` as `min(max_in_memory_buffer, max_total_pipeline_memory)`, applying the tighter of the per-buffer and pipeline-wide limits.
+* `crates/sar-fragmentation/src/lib.rs` (functions `validate_fragment_group()` and `reconstruct_fragments()`, count/span/gap checks before reassembly allocation): `FragmentLimits` with five bounds; `check_fragment_count`, `check_fragment_group_span`, `check_decoded_entry_size`, `check_loss_tolerant_gap`, and `allocation_len` all return `LimitExceeded` before accessing the guarded resource.
+* `crates/sar-core/src/limits.rs` (method `ResourceLimits::fragment_limits()`): `fragment_limits()` sets `max_allocation_bytes` as `min(max_in_memory_buffer, max_total_pipeline_memory)`, applying the tighter of the per-buffer and pipeline-wide limits.
 
 #### Resolution
 
@@ -1163,12 +1163,12 @@ All six transform and recovery crates in the M13a.3 audit scope declare `#![forb
 
 #### Evidence
 
-* `crates/sar-compression/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
-* `crates/sar-delta/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
-* `crates/sar-sparse/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
-* `crates/sar-fec/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
-* `crates/sar-fragmentation/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
-* `crates/sar-loss-tolerant/src/lib.rs` (line 4): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-compression/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-delta/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-sparse/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-fec/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-fragmentation/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` declared at crate level.
+* `crates/sar-loss-tolerant/src/lib.rs` (crate attribute `#![forbid(unsafe_code)]`): `#![forbid(unsafe_code)]` declared at crate level.
 
 #### Resolution
 
@@ -1197,13 +1197,13 @@ Patch-engine edge cases in `apply_bsdiff` and `apply_vcdiff` and recovery-orches
 
 #### Evidence
 
-* `fuzz/Cargo.toml` (lines 32-185): The complete fuzz inventory is declared here as 22 cargo-fuzz bins. None of the registered targets is a dedicated BSDIFF, VCDIFF, or archive-repair harness, and no target name corresponds to `inspect_recovery_metadata`, `plan_archive_repair`, or `repair_archive`.
-* `fuzz/fuzz_targets/transform_pipeline_fuzz.rs` (lines 28-33 and 69-93): This target explicitly excludes "Delta patch algorithms requiring a base object" and only drives `ArchiveReader` entry walking under bounded limits, so it does not reach BSDIFF/VCDIFF application.
-* `fuzz/fuzz_targets/archive_entry_decode.rs` (lines 4-12 and 48-70): This target documents that it "does not require ... external delta bases" and constructs `ArchiveReaderOptions` with `..ArchiveReaderOptions::default()`, so it never supplies `delta_base` while walking entries.
-* `fuzz/fuzz_targets/archive_entry_decode_wide.rs` (lines 4-12 and 48-70): The wide archive-entry target follows the same call path as `archive_entry_decode.rs` with larger limits, but it also leaves `delta_base` unset and therefore cannot meaningfully reach BSDIFF/VCDIFF application.
-* `fuzz/fuzz_targets/archive_logical_files.rs` (lines 40-55): This target drives `ArchiveReader::read_all_logical_files` under default reader options, so any VCDIFF/BSDIFF entry still lacks a supplied delta base.
-* `crates/sar-archive/src/archive.rs` (lines 629-645 and 1500-1545): `ArchiveReaderOptions` defaults `delta_base` to `None`. In `ArchiveReader::next_entry`, the VCDIFF and BSDIFF branches return `SarError::BaseMissing` when `delta_base_hash` is all-zero or `self.options.delta_base` is absent, before `apply_vcdiff` or `apply_bsdiff` is called.
-* `crates/sar-archive/src/recovery.rs` (lines 209-487): The archive-level recovery API surface (`inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`) is implemented here as standalone functions rather than through `ArchiveReader`; no current fuzz target calls these functions directly or indirectly.
+* `fuzz/Cargo.toml` (all `[[bin]]` entries in the cargo-fuzz manifest): The complete fuzz inventory is declared here as 22 cargo-fuzz bins. None of the registered targets is a dedicated BSDIFF, VCDIFF, or archive-repair harness, and no target name corresponds to `inspect_recovery_metadata`, `plan_archive_repair`, or `repair_archive`.
+* `fuzz/fuzz_targets/transform_pipeline_fuzz.rs` (fuzz harness entry point, `ArchiveReaderOptions` construction, and `next_entry()` walk loop): This target explicitly excludes "Delta patch algorithms requiring a base object" and only drives `ArchiveReader` entry walking under bounded limits, so it does not reach BSDIFF/VCDIFF application.
+* `fuzz/fuzz_targets/archive_entry_decode.rs` (fuzz harness entry point, `ArchiveReaderOptions::default()` usage, and `next_entry()` walk loop): This target documents that it "does not require ... external delta bases" and constructs `ArchiveReaderOptions` with `..ArchiveReaderOptions::default()`, so it never supplies `delta_base` while walking entries.
+* `fuzz/fuzz_targets/archive_entry_decode_wide.rs` (fuzz harness entry point, `ArchiveReaderOptions::default()` usage, and `next_entry()` walk loop): The wide archive-entry target follows the same call path as `archive_entry_decode.rs` with larger limits, but it also leaves `delta_base` unset and therefore cannot meaningfully reach BSDIFF/VCDIFF application.
+* `fuzz/fuzz_targets/archive_logical_files.rs` (fuzz harness entry point, `read_all_logical_files(...)` path and default reader options): This target drives `ArchiveReader::read_all_logical_files` under default reader options, so any VCDIFF/BSDIFF entry still lacks a supplied delta base.
+* `crates/sar-archive/src/archive.rs` (struct `ArchiveReaderOptions`, field `delta_base`, and method `ArchiveReader::next_entry()` BSDIFF/VCDIFF base preconditions): `ArchiveReaderOptions` defaults `delta_base` to `None`. In `ArchiveReader::next_entry`, the VCDIFF and BSDIFF branches return `SarError::BaseMissing` when `delta_base_hash` is all-zero or `self.options.delta_base` is absent, before `apply_vcdiff` or `apply_bsdiff` is called.
+* `crates/sar-archive/src/recovery.rs` (functions `inspect_recovery_metadata()`, `plan_archive_repair()`, and `repair_archive()`): The archive-level recovery API surface (`inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`) is implemented here as standalone functions rather than through `ArchiveReader`; no current fuzz target calls these functions directly or indirectly.
 
 #### Remediation
 
@@ -1233,9 +1233,9 @@ Operators and integrators reading the SAR limit surface can tell how decoded out
 
 #### Evidence
 
-* `crates/sar-compression/src/lib.rs` (lines 72-76): `DecompressionOptions` documents only `max_output_size` as a hard cap for decoded bytes to prevent decompression bombs; it does not describe any bound on decoder-library internal memory.
-* `crates/sar-compression/src/lib.rs` (lines 146-158): The DEFLATE path constructs `DeflateDecoder::new(input)` and the ZSTD path constructs `zstd::stream::Decoder::new(input)` without passing a SAR-defined decoder-memory limit parameter.
-* `crates/sar-core/src/limits.rs` (lines 106-119): `ResourceLimits` documents decoded-entry, per-buffer, and total-pipeline bounds, but it does not define a decoder-library-memory-specific field or document such memory as covered by an existing field.
+* `crates/sar-compression/src/lib.rs` (struct `DecompressionOptions`, field `max_output_size`): `DecompressionOptions` documents only `max_output_size` as a hard cap for decoded bytes to prevent decompression bombs; it does not describe any bound on decoder-library internal memory.
+* `crates/sar-compression/src/lib.rs` (function `decode_stream()`, bounded decoded-output flow): The DEFLATE path constructs `DeflateDecoder::new(input)` and the ZSTD path constructs `zstd::stream::Decoder::new(input)` without passing a SAR-defined decoder-memory limit parameter.
+* `crates/sar-core/src/limits.rs` (struct `ResourceLimits`, `max_decoded_entry_size`, `max_in_memory_buffer`, and `max_total_pipeline_memory` field documentation): `ResourceLimits` documents decoded-entry, per-buffer, and total-pipeline bounds, but it does not define a decoder-library-memory-specific field or document such memory as covered by an existing field.
 
 #### Remediation
 
@@ -1260,9 +1260,9 @@ Operators and integrators reading the SAR limit surface can tell how decoded out
 
 #### Evidence
 
-* `crates/sar-core/src/fec.rs` (lines 144 and 183): `limits.check_fec_value_bytes(value.len())` called in both `validate_recovery_tlv` and `parse_lfh_fec_value` before codec dispatch, bounding FEC value bytes before any codec allocation.
-* `crates/sar-fec/src/xor.rs` (lines 30-31 and 246-250): `MAX_PARITY_SIZE` constant of 256 MiB; `encode_recovery` returns `LimitExceeded` when `pl > MAX_PARITY_SIZE`, bounding XOR parity allocation to 256 MiB.
-* `crates/sar-fec/src/rs/mod.rs` (lines 51-52 and 117-128): `MAX_PARITY_SIZE` constant of 256 MiB for RS; `parity_data_len` uses `checked_mul` for stripe_count * group_count and returns `Overflow` on product overflow before any parity allocation.
+* `crates/sar-core/src/fec.rs` (functions `validate_recovery_tlv()` and `parse_lfh_fec_value()`): `limits.check_fec_value_bytes(value.len())` called in both `validate_recovery_tlv` and `parse_lfh_fec_value` before codec dispatch, bounding FEC value bytes before any codec allocation.
+* `crates/sar-fec/src/xor.rs` (constant `MAX_PARITY_SIZE` and function `encode_recovery()` parity-size validation): `MAX_PARITY_SIZE` constant of 256 MiB; `encode_recovery` returns `LimitExceeded` when `pl > MAX_PARITY_SIZE`, bounding XOR parity allocation to 256 MiB.
+* `crates/sar-fec/src/rs/mod.rs` (function `parity_data_len()` and function `validate_rs_fec_value()`): `MAX_PARITY_SIZE` constant of 256 MiB for RS; `parity_data_len` uses `checked_mul` for stripe_count * group_count and returns `Overflow` on product overflow before any parity allocation.
 
 #### Resolution
 
@@ -1287,8 +1287,8 @@ The `repair_archive` API is explicitly documented as an in-memory-only API and s
 
 #### Evidence
 
-* `crates/sar-archive/src/recovery.rs` (lines 13-26): Module documentation explicitly states in-memory API limitations and instructs callers to enforce `max_archive_size`, `max_recovery_protected_range`, and `max_repair_working_set` before passing untrusted archives.
-* `crates/sar-archive/src/recovery.rs` (lines 147-148 and 221): `check_archive_size` called in `parse_archive_layout`; `check_recovery_protected_range` called in `inspect_recovery_metadata`; `check_repair_working_set` called at lines 414-420 and 470-473 before FEC recovery and output allocation.
+* `crates/sar-archive/src/recovery.rs` (module documentation for archive recovery APIs): Module documentation explicitly states in-memory API limitations and instructs callers to enforce `max_archive_size`, `max_recovery_protected_range`, and `max_repair_working_set` before passing untrusted archives.
+* `crates/sar-archive/src/recovery.rs` (functions `parse_archive_layout()`, `inspect_recovery_metadata()`, and `repair_archive()`, named resource-limit checks): `check_archive_size` called in `parse_archive_layout`; `check_recovery_protected_range` called in `inspect_recovery_metadata`; `check_repair_working_set` called before FEC recovery and repaired-output allocation before FEC recovery and output allocation.
 
 #### Resolution
 
