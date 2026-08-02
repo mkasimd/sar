@@ -625,6 +625,7 @@
         "crates/sar-crypto/src/provider.rs",
         "crates/sar-core/src/error.rs",
         "crates/sar-core/src/limits.rs",
+        "crates/sar-core/src/lib.rs",
         "crates/sar-loss-tolerant/src/lib.rs",
         "crates/sar-sparse/src/lib.rs"
       ],
@@ -683,7 +684,7 @@
           "title": "FFI-readiness risks",
           "status": "complete",
           "outcome": "findings_recorded",
-          "summary": "Three FFI-readiness gaps were identified: (1) the `KeyProvider` trait callback model requires a purpose-built stable wrapper for any foreign binding because it uses Rust-specific trait objects, `Send + Sync` bounds, and zeroizing secret containers; (2) `SarError::Io(std::io::Error)` is not ABI-stable and must be mapped to `SarStatus` codes before crossing a language boundary; (3) the listed QUIC connection and stream I/O APIs are `async fn` and require a Tokio runtime adapter for synchronous C or Python wrappers, while the TCP binding is synchronous and more amenable to blocking wrappers. None of these is a security finding; all are documentation gaps requiring remediation in M13b.4.",
+          "summary": "Three FFI-readiness gaps were identified: (1) the `KeyProvider` trait callback model requires a purpose-built stable wrapper for any foreign binding because it uses Rust-specific trait objects, `Send + Sync` bounds, and zeroizing secret containers; (2) `SarError::Io(std::io::Error)` is not ABI-stable and must be mapped to `SarStatus` codes before crossing a language boundary; (3) the listed QUIC connection and stream I/O APIs are `async fn` and require an async runtime or event-loop adapter for synchronous C or Python wrappers, while the synchronous TCP API (`TcpSarConnection`) is more amenable to blocking wrappers. None of these is a security finding; all are documentation gaps requiring remediation in M13b.4.",
           "related_findings": [
             "M13-FFI-001",
             "M13-FFI-002",
@@ -705,7 +706,7 @@
           "title": "APIs that should remain Rust-only",
           "status": "complete",
           "outcome": "observations_only",
-          "summary": "`SecretBytes` and `SecretString` (sar-crypto) should remain Rust-only because they are zeroizing containers whose ownership and destruction semantics cannot be safely transferred across a foreign boundary. `BinaryWriter` and `ParseCursor` (sar-core) are internal parsing and writing helpers not intended as stable surface; they are marked `candidate: false` in the API inventory. `StreamArchiveParser`, `StreamWriteState`, `StreamStep`, `StreamEvent`, and `StreamArchiveSummary` (sar-archive) are marked `not_ready` in the inventory and depend on `Box<dyn KeyProvider>` and generic I/O that require purpose-built wrappers before any foreign exposure. No additional Rust-only classification beyond the API inventory's existing recommendations was required.",
+          "summary": "The existing `SecretBytes` and `SecretString` Rust types (sar-crypto) should remain Rust-only because their zeroizing ownership and destruction semantics must not become part of a foreign ABI. A purpose-built wrapper may copy key material through an explicitly owned and zeroized boundary representation without exposing these concrete types. `BinaryWriter` and `ParseCursor` (sar-core) are internal parsing and writing helpers not intended as stable surface; they are marked `candidate: false` in the API inventory. `StreamArchiveParser`, `StreamWriteState`, `StreamStep`, `StreamEvent`, and `StreamArchiveSummary` (sar-archive) are marked `not_ready` in the inventory and depend on `Box<dyn KeyProvider>` and generic I/O that require purpose-built wrappers before any foreign exposure. No additional Rust-only classification beyond the API inventory's existing recommendations was required.",
           "related_findings": [
             "M13-FFI-001"
           ]
@@ -3009,7 +3010,7 @@
       "severity": "informational",
       "priority": "low",
       "confidence": "confirmed",
-      "summary": "`SarError` is the primary error type returned by all public SAR library APIs. Its `Io` variant holds a `std::io::Error`, which is a Rust-specific owned type that is not ABI-stable and whose internal representation may vary by Rust version and platform. A stable C or Python wrapper must map `SarError` to an integer status code (the `SarStatus` numeric code system is already designed for this purpose) and optionally a caller-owned message buffer, discarding the `std::io::Error` before crossing the language boundary. The API inventory notes for `SarError` document this as a preference but do not specify the mapping requirement. No stable wrapper exists.",
+      "summary": "`SarError` is the central public error type in the reviewed sar-core, sar-archive, sar-stream, and transport-facing APIs. Its `Io` variant holds a `std::io::Error`, which is a Rust-specific owned type that is not ABI-stable and whose internal representation may vary by Rust version and platform. A stable C or Python wrapper must map `SarError` to an integer status code (the `SarStatus` numeric code system is already designed for this purpose) and optionally a caller-owned message buffer, discarding the `std::io::Error` before crossing the language boundary. The API inventory notes for `SarError` document this as a preference but do not specify the mapping requirement. No stable wrapper exists.",
       "current_behavior": "`SarError` variants include `Io(std::io::Error)`, `NotFound(&'static str)`, and others, none of which are ABI-stable or safely exposable to foreign callers.",
       "expected_behavior": "Library documentation and wrapper design guidance should specify the canonical `SarStatus`-based numeric mapping for `SarError`, the expected message-buffer ownership model, and that `std::io::Error` is discarded or reduced to a string before crossing the FFI boundary.",
       "impact": "Wrapper authors must independently discover the `SarStatus` mapping and message-ownership conventions. The mapping is not currently documented at the `SarError` or `SarStatus` level.",
@@ -3058,10 +3059,10 @@
       "severity": "informational",
       "priority": "low",
       "confidence": "confirmed",
-      "summary": "The listed QUIC connection and stream I/O APIs (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require a Tokio executor. These operations cannot be directly exposed through synchronous C or Python wrappers without a blocking adapter or event-loop integration layer. Other QUIC-facing public APIs such as `bind`, `local_addr`, `close`, `feed_stream_bytes`, `local_capabilities`, and TLS-exporter helpers are synchronous, so the gap is limited to the listed QUIC connection and stream I/O APIs. The synchronous TCP binding (`TcpSarConnection`) remains more amenable to blocking foreign wrappers. The runtime requirement is not documented at the affected QUIC APIs.",
-      "current_behavior": "The listed QUIC connection and stream I/O APIs are async. No blocking wrapper or Tokio handle is provided. The TCP binding is synchronous and blocking.",
-      "expected_behavior": "The documentation for the listed QUIC connection and stream I/O APIs should note the Tokio runtime requirement and state that direct C or Python binding requires a blocking adapter layer or runtime handle. The TCP binding should be identified as the more FFI-amenable synchronous transport option.",
-      "impact": "A naive foreign binding to the listed QUIC connection and stream I/O APIs, such as `QuicSarListener::accept` or `connect_quic`, will not compile or execute correctly without a Tokio runtime. The runtime requirement is not surfaced in the public API documentation.",
+      "summary": "The listed QUIC connection and stream I/O APIs (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require an async runtime or event-loop adapter. These operations cannot be directly exposed through synchronous C or Python wrappers without a blocking adapter or event-loop integration layer. Other QUIC-facing public APIs such as `bind`, `local_addr`, `close`, `feed_stream_bytes`, `local_capabilities`, and TLS-exporter helpers are synchronous, so the gap is limited to the listed QUIC connection and stream I/O APIs. The synchronous TCP API (`TcpSarConnection`) remains more amenable to blocking foreign wrappers. The runtime requirement is not documented at the affected QUIC APIs.",
+      "current_behavior": "The listed QUIC connection and stream I/O APIs are async. No blocking wrapper or async runtime handle is provided. The TCP API (`TcpSarConnection`) is synchronous and blocking.",
+      "expected_behavior": "The documentation for the listed QUIC connection and stream I/O APIs should note the async runtime or event-loop adapter requirement and state that direct C or Python binding requires a blocking adapter layer or runtime integration. The TCP API (`TcpSarConnection`) should be identified as the more FFI-amenable synchronous transport option.",
+      "impact": "A naive foreign binding to the listed QUIC connection and stream I/O APIs, such as `QuicSarListener::accept` or `connect_quic`, will not compile or execute correctly without an async runtime or event-loop adapter. The runtime requirement is not surfaced in the public API documentation.",
       "affected_artifacts": [
         "crates/sar-transport/src/quic/connection.rs",
         "crates/sar-transport/src/tcp.rs"
@@ -3071,7 +3072,7 @@
           "kind": "source_code",
           "artifact": "crates/sar-transport/src/quic/connection.rs",
           "locator": "functions `connect_quic()`, `QuicSarListener::accept()`, `QuicSarConnection::open_sar_stream()`, `QuicSarConnection::accept_sar_stream()`, `QuicSarConnection::write_sar_bytes()`, `QuicSarConnection::read_stream_bytes()`, `QuicSarConnection::flush_pending_control_frames()`",
-          "description": "All listed public methods are declared `pub async fn`. Docstrings do not state the Tokio runtime dependency, while other QUIC-facing public APIs in the same module remain synchronous."
+          "description": "All listed public methods are declared `pub async fn`. Docstrings do not state the async runtime or event-loop adapter requirement, while other QUIC-facing public APIs in the same module remain synchronous."
         },
         {
           "kind": "source_code",
@@ -3084,9 +3085,9 @@
       "remediation": {
         "owner": "M13b.4",
         "requirements": [
-          "Document the Tokio runtime requirement on the listed QUIC connection and stream I/O APIs.",
+          "Document the async runtime or event-loop adapter requirement on the listed QUIC connection and stream I/O APIs.",
           "Note that `TcpSarConnection` is the synchronous transport option for blocking FFI wrappers.",
-          "Describe the blocking adapter or runtime handle pattern required for synchronous C or Python QUIC integration."
+          "Describe the blocking adapter or runtime integration pattern required for synchronous C or Python QUIC integration."
         ]
       },
       "compatibility_impact": "clarification_only",

@@ -1549,7 +1549,7 @@ A naive C or Python binding to `ArchiveReader::with_key_provider` or `InMemoryTr
 
 #### Summary
 
-`SarError` is the primary error type returned by all public SAR library APIs. Its `Io` variant holds a `std::io::Error`, which is a Rust-specific owned type that is not ABI-stable and whose internal representation may vary by Rust version and platform. A stable C or Python wrapper must map `SarError` to an integer status code (the `SarStatus` numeric code system is already designed for this purpose) and optionally a caller-owned message buffer, discarding the `std::io::Error` before crossing the language boundary. The API inventory notes for `SarError` document this as a preference but do not specify the mapping requirement. No stable wrapper exists.
+`SarError` is the central public error type in the reviewed sar-core, sar-archive, sar-stream, and transport-facing APIs. Its `Io` variant holds a `std::io::Error`, which is a Rust-specific owned type that is not ABI-stable and whose internal representation may vary by Rust version and platform. A stable C or Python wrapper must map `SarError` to an integer status code (the `SarStatus` numeric code system is already designed for this purpose) and optionally a caller-owned message buffer, discarding the `std::io::Error` before crossing the language boundary. The API inventory notes for `SarError` document this as a preference but do not specify the mapping requirement. No stable wrapper exists.
 
 #### Current Behavior
 
@@ -1588,27 +1588,27 @@ Wrapper authors must independently discover the `SarStatus` mapping and message-
 
 #### Summary
 
-The listed QUIC connection and stream I/O APIs (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require a Tokio executor. These operations cannot be directly exposed through synchronous C or Python wrappers without a blocking adapter or event-loop integration layer. Other QUIC-facing public APIs such as `bind`, `local_addr`, `close`, `feed_stream_bytes`, `local_capabilities`, and TLS-exporter helpers are synchronous, so the gap is limited to the listed QUIC connection and stream I/O APIs. The synchronous TCP binding (`TcpSarConnection`) remains more amenable to blocking foreign wrappers. The runtime requirement is not documented at the affected QUIC APIs.
+The listed QUIC connection and stream I/O APIs (`connect_quic`, `QuicSarListener::accept`, `QuicSarConnection::open_sar_stream`, `QuicSarConnection::accept_sar_stream`, `QuicSarConnection::write_sar_bytes`, `QuicSarConnection::read_stream_bytes`, `QuicSarConnection::flush_pending_control_frames`) are `async fn` and return `Future` values that require an async runtime or event-loop adapter. These operations cannot be directly exposed through synchronous C or Python wrappers without a blocking adapter or event-loop integration layer. Other QUIC-facing public APIs such as `bind`, `local_addr`, `close`, `feed_stream_bytes`, `local_capabilities`, and TLS-exporter helpers are synchronous, so the gap is limited to the listed QUIC connection and stream I/O APIs. The synchronous TCP API (`TcpSarConnection`) remains more amenable to blocking foreign wrappers. The runtime requirement is not documented at the affected QUIC APIs.
 
 #### Current Behavior
 
-The listed QUIC connection and stream I/O APIs are async. No blocking wrapper or Tokio handle is provided. The TCP binding is synchronous and blocking.
+The listed QUIC connection and stream I/O APIs are async. No blocking wrapper or async runtime handle is provided. The TCP API (`TcpSarConnection`) is synchronous and blocking.
 
 #### Expected Behavior
 
-The documentation for the listed QUIC connection and stream I/O APIs should note the Tokio runtime requirement and state that direct C or Python binding requires a blocking adapter layer or runtime handle. The TCP binding should be identified as the more FFI-amenable synchronous transport option.
+The documentation for the listed QUIC connection and stream I/O APIs should note the async runtime or event-loop adapter requirement and state that direct C or Python binding requires a blocking adapter layer or runtime integration. The TCP API (`TcpSarConnection`) should be identified as the more FFI-amenable synchronous transport option.
 
 #### Impact
 
-A naive foreign binding to the listed QUIC connection and stream I/O APIs, such as `QuicSarListener::accept` or `connect_quic`, will not compile or execute correctly without a Tokio runtime. The runtime requirement is not surfaced in the public API documentation.
+A naive foreign binding to the listed QUIC connection and stream I/O APIs, such as `QuicSarListener::accept` or `connect_quic`, will not compile or execute correctly without an async runtime or event-loop adapter. The runtime requirement is not surfaced in the public API documentation.
 
 #### Evidence
 
-* `crates/sar-transport/src/quic/connection.rs` (functions `connect_quic()`, `QuicSarListener::accept()`, `QuicSarConnection::open_sar_stream()`, `QuicSarConnection::accept_sar_stream()`, `QuicSarConnection::write_sar_bytes()`, `QuicSarConnection::read_stream_bytes()`, `QuicSarConnection::flush_pending_control_frames()`): All listed public methods are declared `pub async fn`. Docstrings do not state the Tokio runtime dependency, while other QUIC-facing public APIs in the same module remain synchronous.
+* `crates/sar-transport/src/quic/connection.rs` (functions `connect_quic()`, `QuicSarListener::accept()`, `QuicSarConnection::open_sar_stream()`, `QuicSarConnection::accept_sar_stream()`, `QuicSarConnection::write_sar_bytes()`, `QuicSarConnection::read_stream_bytes()`, `QuicSarConnection::flush_pending_control_frames()`): All listed public methods are declared `pub async fn`. Docstrings do not state the async runtime or event-loop adapter requirement, while other QUIC-facing public APIs in the same module remain synchronous.
 * `crates/sar-transport/src/tcp.rs` (method `TcpSarConnection::process_available()` and `TcpSarConnection::write_all_sar_bytes()`): Synchronous blocking TCP methods. No async executor is required.
 
 #### Remediation
 
-* Document the Tokio runtime requirement on the listed QUIC connection and stream I/O APIs.
+* Document the async runtime or event-loop adapter requirement on the listed QUIC connection and stream I/O APIs.
 * Note that `TcpSarConnection` is the synchronous transport option for blocking FFI wrappers.
-* Describe the blocking adapter or runtime handle pattern required for synchronous C or Python QUIC integration.
+* Describe the blocking adapter or runtime integration pattern required for synchronous C or Python QUIC integration.
