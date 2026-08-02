@@ -166,8 +166,8 @@ Registry status: `in_progress`
 | `M13-FFI-003` | `documentation_gap` | `open` | `informational` | `low` | `M13b.4` | Public QUIC connection and stream I/O operations are async and require a runtime adapter for synchronous foreign wrappers |
 | `M13-COLD-001` | `accepted_design_risk` | `accepted_risk` | `medium` | `medium` | `none` | Global Header leading fields are outside the RECOVERY TLV protected range and cannot be reconstructed by plain SAR v1.0 FEC mechanisms after loss or corruption |
 | `M13-COLD-002` | `accepted_design_risk` | `accepted_risk` | `high` | `medium` | `none` | Central Dictionary and Footer are outside the RECOVERY TLV protected range; their loss or corruption simultaneously removes the parity data required for protected-range repair |
-| `M13-SPEC-001` | `specification_gap` | `pending_normative_resolution` | `not_applicable` | `low` | `M13a.7` | The specification does not define how erasure positions for RECOVERY TLV decoding MUST or SHOULD be derived from storage-layer metadata in cold-storage and tape deployments |
-| `M13-SPEC-002` | `specification_gap` | `pending_normative_resolution` | `not_applicable` | `low` | `M13a.7` | SAR v1.0 defines no normative external recovery sidecar or profile-level redundant manifest format for reconstructing a lost or corrupted Central Dictionary, Footer, or RECOVERY TLV parity data |
+| `M13-SPEC-001` | `accepted_design_risk` | `accepted_risk` | `low` | `low` | `none` | Erasure-position derivation from storage-layer metadata is outside SAR normative scope; Section 9.2 defines the SAR-level precondition |
+| `M13-SPEC-002` | `specification_gap` | `pending_normative_resolution` | `not_applicable` | `low` | `M13a.7` | SAR v1.0 defines no normative external recovery sidecar or container format for reconstructing a lost or corrupted Central Dictionary, Footer, or RECOVERY TLV parity data |
 
 ## Finding Details
 
@@ -1644,7 +1644,7 @@ A naive foreign binding to the listed QUIC connection and stream I/O APIs, such 
 
 #### Summary
 
-Archive bytes 0-7 (Magic Number, Version, Reserved, and Flags Size) are explicitly excluded from the RECOVERY TLV protected byte sequence (Section 9.2). The protected range begins at the first byte of Global Flags (absolute offset 8, per GLOBAL_HEADER_FLAGS_OFFSET). parse_global_header validates Magic Number at bytes 0-3, Version at byte 4, Reserved at byte 5, and Flags Size at bytes 6-7 before reading the protected range. If any of these fields is lost or undetectably corrupted, parse_global_header returns InvalidMagic, InvalidVersion, InvalidLength, or ReservedValue before the RECOVERY protected range can be consulted; no SAR v1.0 RECOVERY TLV, FEC operation, or in-archive mechanism can reconstruct the original values. The condition is a deliberate design boundary: RECOVERY protects the Data Area and flags, not the fixed archive preamble.
+Archive bytes 0-7 (Magic Number, Version, Reserved, and Flags Size) are explicitly excluded from the RECOVERY TLV protected byte sequence (Section 9.2). The protected range begins at the first byte of Global Flags (absolute offset 8, per `GLOBAL_HEADER_FLAGS_OFFSET`). `parse_global_header()` validates Magic Number at bytes 0-3, Version at byte 4, Reserved at byte 5, and Flags Size at bytes 6-7 before reading the protected range. If any of these fields is lost or suffers corruption that produces an invalid value, `parse_global_header()` returns InvalidMagic, InvalidVersion, InvalidLength, or ReservedValue before the RECOVERY protected range can be consulted; corruption that does not produce an invalid value is not detected by parsing. No SAR v1.0 RECOVERY TLV, FEC operation, or in-archive mechanism can reconstruct the original field values after their loss. SAR v1.0 defines this region outside the RECOVERY protected range; changing that range would require normative and potentially wire-format resolution outside M13a.6.
 
 #### Current Behavior
 
@@ -1656,9 +1656,9 @@ Loss or undetectable corruption of archive bytes 0-7 prevents parse_global_heade
 
 #### Evidence
 
-* `specification.md` (Section 9.2 , protected byte sequence definition): Section 9.2 states: "This range excludes Magic Number, Version, Reserved, Flags Size, the Central Dictionary, and the Footer." The protected range begins at the first byte of Global Flags and ends at the final byte before the Central Dictionary.
-* `crates/sar-core/src/format.rs` (constant  and function , Magic Number and Version validation):  is defined as 8, establishing the first byte of the RECOVERY protected range at archive offset 8.  validates Magic Number (bytes 0-3, checked against MAGIC), Version (byte 4, checked against SUPPORTED_GLOBAL_VERSION), Reserved (byte 5, must be zero), and Flags Size (bytes 6-7, must be &gt;= 4 and pass check_global_flags_bytes) before reaching Global Flags. Any failure in these checks returns InvalidMagic, InvalidVersion, ReservedValue, or InvalidLength before the RECOVERY range is accessible.
-* `crates/sar-archive/src/recovery.rs` (function , call to  as first step):  calls  as its first operation.  and  both call  before accessing RECOVERY TLVs. There is no code path in the reviewed recovery functions that bypasses  to access RECOVERY parity data independently of a valid archive preamble.
+* `specification.md` (Section 9.2 `Data Recovery (ID 0x10 - 0x1F)`, protected byte sequence definition): Section 9.2 states: "This range excludes Magic Number, Version, Reserved, Flags Size, the Central Dictionary, and the Footer." The protected range begins at the first byte of Global Flags and ends at the final byte before the Central Dictionary.
+* `crates/sar-core/src/format.rs` (constant `GLOBAL_HEADER_FLAGS_OFFSET` and function `parse_global_header()`, Magic Number and Version validation): `GLOBAL_HEADER_FLAGS_OFFSET` is defined as 8, establishing the first byte of the RECOVERY protected range at archive offset 8. `parse_global_header()` validates Magic Number (bytes 0-3, checked against MAGIC), Version (byte 4, checked against SUPPORTED_GLOBAL_VERSION), Reserved (byte 5, must be zero), and Flags Size (bytes 6-7, must be &gt;= 4 and pass check_global_flags_bytes) before reaching Global Flags. Any failure in these checks returns InvalidMagic, InvalidVersion, ReservedValue, or InvalidLength before the RECOVERY range is accessible.
+* `crates/sar-archive/src/recovery.rs` (function `parse_archive_layout()`, call to `parse_global_header()` as first step): `parse_archive_layout()` calls `parse_global_header()` as its first operation. `inspect_recovery_metadata()` and `repair_archive()` both call `parse_archive_layout()` before accessing RECOVERY TLVs. There is no code path in the reviewed recovery functions that bypasses `parse_global_header()` to access RECOVERY parity data independently of a valid archive preamble.
 
 #### Normative Basis
 
@@ -1670,7 +1670,7 @@ Loss or undetectable corruption of archive bytes 0-7 prevents parse_global_heade
 
 Accepted during M13a.6: the Global Header leading fields (bytes 0-7) are outside the RECOVERY TLV protected range by specification design. No SAR v1.0 mechanism can reconstruct them after loss. The operational mitigation is storage-layer redundancy. No repository change is required.
 
-Rationale: The exclusion is a deliberate design boundary documented in Section 9.2. The 8-byte preamble is small and fixed; storage-layer protection is the appropriate mitigation. Extending the RECOVERY scope to cover the preamble would change the wire format and is outside SAR v1.0 scope.
+Rationale: SAR v1.0 defines the RECOVERY protected range as beginning at the first byte of Global Flags (byte offset 8), per Section 9.2. Bytes 0-7 (Magic Number, Version, Reserved, Flags Size) are outside this range. No current SAR v1.0 mechanism reconstructs this region after loss. External redundancy is an operational mitigation. Changing the protected range to cover the preamble would require normative and potentially wire-format resolution and is outside the scope of M13a.6.
 
 ### M13-COLD-002: Central Dictionary and Footer are outside the RECOVERY TLV protected range; their loss or corruption simultaneously removes the parity data required for protected-range repair
 
@@ -1697,13 +1697,13 @@ Complete loss or corruption of the CD/Footer results in two simultaneous failure
 
 #### Evidence
 
-* `specification.md` (Section 9.2 , protected byte sequence definition and CD/Footer exclusion): Section 9.2 states: "The Central Dictionary and Footer are not part of the protected byte sequence." The RECOVERY TLV value contains the parity data and is stored in the CD Metadata section (Section 7). The protected range ends at the final byte before the Central Dictionary.
-* `specification.md` (Section 4 , CD as post-hoc index): Section 4 states: "The CD is a post-hoc index and does not define the canonical structure of the archive, which is always derived from the Data Area." This establishes the design intent: the Data Area is primary; the CD is a convenience index whose loss leaves the Data Area sequentially accessible.
-* `specification.md` (Section 19.4.4 , Degraded Recovery Mode): Section 19.4.4 states that in degraded recovery mode "available partitions MAY be processed sequentially without relying on the final Central Dictionary" but that "Implementations MUST NOT claim successful archive reconstruction if one or more required partitions are unavailable." This is an implementation-defined opt-in mode, not a normative complete-reconstruction mechanism.
-* `crates/sar-archive/src/recovery.rs` (function , NO_INDEX handling and cd_offset: None branch): When GlobalFlags::NO_INDEX is set,  returns immediately with cd_offset: None and recovery_tlvs: Vec::new(). The comment states: "NO_INDEX archive has no Central Dictionary and therefore no RECOVERY TLV". When NO_INDEX is not set but the footer or CD cannot be parsed, the function returns a SarError before populating recovery_tlvs.
-* `crates/sar-archive/src/recovery.rs` (function , repair_unavailable_reason field):  sets repair_unavailable_reason to "NO_INDEX archive has no Central Dictionary and therefore no RECOVERY TLV" when cd_offset is None, and to "no RECOVERY TLV found in Central Dictionary" when recovery_tlvs is empty. In both cases repair_possible is false and  will return RecoveryUnavailable.
-* `crates/sar-archive/src/archive.rs` (function , footer and CD parsing and bounds validation):  reads the last 8 bytes as the Footer, validates that cd_offset &lt; indexed_end and cd_offset &gt;= header_len (returning SarError::Bounds on failure), then reads and parses the CD bytes. If the CD region cannot be read (Truncated) or parsed (Malformed), read_global_header fails before any RECOVERY TLV is available to callers.
-* `crates/sar-archive/tests/recovery_orchestration_tests.rs` (test function ): This test creates a NO_INDEX archive and verifies that  returns repair_possible: false with repair_unavailable_reason containing the text about NO_INDEX archives having no Central Dictionary and therefore no RECOVERY TLV.
+* `specification.md` (Section 9.2 `Data Recovery (ID 0x10 - 0x1F)`, protected byte sequence definition and CD/Footer exclusion): Section 9.2 states: "The Central Dictionary and Footer are not part of the protected byte sequence." The RECOVERY TLV value contains the parity data and is stored in the CD Metadata section (Section 7). The protected range ends at the final byte before the Central Dictionary.
+* `specification.md` (Section 4 `Archive Structure`, CD as post-hoc index): Section 4 states: "The CD is a post-hoc index and does not define the canonical structure of the archive, which is always derived from the Data Area." This establishes the design intent: the Data Area is primary; the CD is a convenience index whose loss leaves the Data Area sequentially accessible.
+* `specification.md` (Section 19.4.4 `Partition Discovery, Verification, and Recovery`, "Degraded Recovery Mode" subsection): Section 19.4.4 states that in degraded recovery mode "available partitions MAY be processed sequentially without relying on the final Central Dictionary" but that "Implementations MUST NOT claim successful archive reconstruction if one or more required partitions are unavailable." This is an implementation-defined opt-in mode, not a normative complete-reconstruction mechanism.
+* `crates/sar-archive/src/recovery.rs` (function `parse_archive_layout()`, NO_INDEX handling and cd_offset: None branch): When GlobalFlags::NO_INDEX is set, `parse_archive_layout()` returns immediately with cd_offset: None and recovery_tlvs: Vec::new(). The comment states: "NO_INDEX archive has no Central Dictionary and therefore no RECOVERY TLV". When NO_INDEX is not set but the footer or CD cannot be parsed, the function returns a SarError before populating recovery_tlvs.
+* `crates/sar-archive/src/recovery.rs` (function `inspect_recovery_metadata()`, repair_unavailable_reason field): `inspect_recovery_metadata()` sets repair_unavailable_reason to "NO_INDEX archive has no Central Dictionary and therefore no RECOVERY TLV" when cd_offset is None, and to "no RECOVERY TLV found in Central Dictionary" when recovery_tlvs is empty. In both cases repair_possible is false and `plan_archive_repair()` will return RecoveryUnavailable.
+* `crates/sar-archive/src/archive.rs` (method `ArchiveReader::read_global_header()`, footer and CD parsing and bounds validation): `ArchiveReader::read_global_header()` reads the last 8 bytes as the Footer, validates that cd_offset &lt; indexed_end and cd_offset &gt;= header_len (returning SarError::Bounds on failure), then reads and parses the CD bytes. If the CD region cannot be read (Truncated) or parsed (Malformed), `ArchiveReader::read_global_header()` fails before any RECOVERY TLV is available to callers.
+* `crates/sar-archive/tests/recovery_orchestration_tests.rs` (test `plan_repair_unavailable_for_no_index_archive`): This test creates a NO_INDEX archive and verifies that `plan_archive_repair()` returns `SarError::RecoveryUnavailable`, confirming that NO_INDEX archives cannot be repaired because they have no Central Dictionary and therefore no RECOVERY TLV.
 
 #### Normative Basis
 
@@ -1716,9 +1716,45 @@ Complete loss or corruption of the CD/Footer results in two simultaneous failure
 
 Accepted during M13a.6: the Central Dictionary and Footer are outside the RECOVERY TLV protected range by specification design, and RECOVERY parity is co-located with the CD. No SAR v1.0 mechanism can reconstruct the CD or Footer from within the archive after their loss. The Data Area is sequentially accessible in degraded mode (Section 19.4.4). Storage-layer protection and external sidecar or container approaches (SPEC-002) are the appropriate operational mitigations. No repository change is required.
 
-Rationale: The CD exclusion is a deliberate design decision in Section 9.2, consistent with the SAR v1.0 architecture where the CD is a post-hoc index. Changing the RECOVERY scope to include the CD would require significant format changes and is outside SAR v1.0 scope.
+Rationale: SAR v1.0 defines the RECOVERY protected range as ending at the final byte before the Central Dictionary, per Section 9.2. The CD and Footer are outside this range. Section 4 states the CD is a post-hoc index; the canonical structure is always derived from the Data Area. RECOVERY parity is co-located with the CD. No current SAR v1.0 mechanism reconstructs the CD or Footer from within the archive after their loss. External redundancy and sidecar or container approaches are operational mitigations. Changing the RECOVERY scope to include the CD would require normative and potentially wire-format resolution and is outside the scope of M13a.6.
 
-### M13-SPEC-001: The specification does not define how erasure positions for RECOVERY TLV decoding MUST or SHOULD be derived from storage-layer metadata in cold-storage and tape deployments
+### M13-SPEC-001: Erasure-position derivation from storage-layer metadata is outside SAR normative scope; Section 9.2 defines the SAR-level precondition
+
+| Field | Value |
+| --- | --- |
+| Type | accepted_design_risk |
+| Source milestone | M13a.6 |
+| Status | accepted_risk |
+| Severity | low |
+| Priority | low |
+| Owner | none |
+
+#### Summary
+
+Section 9.2 defines the SAR-level precondition for RECOVERY decoding: the decoder MUST know which byte ranges are missing or unusable before invoking RECOVERY decoding, and MUST return SAR_ERR_RECOVERY_UNAVAILABLE or SAR_ERR_EC_FAILED if positions cannot be determined. How those positions are derived from storage-layer metadata (tape block headers, sector error records, ECC maps) is an integration concern outside the SAR wire and protocol contract. Two conforming SAR decoders supplied with the same erasure position list process it identically; no interoperability ambiguity exists at the SAR layer. `plan_archive_repair()` accepts caller-supplied erasure ranges; the derivation step is entirely caller-defined and unspecified by SAR v1.0, which is the correct design boundary.
+
+#### Current Behavior
+
+Section 9.2 mandates that erasure positions be known before invoking RECOVERY decoding and that SAR_ERR_RECOVERY_UNAVAILABLE or SAR_ERR_EC_FAILED be returned if they cannot be determined. `plan_archive_repair()` accepts an explicit ErasureInput from the caller; the function validates that ranges lie within the protected range and are FEC-aligned but does not define or constrain the derivation of those ranges from storage-layer information. This is a deliberate layering: SAR specifies the RECOVERY codec interface; storage-layer integration is an application-level concern.
+
+#### Impact
+
+No interoperability impact. Two conforming SAR decoders supplied with the same erasure positions produce the same result. Deployments on tape or ECC storage determine erasure positions through their own storage-layer mechanisms and supply them to the SAR RECOVERY API. If storage-layer metadata is unavailable or insufficient to determine positions, the deployment must return SAR_ERR_RECOVERY_UNAVAILABLE per Section 9.2.
+
+#### Evidence
+
+* `specification.md` (Section 9.2 `Data Recovery (ID 0x10 - 0x1F)`, RECOVERY erasure-position requirement): Section 9.2 states: "SAR RECOVERY is erasure recovery unless an algorithm-specific section explicitly defines correction of unknown errors. The decoder MUST know which source symbols, blocks, bytes, fragments, or protected byte ranges are missing or unusable before invoking RECOVERY decoding. If missing or unusable positions cannot be determined, the decoder MUST return SAR_ERR_RECOVERY_UNAVAILABLE or SAR_ERR_EC_FAILED, whichever is more specific to the failure stage." The specification does not define a normative procedure for determining those positions from storage-layer metadata.
+* `crates/sar-archive/src/recovery.rs` (function `plan_archive_repair()`, erasure input parameter): `plan_archive_repair()` accepts an explicit caller-supplied `ErasureInput` containing archive_ranges with offset and length fields relative to the archive byte stream. The source of those offset-length pairs is entirely caller-defined; the function validates that they lie within the protected range and are FEC-aligned, but does not define or constrain how the caller determines them from storage-layer information.
+
+#### Resolution
+
+`accepted_risk` - `2026-08-02`
+
+Reclassified during M13a.6 correction: storage-layer erasure-position derivation is outside SAR normative scope. Section 9.2 already defines the SAR-level precondition (decoder must know erasure positions). The derivation step is an external integration concern; no SAR interoperability ambiguity exists. No repository change is required.
+
+Rationale: Section 9.2 defines the SAR-level precondition for RECOVERY decoding sufficiently for interoperability. Two conforming SAR implementations supplied with the same erasure positions produce the same result. The translation of storage-layer error records into SAR byte-offset ranges is an integration concern that SAR does not need to standardize for conformance or interoperability.
+
+### M13-SPEC-002: SAR v1.0 defines no normative external recovery sidecar or container format for reconstructing a lost or corrupted Central Dictionary, Footer, or RECOVERY TLV parity data
 
 | Field | Value |
 | --- | --- |
@@ -1732,54 +1768,21 @@ Rationale: The CD exclusion is a deliberate design decision in Section 9.2, cons
 
 #### Summary
 
-Section 9.2 requires that RECOVERY is erasure recovery and that "the decoder MUST know which source symbols, blocks, bytes, fragments, or protected byte ranges are missing or unusable before invoking RECOVERY decoding." For cold-storage and tape deployments, unreadable byte ranges are identified by storage-layer metadata (tape block headers, sector error records, ECC metadata, filesystem block maps). The specification does not define any normative procedure for deriving SAR erasure positions from storage-layer information, leaving implementations without a conformance requirement for this derivation step. If positions cannot be determined, Section 9.2 requires returning SAR_ERR_RECOVERY_UNAVAILABLE or SAR_ERR_EC_FAILED, but provides no normative guidance on when positions are considered determined.
+SAR v1.0 does not define a normative external sidecar recovery index format or external recovery container format that would allow a conformant SAR reader to reconstruct a lost or corrupted Central Dictionary, Footer, or RECOVERY TLV parity data from an external source. The CD and Footer exclusion from the RECOVERY protected range (COLD-002) creates a structural gap: the parity data that would enable Data Area repair is stored in the same region that cannot be protected by SAR v1.0 FEC. Without a normative external sidecar or container format, interoperable cold-storage resilience for CD/Footer recovery requires an implementation-defined mechanism that a specification-compliant SAR reader cannot locate or apply without implementation-specific out-of-band information. A profile-defined ordinary SAR entry carrying a manifest or index copy would use standard SAR entry framing and would not require duplicate structural anchors or non-standard headers; this is a profile-semantics question, not a SAR v1.0 wire-format gap. The retained specification gap concerns only the external sidecar or container format and its archive binding mechanism.
 
 #### Current Behavior
 
-Section 9.2 mandates: "If missing or unusable positions cannot be determined, the decoder MUST return SAR_ERR_RECOVERY_UNAVAILABLE or SAR_ERR_EC_FAILED, whichever is more specific to the failure stage." The specification provides no normative interface, reporting requirement, or procedure by which storage-layer metadata (tape block headers, sector IDs, ECC error maps) is translated into SAR-level erasure positions before invoking the RECOVERY codec. repair_archive accepts an explicit slice of Erasure structs (offset, length pairs) from the caller; the source of those offsets is entirely caller-defined and unspecified in the reviewed specification text.
+The specification defines RECOVERY TLVs (Section 9.2) stored inside the Central Dictionary for protecting the Data Area. It defines no external sidecar format, recovery container format, or binding mechanism for protecting or reconstructing the CD or Footer themselves. Section 4 describes the four-region archive structure (Global Header, Data Area, CD, Footer); no provision for external or redundant index artifacts is made. Implementations that wish to protect the CD against loss must do so with entirely implementation-defined mechanisms that are not interoperable across SAR implementations. `inspect_recovery_metadata()` has no code path for locating RECOVERY parity from an external sidecar or container.
 
 #### Normative Question
 
-How MUST or SHOULD a SAR implementation derive erasure positions for RECOVERY TLV decoding when storage-layer metadata (tape block headers, sector error records, or other ECC metadata) identifies unreadable byte ranges within the RECOVERY protected sequence? Is an implementation required to accept storage-layer erasure descriptors in a normative format, or is the derivation entirely implementation-defined? What normative boundary, if any, separates the storage-layer erasure identification step from the SAR RECOVERY decoding step for conformance purposes?
+Should SAR v1.0 or a future named compliance profile define a normative external recovery sidecar format and archive binding mechanism enabling a conformant SAR implementation to reconstruct a lost or corrupted Central Dictionary or Footer from external information? If so, what are the minimum required sidecar fields (for example, CD byte copy, offset array copy, RECOVERY TLV parity copy), archive binding mechanism (naming convention, UUID reference, embedded pointer), and version compatibility requirements?
 
 #### Evidence
 
-* `specification.md` (Section 9.2 , RECOVERY erasure-position requirement): Section 9.2 states: "SAR RECOVERY is erasure recovery unless an algorithm-specific section explicitly defines correction of unknown errors. The decoder MUST know which source symbols, blocks, bytes, fragments, or protected byte ranges are missing or unusable before invoking RECOVERY decoding. If missing or unusable positions cannot be determined, the decoder MUST return SAR_ERR_RECOVERY_UNAVAILABLE or SAR_ERR_EC_FAILED, whichever is more specific to the failure stage." The specification does not define a normative procedure for determining those positions from storage-layer metadata.
-* `crates/sar-archive/src/recovery.rs` (function , erasure input parameter):  accepts an explicit caller-supplied slice of Erasure structs (each with offset and length fields relative to the protected range). The source of those offset-length pairs is entirely caller-defined; the function validates that they lie within the protected range and are FEC-aligned, but does not define or constrain how the caller determines them from storage-layer information.
-
-#### Verification
-
-Requirement: `pending_normative_resolution`
-
-### M13-SPEC-002: SAR v1.0 defines no normative external recovery sidecar or profile-level redundant manifest format for reconstructing a lost or corrupted Central Dictionary, Footer, or RECOVERY TLV parity data
-
-| Field | Value |
-| --- | --- |
-| Type | specification_gap |
-| Source milestone | M13a.6 |
-| Status | pending_normative_resolution |
-| Severity | not_applicable |
-| Priority | low |
-| Owner | M13a.7 |
-| Compatibility | unknown_pending_resolution |
-
-#### Summary
-
-SAR v1.0 does not define a normative external sidecar recovery index format, an external recovery container format, or a profile-level redundant manifest mechanism that would allow a conformant SAR reader to reconstruct a lost or corrupted Central Dictionary, Footer, or RECOVERY TLV parity data from an external source. The CD and Footer exclusion from the RECOVERY protected range (COLD-002) creates a structural gap: the parity data that would enable Data Area repair is stored in the same region that cannot be protected by SAR v1.0 FEC. Without a normative sidecar or container format, interoperable cold-storage resilience for CD/Footer recovery requires an implementation-defined mechanism that a specification-compliant SAR reader cannot locate or apply without implementation-specific out-of-band information. A profile-defined redundant manifest that embeds non-standard structural anchors inside an ordinary SAR v1.0 archive would require duplicate headers, central dictionaries, or footers, which are absent from the SAR v1.0 archive structure.
-
-#### Current Behavior
-
-The specification defines RECOVERY TLVs (Section 9.2) stored inside the Central Dictionary for protecting the Data Area. It defines no external sidecar format, recovery container format, or profile mechanism for protecting or reconstructing the CD or Footer themselves. Section 4 describes the four-region archive structure (Global Header, Data Area, CD, Footer); no provision for external or redundant index artifacts is made. Implementations that wish to protect the CD against loss must do so with entirely implementation-defined mechanisms that are not interoperable across SAR implementations. A profile-level redundant manifest approach would require SAR v1.0 wire format changes (non-standard structural anchors) unless confined to an external file, in which case it requires a new format specification to be interoperable.
-
-#### Normative Question
-
-Should SAR v1.0 or a future named compliance profile define a normative external recovery sidecar format or a profile-level mechanism enabling a conformant SAR implementation to reconstruct a lost or corrupted Central Dictionary or Footer from external information? If so, what are the minimum required sidecar fields (for example, CD byte copy, offset array copy, RECOVERY TLV parity copy), locator mechanism (naming convention, UUID binding, or embedded reference), and version compatibility requirements? Would such a mechanism require changes to the SAR v1.0 archive byte stream, and if so, does it constitute a new wire format or a new profile?
-
-#### Evidence
-
-* `specification.md` (Section 4 , four-region structure definition): Section 4 defines the SAR archive as consisting of Global Header, Data Area, Central Dictionary, and Footer. No external sidecar, recovery container, or redundant manifest artifact is defined. The CD is described as a post-hoc index; its loss or corruption is not addressed by any normative recovery mechanism in Section 4.
-* `specification.md` (Section 9.2 , CD and Footer exclusion): The RECOVERY TLV parity data is stored inside the CD (Section 7 Metadata TLV Section) and is excluded from its own protection scope. Section 9.2 provides no mechanism for storing or locating RECOVERY parity data outside the CD, and no sidecar or external container format is defined.
-* `crates/sar-archive/src/recovery.rs` (function , repair_unavailable_reason for missing CD):  returns repair_unavailable_reason when the CD is absent (NO_INDEX) or when no RECOVERY TLV is found in the CD. There is no code path in the reviewed implementation for locating RECOVERY parity from an external sidecar file or container.
+* `specification.md` (Section 4 `Archive Structure`, four-region structure definition): Section 4 defines the SAR archive as consisting of Global Header, Data Area, Central Dictionary, and Footer. No external sidecar, recovery container, or redundant manifest artifact is defined. The CD is described as a post-hoc index; its loss or corruption is not addressed by any normative recovery mechanism in Section 4.
+* `specification.md` (Section 9.2 `Data Recovery (ID 0x10 - 0x1F)`, CD and Footer exclusion): The RECOVERY TLV parity data is stored inside the CD (Section 7 Metadata TLV Section) and is excluded from its own protection scope. Section 9.2 provides no mechanism for storing or locating RECOVERY parity data outside the CD, and no sidecar or external container format is defined.
+* `crates/sar-archive/src/recovery.rs` (function `inspect_recovery_metadata()`, repair_unavailable_reason for missing CD): `inspect_recovery_metadata()` returns repair_unavailable_reason when the CD is absent (NO_INDEX) or when no RECOVERY TLV is found in the CD. There is no code path in the reviewed implementation for locating RECOVERY parity from an external sidecar file or container.
 
 #### Verification
 
