@@ -118,20 +118,30 @@ The CD is a post-hoc index and does not define the canonical structure of the ar
 The Global Header is located at absolute offset **0**. It defines the archive's identity and the structural rules for all subsequent entries.
 
 ### 5.1 Header Layout
-The archive begins with a fixed-size segment followed by variable sized flags and a conditional extension.
+The archive begins with a fixed-size segment followed by the Global Flags field and any conditional Global Header extensions. For SAR version 1.0, the Global Flags field is exactly 4 bytes.
 
 | Offset | Field | Size | Description |
 | --- | --- | --- | --- |
-| 0 | **Magic Number** | 4B | `0x53 0x41 0x52 0x21` ("SAR!") |
-| 4 | **Version** | 1B | Format version (e.g. 0x01) |
-| 5 | **Reserved** | 1B | MUST be 0x0 |
-| 6 | **Flags Size** | 2B | Size of Global Flags |
-| 8 | **Global Flags** | Var | Bitmask defining the binary layout. |
+| 0 | **Magic Number** | 4B | `0x53 0x41 0x52 0x21` ("SAR!"). |
+| 4 | **Version** | 1B | Format version (e.g. 0x01). |
+| 5 | **Reserved** | 1B | MUST be 0x0. |
+| 6 | **Flags Size** | 2B | Size of Global Flags; MUST equal `4` for SAR version 1.0. |
+| 8 | **Global Flags** | 4B | Little-endian bitmask defining the binary layout. |
 |...| **Partition Descriptor** | 96B | Optional; presence governed by `PARTITIONED_ARCHIVE` (Bit 3). |
 |...| **KMS Extension** | Var | Optional; Presence governed by Bit 10. |
 
 ### 5.2 Global Flags Registry
-The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be in conflict with each other and MUST NOT be set simultaneously (see section 11.4).
+
+The SAR version 1.0 Global Flags field MUST be a 32-bit little-endian bitmask encoded in exactly 4 bytes. The `Flags Size` field MUST equal `4`.
+
+All unassigned bits in the 32-bit Global Flags field are reserved. A SAR version 1.0 writer MUST set all reserved Global Flags bits to zero.
+
+A decoder encountering a `Flags Size` value other than `4` in a SAR version 1.0 Global Header MUST reject the archive with `SAR_ERR_INVALID_LENGTH`.
+
+A decoder encountering a nonzero reserved Global Flags bit MUST reject the archive with `SAR_ERR_RESERVED_VALUE`.
+
+Certain combinations of assigned flags are invalid and MUST be rejected as defined by Section 13.4.
+
 
 **Category A: Structural & Indexing**
 | Bit | Name | Description |
@@ -142,6 +152,7 @@ The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be
 | 3 | `PARTITIONED_ARCHIVE` | The archive spans multiple physical files. |
 | 4 | `FILE_FRAGMENTATION` | Individual files may be split into non-contiguous fragments. |
 | 5 | `CDC_SUPPORT` | Enables support for Content-Defined Chunking. |
+| 6 - 7 | `RESERVED` | MUST be zero. |
 
 **Category B: Payload Transformations**
 | Bit | Name | Description |
@@ -149,6 +160,7 @@ The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be
 | 8 | `COMPRESSED` | Compression fields present in Local File Headers. |
 | 9 | `HAS_DELTA` | Incremental Mode. Entries may contain binary patches. |
 | 10 | `ENCRYPTED` | Encryption fields present in Local File Headers. |
+| 11 - 15 | `RESERVED` | MUST be zero. |
 
 **Category C: Integrity & Security**
 | Bit | Name | Description |
@@ -158,6 +170,7 @@ The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be
 | 18 | `SIGNED` | CD includes signature TLV. **Requires Bit 2.** |
 | 19 | `HAS_GLOBAL_EC` | CD contains Error Correction (EC) parity data. |
 | 20 | `SELECTIVE_FEC` | LFH may contain Error Correction (EC) parity data.|
+| 21 - 23 | `RESERVED` | MUST be zero. |
 
 **Category D: Filesystem Metadata**
 | Bit | Name | Description |
@@ -169,6 +182,7 @@ The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be
 | 28 | `EXT_TIME` | Headers include 3x 64-bit Unix timestamps (m/a/ctime). |
 | 29 | `DEDUPLICATION` | Headers include content-based hashes (e.g., BLAKE3). |
 | 30 | `SPARSE_FILES` | Support for sparse filesystem holes. |
+| 31 | `RESERVED` | MUST be zero. |
 
 ### 5.3 Global Header Extensions
 If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, otherwise omitted. It provides the necessary parameters to derive or unwrap the keys used in the Data Area.
@@ -293,9 +307,12 @@ Partition discovery, verification, incomplete-set handling, degraded recovery be
 
 
 ### 5.4 Version Compatibility
+
 * Parsers MUST reject archives with a higher major version than supported.
-* Minor or compatible revisions MAY be accepted if backward-compatible.
-* The Global Header Version defines the structure of all LFHs and flags.
+* Minor or compatible revisions MAY be accepted only if their Global Header and Global Flags semantics are backward-compatible with the supported version.
+* The Global Header Version defines the LFH structure, the permitted `Flags Size`, the Global Flags assignments, and the associated structural and transformation semantics.
+* For SAR version 1.0, `Flags Size` MUST equal `4`. A wider or shorter Global Flags field is not a valid SAR version 1.0 extension.
+* A future SAR format version MAY define a different `Flags Size` or additional Global Flags assignments. Such definitions do not alter the SAR version 1.0 requirements in this section.
 * The Central Dictionary Version defines only the CD layout and MAY evolve independently.
 
 ## 6. Local File Header (LFH)
