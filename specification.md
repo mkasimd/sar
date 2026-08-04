@@ -29,7 +29,11 @@ The following terminology is used throughout this specification:
 
 * **Archive:** A SAR object intended for persistent storage consisting of a Global Header followed by a Data Area and, unless `NO_INDEX` is set, a Central Dictionary and Footer.
 
-* **Entry:** A single logical Application Data Object represented by a Local File Header (LFH) and its associated payload.
+* **Entry:** A single logical Application Data Object represented by one LFH and its associated payload, or by a group of LFHs and payload fragments when `FILE_FRAGMENTATION` is enabled.
+
+* **Full Logical Entry Path:** The canonical SAR path identifying an Entry. It consists of the LFH `Name String` when the LFH `Path String` is absent or empty, and otherwise consists of the LFH `Path String`, followed by `/`, followed by the LFH `Name String`.
+
+* **Extraction Root:** The directory or filesystem scope selected by the caller or host application before materialization begins and beneath which selected Entries are materialized.
 
 * **Payload:** The application-defined data represented by an Entry after all required transformations and reconstruction steps have completed successfully.
 
@@ -413,8 +417,10 @@ Implementations MUST validate that the reconstructed output length exactly match
 
 Any mismatch MUST result in the most specific applicable error code corresponding to the stage at which reconstruction failed.
 
-#### 6.1.2 Fragment Descriptor Semantics
+#### 6.1.3 Fragment Descriptor Semantics
 When `FILE_FRAGMENTATION` is enabled, the **Fragment Descriptor** field SHALL be present in the LFH. All LFHs sharing the same Fragment ID belong to the same logical object.
+
+Multiple LFHs belonging to one Fragment ID do not create separate Full Logical Entry Path occurrences.
 
 The descriptor is structured as:
 
@@ -436,8 +442,20 @@ The descriptor is structured as:
 * Fragment Size SHALL refer to the fragment length within the fully reconstructed logical object after completion of the canonical decode pipeline.
 * Overlapping descriptors MUST trigger `SAR_ERR_INVALID_MAP`.
 
+Within one logical archive, or within one active Stateful Streaming stream context, all LFHs sharing one Fragment ID represent one Entry. Individual fragments MUST NOT be treated as separate Entries for Full Logical Entry Path ordering or final-state determination.
 
-#### 6.1.3 Forward Error Correction (FEC)
+Fragment Index 0 establishes the Name String, Path String, and canonical Entry-order position of the fragmented Entry.
+
+If a later fragment contains a Name String or Path String, the value MUST match the corresponding Fragment Index 0 value. A mismatch MUST return `SAR_ERR_METADATA_CONFLICT` or another more specific applicable error.
+
+A fragmented Entry participates in final-state determination only after successful complete reconstruction or degraded reconstruction permitted by `LOSS_TOLERANT`.
+
+An incomplete fragment set that cannot produce either result MUST NOT supersede an earlier complete Entry at the same Full Logical Entry Path.
+This rule does not permit an implementation to report successful complete processing when the incomplete fragment set requires an error or incomplete result under the fragmentation, recovery, or `LOSS_TOLERANT` requirements.
+
+These rules do not permit duplicate Fragment Index values, overlapping Fragment Descriptors, or any other invalid fragment map.
+
+#### 6.1.4 Forward Error Correction (FEC)
 
 When `SELECTIVE_FEC` global flag is set, the corresponding LFH fields MUST be present according to the following specifications. The corresponding LFH fields MUST follow the specifications set for the `RECOVERY` block in the Central Dictionary (Section 9.2) such that the fields MUST match the specifications therein as follows.
 
@@ -492,6 +510,78 @@ SAR FEC recovery is erasure recovery unless an algorithm-specific section explic
 If missing or unusable symbol positions cannot be determined, the decoder MUST return `SAR_ERR_RECOVERY_UNAVAILABLE` or `SAR_ERR_EC_FAILED`, whichever is more specific to the failure stage.
 
 For LFH Selective FEC, missing or unusable positions SHALL be derived from the unavailable or corrupted encoded Payload Data byte ranges within the corresponding LFH. For fragmented entries, missing or unusable positions MAY additionally be derived from Fragment Index and Fragment Descriptor metadata when the FEC algorithm operates over fragment-aligned symbols or blocks.
+
+#### 6.1.5 Name and Path Semantics
+
+The LFH `Path String` identifies the directory containing the Entry. The LFH `Name String` identifies the final path component.
+
+The `Name String`:
+
+* MUST NOT be empty;
+* MUST NOT contain `/`;
+* MUST NOT contain `\`; and
+* MUST NOT contain U+0000.
+
+The `Path String`, when present and non-empty:
+
+* MUST use `/` as the path-component separator;
+* MUST NOT begin or end with `/`;
+* MUST NOT contain `\` or U+0000;
+* MUST NOT contain an empty component;
+* MUST NOT contain a `.` component; and
+* MUST NOT contain a `..` component.
+
+The Full Logical Entry Path is the `Name String` when the `Path String` is absent or empty. Otherwise, it is the `Path String`, followed by `/`, followed by the `Name String`.
+
+Backslash is not valid in an LFH Name String or Path String. Applications archiving filesystems that permit backslash in filename components SHOULD reject such source names or apply an explicit reversible application-layer mapping before encoding. SAR defines no backslash escape mechanism.
+
+Implementations MUST NOT normalize, rewrite, escape, substitute, or otherwise alter a nonconforming Name String or Path String to make it conforming.
+
+A writer receiving a nonconforming Name String or Path String MUST return `SAR_ERR_INVALID_INPUT` and MUST NOT emit the affected Entry.
+
+A reader encountering a nonconforming encoded Name String or Path String MUST return `SAR_ERR_MALFORMED`.
+
+Multiple complete Entries MAY have the same Full Logical Entry Path. Repeated Full Logical Entry Paths are valid.
+
+For archives, canonical Entry order is physical LFH order in the Data Area. The first LFH follows the Global Header and its extensions. Each subsequent LFH begins at the next-LFH position determined under Section 6.1.1 from the preceding LFH and its Payload Data. Central Dictionary order MUST NOT alter canonical Entry order.
+
+For a complete valid partitioned archive, partition Data Areas are ordered by ascending Partition Index. Missing, duplicate, inconsistent, or otherwise invalid partitions remain governed by Section 19.
+
+For Stateful Streaming Mode, canonical Entry order is the order in which valid Entry LFHs occur in the reliable byte stream within the active session context. Sequence No validation MUST NOT reorder LFHs or redefine that order.
+
+A fragmented Entry occupies the canonical Entry-order position established by Fragment Index 0.
+
+The same final-state rules apply to indexed archives, `NO_INDEX` archives, partitioned archives, and Stateful Streaming Mode.
+
+Complete Entries are applied in canonical Entry order.
+
+A complete Entry replaces an earlier Entry at the same Full Logical Entry Path.
+
+If a non-directory Entry replaces a directory, all earlier descendants of that directory are removed from the final logical state.
+
+If a directory Entry replaces another Entry, existing compatible descendants remain.
+
+If a later Entry requires an ancestor that is absent or is a non-directory, that ancestor becomes an implicit directory and the earlier non-directory object is removed from the final logical state.
+
+An implicit directory has no explicit SAR metadata unless a directory Entry supplies that metadata.
+
+The last complete directory Entry at a Full Logical Entry Path determines the final explicit metadata of that directory.
+
+The final logical state is the state remaining after all complete Entries have been applied in canonical Entry order.
+
+Implementations MAY process Entries internally in another order, provided that the observable successful result is identical to canonical sequential application.
+
+After a complete Entry, or a degraded reconstructed Entry permitted by
+`LOSS_TOLERANT`, establishes another occurrence of an existing Full
+Logical Entry Path, an implementation MAY report `SAR_WARN_DUPLICATE`.
+
+Individual fragments belonging to one fragmented Entry MUST NOT
+independently cause `SAR_WARN_DUPLICATE` to be reported.
+
+Reporting this warning MUST NOT alter archive or stream validity, Entry
+processing, canonical Entry order, final logical state, output, or
+operation success.
+
 
 ### 6.2 The Entry Mode Flags
 While Global Flags determine which LFH entries must be present and what the archive itself may contain (or will never contain), the Entry Mode specifies whether the corresponding fields in the LFH is applicable or not.
@@ -2124,6 +2214,11 @@ Standardized status, warning, and error return values for SAR API implementation
 | 50 | `SAR_ERR_INTERNAL` | Internal implementation error or invariant violation. |
 | 51 | `SAR_ERR_NONCE_REUSE` | AEAD nonce reuse detected for the same encryption key. |
 | 52 | `SAR_ERR_TOO_MANY_STREAMS` | Implementation-defined concurrent or active stream limit exceeded. |
+| 53 | `SAR_ERR_PATH_COLLISION` | During materialization, distinct Full Logical Entry Paths map to the same destination filesystem object. |
+| 54 | `SAR_WARN_DUPLICATE` | Optional non-fatal diagnostic indicating that a repeated Full Logical Entry Path occurrence was encountered. |
+| 55 | `SAR_ERR_PATH_ESCAPE` | During materialization, an Entry destination or effective symbolic-link target escapes the selected scope, or confinement cannot be established. |
+| 56 | `SAR_ERR_INVALID_INPUT` | Nonconforming caller-supplied input to an encoder or API operation. |
+
 
 Values in this registry MAY be used as local API return values and MAY also be carried in `SESSION_STATUS` frames where session status reporting is supported.
 
@@ -2234,7 +2329,7 @@ In addition, Standard implementations MUST support all SAR-defined core feature 
 * Digital Signatures
 * Data Integrity Hashing
 * LOSS_TOLERANT processing according to Section 19.4.5.
-* FEC / Recovery encoding and decoding according to sections 6.1.3 and 9.2
+* FEC / Recovery encoding and decoding according to sections 6.1.4 and 9.2
 
 The following algorithms MUST be supported:
 
@@ -2539,9 +2634,21 @@ Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (8).
 When `HAS_DELTA` (Bit 9) is utilized, the `Delta Base Hash` in the LFH MUST be verified against the hash of the local base file before the patching algorithm is executed. If the base hash does not match, the implementation MUST return `SAR_ERR_PATCH_FAILED` (9). In streaming mode, if the Base Hash is unknown, the parser MUST buffer the patch or return a specific error `SAR_ERR_BASE_MISSING` (10).
 
 ### 13.6 Path Handling and Installation Profiles
-* **Relative Paths**: Normal archival.
-* **Absolute Paths**: Used for `SYSTEM_INSTALL` profiles.
-* **Profiles**: `0x00 SANDBOXED` (Strips leading `/`) | `0x01 SYSTEM_INSTALL` (Permits absolute paths).
+
+Before materialization, the caller or host application MUST select an Extraction Root or an explicitly authorized installation scope.
+
+Archive or stream metadata MUST NOT select or change the Extraction Root or authorized installation scope.
+
+The following extraction profiles are defined:
+
+* `0x00 SANDBOXED`: Entries are materialized beneath the selected Extraction Root.
+* `0x01 SYSTEM_INSTALL`: Entries may be materialized within an installation scope explicitly authorized by the caller or host application.
+* Custom profiles MAY define additional path-mapping rules.
+
+Selection of `SYSTEM_INSTALL` or another privileged scope MUST be explicit. An LFH Name String, Path String, empty destination value, leading separator, drive prefix, share prefix, or device prefix MUST NOT implicitly select a privileged or unconfined scope.
+
+All profiles remain subject to Section 22.4.
+
 
 ## 13.7 Global Invariants (Normative)
 This section defines mandatory invariants that apply to all SAR archives. These rules ensure deterministic parsing, structural consistency, and interoperability across implementations. Any violation of these invariants MUST result in a parsing failure unless explicitly stated otherwise.
@@ -2751,7 +2858,27 @@ All SAR parsers MUST be able to identify and skip Empty Areas.
 * Empty Areas MUST NOT be included in the `File Count` of the Central Dictionary.
 
 ### 15.3 Definition of a symlink file
-The symlink file represents a symlink reconstructed by using the Payload Data as the target path. Implementations MUST NOT treat this payload as file data, but as a string to be passed to the host system's symlink creation utility.
+
+An Entry whose `IS_SYMLINK` Entry Mode bit is set represents a symbolic link. Its reconstructed Payload Data contains the symbolic-link target encoded as UTF-8.
+
+A symbolic-link target MUST NOT contain U+0000.
+
+The Full Logical Entry Path identifies the symbolic-link object. The payload identifies its target.
+
+A symbolic-link target MAY be absolute, relative, parent-traversing, dangling, platform-specific, or directed to an object that has not yet been materialized. These properties do not make the Entry malformed.
+
+A writer receiving a target that is not valid UTF-8 or contains U+0000 MUST return `SAR_ERR_INVALID_INPUT` and MUST NOT emit the affected Entry.
+
+A reader encountering an encoded target that is not valid UTF-8 or contains U+0000 MUST return `SAR_ERR_MALFORMED`.
+
+Readers MUST preserve valid symbolic-link targets without normalization or rewriting.
+
+Writers MUST preserve valid symbolic-link targets supplied by the caller.
+
+Reading, listing, verifying, copying, or transforming an Entry MUST NOT fail solely because its symbolic-link target cannot be safely materialized under a particular local extraction policy.
+
+Symbolic-link materialization is governed by Section 22.4.
+
 
 ## 16. Binary Delta & Patching Protocol
 The Delta protocol enables efficient storage of multi-versioned files by storing only the differences between a current file and its predecessor. This section is consistent with and subordinate to the canonical transformation pipeline defined in Section 13.1.
@@ -3850,8 +3977,54 @@ see section 17.4
 see sections 19.4 and 19.5
 
 ### 22.4 Path Security
-* **Canonicalization**: Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
-* **Privilege Gating**: `SYSTEM_INSTALL` operations SHOULD require administrative privileges and SHOULD verify digital signatures (`SIGNED` Bit 18) before modifying system directories.
+
+Before materializing an Entry, an implementation MUST derive its destination from the selected Extraction Root or explicitly authorized installation scope and the Entry's Full Logical Entry Path.
+
+Archive or stream metadata MUST NOT override the selected scope.
+
+Every filesystem mutation performed during materialization MUST remain within the selected scope.
+
+Implementations MUST account for pre-existing symbolic links, symbolic links created by earlier Entries, path-component replacement, and other filesystem behavior that could redirect a mutation outside the selected scope. Lexical path validation alone is insufficient.
+
+If an Entry destination escapes the selected scope, or confinement cannot be established, the implementation MUST return `SAR_ERR_PATH_ESCAPE` and MUST NOT perform the affected mutation.
+
+The destination of a symbolic-link object and its stored target MUST be evaluated separately.
+
+A relative symbolic-link target SHALL be evaluated lexically from the directory containing the symbolic-link object. The target is not required to exist.
+
+If the lexical result escapes the selected scope, the implementation MUST return `SAR_ERR_PATH_ESCAPE` and MUST NOT create the symbolic link.
+
+An absolute or platform-specific symbolic-link target remains valid archive metadata. Ordinary materialization MUST return `SAR_ERR_PATH_ESCAPE` if the target is outside the selected scope or its confinement cannot be established.
+
+A materializer MUST NOT rewrite a symbolic-link target to make it conform to local security policy.
+
+Later filesystem operations performed by the materialization operation MUST NOT follow a materialized or pre-existing symbolic link outside the selected scope.
+
+Ordinary extraction or state application MUST fail if a selected Entry cannot be safely materialized.
+
+Skipping a selected Entry MUST NOT be enabled by default or selected implicitly.
+
+An implementation MAY skip a selected Entry only when the caller explicitly selected best-effort or other incomplete behavior before the skip condition occurred.
+
+Such an operation MUST:
+
+* identify skipped Entries;
+* report the operation as incomplete; and
+* not report complete extraction or state-application success.
+
+If two distinct Full Logical Entry Paths map to the same destination filesystem object, the implementation MUST return `SAR_ERR_PATH_COLLISION`.
+
+Such collisions include those caused by case folding, Unicode normalization, reserved-name handling, trailing-dot or trailing-space handling, separator conversion, path aliases, or other destination filesystem behavior.
+
+Host-specific pathname restrictions do not make an otherwise conforming Full Logical Entry Path malformed.
+
+An implementation MUST NOT resolve a path collision by silently renaming, merging, discarding, or rewriting either Entry.
+
+Repeated occurrences of the same Full Logical Entry Path are not path collisions and are governed by Section 6.1.5.
+
+Actual filesystem or host API failures not otherwise covered by this section MUST return `SAR_ERR_IO` or another more specific applicable error.
+
+`SYSTEM_INSTALL` operations SHOULD require administrative privileges and SHOULD verify digital signatures (`SIGNED` Bit 18) before modifying system directories.
 
 ### 22.5 Transport and Session Sanity
 * **Sequence Wraparound**: The 2-byte Sequence No wraps at 65.535. This is sufficient for detecting stream desync but is not a substitute for TCP sequence numbers.
