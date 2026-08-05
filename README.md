@@ -5,6 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # sar-rust
 
+[![Lint & Test](https://github.com/mkasimd/sar/actions/workflows/ci.yml/badge.svg)](https://github.com/mkasimd/sar/actions/workflows/ci.yml)
+[![Dependency Security](https://github.com/mkasimd/sar/actions/workflows/security.yml/badge.svg)](https://github.com/mkasimd/sar/actions/workflows/security.yml)
+[![Fuzz Smoke Testing](https://github.com/mkasimd/sar/actions/workflows/fuzz-smoke.yml/badge.svg)](https://github.com/mkasimd/sar/actions/workflows/fuzz-smoke.yml)
+[![Dependabot Updates](https://github.com/mkasimd/sar/actions/workflows/dependabot/dependabot-updates/badge.svg)](https://github.com/mkasimd/sar/actions/workflows/dependabot/dependabot-updates)
+[![Code License: Apache-2.0](https://img.shields.io/badge/Code_License-Apache_2.0-blue.svg)](LICENSES/Apache-2.0.txt)
+[![Spec License: CC-BY-4.0](https://img.shields.io/badge/Spec_License-CC_BY_4.0-orange.svg)](LICENSES/CC-BY-4.0.txt)
+
 Rust reference implementation for the **SAR Protocol v1.0**.
 
 > **Status: experimental / in development**
