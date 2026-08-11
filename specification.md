@@ -39,7 +39,15 @@ The following terminology is used throughout this specification:
 
 * **Fragment:** A portion of an Entry transmitted or stored independently for subsequent reassembly.
 
-* **Partition:** One physical member of a partitioned SAR archive belonging to a common Partition Set.
+* **Partitioned Archive:** One logical SAR archive divided across one or more physical Partitions.
+
+* **Partition Set:** The complete collection of physical Partitions belonging to one Partitioned Archive.
+
+* **Partition:** One physical member of a Partition Set.
+
+* **Partition Set UUID:** A nonzero 16-byte identifier shared by every Partition in one Partition Set.
+
+* **Partition Manifest Entry:** The terminal structural LFH-based Entry that identifies and finalizes one physical Partition.
 
 * **Sender:** The implementation producing or transmitting SAR objects.
 
@@ -124,6 +132,8 @@ A SAR archive consists of four sequential sections, unless the `NO_INDEX` flag i
 
 The CD is a post-hoc index and does not define the canonical structure of the archive, which is always derived from the Data Area. If the `NO_INDEX` flag is set, the CD and Footer are omitted.
 
+For a Partitioned Archive, each physical Partition independently follows this structural model. Every Partition terminates its Data Area with a Partition Manifest Entry. When `NO_INDEX` is unset, every Partition then contains its own partition-local Central Dictionary and Footer. When `NO_INDEX` is set, the Partition Manifest payload is followed by the physical end of that Partition.
+
 ## 5. Global Header & Extension
 The Global Header is located at absolute offset **0**. It defines the archive's identity and the structural rules for all subsequent entries.
 
@@ -137,7 +147,6 @@ The archive begins with a fixed-size segment followed by the Global Flags field 
 | 5 | **Reserved** | 1B | MUST be 0x0. |
 | 6 | **Flags Size** | 2B | Size of Global Flags; MUST equal `4` for SAR version 1.0. |
 | 8 | **Global Flags** | 4B | Little-endian bitmask defining the binary layout. |
-|...| **Partition Descriptor** | 96B | Optional; presence governed by `PARTITIONED_ARCHIVE` (Bit 3). |
 |...| **KMS Extension** | Var | Optional; Presence governed by Bit 10. |
 
 ### 5.2 Global Flags Registry
@@ -175,7 +184,7 @@ Certain combinations of assigned flags are invalid and MUST be rejected as defin
 **Category C: Integrity & Security**
 | Bit | Name | Description |
 | --- | --- | --- |
-| 16 | `HAS_GLOBAL_CRC32` | CD contains a 32-bit global archive CRC. |
+| 16 | `HAS_DATA_AREA_CRC32` | CD contains a 32-bit Data Area CRC32. |
 | 17 | `PER_FILE_CRC` | Local File Headers include file-level CRC32. |
 | 18 | `SIGNED` | CD includes signature TLV. **Requires Bit 2.** |
 | 19 | `HAS_GLOBAL_EC` | CD contains Error Correction (EC) parity data. |
@@ -196,8 +205,6 @@ Certain combinations of assigned flags are invalid and MUST be rejected as defin
 
 ### 5.3 Global Header Extensions
 If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, otherwise omitted. It provides the necessary parameters to derive or unwrap the keys used in the Data Area.
-
-If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST be present, otherwise ommited.
 
 #### 5.3.1 KMS_DATA Structure
 | Field | Size | Description |
@@ -370,43 +377,13 @@ Wrap Algo IDs `0x02` (`RSA-OAEP-4096`), `0x03` (`X25519`), `0x04` (`ML-KEM-768`)
 
 An implementation encountering a reserved or unassigned Wrap Algo ID MUST return `SAR_ERR_RESERVED_VALUE`.
 
-#### 5.3.5 The Partition Descriptor
-The Partition Descriptor Extension is present only when Global Flag Bit 3 (`PARTITIONED_ARCHIVE`) is set.
+#### 5.3.5 Partitioned Archive Global Header Rules
 
-The Partition Descriptor provides archive-set identification, partition ordering, and partition integrity metadata required to reconstruct a partitioned SAR archive independently of file naming conventions, storage backends, or transport mechanisms.
+`PARTITIONED_ARCHIVE` does not add a partition-specific Global Header extension. Partition identity, ordering, finality, and content commitment are carried exclusively by the Partition Manifest Entry defined in Section 19.1.
 
-All partitions belonging to the same partitioned archive MUST contain a valid Partition Descriptor and MUST share the same Partition Set UUID.
+Every Partition in one Partition Set MUST use the same Global Header Version, `Flags Size`, and complete Global Flags value. In particular, `NO_INDEX` MUST have the same value in every Partition of the set.
 
-The Partition Descriptor SHALL be 96 bytes and SHALL be encoded as follows:
-
-| Order | Field                   | Size | Description                                                                      |
-| ----- | ----------------------- | ---- | -------------------------------------------------------------------------------- |
-| 0     | Partition Set UUID      | 16B  | Identifies the logical archive set.                                              |
-| 1     | Partition Index         | 4B   | Zero-based partition index.                                                      |
-| 2     | Total Partitions        | 4B   | Total number of partitions belonging to the archive set.                         |
-| 3     | Previous Partition Hash | 32B  | Hash of the previous partition's Data Area. Partition 0 MUST contain all zeroes. |
-| 4     | Partition Hash          | 32B  | Hash of this partition's Data Area.                                              |
-| 5     | Reserved                | 8B   | Reserved for future use. Encoders MUST set all bytes to `0x00`.                  |
-
-If `PARTITIONED_ARCHIVE` is set, each partition MUST contain a fixed-size Partition Descriptor immediately after Global Flags.
-
-All partitions belonging to the same archive set MUST carry the same Partition Set UUID.
-
-Each partition MUST declare its zero-based Partition Index and Total Partitions value.
-
-All partitions except the final partition MUST set `NO_INDEX` and MUST NOT contain a Central Dictionary or Footer.
-
-The final partition MUST contain a Central Dictionary and Footer if `NO_INDEX` is unset.
-
-If `NO_INDEX` is set, no partition SHALL contain a Central Dictionary or Footer.
-
-Filesystem-based partition sets SHOULD use deterministic names of the form:
-
-`[Archive_Name].sar.[3-byte zero-padded index]`
-
-Implementations MUST NOT rely on filenames as the sole mechanism for partition discovery, validation, or reconstruction.
-
-Partition discovery, verification, incomplete-set handling, degraded recovery behavior, and integrity validation requirements are defined in Section 19.4.
+When `ENCRYPTED` is set, every Partition in one Partition Set MUST use the same KMS Mode ID. Partition-specific KMS consistency requirements are defined in Section 19.1.11.
 
 
 ### 5.4 Version Compatibility
@@ -614,7 +591,7 @@ For LFH Selective FEC, missing or unusable positions SHALL be derived from the u
 
 The LFH `Path String` identifies the directory containing the Entry. The LFH `Name String` identifies the final path component.
 
-The `Name String`:
+The `Name String` of an ordinary Entry:
 
 * MUST NOT be empty;
 * MUST NOT contain `/`;
@@ -630,7 +607,7 @@ The `Path String`, when present and non-empty:
 * MUST NOT contain a `.` component; and
 * MUST NOT contain a `..` component.
 
-The Full Logical Entry Path is the `Name String` when the `Path String` is absent or empty. Otherwise, it is the `Path String`, followed by `/`, followed by the `Name String`.
+Partition Manifest Entries and Empty Areas do not have a Full Logical Entry Path. For every other Entry, the Full Logical Entry Path is the `Name String` when the `Path String` is absent or empty. Otherwise, it is the `Path String`, followed by `/`, followed by the `Name String`.
 
 Backslash is not valid in an LFH Name String or Path String. Applications archiving filesystems that permit backslash in filename components SHOULD reject such source names or apply an explicit reversible application-layer mapping before encoding. SAR defines no backslash escape mechanism.
 
@@ -700,12 +677,38 @@ The 16-bit Entry Mode is split into two functional bytes. The lower byte defines
 | 6 | `LAST_FRAGMENT` | Set if this is the final piece required to complete the logical file. |
 | 7 | `LOSS_TOLERANT` | Entry or fragment group permits degraded reconstruction if fragments are missing or unrecoverable. |
 | 8-11 | `OP_CODE` | Command Enumeration (Context dependent on Bit 13). |
-| 12 | RESERVED | Reserved. |
+| 12 | `PARTITION_MANIFEST` | Identifies the terminal structural Partition Manifest Entry. |
 | 13 | `SESSION_CONTROL` | Context Toggle: If set, Op-Codes are session-level. |
 | 14 | `ATOMIC_WRITE` | Verify CRC before unlinking/committing old data. |
 | 15 | `FORCE_SYNC` | Bypasses local conflict resolution. |
 
-#### 6.2.1 Global vs Entry Flag Consistency Rules
+#### 6.2.1 Partition Manifest Entry Mode Rules
+
+`PARTITION_MANIFEST` MUST NOT be set unless `PARTITIONED_ARCHIVE` is set.
+
+A Partition Manifest Entry MUST NOT set `IS_SYMLINK`, `IS_DIRECTORY`, `IS_COMPRESSED`, `IS_FRAGMENT`, `LAST_FRAGMENT`, `LOSS_TOLERANT`, `SESSION_CONTROL`, `ATOMIC_WRITE`, or `FORCE_SYNC`, and its `OP_CODE` bits MUST be zero.
+
+If a Global Flag causes an LFH field to be physically present, that field remains present in a Partition Manifest LFH. Except for encryption fields when Manifest encryption is active, conditional transformation and Application Data Object metadata fields MUST use the values defined below.
+
+`Comp Algo ID` MUST be `0x00` when present.
+
+`Patch Algo ID` MUST be `0x00` (`STORE_PATCH`) and `Delta Base Hash` MUST be all zero when present.
+
+`CDC Algo ID` MUST be `0x00` when present.
+
+`FEC Algo ID` and `FEC Size` MUST be zero and FEC Value MUST be absent when present.
+
+`Sparse Map Size` MUST be zero and Sparse Map MUST be absent when present. Sparse reconstruction MUST NOT be applied to a Partition Manifest Entry.
+
+`File CRC32`, `Content Hash`, UID/GID, timestamps, and permissions MUST be zero when present and MUST NOT be interpreted as Application Data Object metadata for a Partition Manifest Entry.
+
+`Stream ID` and `Sequence No` MUST be zero. A Partition Manifest Entry MUST NOT participate in session processing.
+
+A Partition Manifest Entry MUST have `Name Length` equal to zero. If `HAS_PATH` is set, `Path Length` MUST equal zero. The corresponding Name String and Path String MUST be absent.
+
+Partition Manifest classification takes precedence over Empty Area classification.
+
+#### 6.2.2 Global vs Entry Flag Consistency Rules
 The Global Flags define **capability and structural schema**, while Entry Mode flags define **per-entry usage** of those capabilities.
 
 The following rules are mandatory:
@@ -742,7 +745,7 @@ The following rules are mandatory:
       
     Violation MUST result in SAR_ERR_FLAG_CONFLICT.
 
-#### 6.2.2 LOSS_TOLERANT behavior
+#### 6.2.3 LOSS_TOLERANT behavior
 If LOSS_TOLERANT is set, implementations MAY continue reconstruction
 despite fragment loss, recovery failure, or unavailable recovery data,
 provided a meaningful degraded logical object can still be produced.
@@ -788,19 +791,51 @@ The Session Mode deals with management of the stateful streaming connection (Sec
 | `0x8-0xF` | RESERVED | Reserved for future session-control opcodes. |
 
 ## 7. Central Dictionary (CD)
-The CD is the primary management structure for random access and archive-wide metadata. It is OMITTED if `NO_INDEX` (Bit 1) is set.
+The CD is the post-hoc random-access index and metadata structure for the Data Area of the current physical archive member. It is OMITTED if `NO_INDEX` (Bit 1) is set.
+
+For an unpartitioned archive, the current physical archive member is the complete archive file. For a Partitioned Archive, each Partition has its own local CD when `NO_INDEX` is unset.
 
 | Field | Size | Condition | Description |
 | --- | --- | --- | --- |
-| Version | 1B | Always | Central Dictionary format version (independent of archive version |
-| Reserved | 7B | Always | Padding block reserved for future use |
-| File Count | 4/8B | Always | Supports 64-bit unsigned integer if `64BIT_SIZE` set (otherwise 32-bits) |
-| Partition ID | 2B | `PARTITIONED_ARCHIVE` | The ID of the current physical file (0-indexed). |
-| Total Partitions | 2B | `PARTITIONED_ARCHIVE` | Total number of physical files in this SAR set. |
-| Global CRC | 4B | `HAS_GLOBAL_CRC32` | CRC32 of all payloads combined. |
+| Version | 1B | Always | Central Dictionary format version, independent of archive version. |
+| Reserved | 7B | Always | Reserved; all bytes MUST be zero. |
+| Entry Count | 4/8B | Always | Number of LFHs represented by the Offsets array. Uses 64 bits when `64BIT_SIZE` is set and 32 bits otherwise. |
+| Data Area CRC32 | 4B | `HAS_DATA_AREA_CRC32` | CRC32 of the exact encoded Data Area byte sequence. |
 | MetaSize | 4B | `OPT_PRESENT` | Total size of the Metadata Section in bytes. |
-| Metadata | Var | `OPT_PRESENT` | TLV Blocks (See Section 7). |
-| Offsets | Var | Always | Array of `File Count` * 4/8B absolute pointers. |
+| Metadata | Var | `OPT_PRESENT` | TLV Blocks (See Section 9). |
+| Offsets | Var | Always | Array of `Entry Count` 4-byte or 8-byte LFH offsets. |
+
+### 7.1 Entry Count and Offset Semantics
+
+`Entry Count` MUST equal the number of offsets encoded in the Offsets array.
+
+Each offset MUST identify the first byte of one LFH represented by the CD. Offsets MUST appear in strictly ascending physical order and each indexed LFH MUST appear exactly once.
+
+Empty Areas MUST NOT be represented in the Offsets array. Every other LFH in the Data Area MUST be represented, including every fragment LFH and, for a Partitioned Archive, the Partition Manifest Entry.
+
+For a Partitioned Archive, the final indexed LFH MUST be the Partition Manifest Entry.
+
+For a Partitioned Archive, every offset is measured from byte zero of the current physical Partition and MUST refer only to an LFH physically contained in that Partition. A local CD MUST NOT refer to an earlier Partition, a later Partition, a future Entry, or a virtual concatenated Partition Set address space.
+
+A CD offset that lies outside the current physical archive member MUST return `SAR_ERR_BOUNDS`. An offset that does not identify an LFH boundary or that points into Payload Data, the CD, CD padding, or the Footer MUST return `SAR_ERR_MALFORMED`.
+
+### 7.2 Data Area CRC32
+
+When `HAS_DATA_AREA_CRC32` is set, `Data Area CRC32` MUST equal CRC32 over the exact encoded byte range `[First_LFH_Offset, End_of_Data_Area)`.
+
+The range includes every encoded LFH, Payload Data, AEAD tag, fragment, Empty Area, Selective FEC field and value, and Partition Manifest LFH and payload when present. It excludes the Global Header, Central Dictionary, Central Dictionary alignment padding, and Footer.
+
+For an indexed archive or Partition, `End_of_Data_Area` is the first byte of the Central Dictionary. The CRC can therefore be calculated incrementally while writing the Data Area and does not include its own stored value.
+
+### 7.3 Partition-Local Metadata Scope
+
+In a Partitioned Archive, all CD metadata is local to the current physical Partition. This includes `DATA_HASH`, `RECOVERY`, `SIGNATURE`, Data Area CRC32, metadata TLVs, and the offset array.
+
+A local `SIGNATURE` authenticates only the current local CD according to Sections 9.3, 13.3, and 14.5. A local `DATA_HASH` anchors only the current Partition's Data Area. A local `RECOVERY` block protects only the protected sequence of the current Partition defined in Section 9.2.
+
+A metadata format that explicitly identifies another Partition or archive member, such as CDC_MAP, MAY reference that member according to the rules defined for that metadata format.
+
+No archive-wide Partition Set signature or archive-wide Central Dictionary is defined by SAR version 1.0.
 
 ## 8. Registries
 ### 8.1 Compression Algorithms (`SAR_L_COMP`)
@@ -1297,7 +1332,7 @@ For a RECOVERY TLV, the protected byte sequence SHALL be the exact byte sequence
 
 This range includes Global Flags, any Global Header extensions, all Local File Headers, all Payload Data, Empty Areas, and all explicitly encoded padding bytes before the Central Dictionary.
 
-This range excludes Magic Number, Version, Reserved, Flags Size, the Central Dictionary, and the Footer.
+This range excludes Magic Number, Version, Reserved, Flags Size, the Central Dictionary, and the Footer. For a Partitioned Archive, the protected sequence is evaluated independently within each physical Partition and ends immediately before that Partition's local Central Dictionary.
 
 The algorithm used SHALL be identified by the least-significant nibble (4 bits) of the one-octet TLV Type field:
 
@@ -2182,7 +2217,7 @@ Any mismatch MUST return `SAR_ERR_INVALID_LENGTH`.
 
 
 ### 9.3 Signature (ID 0x20 - 0x2F)
-The `SIGNATURE` block MUST fulfil the requirements as outlined in section 11.3.
+The `SIGNATURE` block MUST fulfil the requirements as outlined in section 13.3.
 
 The algorithm used MUST be set by the least-significant nibble (4 bits) of the 1 byte TLV Type ID:
 
@@ -2212,7 +2247,7 @@ Implementations encountering an assigned but unsupported signature algorithm ide
 Implementations encountering a reserved signature algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
 ### 9.4 Data Integrity Hashing (ID 0x30 - 0x3F)
-The `DATA_HASH` block anchors the Central Dictionary to the Data Area. When the `SIGNED` flag is set, this block MUST be present to ensure that the files themselves have not been swapped or altered. Also see section 11.3.
+The `DATA_HASH` block anchors the Central Dictionary to the Data Area. When the `SIGNED` flag is set, this block MUST be present to ensure that the files themselves have not been swapped or altered. Also see section 13.3.
 
 The algorithm used MUST be set by the least-significant nibble (4 bits) of the 1 byte TLV Type ID:
  * `0x30`: SHA256
@@ -2374,7 +2409,7 @@ Following successful Global Header resolution, the parser:
 2. **MUST** compute the exact LFH size based on Global Flags prior to consuming variable-length fields.
 3. **MUST** advance the stream position strictly as defined in section 6.1.1.
 5. **MUST NOT** reorder entries during parsing.
-6. **MUST NOT** infer missing entries except as explicitly defined by error handling rules in Section 8.
+6. **MUST NOT** infer missing entries except as explicitly defined by error handling rules in Section 10.
 
 #### 11.2.3 Transformation Resolution Phase
 After LFH parsing and payload acquisition, the implementation:
@@ -2558,7 +2593,7 @@ PBKDF2 support MUST satisfy Section 5.3.4, including every valid combination in 
 
 PBKDF2 remains mandatory because SAR-over-TCP without TLS is a valid baseline transport binding.
 
-Minimal Interoperable Streaming implementations MUST support `LOSS_TOLERANT` Entry Mode semantics as defined in Sections 6.2.2 and 19.4.5.
+Minimal Interoperable Streaming implementations MUST support `LOSS_TOLERANT` Entry Mode semantics as defined in Sections 6.2.3 and 19.4.5.
 
 If `LOSS_TOLERANT` is set, missing or unrecoverable fragments MAY be discarded and streaming MAY continue, provided the affected payload type or transformation chain defines safe partial-output semantics.
 
@@ -2759,7 +2794,7 @@ Until successful AEAD authentication has occurred, implementations SHOULD treat 
 
 * `SIGNED`
 * `OPT_PRESENT`
-* `HAS_GLOBAL_CRC32`
+* `HAS_DATA_AREA_CRC32`
 * `HAS_GLOBAL_EC`
 
 Implementations performing random access MAY parse the first LFH solely for the purpose of locating and verifying the authentication tag prior to trusting Central Dictionary metadata.
@@ -2767,7 +2802,7 @@ Implementations performing random access MAY parse the first LFH solely for the 
 Applications or deployment profiles requiring signed archives MUST enforce signature verification independently of the archive-provided `SIGNED` flag.
 
 ### 13.3 Digital Signatures and Binding
-To ensure global payload integrity, the `DATA_HASH` (ID `0x30 - 0x3F`) MUST be present and included in the signed CD when the `SIGNED` flag is set. The signature MUST be calculated over the entire Central Dictionary excluding the SIGNATURE TLV itself. Implementations MUST NOT trust or act upon Central Dictionary offsets or metadata until signature verification (if SIGNED) and DATA_HASH validation have successfully completed. If SIGNED is not set, implementations SHOULD treat the Central Dictionary as untrusted and MAY validate entries against the Data Area before use. Also see section 9.5.
+To ensure global payload integrity, the `DATA_HASH` (ID `0x30 - 0x3F`) MUST be present and included in the signed CD when the `SIGNED` flag is set. The signature MUST be calculated over the entire Central Dictionary excluding the SIGNATURE TLV itself. For a Partitioned Archive, this signature and DATA_HASH scope is local to the current physical Partition and does not aggregate the Partition Set. Implementations MUST NOT trust or act upon Central Dictionary offsets or metadata until signature verification (if SIGNED) and DATA_HASH validation have successfully completed. If SIGNED is not set, implementations SHOULD treat the Central Dictionary as untrusted and MAY validate entries against the Data Area before use. Also see sections 9.3 and 9.4.
 
 #### 13.3.1 Signature Scope and Threat Model
 The SAR signature (when `SIGNED` is set) covers the Central Dictionary, which in turn anchors the Data Area via the `DATA_HASH` TLV. The Global Header (including Global Flags and KMS Extension) is intentionally outside the signature scope. This is a deliberate design choice, because the Central Dictionary is fully optional in SAR (`NO_INDEX` mode), and because:
@@ -2782,10 +2817,15 @@ Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (8).
 
 1. **Signature Anchor**: If `SIGNED` (Bit 18) is set, `OPT_PRESENT` (Bit 2) MUST be set **AND** `DATA_HASH` (ID 0x30 - 0x3F) MUST be present in the CD.
 2. **Encryption Anchor**: If `ENCRYPTED` (Bit 10) is set, the `KMS_DATA` Global Extension MUST be present (Also see section 5.3.1).
-3. **Index Conflict**: If `NO_INDEX` (Bit 1) is set, the following MUST NOT be set: `OPT_PRESENT`, `HAS_GLOBAL_CRC32`, `HAS_GLOBAL_EC`, `SIGNED`.
+3. **Index Conflict**: If `NO_INDEX` (Bit 1) is set, the following MUST NOT be set: `OPT_PRESENT`, `HAS_DATA_AREA_CRC32`, `HAS_GLOBAL_EC`, `SIGNED`.
 
 ### 13.5 Delta Security
-When `HAS_DELTA` (Bit 9) is utilized, the `Delta Base Hash` in the LFH MUST be verified against the hash of the local base file before the patching algorithm is executed. If the base hash does not match, the implementation MUST return `SAR_ERR_PATCH_FAILED` (9). In streaming mode, if the Base Hash is unknown, the parser MUST buffer the patch or return a specific error `SAR_ERR_BASE_MISSING` (10).
+
+When `HAS_DELTA` (Bit 9) is set, patch processing MUST follow the algorithm-specific base and reconstruction-input requirements defined in Section 8.4.
+
+A patch algorithm that requires a base object, dictionary, or other external reconstruction input MUST NOT be applied until that required input has been resolved and validated according to Section 8.4. Missing required reconstruction input MUST result in `SAR_ERR_BASE_MISSING`. Failure to validate required reconstruction input MUST result in `SAR_ERR_PATCH_FAILED`.
+
+`STORE_PATCH` (`0x00`) is self-contained and MUST NOT require base-object resolution solely because `HAS_DELTA` is set.
 
 ### 13.6 Path Handling and Installation Profiles
 
@@ -2856,7 +2896,7 @@ This section defines mandatory invariants that apply to all SAR archives. These 
 
 ### 13.7.5 Identity and Referential Integrity
 1. **Fragment Uniqueness**
-   The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within the archive. Duplicate indices for the same Fragment ID MUST result in an error.
+   The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within the archive. For a Partitioned Archive, this uniqueness scope is the complete Partition Set. Duplicate indices for the same Fragment ID MUST result in an error.
 
 2. **Delta Base Resolution**
    The `Delta Base Hash` MUST uniquely identify a valid base object. If no matching base is found, or multiple matches exist, the operation MUST fail.
@@ -2888,7 +2928,7 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    If both `SPARSE_FILES` and `FILE_FRAGMENTATION` are enabled, implementations MUST complete fragment reassembly before applying sparse reconstruction.
 
 ### 13.7.7 Empty Area Invariant
-1. **Identification Rule**: An entry with `Name Length == 0` and `IS_FRAGMENT == 0` MUST be interpreted as an Empty Area.
+1. **Identification Rule**: An Entry with `Name Length == 0`, `IS_FRAGMENT == 0`, and `PARTITION_MANIFEST == 0` MUST be interpreted as an Empty Area. A Partition Manifest Entry MUST NOT be interpreted as an Empty Area.
 
 2. **Isolation Requirement** Empty Areas MUST NOT:
 ** Be referenced in the Central Dictionary
@@ -2921,12 +2961,12 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    Errors encountered while processing an entry MUST NOT compromise the ability to continue parsing subsequent entries, unless the error is classified as fatal.
 
 ## 14. Footer (Fixed: 8 Bytes)
-The Footer is located at the final 8 bytes of the archive and provides a pointer to the start of the Central Dictionary.
+The Footer is located at the final 8 bytes of the current physical archive member and provides a pointer to the start of its Central Dictionary.
 
 ### 14.1 Structure
 | Field | Size | Description |
 | --- | --- | --- |
-| CD Offset | 8B   | Unsigned 64-bit integer indicating the absolute byte offset of the Central Dictionary |
+| CD Offset | 8B | Unsigned 64-bit integer indicating the byte offset of the Central Dictionary from byte zero of the current physical archive member. |
 
 ### 14.2 Presence Rules
 * The Footer MUST be present if and only if `NO_INDEX` (Bit 1) is **not** set.
@@ -2947,7 +2987,7 @@ To ensure consistent layout and compatibility with memory-mapped access:
 Padding bytes inserted for alignment are considered part of the Central Dictionary region for the purposes of signature calculation, but are not part of the logical Central Dictionary structure.
 
 ### 14.4 Offset Semantics
-* The `CD Offset` MUST point to the **first byte of the Central Dictionary**, not including any padding.
+* The `CD Offset` MUST point to the **first byte of the Central Dictionary**, not including any padding. For a Partitioned Archive, the offset is relative to byte zero of the current physical Partition and MUST NOT use a virtual Partition Set address space.
 * The offset MUST satisfy:
 
   * `CD Offset ≥ End of Data Area`
@@ -3007,9 +3047,9 @@ An Empty Area is represented by a valid LFH that points to a "null" file.
 ### 15.2 Mandatory Extraction Behavior for Empty Areas
 All SAR parsers MUST be able to identify and skip Empty Areas.
 
-* A parser encountering an LFH with `Name Length == 0` AND `IS_FRAGMENT == 0` SHALL interpret this as an Empty Area.
+* A parser encountering an LFH with `Name Length == 0` AND `IS_FRAGMENT == 0` AND `PARTITION_MANIFEST == 0` SHALL interpret this as an Empty Area.
 * The parser MUST skip `Payload Size` bytes to arrive at the next header.
-* Empty Areas MUST NOT be included in the `File Count` of the Central Dictionary.
+* Empty Areas MUST NOT be included in the `Entry Count` of the Central Dictionary.
 
 ### 15.3 Definition of a symlink file
 
@@ -3888,11 +3928,213 @@ Implementations MAY record the negotiated TLS key agreement algorithm or policy 
 ## 19. Archive Partitioning and File Fragmentation
 This section formalizes how SAR handles data that is physically or logically non-contiguous.
 
-### 19.1 Archive Partitioning (Multi-part Archives)
-When `PARTITIONED_ARCHIVE` (Global Bit 3) is set, a logical SAR archive is split across multiple physical `.sar` files.
-* **Global Header**: Every physical file MUST contain the same Global Flags.
-* **Central Dictionary**: Only the **final partition** contains the Central Dictionary and Footer.
-* **Cross-Partition Offsets**: If `64BIT_SIZE` is active, offsets in the CD are absolute across the entire logical set (treating all files as one continuous byte-stream).
+### 19.1 Archive Partitioning
+When `PARTITIONED_ARCHIVE` (Global Bit 3) is set, one logical Partitioned Archive is represented by one or more independently parseable physical Partitions belonging to one Partition Set.
+
+Every Partition MUST begin at physical byte offset zero with a complete SAR Global Header and MUST end its Data Area with exactly one Partition Manifest Entry.
+
+When `NO_INDEX` is unset, every Partition MUST contain exactly one partition-local Central Dictionary and one Footer after the Partition Manifest Entry. When `NO_INDEX` is set, no Partition may contain a Central Dictionary or Footer and the Partition Manifest payload MUST end at the physical end of the Partition.
+
+A complete Partition Set MUST be processable without filename conventions, storage-backend conventions, a final archive-wide Central Dictionary, or a virtual concatenated offset space.
+
+#### 19.1.1 Partition Manifest Entry
+
+The Partition Manifest Entry is an LFH-based structural Entry identified by Entry Mode bit 12 (`PARTITION_MANIFEST`). It MUST be present exactly once in every Partition and MUST be the final LFH in that Partition's Data Area.
+
+The Manifest MUST be wholly contained in the current Partition. No LFH may follow it in the Data Area.
+
+The Manifest restrictions in Section 6.2.1 apply. The Manifest is not an Application Data Object and has no Full Logical Entry Path.
+
+#### 19.1.2 Manifest Version 1 Binary Layout
+
+The decoded Manifest Version 1 payload is exactly 100 bytes and is encoded as follows:
+
+| Offset | Field | Size | Encoding |
+| ---: | --- | ---: | --- |
+| `0` | Manifest Version | 1B | Unsigned integer; MUST equal `1`. |
+| `1` | Hash Algorithm ID | 1B | SAR DATA_HASH algorithm identifier. |
+| `2` | Manifest Flags | 2B | Little-endian bit field. |
+| `4` | Partition Index | 4B | Little-endian unsigned zero-based index. |
+| `8` | Total Partitions | 4B | Little-endian known count or unknown sentinel. |
+| `12` | Committed Content Length | 8B | Little-endian encoded byte count. |
+| `20` | Partition Set UUID | 16B | Opaque nonzero identity bytes. |
+| `36` | Previous Partition Hash | 32B | Digest selected by Hash Algorithm ID. |
+| `68` | Current Partition Hash | 32B | Digest selected by Hash Algorithm ID. |
+
+`Uncompressed Size` MUST equal `100` for Manifest Version 1. For a plaintext Manifest, `Payload Size` MUST equal `100`. For an AEAD-encrypted Manifest, `Payload Size` MUST equal `100 + TagLen` for the selected AEAD algorithm.
+
+Manifest Version 1 defines Manifest Flags bit 0 as `FINAL_PARTITION`. Bits 1 through 15 are reserved and MUST be zero. A receiver encountering a nonzero reserved Manifest Flags bit MUST return `SAR_ERR_RESERVED_VALUE`.
+
+An unsupported Manifest Version that is structurally bounded by its LFH MUST return `SAR_ERR_UNSUPPORTED`. A Version 1 Manifest whose decoded size is not exactly 100 bytes MUST return `SAR_ERR_INVALID_LENGTH`.
+
+#### 19.1.3 Partition Identity, Ordering, and Count
+
+`Partition Set UUID` identifies the logical Partition Set. The all-zero UUID is invalid and MUST return `SAR_ERR_MALFORMED`.
+
+`Partition Index` is the authoritative zero-based ordinal position of a Partition.
+
+`Total Partitions` has the following meanings:
+
+| Value | Meaning |
+| ---: | --- |
+| `0x00000000` | Invalid. |
+| `0x00000001` through `0xFFFFFFFE` | Known total number of Partitions. |
+| `0xFFFFFFFF` | Total number of Partitions is not yet known. |
+
+A known total MUST satisfy `Partition Index < Total Partitions`. An unknown total MUST NOT be combined with `FINAL_PARTITION`.
+
+The final Partition MUST set `FINAL_PARTITION`, MUST contain the exact known Total Partitions value, and MUST satisfy `Partition Index == Total Partitions - 1`.
+
+A non-final Partition with a known total MUST satisfy `Partition Index < Total Partitions - 1`.
+
+All known Total Partitions values within one Partition Set MUST agree. Exactly one Partition in a complete Partition Set MUST set `FINAL_PARTITION`.
+
+EOF, end-of-tape, transport closure, storage enumeration exhaustion, filename absence, or receipt of a valid non-final Partition MUST NOT independently establish logical completion.
+
+Partition-capable conforming implementations MUST support complete Partition Sets containing 1 through 65535 Partitions inclusive. Implementations MAY support larger sets. A valid count exceeding a configured or implementation limit MUST return `SAR_ERR_LIMIT_EXCEEDED`.
+
+#### 19.1.4 Partition Content Commitment and Hash Linkage
+
+Manifest Version 1 uses the existing SAR DATA_HASH algorithm identifier namespace. SHA256 (`0x30`), BLAKE3 (`0x31`), and SHA3_256 (`0x32`) produce the required 32-byte digest size. A partition-capable implementation MUST support SHA256 for Partition Manifest hashing.
+
+Every Manifest in one Partition Set MUST use the same Hash Algorithm ID.
+
+`Committed Content Length` MUST equal the physical byte offset of the Partition Manifest LFH from byte zero of the current Partition.
+
+`Current Partition Hash` MUST equal:
+
+```text
+H(Partition bytes [0 : Committed Content Length])
+```
+
+The committed range includes the complete Global Header and every encoded byte before the Manifest LFH. It excludes the Manifest LFH and payload, local Central Dictionary, Central Dictionary alignment padding, and Footer.
+
+Partition Index 0 MUST contain 32 zero bytes in `Previous Partition Hash`.
+
+For every Partition Index greater than zero:
+
+```text
+Partition[i].Previous Partition Hash = Partition[i - 1].Current Partition Hash
+```
+
+Partition Index determines order. Hash linkage verifies the committed content of the expected predecessor and MUST NOT be used as an alternative ordering mechanism.
+
+A Current Partition Hash mismatch MUST return `SAR_ERR_HASH_MISMATCH`. A predecessor-link mismatch MUST return `SAR_ERR_PARTITION_MISMATCH`.
+
+
+#### 19.1.5 Physical Partition Boundaries
+
+A physical Partition boundary may occur only between complete encoded SAR structures.
+
+An LFH, all variable LFH fields, Payload Data, AEAD authentication tag, and Selective FEC data belonging to that LFH MUST be wholly contained in one Partition. The Partition Manifest Entry, local Central Dictionary, permitted CD alignment padding, and Footer MUST likewise each be wholly contained in the current Partition.
+
+A logical Application Data Object may span Partitions only through ordinary SAR fragmentation. Partitioning MUST NOT introduce a second fragmentation representation.
+
+No transformation state required to interpret an Entry may cross a Partition boundary implicitly. Cross-Partition dependencies MUST be represented by explicit SAR identifiers and dependency fields.
+
+#### 19.1.6 Fragmentation Across Partitions
+
+Within a Partitioned Archive, Fragment ID scope is the complete Partition Set.
+
+Fragment Index 0 MAY occur in one Partition and later fragments of the same Entry MAY occur in later Partitions. Each fragment remains one complete LFH-based fragment contained in one Partition.
+
+Canonical physical ordering across a complete Partition Set is ascending Partition Index and then physical LFH order within each Partition. A fragmented Entry retains the canonical Entry-order position established by Fragment Index 0.
+
+A Partition may be structurally complete even when a fragmented Entry continues in a later Partition. A complete Partition Set MUST NOT be reported as completely reconstructed while required fragments remain unavailable unless existing `LOSS_TOLERANT` rules permit a degraded result.
+
+A partition-local CD indexes each fragment LFH separately. General fragment field presence and consistency requirements remain defined by the fragmentation rules and are not altered by partitioning.
+
+#### 19.1.7 Partition-Local Central Dictionary and Footer
+
+When `NO_INDEX` is unset, every Partition MUST contain one local Central Dictionary and Footer. The local CD describes only LFHs physically present in the same Partition according to Section 7.
+
+When `NO_INDEX` is set, no Partition contains a CD or Footer. The `NO_INDEX` Global Flag MUST have the same value in every Partition of one Partition Set.
+
+All local CD offsets and the Footer `CD Offset` are measured from byte zero of the current physical Partition. No virtual concatenated Partition Set address space exists.
+
+#### 19.1.8 Completion and Missing Members
+
+A Partition Set is complete only when exactly one valid final Partition establishes the exact Total Partitions value, every Partition Index from zero through `Total Partitions - 1` is available exactly once after duplicate resolution, all Partition Set UUID and known-count relationships agree, every Current Partition Hash validates, every Previous Partition Hash relationship validates, and every required local structural rule succeeds.
+
+If complete processing is requested and one or more required members are unavailable, the implementation MUST return `SAR_ERR_PARTITION_MISSING`.
+
+Implementations MAY provide explicitly application-controlled incomplete or degraded processing consistent with Section 12.4, but MUST NOT report complete Partition Set reconstruction while a required Partition is unavailable.
+
+#### 19.1.9 Duplicate Partition Candidates
+
+Physical candidates are grouped for duplicate resolution by the tuple `(Partition Set UUID, Partition Index)`.
+
+For duplicate-resolution purposes, Partition identity is determined by the canonical Data Area and the Manifest values that bind that Data Area to the Partition Set. The local Central Dictionary, its metadata, alignment padding, and Footer are auxiliary structures and are not part of Partition identity.
+
+Each candidate MUST independently satisfy all validation requirements applicable to that physical Partition before it may participate in duplicate resolution. A candidate that fails validation MUST NOT be used as a replica and MUST NOT by itself cause an otherwise valid candidate for the same tuple to be treated as conflicting.
+
+Because candidates are grouped by identical Partition Set UUID and Partition Index before replica comparison, those two values are already equal and are not repeated in the replica-equivalence criteria below.
+
+Two or more valid candidates for the same tuple are equivalent replicas if they agree on Manifest Version, Hash Algorithm ID, Total Partitions, finality, Committed Content Length, Previous Partition Hash, and verified Current Partition Hash.
+
+When Manifest encryption is active, equivalent replicas MAY differ in the encoded Manifest ciphertext, nonce, and authentication tag, provided each Manifest independently authenticates and decodes to the values required for replica equivalence.
+
+Equivalent replicas MAY differ in their local Central Dictionary, Central Dictionary metadata, signatures, recovery data, alignment padding, and Footer, provided each candidate independently satisfies all applicable validation requirements. Such differences do not alter the canonical Data Area represented by the Partition.
+
+For operations defined solely by the canonical Data Area, an implementation MAY use any equivalent replica.
+
+For operations that depend on auxiliary Central Dictionary metadata or other replica-local structures, an implementation MAY use the corresponding independently validated information from any equivalent replica. An implementation MUST NOT treat differing auxiliary metadata between equivalent replicas as a Partition conflict solely because the metadata differs.
+
+Information from multiple equivalent replicas MUST NOT be combined in a manner that violates the validation, scope, ordering, or consistency rules of the metadata formats being used.
+
+If two or more valid candidates for the same tuple disagree on any value required for replica equivalence, they are conflicting candidates and processing of the Partition Set MUST fail with `SAR_ERR_PARTITION_MISMATCH`.
+
+Different Partition Indices within the same Partition Set identify distinct physical Partitions and are not duplicate candidates.
+
+#### 19.1.10 Global Header Consistency
+
+Every Partition in one Partition Set MUST contain the same Global Header Version, `Flags Size`, and complete Global Flags value.
+
+Global Header byte-for-byte equality is not required because partition-local KMS parameters may vary as permitted by Section 19.1.11.
+
+#### 19.1.11 Partition-Specific KMS Consistency
+
+When `ENCRYPTED` is set, every Partition in one Partition Set MUST use the same KMS Mode ID.
+
+For PBKDF2, every Partition MUST use the same PRF Algo ID. Salt, Iterations, and other permitted partition-local parameters MAY differ.
+
+For ARGON2, every Partition MUST use the same Argon2 Variant and Version. Salt, Memory Cost, Time Cost, Parallelism, and other permitted partition-local parameters MAY differ.
+
+For ASYMMETRIC_WRAP, every Partition MUST use the same Wrap Algo ID and the same logical recipient set. Recipient ordering MAY differ and randomized Wrapped Key Blob bytes MAY differ.
+
+For TLS_EXPORTER, every Partition MUST use the same Context Version and KDF Algo ID.
+
+A cross-Partition mismatch in these set-defining KMS properties MUST return `SAR_ERR_PARTITION_MISMATCH`.
+
+These rules define only the consistency required for Partition Set interpretation. General KMS security and interoperability requirements remain governed by the KMS sections of this specification.
+
+#### 19.1.12 Manifest Encryption
+
+Partitioning does not require archive encryption.
+
+When `ENCRYPTED` is unset, the Partition Manifest Entry MUST have `IS_ENCRYPTED` unset and its payload is plaintext.
+
+When `ENCRYPTED` is set, the Partition Manifest Entry MUST set `IS_ENCRYPTED` and MUST use an AEAD-capable SAR encryption algorithm. Every Partition Manifest Entry in one Partition Set MUST use the same AEAD algorithm.
+
+The Manifest uses the ordinary SAR AEAD nonce, tag, processing, and AAD rules in Section 13.2. Partitioning does not redefine the general AAD domain.
+
+Mandatory Manifest AEAD protects Partition Set UUID, ordering, count, finality, and predecessor-link metadata that is not included in `Current Partition Hash`. It also provides authenticated Manifest metadata for `NO_INDEX` Partition Sets, where CD signatures are unavailable.
+
+Ordinary non-Manifest Entries retain their normal Entry Mode and encryption choices.
+
+#### 19.1.13 Resource Limits and Arithmetic
+
+Implementations MUST apply configured resource limits before allocating or retaining state based on Partition metadata.
+
+Limits MUST cover at least claimed Total Partitions, discovered candidates, simultaneously open members, aggregate encoded size, aggregate reconstructed size, temporary storage, duplicate-candidate retention, fragment maps, hash-verification work, relationship traversal, local CD Entry Count, and offset-array storage.
+
+All arithmetic involving counts, indices, offsets, lengths, aggregate sizes, and offset-array sizes MUST use checked arithmetic. Overflow MUST return `SAR_ERR_OVERFLOW`. A syntactically valid value exceeding a configured implementation limit MUST return `SAR_ERR_LIMIT_EXCEEDED`.
+
+#### 19.1.14 Manifest Validation
+
+A decoder MUST validate the Manifest's structural classification, exact Version 1 decoded size, supported version, reserved flag bits, nonzero Partition Set UUID, Partition Index, Total Partitions, finality relationship, configured count limits, checked arithmetic, Committed Content Length, Hash Algorithm ID, Current Partition Hash, Previous Partition Hash relationship when the predecessor is available, Global Header consistency, required KMS consistency, and local CD/Footer presence according to `NO_INDEX`.
+
+A missing required Manifest MUST return `SAR_ERR_METADATA_MISSING`. More than one Manifest in one Partition MUST return `SAR_ERR_METADATA_CONFLICT`. A Manifest without `PARTITIONED_ARCHIVE` MUST return `SAR_ERR_FLAG_CONFLICT`. A Manifest that is not the final LFH in the Data Area MUST return `SAR_ERR_MALFORMED`.
 
 ### 19.2 File Fragmentation (Multiplexing)
 When `FILE_FRAGMENTATION` (Global Bit 4) is set, a single file (e.g., `video.mp4`) can be broken into $N$ fragments. This is critical for real-time streaming where large assets must be interleaved with control commands or other data.
@@ -3931,60 +4173,9 @@ Fragmentation is a potential vector for a **"Memory Exhaustion Attack"** (where 
 
 ### 19.4.4 Partition Discovery, Verification, and Recovery
 
-For `PARTITIONED_ARCHIVE` mode (Global Bit 3), Receivers MUST verify that all partitions belong to the same logical archive set before processing archive payloads.
+Partition discovery, association, ordering, completion, duplicate-candidate handling, hash linkage, and missing-member behavior are defined in Section 19.1.
 
-#### Partition Association
-
-Partitions MUST be associated using the Partition Descriptor defined in Section 5.
-
-All partitions belonging to the same archive set MUST:
-
-* Contain the same `Partition Set UUID`.
-* Declare a unique `Partition Index`.
-* Declare the same `Total Partitions` value.
-
-Matching filenames, archive names, Magic values, or Global Flags alone MUST NOT be treated as sufficient proof that partitions belong to the same archive set.
-
-Filesystem-based partition sets SHOULD use deterministic names of the form:
-
-`[Archive_Name].sar.[3-byte zero-padded index]`
-
-Implementations MUST NOT rely on filenames as the sole mechanism for partition discovery or verification.
-
-#### Partition Integrity Verification
-
-Partition integrity SHOULD be verified before extraction begins.
-
-Verification MAY be performed using:
-
-* Digital Signatures when the `SIGNED` flag is present.
-* Partition Hash and Previous Partition Hash values contained within the Partition Descriptor.
-* Archive-wide integrity mechanisms defined elsewhere in this specification.
-
-Partition 0 MUST contain a zero-filled `Previous Partition Hash`.
-
-Receivers MUST verify that all discovered partitions form a continuous and valid partition chain.
-
-#### Incomplete Partition Sets
-
-If one or more required partitions are unavailable, the Receiver MUST return `SAR_ERR_PARTITION_MISSING`.
-
-Extraction SHOULD NOT begin until all required partitions have been located and verified.
-
-#### Degraded Recovery Mode
-
-Implementations MAY provide an application-controlled degraded recovery mode.
-
-In degraded recovery mode, available partitions MAY be processed sequentially without relying on the final Central Dictionary.
-
-When degraded recovery mode is used:
-
-* Missing partitions MUST result in `SAR_WARN_INCOMPLETE`.
-* Entries spanning unavailable partitions MUST be skipped.
-* Integrity verification MUST be limited to metadata available within the recovered partitions.
-* Implementations MUST NOT claim successful archive reconstruction if one or more required partitions are unavailable.
-
-The use of degraded recovery mode is implementation-defined and MUST NOT be enabled implicitly.
+Filenames, archive names, storage enumeration order, and storage-backend metadata MAY assist discovery but MUST NOT establish Partition Set identity, Partition order, or logical completion.
 
 
 ### 19.4.5 Lossy Reassembly and Best-Effort Streaming
@@ -4048,7 +4239,7 @@ For self-contained archives, the Catalog is stored as a Metadata TLV block in th
 
 * **TLV Type ID**: `0x40` (`CDC_MAP`)
 * **Structure**: A 16-byte `CDC_MAP_Header` followed by `Record_Count` 48-byte `CDC_MAP_Record` entries.
-* **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, this TLV SHOULD be present.
+* **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, a self-contained archive SHOULD provide sufficient `CDC_MAP` metadata in its Central Dictionary metadata to resolve its Recipe entries. In a Partitioned Archive, this metadata MAY be distributed across partition-local Central Dictionaries, and a `CDC_MAP` record MAY reference any Partition belonging to the same Partition Set.
 * **Verification Scope**: Structural validation of stored CDC metadata is always permitted. Hash verification over stored byte ranges is permitted when the hash algorithm is supported and archive bounds are available.
 
 `CDC_MAP` is **self-describing** via the `Hash_Algorithm_ID` field in its header.  Parsers MUST read `Hash_Algorithm_ID` from the header to determine which hash algorithm is used for record hashes.  Parsers MUST NOT hard-code an unnamed hash algorithm or treat the LFH `CDC Algo ID` (chunking algorithm) as the hash algorithm for CDC_MAP records.
@@ -4076,12 +4267,13 @@ TLV Length MUST equal `16 + Record_Count × Record_Size`.  Both the multiplicati
 
 #### CDC_MAP_Record v1 (48 bytes)
 
-| Field             | Size     | Description                                                                     |
-| ----------------- | -------- | ------------------------------------------------------------------------------- |
-| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID`.                   |
-| `Partition_ID`    | 4 bytes  | Partition identifier containing the referenced chunk.                           |
-| `Absolute_Offset` | 8 bytes  | Absolute byte offset of the referenced chunk from the beginning of the archive. |
-| `Compressed_Size` | 4 bytes  | Size in bytes of the referenced stored chunk payload.                           |
+| Field             |     Size | Description                                                                                                                                                                                          |
+| ----------------- | -------: | --------------- |
+| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID`. |
+| `Partition_Index` |  4 bytes | Physical member selector. MUST be `0` for an unpartitioned archive. For a Partitioned Archive, MUST equal the Partition Manifest `Partition Index` of the Partition containing the referenced chunk. |
+| `Member_Offset`   |  8 bytes | Byte offset of the referenced chunk from physical byte zero of the archive member selected by `Partition_Index`. |
+| `Compressed_Size` |  4 bytes | Size in bytes of the referenced stored chunk payload. |
+
 
 #### CDC_MAP hash algorithm registry
 
@@ -4099,21 +4291,26 @@ Structural validation MAY always be performed and includes:
 * TLV Length equals `16 + Record_Count × Record_Size`;
 * all arithmetic is checked;
 * `Hash_Algorithm_ID` is in the registry.
+* for an unpartitioned archive, `Partition_Index` is zero for every record;
+* for a Partitioned Archive, each `Partition_Index` identifies a Partition belonging to the same Partition Set before the referenced location is used;
+* `Member_Offset + Compressed_Size` uses checked arithmetic.
 
 #### CDC_MAP hash verification
 
 Hash verification MAY be performed only if:
 
 * `Hash_Algorithm_ID` is supported;
-* the referenced byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)` is readable;
-* archive bounds are available.
+* the physical archive member selected by `Partition_Index` is available;
+* the referenced byte range `[Member_Offset, Member_Offset + Compressed_Size)` is readable within that member; and
+* the bounds of that member are available.
 
-`Absolute_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within archive bounds when archive bounds are available.
+For an unpartitioned archive, `Partition_Index` MUST be zero and selects the archive itself.
 
-CDC_MAP hash verification is over the exact stored byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)`.  This is **not** the same as FASTCDC boundary-regeneration verification.
+For a Partitioned Archive, `Partition_Index` MUST identify the Partition whose Partition Manifest carries the same `Partition Index` value.
 
-A parser does not require knowledge of the CDC chunking algorithm (as defined by the LFH `CDC Algo ID` in Section 8.5) to parse the `CDC_MAP` structure itself. The CDC algorithm determines how chunks are produced, but the `CDC_MAP` is a catalog of already materialized chunk metadata.
+`Member_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within the bounds of the selected physical archive member when those bounds are available.
 
+CDC_MAP hash verification is over the exact stored byte range `[Member_Offset, Member_Offset + Compressed_Size)` of the selected physical archive member. This is **not** the same as FASTCDC boundary-regeneration verification.
 
 ### 21.2 External Database Integration (`CDC_EXT_PROVIDER`)
 
