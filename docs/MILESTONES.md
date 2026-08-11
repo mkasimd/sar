@@ -989,16 +989,24 @@ If this milestone document appears to describe library/profile layout differentl
 
 ## M13a.7: specification gap triage and normative resolution
 
-* review every M13 finding classified as a specification gap
-* confirm that each gap represents missing, ambiguous, or internally inconsistent normative behavior
-* determine the intended interoperable behavior for each confirmed gap
-* update `specification.md` and related normative documentation where required
-* record the normative decision, compatibility impact, and affected implementation areas in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
-* distinguish clarification-only changes from behavioral or wire-format changes
-* define verification expectations after normative resolution
-* assign resulting implementation and test work to the applicable M13b milestone
+Audit registry: `docs/machine-readable/M13_AUDIT_FINDINGS.json` scope `M13a.7`.
+
+Objectives:
+
+* `M13a.7-OBJ-01` — triage and classify specification gaps
+* `M13a.7-OBJ-02` — resolve parser and extraction semantics
+* `M13a.7-OBJ-03` — resolve profile taxonomy and terminology
+* `M13a.7-OBJ-04` — complete compliance and KMS interoperability baseline
+* `M13a.7-OBJ-05` — resolve partition wire architecture
+* `M13a.7-OBJ-06` — classify fragmented LFH field semantics
+* `M13a.7-OBJ-07` — reorganize error and status registry
+* `M13a.7-OBJ-08` — perform final normative consistency and implementation-impact review
+
+Constraints:
+
 * do not implement code remediation in this milestone
 * do not silently resolve specification gaps through implementation choices
+* assign resulting implementation and test work to the applicable M13b milestone
 
 ## M13b.1: parser, resource, and parser-fuzzing remediation
 

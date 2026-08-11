@@ -870,6 +870,108 @@
           ]
         }
       ]
+    },
+    {
+      "milestone": "M13a.7",
+      "title": "Specification Gap Triage and Normative Resolution",
+      "status": "in_progress",
+      "started_date": "2026-08-05",
+      "included_artifacts": [
+        "specification.md",
+        "docs/machine-readable/M13_AUDIT_FINDINGS.json",
+        "docs/MILESTONES.md"
+      ],
+      "excluded_topics": [
+        "Rust source behavior changes",
+        "test and test vector changes",
+        "schema changes",
+        "Cargo file changes",
+        "API inventory changes",
+        "code remediation — all remediation is assigned to M13b milestones",
+        "re-audit of M13a.1 through M13a.6 topics except where normative resolution directly requires clarification"
+      ],
+      "notes": [
+        "M13a.7 records triage decisions, normative question formulations, and design directions only; no remediation is implemented in this scope.",
+        "Open specification gaps do not prevent marking individual objectives complete while the overall M13a.7 scope remains in_progress.",
+        "All new findings (M13-SPEC-003 through M13-SPEC-007) are assigned to M13a.7 for normative resolution.",
+        "M13-TRANSFORM-001 has been reclassified: the original demand for per-repository-preset normative algorithm tables was misclassified; implementation, API, and documentation remediation remains open."
+      ],
+      "objectives": [
+        {
+          "id": "M13a.7-OBJ-01",
+          "title": "Triage and classify specification gaps",
+          "status": "in_progress",
+          "outcome": "findings_recorded",
+          "summary": "Review all M13 findings classified as specification_gap or pending_normative_resolution. Confirm that each gap represents missing, ambiguous, or internally inconsistent normative behavior. Record triage decisions and classification in the findings registry.",
+          "related_findings": [
+            "M13-PARSER-004",
+            "M13-EXTRACT-005",
+            "M13-TRANSFORM-001",
+            "M13-SPEC-002",
+            "M13-SPEC-003",
+            "M13-SPEC-004",
+            "M13-SPEC-005",
+            "M13-SPEC-006",
+            "M13-SPEC-007"
+          ]
+        },
+        {
+          "id": "M13a.7-OBJ-02",
+          "title": "Resolve parser and extraction semantics",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Determine the intended normative behavior for M13-PARSER-004 (GlobalFlags undefined bits and extension bytes) and M13-EXTRACT-005 (symlink target conformance and extraction-safety). Record normative decisions, compatibility impact, and verification expectations.",
+          "related_findings": []
+        },
+        {
+          "id": "M13a.7-OBJ-03",
+          "title": "Resolve profile taxonomy and terminology",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Determine whether Compliance Profile should be introduced as the normative umbrella term for the three existing specification-defined implementation capability profiles. Record the normative decision for M13-SPEC-006.",
+          "related_findings": []
+        },
+        {
+          "id": "M13a.7-OBJ-04",
+          "title": "Complete compliance and KMS interoperability baseline",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Determine mandatory role-qualified conformance, Guaranteed Interoperability Baseline, KMS mode requirements, parameter ranges, and encoder-decoder self-compatibility rules for same-profile interoperability. Record the normative decision for M13-SPEC-003.",
+          "related_findings": []
+        },
+        {
+          "id": "M13a.7-OBJ-05",
+          "title": "Resolve partition wire architecture",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Determine the normative wire structures, field layouts, ordering rules, integrity scopes, KMS consistency rules, and validation behavior that define a complete interoperable Partition Set. Record the normative decision for M13-SPEC-004.",
+          "related_findings": []
+        },
+        {
+          "id": "M13a.7-OBJ-06",
+          "title": "Classify fragmented LFH field semantics",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Classify every LFH field by its required presence, absence, inheritance, equality, variability, and error semantics across Fragment Index values. Record the normative decision for M13-SPEC-005.",
+          "related_findings": []
+        },
+        {
+          "id": "M13a.7-OBJ-07",
+          "title": "Reorganize error and status registry",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Define a category taxonomy, numeric allocation ranges, semantic scopes, warning model, reservation policy, and compatibility strategy for the SAR error and status registry. Record the normative decision for M13-SPEC-007.",
+          "related_findings": []
+        },
+        {
+          "id": "M13a.7-OBJ-08",
+          "title": "Perform final normative consistency and implementation-impact review",
+          "status": "planned",
+          "outcome": "not_assessed",
+          "summary": "Review all normative decisions from M13a.7-OBJ-02 through M13a.7-OBJ-07 for mutual consistency and implementation impact. Assign resulting implementation and test work to the applicable M13b milestone.",
+          "related_findings": []
+        }
+      ]
     }
   ],
   "findings": [
@@ -2307,6 +2409,19 @@
       "resolution_owner": "M13a.7",
       "verification": {
         "test_requirement": "pending_normative_resolution"
+      },
+      "notes": [
+        "Reclassification (M13a.7): The original demand for per-repository-preset normative algorithm tables was misclassified. Repository-defined presets are not normative SAR Compliance Profiles and do not require per-preset normative algorithm tables in the specification.",
+        "Implementation, API, documentation, and source-code comment validation remediation remains open under this finding.",
+        "Wider normative specification work arising from this reclassification is tracked separately: compliance and KMS interoperability baseline in M13-SPEC-003, partition wire architecture in M13-SPEC-004, fragment LFH field semantics in M13-SPEC-005, and Compliance Profile umbrella terminology in M13-SPEC-006."
+      ],
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-003",
+          "M13-SPEC-004",
+          "M13-SPEC-005",
+          "M13-SPEC-006"
+        ]
       }
     },
     {
@@ -3493,6 +3608,314 @@
       "resolution_owner": "M13a.7",
       "verification": {
         "test_requirement": "pending_normative_resolution"
+      }
+    },
+    {
+      "id": "M13-SPEC-003",
+      "title": "Compliance and KMS Interoperability Baseline is incomplete",
+      "finding_type": "specification_gap",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "interoperability",
+        "cryptography",
+        "authentication",
+        "conformance",
+        "error_handling"
+      ],
+      "status": "pending_normative_resolution",
+      "severity": "not_applicable",
+      "priority": "high",
+      "confidence": "confirmed",
+      "summary": "The current specification does not yet completely define role-qualified encoder, decoder, and encoder-decoder conformance; the Guaranteed Interoperability Baseline; mandatory interoperable KMS support and parameter ranges; encoder-decoder self-compatibility; complete optional ASYMMETRIC_WRAP constructions; or explicit incomplete handling for unsupported selected Entries.",
+      "current_behavior": "Section 12 defines three implementation capability profiles and mandatory transformation algorithms, but same-profile encrypted interoperability is not guaranteed because the applicable KMS modes and parameter ranges are incomplete. Role-qualified conformance, baseline-output semantics, encoder-decoder self-compatibility, and explicit incomplete unsupported-Entry processing are also not fully normative.",
+      "normative_question": "What mandatory role behavior, KMS modes, KDF algorithms, continuous parameter ranges, optional-construction rules, unsupported-feature behavior, inspection semantics, ASYMMETRIC_WRAP constructions, and TLS_EXPORTER obligations are required so two same-profile implementations can process each other's guaranteed-baseline output?",
+      "affected_artifacts": [
+        "specification.md"
+      ],
+      "evidence": [
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 12 `Compliance Profiles`, Section 12.1 `Standard Compliance Profile`, Section 12.2 `Minimal Interoperable Archive Profile`, Section 12.3 `Minimal Interoperable Streaming Profile`",
+          "description": "Section 12 defines three named compliance profiles (Standard Compliance Profile, Minimal Interoperable Archive Profile, Minimal Interoperable Streaming Profile) and their mandatory feature and algorithm tables, but does not define role-qualified (encoder-only, decoder-only, encoder-decoder) conformance, a Guaranteed Interoperability Baseline, or encoder-decoder self-compatibility requirements."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 5.4.1 KMS Mode Registry, KMS Mode 0x01 PBKDF2, 0x02 ARGON2, 0x03 ASYMMETRIC_WRAP, 0x04 TLS_EXPORTER",
+          "description": "The KMS mode registry defines four modes and their payload structures, but does not specify which modes are mandatory for each compliance profile or what continuous parameter ranges (e.g., iteration counts, memory parameters) are required for interoperable decryption."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 12.4 `Unsupported Features`, Transparent Skip rules, SAR_ERR_UNSUPPORTED return requirement",
+          "description": "Section 12.4 defines that encountering an unsupported feature must return SAR_ERR_UNSUPPORTED and permits Transparent Skip for optional structures where size can be safely determined, but does not define explicit incomplete-entry handling for partially supported selected Entries."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 18.6 `TLS_EXPORTER SAR AEAD Profile`, CAP_TLS_EXPORTER_AEAD capability flag",
+          "description": "TLS_EXPORTER requirements are defined for transport bindings but are not linked to mandatory compliance profile obligations. It is not normatively stated which profiles must or may use TLS_EXPORTER."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 5.4.1 KMS Mode 0x03 ASYMMETRIC_WRAP",
+          "description": "ASYMMETRIC_WRAP is listed in the KMS mode registry with a payload structure but its required constructions, key types, and wrapping algorithms are not completely normatively defined."
+        }
+      ],
+      "compatibility_impact": "unknown_pending_resolution",
+      "resolution_owner": "M13a.7",
+      "verification": {
+        "test_requirement": "pending_normative_resolution"
+      },
+      "notes": [
+        "Encoder-only, decoder-only, and encoder-decoder role-qualified conformance are intended to be introduced as part of normative resolution.",
+        "The umbrella term `Compliance Profile` is separately tracked by M13-SPEC-006 and must not be inferred from the disposition of M13-TRANSFORM-001.",
+        "The Minimal Interoperable Archive Profile and Minimal Interoperable Streaming Profile are expected to require PBKDF2/HMAC-SHA256 for interoperable encrypted output.",
+        "The Standard Compliance Profile is expected to require both PBKDF2 and Argon2id.",
+        "Exact normative text for KMS parameter ranges and role requirements remains pending normative resolution.",
+        "No new encoded compliance-profile identifier is intended; existing profile identifiers are not changed."
+      ],
+      "relationships": {
+        "related_findings": [
+          "M13-TRANSFORM-001",
+          "M13-SPEC-006",
+          "M13-SPEC-007"
+        ]
+      }
+    },
+    {
+      "id": "M13-SPEC-004",
+      "title": "Partition architecture lacks a stable interoperable wire model",
+      "finding_type": "specification_gap",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "wire_format",
+        "interoperability",
+        "parser",
+        "recovery",
+        "cryptography",
+        "compatibility"
+      ],
+      "status": "pending_normative_resolution",
+      "severity": "not_applicable",
+      "priority": "high",
+      "confidence": "confirmed",
+      "summary": "The current partition model does not provide a sufficiently stable and forward-writable interoperable definition for partition identity, ordering, finality, unknown counts, content commitment, predecessor linkage, partition-local indexing, Footer coordinates, local integrity metadata, KMS consistency, and duplicate partition candidates.",
+      "current_behavior": "Partition metadata is currently tied to the existing Global Header and Central Dictionary structures, while several required relationships and coordinate systems remain incomplete or ambiguous. A drafted replacement architecture uses terminal Partition Manifest Entries and partition-local Central Dictionaries and Footers, but it has not been normatively adopted.",
+      "normative_question": "What exact SAR wire structures, field layouts, identifiers, ordering rules, hash domains, local offset systems, count and finality encodings, KMS consistency rules, integrity scopes, resource limits, and validation behavior define a complete interoperable Partition Set?",
+      "affected_artifacts": [
+        "specification.md"
+      ],
+      "evidence": [
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 5.3.4 `The Partition Descriptor`, PARTITIONED_ARCHIVE Global Flag Bit 3",
+          "description": "The Partition Descriptor Extension defines Partition Set UUID, Partition Index, Total Partitions, and a Partition Hash field, but does not define partition-local offset systems, unknown-count sentinels, predecessor linkage, committed content length, or Manifest AEAD. All partitions share the same Global Header structure."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 7 `Central Dictionary (CD)`, Total Partitions field, HAS_GLOBAL_CRC32 flag",
+          "description": "The Central Dictionary defines a Total Partitions field and a Global CRC32 over all payloads combined, but its scope, coordination with partition-local CDs, and partition-relative offset semantics are not defined."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 4 `Archive Structure`, NO_INDEX flag, Footer definition, Data Area structure",
+          "description": "The architecture divides archives into four sequential sections and specifies that all partitions except the final must set NO_INDEX. Partition-local Footer coordinates and integrity scopes are not defined beyond this constraint."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13a.7",
+      "verification": {
+        "test_requirement": "pending_normative_resolution"
+      },
+      "notes": [
+        "Drafted direction (not adopted): terminal LFH-based Partition Manifest Entry to replace or supplement the pre-Data-Area Partition Descriptor.",
+        "Drafted direction (not adopted): removal or redesign of the pre-Data-Area Partition Descriptor.",
+        "Drafted direction (not adopted): partition-local Central Dictionaries and Footers with partition-relative offsets.",
+        "Drafted direction (not adopted): Current Partition Hash and Previous Partition Hash fields for predecessor linkage.",
+        "Drafted direction (not adopted): Committed Content Length field for content commitment.",
+        "Drafted direction (not adopted): unknown Total Partitions sentinel value for streaming producers.",
+        "Drafted direction (not adopted): Final Partition bit or flag to signal partition set completion.",
+        "Drafted direction (not adopted): partition-local Data Area CRC32 integrity scope.",
+        "Drafted direction (not adopted): Manifest AEAD for partition manifest entry authentication.",
+        "Drafted direction (not adopted): complete Global Header AAD specification for partitioned archives.",
+        "Drafted direction (not adopted): partition-local signature scope definition.",
+        "Drafted direction (not adopted): cross-partition KMS consistency rules.",
+        "Drafted direction (not adopted): duplicate partition candidate resolution rules.",
+        "Dedicated binary-layout, compatibility, versioning, parser, encoder, and test vector review is required before any partition wire model change is adopted."
+      ],
+      "relationships": {
+        "related_findings": [
+          "M13-COLD-001",
+          "M13-SPEC-002",
+          "M13-SPEC-003",
+          "M13-SPEC-005",
+          "M13-SPEC-007"
+        ]
+      }
+    },
+    {
+      "id": "M13-SPEC-005",
+      "title": "Fragment LFH field presence and consistency rules are incomplete",
+      "finding_type": "specification_gap",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "wire_format",
+        "interoperability",
+        "parser",
+        "transform",
+        "fec",
+        "recovery"
+      ],
+      "status": "pending_normative_resolution",
+      "severity": "not_applicable",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "The specification does not classify every conditional LFH field according to whether it appears only in Fragment Index 0, appears in every fragment, must equal Fragment Index 0 when repeated, or may legitimately vary per fragment.",
+      "current_behavior": "The M13-EXTRACT-005 resolution establishes that one Fragment ID identifies one Entry and that later Name String and Path String values must match Fragment Index 0, but the corresponding presence, inheritance, equality, variability, validation, and error rules for the remaining LFH fields are not comprehensively defined.",
+      "normative_question": "For every LFH field and conditional field group, what are the required presence, absence, inheritance, equality, variability, reconstruction scope, and conflict-error semantics across Fragment Index values?",
+      "affected_artifacts": [
+        "specification.md"
+      ],
+      "evidence": [
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 6.1.2 `Fragment Descriptor Semantics`, FILE_FRAGMENTATION Global Flag Bit 4, Fragment ID and Fragment Index LFH fields",
+          "description": "Section 6.1.2 defines Fragment Descriptor semantics and states that all LFHs sharing the same Fragment ID belong to the same logical object, but does not classify each conditional LFH field by its presence and equality rules across Fragment Index values."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 19.4 `Fragment Reassembly`, Name/Path Persistence note, Fragment Index 0 requirements",
+          "description": "Section 19.4 states that only Fragment Index 0 is required to carry Name String and Path String and that subsequent fragments SHOULD set Name Length to 0, but does not normatively define equality requirements, inheritance rules, or SAR_ERR_METADATA_CONFLICT behavior for other repeated fields."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 10 `Error and Status Mapping`, SAR_ERR_METADATA_CONFLICT (value 41)",
+          "description": "SAR_ERR_METADATA_CONFLICT is defined for conflicting or mutually exclusive metadata, but the conditions under which it applies to fragment LFH field conflicts are not fully enumerated."
+        }
+      ],
+      "compatibility_impact": "unknown_pending_resolution",
+      "resolution_owner": "M13a.7",
+      "verification": {
+        "test_requirement": "pending_normative_resolution"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-EXTRACT-005",
+          "M13-SPEC-004",
+          "M13-SPEC-007"
+        ]
+      }
+    },
+    {
+      "id": "M13-SPEC-006",
+      "title": "Compliance Profile umbrella terminology requires explicit normative adoption",
+      "finding_type": "specification_gap",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "conformance",
+        "documentation",
+        "profile_boundary"
+      ],
+      "status": "pending_normative_resolution",
+      "severity": "not_applicable",
+      "priority": "low",
+      "confidence": "confirmed",
+      "summary": "The term Compliance Profile is intended as the normative umbrella term for the three existing specification-defined implementation capability profiles, but this terminology has not yet been explicitly adopted and must not be inferred from the disposition of M13-TRANSFORM-001.",
+      "current_behavior": "Section 12 defines the Minimal Interoperable Archive Profile, Minimal Interoperable Streaming Profile, and the Standard Compliance Profile, but the shared umbrella terminology and its distinction from repository presets, product modes, installation profiles, transport profiles, and algorithm-specific profiles are not yet explicitly defined.",
+      "normative_question": "Should Compliance Profile be introduced as the umbrella term for the three existing specification-defined implementation capability profiles without renaming them or altering their requirements or wire representation?",
+      "affected_artifacts": [
+        "specification.md"
+      ],
+      "evidence": [
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 12 `Compliance Profiles`, Section 12.1 `Standard Compliance Profile`, Section 12.2 `Minimal Interoperable Archive Profile`, Section 12.3 `Minimal Interoperable Streaming Profile`",
+          "description": "Section 12 is titled 'Compliance Profiles' and defines three profiles: the Standard Compliance Profile (Section 12.1), the Minimal Interoperable Archive Profile (Section 12.2), and the Minimal Interoperable Streaming Profile (Section 12.3). The umbrella term 'Compliance Profile' appears as a section title but is not explicitly introduced as a normative term that exclusively designates these three specification-defined capability profiles."
+        }
+      ],
+      "compatibility_impact": "clarification_only",
+      "resolution_owner": "M13a.7",
+      "verification": {
+        "test_requirement": "pending_normative_resolution"
+      },
+      "notes": [
+        "Introducing 'Compliance Profile' as a normative umbrella term is intended to clarify that repository presets, product modes, installation profiles, transport profiles, and algorithm-specific profiles are not Compliance Profiles.",
+        "No renaming of the existing three profiles is intended; 'Standard Compliance Profile', 'Minimal Interoperable Archive Profile', and 'Minimal Interoperable Streaming Profile' remain the canonical names.",
+        "No new encoded compliance-profile identifier in the SAR wire format is intended.",
+        "This finding must be resolved independently of M13-TRANSFORM-001 and must not be marked resolved simply because M13-TRANSFORM-001 is resolved."
+      ],
+      "relationships": {
+        "related_findings": [
+          "M13-TRANSFORM-001",
+          "M13-SPEC-003"
+        ]
+      }
+    },
+    {
+      "id": "M13-SPEC-007",
+      "title": "Error and status registry lacks a coherent taxonomy and allocation model",
+      "finding_type": "specification_gap",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "error_handling",
+        "interoperability",
+        "public_api",
+        "compatibility"
+      ],
+      "status": "pending_normative_resolution",
+      "severity": "not_applicable",
+      "priority": "medium",
+      "confidence": "confirmed",
+      "summary": "The error and status registry has grown in chronological allocation order and does not yet define a stable category taxonomy, allocation policy, semantic context model, warning model, or reserved ranges for future expansion.",
+      "current_behavior": "Existing symbolic and numeric status values are defined in one registry, but related errors are not consistently grouped by context and several newly identified normative behaviors require final symbolic names, semantic boundaries, and numeric assignments.",
+      "normative_question": "What category taxonomy, numeric allocation ranges, symbolic names, semantic scopes, warning rules, future reservation policy, and compatibility strategy should govern the SAR error and status registry?",
+      "affected_artifacts": [
+        "specification.md"
+      ],
+      "evidence": [
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 10 `Error and Status Mapping`, full status code table (values 0 through 52)",
+          "description": "Section 10 defines 54 status values (SAR_OK through SAR_ERR_TOO_MANY_STREAMS) allocated in approximately chronological order. Related errors (e.g., SAR_ERR_FRAGMENT_GAP at 14 and SAR_ERR_FRAGMENT_TIMEOUT at 17) are not adjacent. No category taxonomy, reserved range, or allocation policy is defined."
+        },
+        {
+          "kind": "specification",
+          "artifact": "specification.md",
+          "locator": "Section 10 `Error and Status Mapping`, SAR_ERR_UNSUPPORTED (7) and SAR_ERR_MALFORMED (23) semantic scope paragraphs",
+          "description": "Section 10 provides additional semantic scope paragraphs for SAR_ERR_UNSUPPORTED and SAR_ERR_MALFORMED to guide correct usage, but these are the only two values with explicit scope guidance. Semantic boundaries for other values (especially SAR_WARN_INCOMPLETE at 18) are not defined."
+        }
+      ],
+      "compatibility_impact": "unknown_pending_resolution",
+      "resolution_owner": "M13a.7",
+      "verification": {
+        "test_requirement": "pending_normative_resolution"
+      },
+      "notes": [
+        "Numeric identity of finalized status values is normative; once a value is finalized it must not be renumbered.",
+        "Category organization must not create implicit range-based semantics unless explicit guaranteed numeric ranges are defined in the specification.",
+        "The review may renumber provisional values because no independent SAR implementation exists yet; this window closes once an independent implementation ships.",
+        "The review must cover statuses required by parser, extraction, KMS, unsupported-skip, fragmentation, and partition normative decisions.",
+        "Internal validation order remains implementation-defined unless normative resolution determines that a specific order affects interoperability."
+      ],
+      "relationships": {
+        "related_findings": [
+          "M13-PARSER-004",
+          "M13-EXTRACT-005",
+          "M13-SPEC-003",
+          "M13-SPEC-004",
+          "M13-SPEC-005"
+        ]
       }
     }
   ],
