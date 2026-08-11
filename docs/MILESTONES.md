@@ -911,8 +911,6 @@ If this milestone document appears to describe library/profile layout differentl
 * update `SECURITY.md` where security posture changed
 * ensure documentation distinguishes current behavior, planned hardening, and future profile policy
 
-# Current and future milestones
-
 ## M13a.1: parser, memory, panic, and DoS audit
 
 * audit Global Header, LFH, TLV, Central Dictionary, Footer, `ArchiveReader`, and `StreamArchiveParser` structural parsing
@@ -987,26 +985,19 @@ If this milestone document appears to describe library/profile layout differentl
 * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
 * record findings, accepted design risks, and specification gaps in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
 
+# Current and future milestones
+
 ## M13a.7: specification gap triage and normative resolution
 
-Audit registry: `docs/machine-readable/M13_AUDIT_FINDINGS.json` scope `M13a.7`.
+* triage and resolve M13 findings that require normative specification decisions
+* establish deterministic cross-implementation behavior for indexed archives, `NO_INDEX` archives, partitioned archives, and Stateful Streaming Mode
+* resolve specification gaps covering parser semantics, extraction and logical-state behavior, Compliance Profiles, cryptographic interoperability, partitioning, fragmentation, and error/status semantics
+* incorporate accepted clarification, behavioral, and wire-format changes into `specification.md` and maintain affected normative cross-references
+* document each normative decision, compatibility impact, implementation impact, and verification expectation in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
+* track materially distinct gaps as separate findings and assign resulting implementation and test remediation to the applicable M13b milestone
+* complete a final normative consistency and implementation-impact review before M13a.7 is closed
+* limit implementation changes to documentation or source cross-reference corrections directly required by specification changes
 
-Objectives:
-
-* `M13a.7-OBJ-01` — triage and classify specification gaps
-* `M13a.7-OBJ-02` — resolve parser and extraction semantics
-* `M13a.7-OBJ-03` — resolve profile taxonomy and terminology
-* `M13a.7-OBJ-04` — complete compliance and KMS interoperability baseline
-* `M13a.7-OBJ-05` — resolve partition wire architecture
-* `M13a.7-OBJ-06` — classify fragmented LFH field semantics
-* `M13a.7-OBJ-07` — reorganize error and status registry
-* `M13a.7-OBJ-08` — perform final normative consistency and implementation-impact review
-
-Constraints:
-
-* do not implement code remediation in this milestone
-* do not silently resolve specification gaps through implementation choices
-* assign resulting implementation and test work to the applicable M13b milestone
 
 ## M13b.1: parser, resource, and parser-fuzzing remediation
 
