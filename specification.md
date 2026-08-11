@@ -51,6 +51,10 @@ The following terminology is used throughout this specification:
 
 * **Structural Determinism:** The property that the presence, ordering, and interpretation of encoded fields are derived exclusively from the Global Flags and Entry Mode bits defined by this specification without heuristic interpretation.
 
+* **Compliance Profile:** A normative implementation capability baseline. A Compliance Profile is not encoded in an archive or stream and does not alter the SAR wire representation.
+
+* **Guaranteed Interoperability Baseline:** The mandatory features, algorithms, KMS modes, parameter ranges, and combinations that every conforming implementation of the same Compliance Profile and applicable role is required to support.
+
 Unless explicitly specified otherwise, references to "objects" within this document refer to Application Data Objects.
 
 ### 2.2 Data Representation
@@ -92,6 +96,8 @@ Many existing formats and protocols permit optional algorithms, feature subsets,
 SAR addresses this by defining explicit compliance profiles together with mandatory-to-implement behaviors and algorithm subsets.
 
 Implementations conforming to the same compliance profile can therefore process the same Application Data Objects without requiring prior capability negotiation while remaining extensible through optional features and future extensions.
+
+This guarantee applies when the encoded output uses only the mandatory features, algorithms, KMS modes, parameter ranges, and combinations of the claimed Compliance Profile. Assigned optional identifiers remain assigned SAR identifiers. Encoded use of an optional construction is valid SAR only where this specification defines its complete normative construction. Valid optional constructions remain outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile makes them mandatory.
 
 ### Security and Integrity
 
@@ -196,9 +202,9 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 #### 5.3.1 KMS_DATA Structure
 | Field | Size | Description |
 | --- | --- | --- |
-| **KMS Mode ID** | 1B | Defines the method (See 3.3.2). |
+| **KMS Mode ID** | 1B | Defines the method (See Section 5.3.2). |
 | **KMS Payload Length**| 4B | Size of the following payload in bytes. |
-| **KMS Payload** | Var | Mode-specific parameters (See 3.3.3). |
+| **KMS Payload** | Var | Mode-specific parameters (See Section 5.3.3). |
 
 **Rules for KMS Parsing:**
 * **Total Size**: The total size of the Global Header with KMS is `13 + Flags Size + KMS Payload Length` bytes.
@@ -223,37 +229,38 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 * If a CUSTOM mode is encountered and not supported, implementations MUST return `SAR_ERR_UNSUPPORTED`.
 
 #### 5.3.3 Mode-Specific Payload Structures
+
 **Mode 0x01 - PBKDF2**
 | Field | Size | Description |
 | --- | --- | --- |
 | PRF Algo ID | 1B | 0x01: HMAC-SHA256, 0x02: HMAC-SHA512, 0x03: HMAC-SHA3-256. |
-| Salt Length | 1B | MUST be ≥ 16. |
+| Salt Length | 1B | Length of Salt in bytes. |
 | Salt | Var | Random binary salt. |
-| Iterations | 4B | MUST be ≥ 100,000. |
-| Derived Key Length | 2B | MUST match encryption algorithm requirements. |
+| Iterations | 4B | PBKDF2 iteration count. |
+| Derived Key Length | 2B | MUST match the selected encryption algorithm requirements. |
 
 **Mode 0x02 - ARGON2**
 | Field | Size | Description |
 | --- | --- | --- |
 | Argon2 Variant | 1B | 0x01: Argon2d, 0x02: Argon2i, 0x03: Argon2id. |
-| Version | 1B | 0x13 RECOMMENDED. |
-| Salt Length | 1B | MUST be ≥ 16. |
+| Version | 1B | Argon2 version identifier. |
+| Salt Length | 1B | Length of Salt in bytes. |
 | Salt | Var | Random binary salt. |
-| Memory Cost (KiB) | 4B | MUST be ≥ 64 MiB. |
+| Memory Cost (KiB) | 4B | Argon2 memory cost in KiB. |
 | Time Cost | 4B | Number of passes. |
-| Parallelism | 2B | Number of threads. |
-| Derived Key Length | 2B | MUST match algorithm requirements. |
+| Parallelism | 2B | Number of Argon2 lanes. |
+| Derived Key Length | 2B | MUST match the selected encryption algorithm requirements. |
 
 **Mode 0x03 - ASYMMETRIC_WRAP**
 | Field | Size | Description |
 | --- | --- | --- |
 | Wrap Algo ID | 1B | 0x01: RSA-OAEP-2048, 0x02: RSA-OAEP-4096, 0x03: X25519, 0x04: ML-KEM-768, 0x05: ML-KEM-1024. |
-| Recipient Count | 1B | MUST be ≥ 1. |
+| Recipient Count | 1B | Number of recipient records. |
 | *Recipient Loop* | - | Repeat per Recipient: |
 | - Recipient ID Len | 1B | Length of ID. |
-| - Recipient ID | Var | Key ID / Fingerprint. |
+| - Recipient ID | Var | Key ID or fingerprint. |
 | - Wrapped Key Len | 2B | Length of wrapped blob. |
-| - Wrapped Key Blob | Var | The Wrapped Master Key. |
+| - Wrapped Key Blob | Var | The wrapped master key. |
 
 **Mode 0x04 - TLS_EXPORTER**
 | Field                      | Size | Description                                                                |
@@ -269,9 +276,101 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 | Derived Key Length         | 2B   | MUST match the selected AEAD algorithm requirements.                       |
 | Flags                      | 2B   | Profile flags; reserved bits MUST be zero.                                 |
 
+An implementation claiming support for KMS Mode `0x04 TLS_EXPORTER` MUST implement the TLS_EXPORTER SAR AEAD profile defined in Section 18.6.
 
+#### 5.3.4 KMS Mode Processing Requirements
 
-#### 5.3.4 The Partition Descriptor
+##### PBKDF2
+
+Salt Length MUST be at least 16 bytes.
+
+Iterations MUST be at least 100000.
+
+Implementations claiming a SAR Compliance Profile that requires PBKDF2 support MUST support PRF Algo ID `0x01` and all valid parameter combinations within the following ranges:
+
+* Salt Length from 16 through 64 bytes inclusive;
+* Iterations from 100000 through 600000 inclusive; and
+* every Derived Key Length required by the mandatory encryption algorithms of the claimed Compliance Profile.
+
+A decoder claiming such profile support MUST process every valid parameter combination within these ranges.
+
+An encoder producing output within a Compliance Profile's Guaranteed Interoperability Baseline MAY select any valid parameter combination within these ranges.
+
+General-purpose encoders SHOULD use at least 600000 iterations.
+
+Implementations MAY support additional PRFs and parameter values. Output using valid parameters outside the mandatory interoperable ranges remains valid SAR but is outside the Guaranteed Interoperability Baseline unless another applicable profile makes those parameters mandatory.
+
+Before beginning derivation, an implementation MUST apply configured resource limits to Iterations, Salt Length, and Derived Key Length.
+
+If a syntactically valid PBKDF2 parameter set exceeds those limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because the valid work factor exceeds the mandatory interoperable range.
+
+Syntactically invalid, reserved, malformed, or inconsistent parameters MUST return the most specific applicable structural, length, bounds, or reserved-value error.
+
+##### ARGON2
+
+Salt Length MUST be at least 16 bytes.
+
+Memory Cost, Time Cost, and Parallelism MUST be greater than zero.
+
+Implementations claiming a SAR Compliance Profile that requires Argon2id support MUST support Argon2 Variant `0x03`, Version `0x13`, and all valid parameter combinations within the following ranges:
+
+* Memory Cost from 19456 KiB through 65536 KiB inclusive;
+* Time Cost from 2 through 3 inclusive;
+* Parallelism from 1 through 4 inclusive;
+* Salt Length from 16 through 64 bytes inclusive; and
+* every Derived Key Length required by the mandatory encryption algorithms of the claimed Compliance Profile.
+
+A decoder claiming such profile support MUST process every valid parameter combination within these ranges.
+
+An encoder producing Argon2id output within a Compliance Profile's Guaranteed Interoperability Baseline MAY select any valid parameter combination within these ranges.
+
+Implementations SHOULD additionally support the applicable recommended Argon2id configurations defined by RFC 9106.
+
+General-purpose encoders SHOULD select an RFC 9106 recommended configuration when the intended processing environment can provide the required memory and processing resources.
+
+Implementations MAY support valid Argon2 variants, versions, and parameter values outside these ranges. Such output remains valid SAR but is outside the Guaranteed Interoperability Baseline unless another applicable profile makes those values mandatory.
+
+Before beginning derivation, an implementation MUST apply configured resource limits to Memory Cost, Time Cost, Parallelism, Salt Length, and Derived Key Length.
+
+If a syntactically valid Argon2 parameter set exceeds those limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because valid parameters exceed the mandatory interoperable range.
+
+Syntactically invalid, reserved, malformed, or inconsistent parameters MUST return the most specific applicable structural, length, bounds, or reserved-value error.
+
+##### ASYMMETRIC_WRAP
+
+KMS Mode `0x03 ASYMMETRIC_WRAP` is OPTIONAL for every SAR Compliance Profile.
+
+An implementation MUST NOT claim support for KMS Mode `0x03 ASYMMETRIC_WRAP` unless it supports Wrap Algo ID `0x01` (`RSA-OAEP-2048`) according to the complete construction in this subsection.
+
+Recipient Count MUST be at least 1. Recipient ID Len and Wrapped Key Len MUST be greater than zero for every recipient. Every recipient record and Wrapped Key Blob MUST be fully contained within KMS Payload Length.
+
+Recipient ID is an opaque, non-secret identifier for the recipient public key. Its namespace and resolution mechanism are selected by the caller or key-management environment. Encoders and decoders MUST preserve Recipient ID bytes exactly and MUST NOT infer a key format from those bytes.
+
+Wrap Algo ID `0x01` uses RSAES-OAEP with:
+
+* an RSA modulus of exactly 2048 bits;
+* SHA-256 as the OAEP digest;
+* MGF1 with SHA-256 as the mask generation function;
+* the empty byte string as the OAEP label; and
+* no optional or implementation-defined OAEP parameters.
+
+The OAEP plaintext MUST be exactly the master-key bytes. It MUST contain no length prefix, algorithm identifier, padding field, or additional context. Its length MUST equal the encryption key length required by the selected SAR encryption algorithm.
+
+Wrapped Key Len MUST equal 256. Wrapped Key Blob MUST contain the RSA ciphertext as an unsigned 256-byte big-endian octet string.
+
+An encoder claiming support for this mode MUST be able to produce conforming recipient records using Wrap Algo ID `0x01`. A decoder claiming support for this mode MUST be able to consume conforming recipient records using Wrap Algo ID `0x01`.
+
+An implementation exposing both encoder and decoder roles for this mode MUST decode every Wrap Algo ID and parameter combination that it emits.
+
+Failure to locate a recipient key matching any Recipient ID MUST return `SAR_ERR_KEY_MISSING`.
+
+OAEP decoding failure, recovered-key length mismatch, or use of an incompatible recipient key MUST return `SAR_ERR_KEY_REJECTED`. An implementation MUST NOT expose which internal RSA-OAEP validation step failed.
+
+Wrap Algo IDs `0x02` (`RSA-OAEP-4096`), `0x03` (`X25519`), `0x04` (`ML-KEM-768`), and `0x05` (`ML-KEM-1024`) are assigned but their complete interoperable wrapping constructions are not defined by SAR version 1.0. A conforming encoder MUST NOT emit those identifiers. A decoder encountering one of those assigned identifiers MUST return `SAR_ERR_UNSUPPORTED`.
+
+An implementation encountering a reserved or unassigned Wrap Algo ID MUST return `SAR_ERR_RESERVED_VALUE`.
+
+#### 5.3.5 The Partition Descriptor
 The Partition Descriptor Extension is present only when Global Flag Bit 3 (`PARTITIONED_ARCHIVE`) is set.
 
 The Partition Descriptor provides archive-set identification, partition ordering, and partition integrity metadata required to reconstruct a partitioned SAR archive independently of file naming conventions, storage backends, or transport mechanisms.
@@ -2179,7 +2278,7 @@ Standardized status, warning, and error return values for SAR API implementation
 | 15 | `SAR_ERR_REASSEMBLY_BUFFER_FULL` | Reassembly buffers exceeded implementation-supported limits. |
 | 16 | `SAR_ERR_PARTITION_MISMATCH` | Partition identifier, UUID, archive identifier, or magic value does not match the expected archive set. |
 | 17 | `SAR_ERR_FRAGMENT_TIMEOUT` | Required fragment did not arrive before the configured timeout expired. |
-| 18 | `SAR_WARN_INCOMPLETE` | Non-fatal warning: object reconstructed with missing fragments, missing data, or degraded recovery quality. |
+| 18 | `SAR_WARN_INCOMPLETE` | Non-fatal warning: processing completed with missing, degraded, or intentionally skipped output. |
 | 19 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
 | 20 | `SAR_ERR_CDC_MISMATCH` | Reassembled CDC object hash does not match the declared Content Hash. |
 | 21 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
@@ -2219,16 +2318,15 @@ Standardized status, warning, and error return values for SAR API implementation
 | 55 | `SAR_ERR_PATH_ESCAPE` | During materialization, an Entry destination or effective symbolic-link target escapes the selected scope, or confinement cannot be established. |
 | 56 | `SAR_ERR_INVALID_INPUT` | Nonconforming caller-supplied input to an encoder or API operation. |
 
-
 Values in this registry MAY be used as local API return values and MAY also be carried in `SESSION_STATUS` frames where session status reporting is supported.
 
-SAR_ERR_UNSUPPORTED SHALL be returned only when a SAR-defined feature, algorithm, profile, or extension is valid according to this specification but is not implemented by the current implementation.
+`SAR_ERR_UNSUPPORTED` SHALL be returned only when a SAR-defined feature, algorithm, profile, or extension is valid according to this specification but is not implemented by the current implementation.
 
 Reserved, malformed, prohibited, or syntactically invalid values SHALL use the corresponding specific error codes defined in this section.
 
-If an implementation encounters archive behavior, field combinations, or value semantics not defined by this specification, it MUST NOT infer semantics. The implementation MUST fail closed and return the most specific applicable error code. If no more specific error code applies, it MUST return SAR_ERR_MALFORMED.
+If an implementation encounters archive behavior, field combinations, or value semantics not defined by this specification, it MUST NOT infer semantics. The implementation MUST fail closed and return the most specific applicable error code. If no more specific error code applies, it MUST return `SAR_ERR_MALFORMED`.
 
-If the behavior is defined by a valid but unsupported SAR extension, implementations MUST return SAR_ERR_UNSUPPORTED.
+If the behavior is defined by a valid but unsupported SAR extension, implementations MUST return `SAR_ERR_UNSUPPORTED`.
 
 ## 11. Abstract Stream Processing Model
 ### 11.1 SAR Byte Stream Definition
@@ -2304,18 +2402,44 @@ are defined exclusively in:
 
 Implementations **MUST NOT** conflate the SAR Byte Stream model defined in this section with Stateful Streaming semantics defined in Section 18.
 
-
 ## 12. Compliance Profiles
 
-SAR defines multiple compliance profiles to facilitate interoperability across implementations ranging from resource-constrained embedded systems to full-featured archival and replication platforms.
+SAR Compliance Profiles define normative implementation capability baselines. They are not encoded archive or stream profiles, do not alter the SAR wire representation, and are not selected by archive or stream metadata.
 
-All profiles remain bitstream-compatible and SHALL follow the parsing, validation, security, and error-handling requirements defined elsewhere in this specification.
+All Compliance Profiles remain bitstream-compatible and SHALL follow the parsing, validation, security, and error-handling requirements defined elsewhere in this specification.
 
-### 12.1 Standard Compliance Profile
+A Compliance Profile may be claimed for one of the following roles:
 
-The Standard Compliance Profile represents a fully conformant SAR implementation.
+* an encoder-only implementation;
+* a decoder-only implementation; or
+* an encoder-decoder implementation.
 
-A Standard implementation MUST satisfy all requirements of both the Minimal Interoperable Archive Profile (Section 12.2) and the Minimal Interoperable Streaming Profile (Section 12.3).
+An encoder-only implementation MUST implement every mandatory encoding behavior applicable to its claimed Compliance Profile. It is not required to contain a decoder when its conformance claim is explicitly role-qualified.
+
+A decoder-only implementation MUST implement every mandatory decoding behavior applicable to its claimed Compliance Profile.
+
+An encoder-decoder implementation MUST satisfy both the encoder-only and decoder-only requirements of its claimed Compliance Profile.
+
+It MUST decode every optional algorithm, KMS mode, parameter value, and parameter combination that its encoder role can emit.
+
+An encoder-decoder implementation MAY implement decoding support for algorithms, KMS modes, parameter values, or parameter combinations that its encoder role does not emit.
+
+Additional decoder support does not require the encoder role to emit those constructions and does not place those constructions within the Guaranteed Interoperability Baseline.
+
+Conformance claims SHOULD identify both the Compliance Profile and the implemented role, for example `Minimal Interoperable Archive Profile encoder-only implementation`, `Minimal Interoperable Archive Profile decoder-only implementation`, or `Minimal Interoperable Archive Profile encoder-decoder implementation`.
+
+The Guaranteed Interoperability Baseline of a Compliance Profile consists of its mandatory features, algorithms, KMS modes, parameter ranges, and required combinations.
+
+Every conforming same-profile decoder of the applicable role MUST process conforming output within that Guaranteed Interoperability Baseline without returning `SAR_ERR_UNSUPPORTED`.
+
+An implementation MAY support and emit assigned optional algorithms, KMS modes, and parameters when this specification defines their complete normative construction and the implementation implements that construction. Such output remains valid SAR but is outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile makes the construction mandatory. Negotiated, configured, or otherwise known support may permit interoperable use of an optional construction but does not expand the Guaranteed Interoperability Baseline. The writer implementation remains profile-conforming, but the output MUST NOT be represented as guaranteed consumable by every implementation claiming that Compliance Profile.
+
+
+### 12.1 Standard Interoperable Profile
+
+The Standard Interoperable Profile represents a fully conformant SAR implementation for its claimed role.
+
+A Standard implementation MUST satisfy all requirements of both the Minimal Interoperable Archive Profile (Section 12.2) and the Minimal Interoperable Streaming Profile (Section 12.3) applicable to that role.
 
 In addition, Standard implementations MUST support all SAR-defined core feature sets defined by this specification as listed below:
 
@@ -2329,23 +2453,28 @@ In addition, Standard implementations MUST support all SAR-defined core feature 
 * Digital Signatures
 * Data Integrity Hashing
 * LOSS_TOLERANT processing according to Section 19.4.5.
-* FEC / Recovery encoding and decoding according to sections 6.1.4 and 9.2
+* FEC / Recovery encoding and decoding according to Sections 6.1.4 and 9.2
 
-The following algorithms MUST be supported:
+The following algorithms and KMS modes MUST be supported for the applicable role:
 
-| Feature        | Required Algorithms                                  |
-| -------------- | ---------------------------------------------------- |
-| Compression    | STORE (`0x00`), DEFLATE (`0x01`), ZSTD (`0x02`)      |
-| Encryption     | AES256_GCM (`0x01`), XCHACHA20_POLY (`0x04`)         |
-| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)                  |
-| CDC            | FASTCDC (`0x02`)                                     |
-| Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)                |
-| Signatures     | Ed25519 (raw) (`0x24`), RSA-PSS (ASN.1-DER) (`0x23`) |
-| Hashing        | SHA256 (`0x30`), BLAKE3 (`0x31`)                     |
+| Feature        | Required Algorithms or Modes                           |
+| -------------- | ------------------------------------------------------ |
+| Compression    | STORE (`0x00`), DEFLATE (`0x01`), ZSTD (`0x02`)        |
+| Encryption     | AES256_GCM (`0x01`), XCHACHA20_POLY (`0x04`)           |
+| KMS            | PBKDF2 (`0x01`), ARGON2 with Argon2id (`0x02`)         |
+| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)                    |
+| CDC            | FASTCDC (`0x02`)                                       |
+| Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)                  |
+| Signatures     | Ed25519 (raw) (`0x24`), RSA-PSS (ASN.1-DER) (`0x23`)   |
+| Hashing        | SHA256 (`0x30`), BLAKE3 (`0x31`)                       |
+
+Standard PBKDF2 support MUST satisfy Section 5.3.4, including HMAC-SHA256 and every valid combination in the mandatory PBKDF2 parameter ranges.
+
+Standard ARGON2 support MUST satisfy Section 5.3.4, including Argon2id Variant `0x03`, Version `0x13`, and every valid combination in the mandatory Argon2id parameter ranges.
 
 Additional algorithms defined by this specification MAY be implemented.
 
-Algorithms not listed as required for the Standard Compliance Profile are OPTIONAL unless explicitly designated as mandatory elsewhere in this specification.
+Algorithms not listed as required for the Standard Interoperable Profile are OPTIONAL unless explicitly designated as mandatory elsewhere in this specification.
 
 Implementations encountering assigned but unsupported optional algorithms MUST return `SAR_ERR_UNSUPPORTED`.
 
@@ -2359,37 +2488,43 @@ For Stateful Streaming Mode (Section 18), Standard implementations SHOULD suppor
 
 The Minimal Interoperable Archive Profile is intended for resource-constrained systems that require SAR archive interoperability but do not require Stateful Streaming Mode.
 
-A Minimal Interoperable Archive implementation MUST implement:
+A Minimal Interoperable Archive implementation MUST implement the following behavior applicable to its claimed role:
 
-1. LFH Parsing and validation.
+1. LFH parsing, production, and validation.
 2. Header Size and Payload Size processing.
 3. Sequential archive processing.
 4. Central Dictionary processing when present.
 5. NO_INDEX archive processing.
-6. Filename extraction.
+6. Filename extraction or encoding.
 7. Error code mappings applicable to implemented features.
 8. Flag dependency validation.
-9. AEAD authentication verification according to Section 13.2.
+9. AEAD authentication generation or verification according to Section 13.2.
 
-The following algorithms MUST be supported:
+The following algorithms and KMS modes MUST be supported for the applicable role:
 
-| Feature     | Required Algorithms              |
-| ----------- | -------------------------------- |
-| Compression | STORE (`0x00`), DEFLATE (`0x01`) |
-| Encryption  | AES256_GCM (`0x01`)              |
+| Feature     | Required Algorithms or Modes       |
+| ----------- | ---------------------------------- |
+| Compression | STORE (`0x00`), DEFLATE (`0x01`)   |
+| Encryption  | AES256_GCM (`0x01`)                |
+| KMS         | PBKDF2 (`0x01`) with HMAC-SHA256   |
+
+PBKDF2 support MUST satisfy Section 5.3.4, including every valid combination in the mandatory PBKDF2 parameter ranges and every Derived Key Length required by AES256_GCM.
 
 Support for ZSTD (`0x02`) is RECOMMENDED but OPTIONAL.
+
+Argon2id, TLS, TLS_EXPORTER, and ASYMMETRIC_WRAP are not required by this profile.
 
 Stateful Streaming Mode (Section 18) is OPTIONAL.
 
 ### 12.3 Minimal Interoperable Streaming Profile
 
 The Minimal Interoperable Streaming Profile is intended for resource-constrained systems that require real-time replication and streaming but do not require support for archive-oriented SAR features.
+
 The Minimal Interoperable Streaming Profile is not a subset of the Minimal Interoperable Archive Profile and is optimized for interoperability within Stateful Streaming Mode (Section 18) rather than general-purpose archival processing.
 
-A Minimal Interoperable Streaming implementation MUST implement:
+A Minimal Interoperable Streaming implementation MUST implement the following behavior applicable to its claimed role:
 
-1. LFH Parsing and validation.
+1. LFH parsing, production, and validation.
 2. Header Size and Payload Size processing.
 3. NO_INDEX stream processing.
 4. Stream ID handling.
@@ -2397,26 +2532,31 @@ A Minimal Interoperable Streaming implementation MUST implement:
 6. SESSION_INIT processing.
 7. SESSION_CLOSE processing.
 8. SESSION_HEARTBEAT processing.
-9. SESSION_CAPABILITIES processing
+9. SESSION_CAPABILITIES processing.
 10. Session timeout handling.
 11. Stream state validation.
 12. Error code mappings applicable to implemented features.
 13. Flag dependency validation.
-14. AEAD authentication verification according to Section 13.2.
-15. Forward Error Correction (FEC) encoding and decoding.
-16. Delta patch processing.
+14. AEAD authentication generation or verification according to Section 13.2.
+15. Forward Error Correction encoding or decoding.
+16. Delta patch encoding or processing.
 17. `LOSS_TOLERANT` processing according to Section 19.4.5.
 18. Fragmentation according to Sections 19.2 and 19.5.
 19. Sparse file reconstruction according to Sections 17 and 19.6.
 
-The following algorithms MUST be supported:
+The following algorithms and KMS modes MUST be supported for the applicable role:
 
-| Feature        | Required Algorithms                 |
-| -------------- | ----------------------------------- |
-| Compression    | STORE (`0x00`), DEFLATE (`0x01`)    |
-| Encryption     | AES256_GCM (`0x01`)                 |
-| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`) |
-| Delta | STORE_PATCH (`0x00`), VCDIFF (`0x01`) |
+| Feature        | Required Algorithms or Modes       |
+| -------------- | ---------------------------------- |
+| Compression    | STORE (`0x00`), DEFLATE (`0x01`)   |
+| Encryption     | AES256_GCM (`0x01`)                |
+| KMS            | PBKDF2 (`0x01`) with HMAC-SHA256   |
+| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)|
+| Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)|
+
+PBKDF2 support MUST satisfy Section 5.3.4, including every valid combination in the mandatory PBKDF2 parameter ranges and every Derived Key Length required by AES256_GCM.
+
+PBKDF2 remains mandatory because SAR-over-TCP without TLS is a valid baseline transport binding.
 
 Minimal Interoperable Streaming implementations MUST support `LOSS_TOLERANT` Entry Mode semantics as defined in Sections 6.2.2 and 19.4.5.
 
@@ -2447,19 +2587,33 @@ Other transport bindings MAY be implemented, but support for such bindings does 
 
 ### 12.4 Unsupported Features
 
-Implementations MAY support only the features required by their selected compliance profile.
+An implementation MAY support assigned optional SAR features, algorithms, KMS modes, and parameter values in addition to those required by its claimed Compliance Profile when this specification defines the complete normative construction required for their use.
 
-If an implementation supports a feature but encounters an assigned algorithm identifier that is not implemented by the selected profile, it MUST return `SAR_ERR_UNSUPPORTED`.
+A valid optional feature, algorithm, KMS mode, or parameter combination whose complete normative construction is defined by this specification but is not implemented locally MUST result in `SAR_ERR_UNSUPPORTED`, unless a more specific applicable error exists.
 
-If an implementation encounters a reserved algorithm identifier, it MUST return `SAR_ERR_RESERVED_VALUE`.
+A reserved or unassigned identifier MUST result in `SAR_ERR_RESERVED_VALUE`.
 
-If an implementation encounters a valid SAR feature that is not implemented by the selected profile, it MUST return `SAR_ERR_UNSUPPORTED`, unless a more specific error code applies.
+A conforming decoder MUST NOT return `SAR_ERR_UNSUPPORTED` for conforming input within the Guaranteed Interoperability Baseline of its claimed Compliance Profile and applicable role.
 
-If the size of an unsupported structure can be determined safely from the LFH and Global Flags, implementations MAY perform Transparent Skip by using the `Header Size` and `Payload Size` fields without interpreting the skipped metadata.
+Ordinary decoding, verification, reconstruction, extraction, materialization, or state application MUST fail closed when a selected Entry requires an unsupported transformation. Such a transformation MUST NOT be silently skipped.
 
-Transparent Skip MUST NOT be used for transformations required to reconstruct payload contents, including compression, encryption, delta patching, CDC reconstruction, or Forward Error Correction (FEC) encoding and decoding.
+If the size and end position of an unsupported structure can be determined safely from the Global Flags, `Header Size`, `Payload Size`, and applicable structural rules, an implementation MAY continue structural parsing without interpreting or reconstructing the unsupported contents. This behavior is called Transparent Skip.
 
-Unknown or reserved structural features MUST NOT be skipped and MUST result in `SAR_ERR_UNSUPPORTED`, `SAR_ERR_RESERVED_VALUE`, or another more specific error code as applicable.
+Transparent Skip means only that structural parsing can continue. It does not mean that the skip is invisible to the caller and does not constitute successful decoding, verification, reconstruction, extraction, materialization, or complete state application of the affected Entry.
+
+Unknown, reserved, malformed, or structurally ambiguous features MUST NOT be skipped when their boundaries cannot be established safely. The implementation MUST return `SAR_ERR_RESERVED_VALUE`, `SAR_ERR_MALFORMED`, `SAR_ERR_INVALID_LENGTH`, `SAR_ERR_BOUNDS`, or another more specific applicable error.
+
+An implementation MAY provide an incomplete processing mode that skips selected Entries requiring assigned but unsupported SAR features or algorithms.
+
+This mode MUST NOT be enabled by default and MUST be explicitly selected by the caller before the first skip condition occurs. Archive or stream metadata MUST NOT enable this mode.
+
+An Entry MAY be skipped only when its boundaries and the location of the next structure can be determined safely.
+
+The implementation MUST identify every skipped selected Entry and the unsupported feature or algorithm that caused the skip.
+
+If one or more selected Entries are skipped, the operation MUST return `SAR_WARN_INCOMPLETE` and MUST be reported as incomplete.
+
+Implementations are not required to provide this incomplete processing mode.
 
 ## 13. Security and Integrity
 ## 13.1 Transformation Sequence (Canonical Pipeline)
@@ -3026,6 +3180,11 @@ A duplicate `SESSION_INIT` for an already-active Stream ID on the same transport
 
 The Session Flags field describes bidirectional behavior requested or required by the endpoint that transmitted `SESSION_INIT`.
 
+A sender establishing a new SAR session on an existing transport connection MUST use a Session UUID that has not previously been used for another SAR session on that transport connection.
+
+This requirement applies even when a previously closed Stream ID is reused.
+
+
 | Bit  | Name                              | Description                                                                                                                                              |
 | ---- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 0    | `BIDIRECTIONAL_CONTROL_REQUESTED` | The sender of `SESSION_INIT` can receive reverse-direction `SESSION_CONTROL` messages over the same transport connection.                                |
@@ -3259,12 +3418,19 @@ If bidirectional control is active, both endpoints SHOULD transmit `SESSION_CAPA
 
 `SESSION_CAPABILITIES` advertises support. It does not select SAR-layer AEAD, change KMS state, alter Global Flags, or override the SAR Global Header.
 
-`CAP_TLS_EXPORTER_AEAD` indicates that the transmitting endpoint supports deriving SAR-layer AEAD keying material from TLS exporter material using KMS Mode `0x04 TLS_EXPORTER`.
+`CAP_TLS_EXPORTER_AEAD` indicates that the transmitting endpoint supports deriving SAR-layer AEAD keying material using KMS Mode `0x04 TLS_EXPORTER`.
 
-KMS Mode `0x04 TLS_EXPORTER`, when selected by the SAR Global Header / KMS configuration, is authoritative for selecting TLS-exporter SAR-AEAD for that SAR stream.
+The capability does not select or enable KMS Mode `0x04 TLS_EXPORTER` for the SAR stream carrying the capability advertisement.
 
 Failure behavior for unsupported KMS Mode `0x04 TLS_EXPORTER` is defined in Section 18.6.5.
 
+`SESSION_CAPABILITIES` advertises capabilities of the transmitting endpoint. It does not select, enable, disable, or modify capabilities, KMS state, Global Flags, transformation semantics, or security modes of the SAR stream carrying the message.
+
+Capability information received from an endpoint MAY be used when configuring a subsequent SAR stream on the same transport connection, subject to application policy and the requirements of the applicable transport binding.
+
+Capability exchange MUST NOT alter the interpretation, KMS mode, or cryptographic state of an already active SAR stream.
+
+A capability-dependent property selected through the Global Header or KMS configuration can take effect only in a new SAR stream with a new Global Header.
 
 ### 18.4 Stateful Execution Semantics
 This subsection defines execution guarantees that apply **only when Stateful Streaming Mode is active (Section 18.1)**.
@@ -3322,7 +3488,17 @@ A new SAR stream MAY begin on an existing TCP connection only after the precedin
 
 If a receiver encounters an invalid or rejected SAR stream and cannot safely determine the end of that stream without fully accepting it, the receiver MUST close the TCP connection.
 
-If TLS is layered over TCP and the TLS stack exposes exporter keying material, the resulting TLS session MAY be used with KMS Mode `0x04 TLS_EXPORTER`. Endpoints that do not support KMS Mode `0x04 TLS_EXPORTER` fail closed as defined in Section 18.6.5.
+SAR-over-TCP MAY operate over plaintext TCP or over TCP protected by TLS.
+
+Support for SAR-over-TCP does not require TLS support.
+
+An implementation claiming support for TLS-exporter SAR-AEAD over SAR-over-TCP MUST support KMS Mode `0x04 TLS_EXPORTER` and the TLS_EXPORTER SAR AEAD profile defined in Section 18.6.
+
+Mutual support for TLS-exporter SAR-AEAD MAY be established through `CAP_TLS_EXPORTER_AEAD` as defined in Section 18.3.9, through explicit application or deployment configuration, through an out-of-band agreement, or through another negotiation mechanism defined by an applicable application protocol.
+
+Capability information exchanged in one SAR stream MAY be used when creating a subsequent SAR stream on the same TCP or TLS connection as defined in Section 18.3.9. Such capability exchange does not modify the KMS mode or cryptographic state of the stream carrying the capability advertisement.
+
+To enable TLS-exporter SAR-AEAD after capability exchange, the sender MUST begin a new SAR stream with a new Global Header selecting KMS Mode `0x04 TLS_EXPORTER`.
 
 If TCP is not protected by TLS, KMS Mode `0x04 TLS_EXPORTER` MUST NOT be used.
 
@@ -3401,7 +3577,7 @@ A stream-local error SHOULD NOT require closing the entire QUIC connection unles
 
 Termination of a SAR session MUST unbind the SAR Stream ID and Session UUID on that QUIC connection and MUST cause QUIC streams associated exclusively with that SAR session to be closed, reset, drained, or disassociated according to transport policy.
 
-SAR-over-QUIC endpoints SHOULD support `CAP_TLS_EXPORTER_AEAD`.
+SAR-over-QUIC implementations MUST support KMS Mode `0x04 TLS_EXPORTER`. Endpoints that advertise session capabilities SHOULD advertise `CAP_TLS_EXPORTER_AEAD` when TLS-exporter SAR-AEAD is available for the active session.
 
 SAR-over-QUIC deployments SHOULD use SAR-layer AEAD protection derived through KMS Mode `0x04 TLS_EXPORTER`.
 
@@ -3411,19 +3587,13 @@ SAR-over-QUIC deployments concerned with harvest-now-decrypt-later attacks SHOUL
 
 ### 18.6 TLS_EXPORTER SAR AEAD Profile
 
-The `TLS_EXPORTER` SAR AEAD profile defines how SAR derives SAR-layer AEAD keying material from an authenticated TLS-based transport session.
+The `TLS_EXPORTER` SAR AEAD profile defines how SAR derives SAR-layer AEAD keying material from an authenticated TLS-based transport session using KMS Mode `0x04 TLS_EXPORTER`.
 
-This profile applies to any SAR transport binding that uses TLS and exposes TLS exporter keying material, including:
+A SAR-over-QUIC implementation MUST support KMS Mode `0x04 TLS_EXPORTER` and this profile. This requirement mandates implementation support and does not require every SAR-over-QUIC stream to select TLS-exporter SAR-AEAD mode.
 
-* SAR-over-QUIC
-* SAR-over-TCP when TCP is wrapped in TLS
-* future TLS-based SAR transport bindings
+A SAR-over-TCP implementation MUST support KMS Mode `0x04 TLS_EXPORTER` and this profile only if it claims support for TLS-exporter SAR-AEAD over TCP protected by TLS. Support for SAR-over-TCP, including SAR-over-TCP protected by TLS, does not otherwise require support for KMS Mode `0x04 TLS_EXPORTER`.
 
-This profile MUST NOT be used unless the underlying TLS session has completed successfully and the peer authentication policy required by the application has been satisfied.
-
-For SAR-over-QUIC, the TLS session is the QUIC/TLS session.
-
-For SAR-over-TCP+TLS, the TLS session is the TLS session carried over TCP.
+This profile MUST NOT be used unless the underlying TLS session has completed successfully, TLS exporter keying material is available to the SAR implementation, and the peer authentication policy required by the application has been satisfied.
 
 
 #### 18.6.1 Security Modes
@@ -4038,6 +4208,24 @@ Implementations SHOULD provide three standard levels of archive inspection for t
 | 0x00 | `NAMES_ONLY` | Fastest mode; only parses `Name` fields from CD or LFH. Ideal for quick index generation. |
 | 0x01 | `METADATA` | Parses names, uncompressed sizes, path information, and timestamps. Suitable for standard views. |
 | 0x02 | `TECHNICAL` | Exhaustive parse; includes absolute offsets, algorithm IDs, internal KMS metadata, and all TLV data blocks. |
+
+These modes perform structural inspection. When an Entry and the following structure can be located safely, an implementation MAY inspect structurally available information even if the Entry payload requires an unsupported transformation.
+
+Depending on the selected mode and physically available fields, inspection MAY report Name String, Path String, declared sizes, timestamps, offsets, algorithm identifiers, KMS metadata, and TLV blocks.
+
+Successful listing or structural inspection does not establish payload reconstruction, decryption, cryptographic authentication, content-hash verification, patch application, extraction, materialization, or complete state application.
+
+Inspection of an unsupported Entry MUST NOT be represented as successful decoding or verification of that Entry.
+
+#### 22.6.1 Non-Normative Implementation Profiles and Privilege Separation
+
+NOTE: This subsection is non-normative.
+
+Implementations may provide restricted libraries, application presets, build-time capability subsets, privilege-separated components, or reduced attack-surface configurations.
+
+For example, a privileged component may use a separately built library exposing fewer operations than a general user-space archive tool.
+
+Such implementation-specific profiles and configurations are not SAR Compliance Profiles, are not encoded in archives or streams, do not alter SAR archive or stream validity, and do not alter the normative interoperability requirements of Section 12.
 
 ### 22.7 Random Access
 The `MetaSize` field in the Central Dictionary enables jumping to the offset array, bypassing variable-length metadata blocks. Implementations SHOULD use memory-mapped files (mmap) for the Data Area to leverage OS-level caching during random-access operations.
