@@ -29,6 +29,8 @@ The following terminology is used throughout this specification:
 
 * **Archive:** A SAR object intended for persistent storage consisting of a Global Header followed by a Data Area and, unless `NO_INDEX` is set, a Central Dictionary and Footer.
 
+* **Physical Archive Member:** One independently encoded physical SAR archive unit beginning at byte offset zero with a Global Header. For an unpartitioned Archive, the Physical Archive Member is the complete Archive. For a Partitioned Archive, each Partition is one Physical Archive Member.
+
 * **Entry:** A single logical Application Data Object represented by one LFH and its associated payload, or by a group of LFHs and payload fragments when `FILE_FRAGMENTATION` is enabled.
 
 * **Full Logical Entry Path:** The canonical SAR path identifying an Entry. It consists of the LFH `Name String` when the LFH `Path String` is absent or empty, and otherwise consists of the LFH `Path String`, followed by `/`, followed by the LFH `Name String`.
@@ -43,7 +45,7 @@ The following terminology is used throughout this specification:
 
 * **Partition Set:** The complete collection of physical Partitions belonging to one Partitioned Archive.
 
-* **Partition:** One physical member of a Partition Set.
+* **Partition:** A Physical Archive Member belonging to a Partition Set.
 
 * **Partition Set UUID:** A nonzero 16-byte identifier shared by every Partition in one Partition Set.
 
@@ -56,6 +58,8 @@ The following terminology is used throughout this specification:
 * **Stateful Streaming Mode:** The streaming mode defined in Section 18 in which Application Data Objects are exchanged over an established session while maintaining stream state.
 
 * **Transformation:** Any operation altering the encoded representation of an Entry without changing its logical payload, including compression, encryption, delta encoding, fragmentation, or Forward Error Correction (FEC).
+
+* **KMS Master Secret:** A 32-byte secret established by the active standard KMS mode and used exclusively as input to SAR per-Entry key derivation. For encrypted archival processing, one KMS Master Secret is established for each Physical Archive Member from that member's KMS Extension. In Stateful Streaming Mode using PBKDF2, ARGON2, or ASYMMETRIC_WRAP, one KMS Master Secret is established for the SAR stream from that stream's KMS Extension. In Stateful Streaming Mode using `TLS_EXPORTER`, each active directional key usage establishes an independent KMS Master Secret after successful session initialization. A KMS Master Secret MUST NOT be used directly as an Entry encryption key.
 
 * **Structural Determinism:** The property that the presence, ordering, and interpretation of encoded fields are derived exclusively from the Global Flags and Entry Mode bits defined by this specification without heuristic interpretation.
 
@@ -204,7 +208,15 @@ Certain combinations of assigned flags are invalid and MUST be rejected as defin
 | 31 | `RESERVED` | MUST be zero. |
 
 ### 5.3 Global Header Extensions
-If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, otherwise omitted. It provides the necessary parameters to derive or unwrap the keys used in the Data Area.
+If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, otherwise omitted. It provides the parameters required to establish the KMS Master Secret used as input to Entry-key derivation.
+
+Every standard KMS mode establishes a 32-byte KMS Master Secret. The KMS Master Secret MUST NOT be used directly as an Entry encryption key.
+
+PBKDF2 and ARGON2 derive the KMS Master Secret from caller-supplied password material. ASYMMETRIC_WRAP recovers the KMS Master Secret from a recipient-specific wrapped representation. TLS_EXPORTER derives directional KMS Master Secrets from an authenticated TLS session after the Stateful Streaming bootstrap defined in Section 18.6.
+
+Except where a CUSTOM KMS or encryption construction explicitly defines another complete key hierarchy, every SAR-defined encrypted Entry derives its native encryption key from the applicable KMS Master Secret according to Section 5.3.4.
+
+The KMS Extension is Global Header state and does not select one encryption algorithm for all Entries. The LFH `Encr Algo ID` remains authoritative for the encryption algorithm of each Entry with `IS_ENCRYPTED` set. Entries using different encryption algorithms MAY coexist under one KMS Extension.
 
 #### 5.3.1 KMS_DATA Structure
 | Field | Size | Description |
@@ -238,144 +250,304 @@ If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, othe
 #### 5.3.3 Mode-Specific Payload Structures
 
 **Mode 0x01 - PBKDF2**
-| Field | Size | Description |
-| --- | --- | --- |
-| PRF Algo ID | 1B | 0x01: HMAC-SHA256, 0x02: HMAC-SHA512, 0x03: HMAC-SHA3-256. |
-| Salt Length | 1B | Length of Salt in bytes. |
-| Salt | Var | Random binary salt. |
-| Iterations | 4B | PBKDF2 iteration count. |
-| Derived Key Length | 2B | MUST match the selected encryption algorithm requirements. |
+
+| Field              | Size | Description |
+| ------------------ | ---- | ------------------------ |
+| PRF Algo ID        | 1B   | 0x01: HMAC-SHA256, 0x02: HMAC-SHA512, 0x03: HMAC-SHA3-256. |
+| Iterations         | 4B   | PBKDF2 iteration count. |
+| Derived Key Length | 2B   | Length of the derived KMS Master Secret. MUST equal `32`. |
+| Salt Length        | 1B   | Length of Salt in bytes. |
+| Salt               | Var  | Random binary salt. |
 
 **Mode 0x02 - ARGON2**
-| Field | Size | Description |
-| --- | --- | --- |
-| Argon2 Variant | 1B | 0x01: Argon2d, 0x02: Argon2i, 0x03: Argon2id. |
-| Version | 1B | Argon2 version identifier. |
-| Salt Length | 1B | Length of Salt in bytes. |
-| Salt | Var | Random binary salt. |
-| Memory Cost (KiB) | 4B | Argon2 memory cost in KiB. |
-| Time Cost | 4B | Number of passes. |
-| Parallelism | 2B | Number of Argon2 lanes. |
-| Derived Key Length | 2B | MUST match the selected encryption algorithm requirements. |
+
+| Field              | Size | Description |
+| ------------------ | ---- | ----------------------- |
+| Argon2 Variant     | 1B   | 0x03: Argon2id. All other values are RESERVED. |
+| Version            | 1B   | Argon2 version identifier. |
+| Memory Cost (KiB)  | 4B   | Argon2 memory cost in KiB. |
+| Time Cost          | 4B   | Number of passes. |
+| Parallelism        | 2B   | Number of Argon2 lanes. |
+| Derived Key Length | 2B   | Length of the derived KMS Master Secret. MUST equal `32`. |
+| Salt Length        | 1B   | Length of Salt in bytes. |
+| Salt               | Var  | Random binary salt. |
 
 **Mode 0x03 - ASYMMETRIC_WRAP**
-| Field | Size | Description |
-| --- | --- | --- |
-| Wrap Algo ID | 1B | 0x01: RSA-OAEP-2048, 0x02: RSA-OAEP-4096, 0x03: X25519, 0x04: ML-KEM-768, 0x05: ML-KEM-1024. |
-| Recipient Count | 1B | Number of recipient records. |
-| *Recipient Loop* | - | Repeat per Recipient: |
-| - Recipient ID Len | 1B | Length of ID. |
-| - Recipient ID | Var | Key ID or fingerprint. |
-| - Wrapped Key Len | 2B | Length of wrapped blob. |
-| - Wrapped Key Blob | Var | The wrapped master key. |
+
+| Field              | Size | Description |
+| ------------------ | ---- | ---------------------------------- |
+| Wrap Algo ID       | 1B   | Identifies the asymmetric wrapping construction. |
+| Recipient Count    | 1B   | Number of recipient records. |
+| *Recipient Loop*   | -    | Repeat per Recipient: |
+| - Recipient ID Len | 1B   | Length of ID. |
+| - Recipient ID     | Var  | Key ID or fingerprint. |
+| - Wrapped Key Len  | 2B   | Length of wrapped blob. |
+| - Wrapped Key Blob | Var  | Recipient-specific wrapped representation of the KMS Master Secret. |
+
+The Wrap Algo ID assignments and complete wrapping constructions are defined in Section 5.3.4.
 
 **Mode 0x04 - TLS_EXPORTER**
-| Field                      | Size | Description                                                                |
-|----------------------------|------|----------------------------------------------------------------------------|
-| Exporter Label Length      | 1B   | Length of Exporter Label in bytes.                                         |
-| Exporter Label             | Var  | ASCII-encoded TLS exporter label.                                          |
-| Context Version            | 1B   | MUST be `0x01` for this profile.                                           |
-| AEAD Algo ID               | 1B   | SAR AEAD algorithm ID.                                                     |
-| KDF Algo ID                | 1B   | Optional post-export KDF; `0x00` means direct TLS exporter output profile. `0x01 - 0xFF`: RESERVED; nonzero values MUST return `SAR_ERR_RESERVED_VALUE`. |
-| Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding.                             |
-| Salt Length                | 1B   | MAY be `0`; length of non-secret salt/context bytes.                       |
-| Salt                       | Var  | Non-secret salt/context bytes.                                             |
-| Derived Key Length         | 2B   | MUST match the selected AEAD algorithm requirements.                       |
-| Flags                      | 2B   | Profile flags; reserved bits MUST be zero.                                 |
+
+| Field                      | Size | Description |
+| -------------------------- | ---- | ------------ |
+| Context Version            | 1B   | TLS_EXPORTER context format version. MUST equal `0x01`. All other values are RESERVED.|
+| KDF Algo ID | 1B | Post-export derivation identifier. `0x00` means direct TLS exporter output as the KMS Master Secret. Values `0x01-0xFF` are RESERVED. |
+| Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
+| Derived Key Length         | 2B   | Length of the directional KMS Master Secret. MUST equal `32`. |
+| Exporter Label Length | 1B | Length of Exporter Label in bytes. MUST equal `15` for Context Version `0x01`. |
+| Salt Length | 1B | Length of non-secret Salt in bytes. MUST equal `0` for Context Version `0x01`. |
+| Exporter Label | Var | ASCII-encoded TLS exporter label. MUST equal `EXPORTER-SAR-v1` for Context Version `0x01`. |
+| Salt | Var | Non-secret salt bytes. MUST be absent when Salt Length is zero. |
+
+KMS Mode `0x04 TLS_EXPORTER` does not select an Entry encryption algorithm. Each encrypted LFH retains its own authoritative `Encr Algo ID`.
 
 An implementation claiming support for KMS Mode `0x04 TLS_EXPORTER` MUST implement the TLS_EXPORTER SAR AEAD profile defined in Section 18.6.
 
+A decoder MUST NOT attempt TLS exporter derivation or subsequent encrypted Entry processing using a reserved Context Version or KDF Algo ID.
+
 #### 5.3.4 KMS Mode Processing Requirements
 
+Every standard KMS mode establishes a KMS Master Secret of exactly 32 bytes.
+
+The KMS Master Secret is key-derivation material and MUST NOT be supplied directly to a SAR encryption algorithm as its Entry encryption key.
+
+For every Entry with `IS_ENCRYPTED` set and a SAR-defined standard encryption algorithm selected by `Encr Algo ID`, the native Entry encryption key MUST be derived from the applicable KMS Master Secret using HKDF-SHA256 as defined below.
+
+```text
+Entry_Key = HKDF-SHA256(
+    IKM  = KMS_Master_Secret,
+    salt = empty,
+    info = Entry_Key_Info,
+    L    = Native_Key_Length(Encr_Algo_ID)
+)
+```
+
+`KMS_Master_Secret` is the exact 32-byte KMS Master Secret established by the active KMS mode.
+
+`Entry_Key_Info` MUST be the following exact byte sequence:
+
+```text
+ASCII("SAR-v1-entry-key") ||
+Encr_Algo_ID ||
+LFH_IV_Nonce
+```
+
+`ASCII("SAR-v1-entry-key")` is the exact 16-byte ASCII sequence:
+
+```text
+53 41 52 2D 76 31 2D 65 6E 74 72 79 2D 6B 65 79
+```
+
+No string terminator, separator byte, or length prefix is encoded after that label.
+
+`Encr_Algo_ID` is the exact one-byte value encoded in the current LFH `Encr Algo ID` field.
+
+`LFH_IV_Nonce` is the complete 24-byte LFH IV / Nonce field exactly as encoded in the current LFH, including reserved bytes.
+
+`Native_Key_Length(Encr_Algo_ID)` is the exact encryption-key length defined by the selected encryption algorithm in Section 8.2. A SAR-defined standard encryption algorithm MUST define one exact native key length before that algorithm is valid for emission.
+
+HKDF-SHA256 uses SHA-256 as its hash function. The `salt` input above is the zero-length byte string. No Entry-specific state other than the exact `Entry_Key_Info` bytes defined above participates in this derivation.
+
+Different Entries governed by the same KMS Extension MAY select different encryption algorithms and MAY therefore request different native Entry-key lengths where defined by those algorithms.
+
+The LFH IV / Nonce field remains the nonce or IV supplied to the selected encryption algorithm according to Section 8.2.2. Inclusion of that field in `Entry_Key_Info` does not relax or replace any nonce-uniqueness requirement.
+
+The Name String, Path String, Full Logical Entry Path, Entry Mode, Stream ID, Sequence No, physical LFH offset, and other LFH metadata MUST NOT be added to `Entry_Key_Info`.
+
+If `IS_ENCRYPTED` is unset, no Entry encryption key is derived. When Global Flag `ENCRYPTED` is set, the physically present encryption fields are instead treated according to the inert-field rules in Section 6.2.2.
+
+A CUSTOM KMS or encryption construction MAY define another key hierarchy only when its complete externally agreed construction explicitly defines that hierarchy. Such behavior does not alter the standard SAR key hierarchy defined in this section.
+
 ##### PBKDF2
+
+PBKDF2 derives the 32-byte KMS Master Secret from caller-supplied password material.
+
+`Derived Key Length` MUST equal `32`. A different value MUST return `SAR_ERR_INVALID_LENGTH`.
 
 Salt Length MUST be at least 16 bytes.
 
 Iterations MUST be at least 100000.
 
-Implementations claiming a SAR Compliance Profile that requires PBKDF2 support MUST support PRF Algo ID `0x01` and all valid parameter combinations within the following ranges:
+Every implementation supporting KMS Mode `0x01 PBKDF2` MUST support PRF Algo ID `0x01` and all valid parameter combinations within the following mandatory interoperable ranges:
 
 * Salt Length from 16 through 64 bytes inclusive;
 * Iterations from 100000 through 600000 inclusive; and
-* every Derived Key Length required by the mandatory encryption algorithms of the claimed Compliance Profile.
+* Derived Key Length equal to `32`.
 
-A decoder claiming such profile support MUST process every valid parameter combination within these ranges.
+A decoder supporting KMS Mode `0x01 PBKDF2` MUST process every valid parameter combination within these ranges.
 
-An encoder producing output within a Compliance Profile's Guaranteed Interoperability Baseline MAY select any valid parameter combination within these ranges.
+An encoder supporting KMS Mode `0x01 PBKDF2` MAY select any valid parameter combination within these ranges.
 
 General-purpose encoders SHOULD use at least 600000 iterations.
 
-Implementations MAY support additional PRFs and parameter values. Output using valid parameters outside the mandatory interoperable ranges remains valid SAR but is outside the Guaranteed Interoperability Baseline unless another applicable profile makes those parameters mandatory.
+Implementations MAY support additional assigned PRFs and valid parameter values outside the mandatory interoperable ranges. Output using such values remains valid SAR where the applicable construction is completely defined, but is outside the Guaranteed Interoperability Baseline unless another applicable Compliance Profile makes those values mandatory.
 
-Before beginning derivation, an implementation MUST apply configured resource limits to Iterations, Salt Length, and Derived Key Length.
+An encoder claiming a Compliance Profile MAY emit such valid out-of-baseline PBKDF2 output without losing Compliance Profile conformance. That particular output is not guaranteed to be processable by every decoder claiming the same Compliance Profile.
 
-If a syntactically valid PBKDF2 parameter set exceeds those limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because the valid work factor exceeds the mandatory interoperable range.
+Before beginning derivation, an implementation MUST apply configured resource limits to Iterations and Salt Length.
+
+If a syntactically valid PBKDF2 parameter set exceeds those configured resource limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because a valid work factor lies outside the Guaranteed Interoperability Baseline.
+
+A successful PBKDF2 operation MUST produce exactly 32 bytes. Those bytes are the KMS Master Secret and MUST be used only as input to the per-Entry key derivation defined in this section.
 
 Syntactically invalid, reserved, malformed, or inconsistent parameters MUST return the most specific applicable structural, length, bounds, or reserved-value error.
 
 ##### ARGON2
 
+ARGON2 derives the 32-byte KMS Master Secret from caller-supplied password material.
+
+Argon2 Variant `0x03` identifies Argon2id. All other Variant values are RESERVED.
+
+`Derived Key Length` MUST equal `32`. A different value MUST return `SAR_ERR_INVALID_LENGTH`.
+
 Salt Length MUST be at least 16 bytes.
 
 Memory Cost, Time Cost, and Parallelism MUST be greater than zero.
 
-Implementations claiming a SAR Compliance Profile that requires Argon2id support MUST support Argon2 Variant `0x03`, Version `0x13`, and all valid parameter combinations within the following ranges:
+Every implementation supporting KMS Mode `0x02 ARGON2` MUST support Argon2id Version `0x13`.
+
+Such implementations MUST support all valid Argon2id Version `0x13` parameter combinations within the following mandatory interoperable ranges:
 
 * Memory Cost from 19456 KiB through 65536 KiB inclusive;
 * Time Cost from 2 through 3 inclusive;
 * Parallelism from 1 through 4 inclusive;
 * Salt Length from 16 through 64 bytes inclusive; and
-* every Derived Key Length required by the mandatory encryption algorithms of the claimed Compliance Profile.
+* Derived Key Length equal to `32`.
 
-A decoder claiming such profile support MUST process every valid parameter combination within these ranges.
+A decoder supporting KMS Mode `0x02 ARGON2` MUST process every valid Argon2id Version `0x13` parameter combination within these ranges.
 
-An encoder producing Argon2id output within a Compliance Profile's Guaranteed Interoperability Baseline MAY select any valid parameter combination within these ranges.
+An encoder supporting KMS Mode `0x02 ARGON2` MAY select any valid Argon2id Version `0x13` parameter combination within these ranges.
 
 Implementations SHOULD additionally support the applicable recommended Argon2id configurations defined by RFC 9106.
 
 General-purpose encoders SHOULD select an RFC 9106 recommended configuration when the intended processing environment can provide the required memory and processing resources.
 
-Implementations MAY support valid Argon2 variants, versions, and parameter values outside these ranges. Such output remains valid SAR but is outside the Guaranteed Interoperability Baseline unless another applicable profile makes those values mandatory.
+Implementations MAY additionally support other Argon2id versions and valid parameter values outside the mandatory interoperable ranges.
 
-Before beginning derivation, an implementation MUST apply configured resource limits to Memory Cost, Time Cost, Parallelism, Salt Length, and Derived Key Length.
+If a decoder does not support the encoded Argon2id Version, it MUST return `SAR_ERR_UNSUPPORTED`.
 
-If a syntactically valid Argon2 parameter set exceeds those limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because valid parameters exceed the mandatory interoperable range.
+An Argon2 Version value MUST NOT be treated as reserved solely because it is not implemented by the decoder.
+
+Output using another supported Argon2id Version or valid parameters outside the mandatory interoperable ranges remains valid SAR but is outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile defines otherwise.
+
+Before beginning derivation, an implementation MUST apply configured resource limits to Memory Cost, Time Cost, Parallelism, and Salt Length.
+
+If a syntactically valid Argon2 parameter set exceeds those configured resource limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because valid parameters lie outside the mandatory interoperable ranges.
+
+A successful ARGON2 operation MUST produce exactly 32 bytes. Those bytes are the KMS Master Secret and MUST be used only as input to the per-Entry key derivation defined in this section.
 
 Syntactically invalid, reserved, malformed, or inconsistent parameters MUST return the most specific applicable structural, length, bounds, or reserved-value error.
 
 ##### ASYMMETRIC_WRAP
 
-KMS Mode `0x03 ASYMMETRIC_WRAP` is OPTIONAL for every SAR Compliance Profile.
+ASYMMETRIC_WRAP recovers a 32-byte KMS Master Secret from one recipient-specific wrapping record. It does not wrap or recover an Entry-specific encryption key.
 
-An implementation MUST NOT claim support for KMS Mode `0x03 ASYMMETRIC_WRAP` unless it supports Wrap Algo ID `0x01` (`RSA-OAEP-2048`) according to the complete construction in this subsection.
+The following Wrap Algo IDs are defined:
+
+| ID     | Name            | Construction                                                                                          |
+| ------ | --------------- | ----------------------------------------------------------------------------------------------------- |
+| `0x01` | `RSA-OAEP-2048` | RSAES-OAEP with a 2048-bit RSA modulus.                                                               |
+| `0x02` | `RSA-OAEP-4096` | RSAES-OAEP with a 4096-bit RSA modulus.                                                               |
+| `0x03` | `X25519`        | HPKE Base mode using DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and AES-256-GCM as defined by RFC 9180. |
+| `0x04` | `ML-KEM-768`    | Assigned; complete SAR wrapping construction not yet defined.                                         |
+| `0x05` | `ML-KEM-1024`   | Assigned; complete SAR wrapping construction not yet defined.                                         |
+
+An implementation claiming support for KMS Mode `0x03 ASYMMETRIC_WRAP` MUST support Wrap Algo ID `0x01` (`RSA-OAEP-2048`).
+
+Implementations MAY additionally support any other Wrap Algo ID for which this specification defines a complete wrapping construction.
 
 Recipient Count MUST be at least 1. Recipient ID Len and Wrapped Key Len MUST be greater than zero for every recipient. Every recipient record and Wrapped Key Blob MUST be fully contained within KMS Payload Length.
 
-Recipient ID is an opaque, non-secret identifier for the recipient public key. Its namespace and resolution mechanism are selected by the caller or key-management environment. Encoders and decoders MUST preserve Recipient ID bytes exactly and MUST NOT infer a key format from those bytes.
+Recipient ID is an opaque, non-secret identifier for the recipient key. Its namespace and key-resolution mechanism are selected by the caller or key-management environment. Encoders and decoders MUST preserve Recipient ID bytes exactly and MUST NOT infer a key format from those bytes.
 
-Wrap Algo ID `0x01` uses RSAES-OAEP with:
+###### RSA-OAEP-2048 and RSA-OAEP-4096
 
-* an RSA modulus of exactly 2048 bits;
+Wrap Algo IDs `0x01` and `0x02` use RSAES-OAEP as specified by RFC 8017 with:
+
 * SHA-256 as the OAEP digest;
 * MGF1 with SHA-256 as the mask generation function;
 * the empty byte string as the OAEP label; and
 * no optional or implementation-defined OAEP parameters.
 
-The OAEP plaintext MUST be exactly the master-key bytes. It MUST contain no length prefix, algorithm identifier, padding field, or additional context. Its length MUST equal the encryption key length required by the selected SAR encryption algorithm.
+Wrap Algo ID `0x01` requires an RSA modulus of exactly 2048 bits.
 
-Wrapped Key Len MUST equal 256. Wrapped Key Blob MUST contain the RSA ciphertext as an unsigned 256-byte big-endian octet string.
+Wrap Algo ID `0x02` requires an RSA modulus of exactly 4096 bits.
 
-An encoder claiming support for this mode MUST be able to produce conforming recipient records using Wrap Algo ID `0x01`. A decoder claiming support for this mode MUST be able to consume conforming recipient records using Wrap Algo ID `0x01`.
+For both constructions, the OAEP plaintext MUST be exactly the 32-byte KMS Master Secret. It MUST contain no length prefix, encryption algorithm identifier, padding field, or additional SAR context.
 
-An implementation exposing both encoder and decoder roles for this mode MUST decode every Wrap Algo ID and parameter combination that it emits.
+For Wrap Algo ID `0x01`, Wrapped Key Len MUST equal `256`.
+
+For Wrap Algo ID `0x02`, Wrapped Key Len MUST equal `512`.
+
+Wrapped Key Blob MUST contain the RSA ciphertext as an unsigned big-endian octet string whose length equals Wrapped Key Len.
+
+After successful RSA-OAEP decoding, the recovered plaintext MUST be exactly 32 bytes. A recovered plaintext of any other length MUST return `SAR_ERR_KEY_REJECTED`.
+
+###### X25519
+
+Wrap Algo ID `0x03` uses HPKE as specified by RFC 9180 with the following fixed ciphersuite:
+
+```text
+Mode = Base
+KEM  = DHKEM(X25519, HKDF-SHA256)
+KDF  = HKDF-SHA256
+AEAD = AES-256-GCM
+```
+
+No other HPKE mode, KEM, KDF, or AEAD combination is valid for Wrap Algo ID `0x03`.
+
+The HPKE recipient public key is the X25519 public key resolved by Recipient ID.
+
+The HPKE plaintext MUST be exactly the 32-byte KMS Master Secret.
+
+The HPKE `info` value MUST be the exact 16-byte ASCII sequence:
+
+```text
+SAR-v1-hpke-wrap
+```
+
+Its exact byte representation is:
+
+```text
+53 41 52 2D 76 31 2D 68 70 6B 65 2D 77 72 61 70
+```
+
+No string terminator, separator, or length prefix is included.
+
+The HPKE AAD value MUST be the exact Recipient ID byte sequence from the current recipient record.
+
+The Wrapped Key Blob MUST be encoded as:
+
+```text
+Wrapped Key Blob = enc || ciphertext
+```
+
+where `enc` is the 32-byte encapsulated key produced by DHKEM(X25519, HKDF-SHA256), and `ciphertext` is the HPKE ciphertext returned by sealing the 32-byte KMS Master Secret.
+
+For this fixed HPKE construction, `ciphertext` is 48 bytes: 32 bytes of encrypted KMS Master Secret followed by the 16-byte AES-256-GCM authentication tag.
+
+Wrapped Key Len MUST therefore equal `80`.
+
+A decoder MUST split the Wrapped Key Blob after the first 32 bytes and supply the resulting `enc` and `ciphertext` values to the RFC 9180 HPKE Base-mode opening operation using the exact `info` and AAD values defined above.
+
+A successful HPKE opening operation MUST recover exactly 32 bytes. Those bytes are the KMS Master Secret.
+
+###### Common Processing Requirements
+
+For archival processing, the successfully recovered 32-byte value is the KMS Master Secret for the current Physical Archive Member. In Stateful Streaming Mode, it is the KMS Master Secret for the current SAR stream.
+
+The recovered KMS Master Secret MUST NOT be used directly as an Entry encryption key. Entry encryption keys MUST be derived according to the common SAR key hierarchy defined earlier in this section.
+
+An implementation exposing both encoder and decoder roles for ASYMMETRIC_WRAP MUST decode every Wrap Algo ID and parameter combination that its encoder role emits.
 
 Failure to locate a recipient key matching any Recipient ID MUST return `SAR_ERR_KEY_MISSING`.
 
-OAEP decoding failure, recovered-key length mismatch, or use of an incompatible recipient key MUST return `SAR_ERR_KEY_REJECTED`. An implementation MUST NOT expose which internal RSA-OAEP validation step failed.
+RSA-OAEP decoding failure, RSA recovered-secret length mismatch, HPKE opening failure, HPKE recovered-secret length mismatch, or use of an incompatible recipient key MUST return `SAR_ERR_KEY_REJECTED`. An implementation MUST NOT expose which internal asymmetric-unwrapping validation step failed.
 
-Wrap Algo IDs `0x02` (`RSA-OAEP-4096`), `0x03` (`X25519`), `0x04` (`ML-KEM-768`), and `0x05` (`ML-KEM-1024`) are assigned but their complete interoperable wrapping constructions are not defined by SAR version 1.0. A conforming encoder MUST NOT emit those identifiers. A decoder encountering one of those assigned identifiers MUST return `SAR_ERR_UNSUPPORTED`.
+Wrap Algo IDs `0x04` (`ML-KEM-768`) and `0x05` (`ML-KEM-1024`) are assigned but their complete interoperable SAR wrapping constructions are not defined by this specification. A conforming encoder MUST NOT emit those identifiers. A decoder encountering either identifier MUST return `SAR_ERR_UNSUPPORTED`.
 
 An implementation encountering a reserved or unassigned Wrap Algo ID MUST return `SAR_ERR_RESERVED_VALUE`.
+
 
 #### 5.3.5 Partitioned Archive Global Header Rules
 
@@ -385,6 +557,7 @@ Every Partition in one Partition Set MUST use the same Global Header Version, `F
 
 When `ENCRYPTED` is set, every Partition in one Partition Set MUST use the same KMS Mode ID. Partition-specific KMS consistency requirements are defined in Section 19.1.11.
 
+Each encrypted Partition independently establishes its own KMS Master Secret from that Partition's local KMS Extension. KMS consistency requirements across the Partition Set do not require the resulting KMS Master Secrets to be equal. Mode-permitted local KMS parameters may produce different KMS Master Secrets in different Partitions.
 
 ### 5.4 Version Compatibility
 
@@ -791,9 +964,9 @@ The Session Mode deals with management of the stateful streaming connection (Sec
 | `0x8-0xF` | RESERVED | Reserved for future session-control opcodes. |
 
 ## 7. Central Dictionary (CD)
-The CD is the post-hoc random-access index and metadata structure for the Data Area of the current physical archive member. It is OMITTED if `NO_INDEX` (Bit 1) is set.
+The CD is the post-hoc random-access index and metadata structure for the Data Area of the current Physical Archive Member. It is OMITTED if `NO_INDEX` (Bit 1) is set.
 
-For an unpartitioned archive, the current physical archive member is the complete archive file. For a Partitioned Archive, each Partition has its own local CD when `NO_INDEX` is unset.
+For an unpartitioned archive, the current Physical Archive Member is the complete archive file. For a Partitioned Archive, each Partition has its own local CD when `NO_INDEX` is unset.
 
 | Field | Size | Condition | Description |
 | --- | --- | --- | --- |
@@ -817,7 +990,7 @@ For a Partitioned Archive, the final indexed LFH MUST be the Partition Manifest 
 
 For a Partitioned Archive, every offset is measured from byte zero of the current physical Partition and MUST refer only to an LFH physically contained in that Partition. A local CD MUST NOT refer to an earlier Partition, a later Partition, a future Entry, or a virtual concatenated Partition Set address space.
 
-A CD offset that lies outside the current physical archive member MUST return `SAR_ERR_BOUNDS`. An offset that does not identify an LFH boundary or that points into Payload Data, the CD, CD padding, or the Footer MUST return `SAR_ERR_MALFORMED`.
+A CD offset that lies outside the current Physical Archive Member MUST return `SAR_ERR_BOUNDS`. An offset that does not identify an LFH boundary or that points into Payload Data, the CD, CD padding, or the Footer MUST return `SAR_ERR_MALFORMED`.
 
 ### 7.2 Data Area CRC32
 
@@ -854,12 +1027,14 @@ No archive-wide Partition Set signature or archive-wide Central Dictionary is de
 * CUSTOM compression MAY require external metadata negotiated outside SAR.
 
 ### 8.2 Encryption Algorithms (`SAR_L_ENCR`)
-* `0x00`: **PLAINTEXT** (No transformation; skip IV parsing/apply identity)
-* `0x01`: **AES256_GCM** (Authenticated Encryption)
-* `0x02`: **CHACHA20** (RFC 8439 ChaCha20 Stream Cipher)
-* `0x03`: **AES256_CBC** (Block Cipher - Legacy Support)
-* `0x04`: **XCHACHA20_POLY** (XChaCha20-Poly1305 - Recommended AEAD)
-* `0x05`: **CHACHA20_POLY1305** (ChaCha20-Poly1305 AEAD)
+
+* `0x00`: **PLAINTEXT** (No encryption transformation)
+* `0x01`: **AES256_GCM** (AES-256-GCM)
+* `0x02`: RESERVED
+* `0x03`: RESERVED
+* `0x04`: **XCHACHA20_POLY** (XChaCha20-Poly1305)
+* `0x05`: **CHACHA20_POLY1305** (ChaCha20-Poly1305)
+* `0x06`: **ASCON_AEAD128** (Ascon-AEAD128 as specified by NIST SP 800-232)
 * `0x20-0x3F`: RESERVED for post-quantum encryption and KEM algorithms.
 * `0x40-0x5F`: RESERVED for experimental algorithms.
 * `0x60-0xEF`: RESERVED for future standardization.
@@ -867,80 +1042,98 @@ No archive-wide Partition Set signature or archive-wide Central Dictionary is de
 
 Any algorithm identifier not explicitly assigned in this section is RESERVED.
 
-Implementations encountering a reserved value MUST return SAR_ERR_RESERVED_VALUE.
+Implementations encountering a reserved value MUST return `SAR_ERR_RESERVED_VALUE`.
 
-If decryption or authentication later fails, implementations MUST return SAR_ERR_DECRYPT_FAILED or SAR_ERR_AUTH_FAILED as appropriate.
+If `IS_ENCRYPTED` is set, `Encr Algo ID` MUST identify an assigned encryption algorithm whose construction is valid for encrypted Entry processing. `PLAINTEXT` MUST NOT be selected for an Entry with `IS_ENCRYPTED` set. A violation MUST return `SAR_ERR_FLAG_CONFLICT`.
+
+All standard encryption algorithms currently assigned by this specification other than `PLAINTEXT` are AEAD algorithms.
+
+For standard AEAD algorithms, authentication failure MUST return `SAR_ERR_AUTH_FAILED`.
 
 #### 8.2.1 CUSTOM Encryption Semantics
+
 * Values in `0xF0-0xFF` define user-defined encryption schemes.
-* MUST require matching external specification between encoder and decoder.
-* If the required CUSTOM encryption specification is unavailable or unsupported, implementations MUST return SAR_ERR_UNSUPPORTED. 
+* CUSTOM encryption MUST require a matching external specification between encoder and decoder.
+* If the required CUSTOM encryption specification is unavailable or unsupported, implementations MUST return `SAR_ERR_UNSUPPORTED`.
 * CUSTOM encryption MUST NOT be assumed secure or standardized.
+* A CUSTOM encryption construction MUST completely define its key length, IV or nonce interpretation, authentication behavior, Payload Data encoding, AAD behavior, and any requirements that differ from the standard SAR encryption rules.
 
-#### 8.2.2 IV / Nonce Field Semantics
+#### 8.2.2 Standard Encryption and IV / Nonce Semantics
 
-The LFH IV / Nonce field SHALL always occupy 24 bytes when the
-`ENCRYPTED` flag is set.
+The LFH IV / Nonce field occupies exactly 24 bytes whenever the `ENCRYPTED` Global Flag is set.
 
-Encryption algorithms SHALL interpret the field as follows:
+When `IS_ENCRYPTED` is unset, the encryption fields are semantically inert and MUST be interpreted according to Section 6.2.2.
 
-| Algorithm | IV / Nonce Length |
-|-----------|-------------|
-| PLAINTEXT  | 0 bytes  |
-| AES256_GCM | 12 bytes |
-| CHACHA20 | 12 bytes |
-| AES256_CBC | 16 bytes |
-| XCHACHA20_POLY | 24 bytes |
-| CHACHA20_POLY1305 | 12 bytes |
+When `IS_ENCRYPTED` is set, the selected standard encryption algorithm MUST interpret the 24-byte IV / Nonce field as follows:
 
-For algorithms requiring fewer than 24 bytes, the IV or nonce SHALL
-occupy the first N bytes of the field.
+| Algorithm | Native Key Length | Nonce Length | IV / Nonce Field Encoding | Tag Length |
+| --------- | ----------------- | ------------ | ------------------------- | ---------- |
+| `AES256_GCM`        |  32B | 12B | Bytes `0-11` contain the nonce; bytes `12-23` MUST be zero. | 16B |
+| `XCHACHA20_POLY`    |  32B | 24B | Bytes `0-23` contain the nonce.| 16B |
+| `CHACHA20_POLY1305` |  32B | 12B | Bytes `0-11` contain the nonce; bytes `12-23` MUST be zero. | 16B |
+| `ASCON_AEAD128`     |  16B | 16B | Bytes `0-15` contain the nonce; bytes `16-23` MUST be zero. | 16B |
 
-All remaining bytes SHALL be set to 0x00 by the encoder.
+For algorithms whose nonce is shorter than 24 bytes, every unused byte of the IV / Nonce field is RESERVED and MUST be zero. A decoder encountering a nonzero reserved IV / Nonce byte MUST return `SAR_ERR_RESERVED_VALUE`.
 
-Unused bytes are RESERVED.
+The native Entry encryption key MUST be derived according to Section 5.3.4 using the Native Key Length defined in the table above.
 
-For PLAINTEXT, all 24 bytes of the IV / Nonce field SHALL be set to 0x00 by the encoder and SHALL be ignored by the decoder.
+For every standard AEAD algorithm, `Payload Data` MUST be encoded as:
 
-Decoders MUST ignore unused bytes when constructing the IV or nonce.
+```text
+Payload Data = Ciphertext || Authentication Tag
+```
 
-Implementations operating in strict validation mode MAY verify that
-all reserved bytes are set to 0x00.
+The Authentication Tag immediately follows the Ciphertext and is exactly 16 bytes. Tag truncation MUST NOT be used.
 
-If strict validation mode is enabled, non-zero unused bytes MUST
-result in `SAR_ERR_MALFORMED`.
+`Payload Size` includes both the Ciphertext and Authentication Tag. An encrypted Payload Data field shorter than 16 bytes is invalid and MUST return `SAR_ERR_INVALID_LENGTH`.
 
-For AEAD algorithms, encoders MUST NOT reuse the same nonce with the same encryption key. Within a single archive, every AEAD-encrypted LFH using the same derived encryption key MUST use a unique nonce.
+SAR AAD MUST be supplied as the AEAD associated-data input according to Section 13.2.1.
 
-If an encoder detects that a nonce would be reused with the same encryption key, it MUST abort archive creation and return `SAR_ERR_NONCE_REUSE`.
+**AES256_GCM**
 
-Reuse of a key/nonce pair compromises confidentiality and integrity.
+`AES256_GCM` uses AES-256 in Galois/Counter Mode as specified by NIST SP 800-38D, with the key, nonce, and authentication-tag lengths fixed by this section. Other GCM key, IV, or authentication-tag sizes MUST NOT be used.
 
-Nonce uniqueness requirements apply to encoders.
+**XCHACHA20_POLY**
 
-Decoders are not required to detect nonce reuse and MUST NOT assume that repeated nonce values alone constitute a protocol violation, as different entries MAY utilize different encryption keys.
+`XCHACHA20_POLY` uses XChaCha20-Poly1305 as specified by `draft-irtf-cfrg-xchacha-03`, using the AEAD_CHACHA20_POLY1305 construction defined by RFC 8439. The key, nonce, and authentication-tag lengths are fixed by this section.
 
-NOTE:
-Encryption algorithms providing confidentiality only (e.g.
-AES256_CBC and CHACHA20) do not provide authenticity or integrity
-protection.
+**CHACHA20_POLY1305**
 
-Implementations MAY successfully decrypt data using an incorrect key,
-resulting in corrupted or otherwise invalid output.
+`CHACHA20_POLY1305` uses AEAD_CHACHA20_POLY1305 as specified by RFC 8439. The key, nonce, and authentication-tag lengths are fixed by this section.
 
-Applications requiring reliable key validation and tamper detection
-SHOULD use an authenticated encryption algorithm such as `AES256_GCM`,
-`CHACHA20_POLY1305`, or `XCHACHA20_POLY1305`.
+**ASCON_AEAD128**
+
+`ASCON_AEAD128` uses Ascon-AEAD128 as specified by NIST SP 800-232.
+
+The key, nonce, and authentication-tag lengths are fixed by this section. Tag truncation and the Ascon-AEAD128 nonce-masking option MUST NOT be used.
+
+##### Nonce Uniqueness
+
+For a given KMS Master Secret value and `Encr Algo ID`, an encoder MUST NOT use the same active nonce value for more than one encrypted LFH.
+
+The active nonce value consists only of the algorithm-specific nonce bytes identified in the table above. Reserved trailing bytes are not part of the nonce.
+
+This uniqueness requirement applies across every Entry deriving its key from the same KMS Master Secret and using the same `Encr Algo ID`, including ordinary Entries, fragments, structural encrypted Entries such as Partition Manifests, and Entries carried on multiple transport streams.
+
+Different `Encr Algo ID` values define independent nonce-uniqueness scopes because the algorithm identifier participates in the Entry-key derivation defined in Section 5.3.4.
+
+Different KMS Master Secret values define independent nonce-uniqueness scopes. This includes independently established Partition KMS Master Secrets and the independent directional KMS Master Secrets established by `TLS_EXPORTER`.
+
+Opening an additional QUIC or other transport stream does not create a new nonce-uniqueness scope.
+
+SAR does not mandate random or deterministic nonce generation. An encoder MAY use any generation strategy that satisfies the uniqueness requirement above.
+
+If an encoder detects an attempted nonce reuse within the applicable scope, it MUST abort the affected encoding operation and return `SAR_ERR_NONCE_REUSE`.
+
+Decoders are not required to detect nonce reuse.
 
 #### 8.2.3 Default Encryption Algorithm Selection
 
-When an implementation creates an encrypted SAR archive and no specific encryption algorithm has been explicitly selected by the invoking application, configuration, profile, or user, the implementation MUST select an AEAD-capable encryption algorithm.
+When an implementation creates encrypted SAR output and no specific encryption algorithm has been explicitly selected by the invoking application, configuration, Compliance Profile, or user, the implementation MUST select an assigned standard AEAD algorithm.
 
-Implementations SHOULD prefer `AES256_GCM` as the default AEAD algorithm.
+Implementations SHOULD prefer `AES256_GCM` as the default encryption algorithm.
 
-Implementations MAY provide configuration mechanisms allowing an alternate AEAD-capable algorithm to be selected as the implementation default.
-
-Non-AEAD algorithms (e.g., `AES256_CBC`, `CHACHA20`) MUST NOT be selected as defaults for newly created encrypted archives unless explicitly requested by the invoking application, configuration, profile, or user.
+Implementations MAY provide configuration mechanisms allowing another assigned standard AEAD algorithm to be selected as the implementation default.
 
 ### 8.3 OS Origin Mapping (`OS_ORIGIN`)
 * `0x00`: **UNKNOWN**
@@ -2331,7 +2524,7 @@ Standardized status, warning, and error return values for SAR API implementation
 | 33 | `SAR_ERR_SIGNATURE_FAILED` | Digital signature validation failed. |
 | 34 | `SAR_ERR_ANCHOR_HASH_FAILED` | Anchor Hash validation failed. |
 | 35 | `SAR_ERR_INVALID_VERSION` | Archive version, profile version, or protocol version is unsupported or invalid. |
-| 36 | `SAR_ERR_KEY_MISSING` | Required decryption, signing, or verification key is unavailable. |
+| 36 | `SAR_ERR_KEY_MISSING` | Required cryptographic key or keying material is unavailable. |
 | 37 | `SAR_ERR_KEY_REJECTED` | Provided cryptographic key is invalid, revoked, expired, or incompatible. |
 | 38 | `SAR_ERR_STREAM_CLOSED` | Stream terminated unexpectedly before completion. |
 | 39 | `SAR_ERR_STREAM_STATE` | Invalid stream state, stream lifecycle violation, protocol sequencing error, or Stream ID conflict. |
@@ -2503,9 +2696,7 @@ The following algorithms and KMS modes MUST be supported for the applicable role
 | Signatures     | Ed25519 (raw) (`0x24`), RSA-PSS (ASN.1-DER) (`0x23`)   |
 | Hashing        | SHA256 (`0x30`), BLAKE3 (`0x31`)                       |
 
-Standard PBKDF2 support MUST satisfy Section 5.3.4, including HMAC-SHA256 and every valid combination in the mandatory PBKDF2 parameter ranges.
-
-Standard ARGON2 support MUST satisfy Section 5.3.4, including Argon2id Variant `0x03`, Version `0x13`, and every valid combination in the mandatory Argon2id parameter ranges.
+Standard PBKDF2 and ARGON2 support MUST satisfy the mandatory interoperability requirements defined for those KMS modes in Section 5.3.4.
 
 Additional algorithms defined by this specification MAY be implemented.
 
@@ -2543,7 +2734,7 @@ The following algorithms and KMS modes MUST be supported for the applicable role
 | Encryption  | AES256_GCM (`0x01`)                |
 | KMS         | PBKDF2 (`0x01`) with HMAC-SHA256   |
 
-PBKDF2 support MUST satisfy Section 5.3.4, including every valid combination in the mandatory PBKDF2 parameter ranges and every Derived Key Length required by AES256_GCM.
+PBKDF2 support MUST satisfy the mandatory interoperability requirements defined for that KMS mode in Section 5.3.4.
 
 Support for ZSTD (`0x02`) is RECOMMENDED but OPTIONAL.
 
@@ -2589,7 +2780,7 @@ The following algorithms and KMS modes MUST be supported for the applicable role
 | FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)|
 | Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)|
 
-PBKDF2 support MUST satisfy Section 5.3.4, including every valid combination in the mandatory PBKDF2 parameter ranges and every Derived Key Length required by AES256_GCM.
+PBKDF2 support MUST satisfy the mandatory interoperability requirements defined for that KMS mode in Section 5.3.4.
 
 PBKDF2 remains mandatory because SAR-over-TCP without TLS is a valid baseline transport binding.
 
@@ -2722,37 +2913,49 @@ Also consider section 17.4.3 with regards to integrity verification and section 
 * The output of the final stage MUST represent the fully reconstructed logical file.
 
 ### 13.2 Authenticated Encryption (AEAD)
-When `ENCRYPTED` is set, AEAD algorithms (e.g., `AES256_GCM`, `XCHACHA20_POLY`, `CHACHA20_POLY1305`) MUST verify the authentication tag before decompression to prevent "Decompression Bomb" attacks and chosen-ciphertext exploits.
+
+When `IS_ENCRYPTED` is set, AEAD encryption algorithms MUST verify the authentication tag before decompression to prevent "Decompression Bomb" attacks and chosen-ciphertext exploits.
 
 #### 13.2.1 AEAD Additional Authenticated Data (AAD) Binding
-To provide integrity protection over LFH metadata (not just payload confidentiality), implementations using an AEAD-capable encryption algorithm MUST bind the LFH fields to the AEAD authentication tag via the Additional Authenticated Data (AAD) mechanism.
+
+To provide integrity protection over SAR header metadata, implementations using an AEAD-capable encryption algorithm MUST bind the complete encoded Global Header and the applicable LFH fields to the AEAD authentication tag through Additional Authenticated Data (AAD).
 
 **AAD Construction**
 
-The AAD for a given LFH MUST be constructed as follows:
+The AAD for a given LFH MUST be the concatenation, in order, of:
 
-* All bytes of the Global Header from archive offset 0 through the final byte of the Global Flags field, in their encoded on-wire representation.
-* All bytes of the LFH from the first byte of the `Header Size` field through the last byte of the LFH header, in their encoded on-wire representation, except that when SELECTIVE_FEC is active and FEC Algo ID is non-zero, the FEC Size field and FEC Value field SHALL be excluded from the AAD.
+* the complete encoded Global Header, from its first byte through the byte immediately preceding the first LFH; and
+* all bytes of the current LFH from the first byte of the `Header Size` field through the final byte of the LFH header, except that when `SELECTIVE_FEC` is active and FEC Algo ID is non-zero, the FEC Size field and FEC Value field MUST be excluded.
 
-This is equivalent to the concatenation of:
+For a Physical Archive Member, the Global Header AAD component is therefore the exact byte range:
 
-* bytes in range `[0, GlobalHeader_End)`
-* bytes in range `[LFH_Start, LFH_Start + Header Size)`, excluding the `FEC Size` field and `FEC Value` field when `SELECTIVE_FEC` is active and `FEC Algo ID` is non-zero.
+```text
+[0 : First_LFH_Offset]
+```
 
-where `GlobalHeader_End` denotes the first byte immediately following the Global Flags field.
+The complete Global Header AAD component includes all encoded Global Header fields and extensions, including the complete KMS Extension when present.
 
-The KMS Extension, if present, SHALL NOT be included in AAD.
+The LFH AAD component is:
 
-The `FEC Algo ID` field, if present, SHALL remain included in AAD.
+```text
+[LFH_Start : LFH_Start + Header Size)
+```
+
+with the FEC Size and FEC Value fields omitted when `SELECTIVE_FEC` is active and FEC Algo ID is non-zero.
+
+The `FEC Algo ID` field, when present, remains included in AAD.
+
+All AAD bytes MUST be used exactly as encoded. Implementations MUST NOT normalize, reconstruct, reinterpret, or canonicalize encoded field values before supplying them as AAD.
 
 **Normative Requirements**
 
-* Encoders MUST pass this AAD to the AEAD encryption operation when generating the ciphertext and authentication tag.
-* Decoders MUST pass the same AAD to the AEAD cipher when verifying the authentication tag. Verification MUST occur before decompression, patch application, or any state-mutating operation.
-* If authentication tag verification fails, the implementation MUST return `SAR_ERR_AUTH_FAILED` and MUST NOT proceed with any further processing of the payload or LFH metadata.
+* Encoders MUST pass the AAD defined above to the AEAD encryption operation when generating the ciphertext and authentication tag.
+* Decoders MUST pass the identical AAD byte sequence to the AEAD verification operation.
+* AEAD authentication MUST succeed before decompression, patch application, plaintext release, or any state-mutating operation.
+* If authentication fails, the implementation MUST return `SAR_ERR_AUTH_FAILED` and MUST NOT continue processing the protected payload.
 
 #### 13.2.2 AEAD Tag Placement and Payload Parsing
-For AEAD algorithms (e.g. `AES256_GCM`, `XCHACHA20_POLY`, `CHACHA20_POLY1305`), the per-entry authentication tag (computed over ciphertext and AAD) MUST be encoded at the **end** of `Payload Data` using this layout:
+For all AEAD algorithms, the per-entry authentication tag (computed over ciphertext and AAD) MUST be encoded at the **end** of `Payload Data` using this layout:
 
 `Payload Data = Ciphertext || Tag`
 
@@ -2961,12 +3164,12 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    Errors encountered while processing an entry MUST NOT compromise the ability to continue parsing subsequent entries, unless the error is classified as fatal.
 
 ## 14. Footer (Fixed: 8 Bytes)
-The Footer is located at the final 8 bytes of the current physical archive member and provides a pointer to the start of its Central Dictionary.
+The Footer is located at the final 8 bytes of the current Physical Archive Member and provides a pointer to the start of its Central Dictionary.
 
 ### 14.1 Structure
 | Field | Size | Description |
 | --- | --- | --- |
-| CD Offset | 8B | Unsigned 64-bit integer indicating the byte offset of the Central Dictionary from byte zero of the current physical archive member. |
+| CD Offset | 8B | Unsigned 64-bit integer indicating the byte offset of the Central Dictionary from byte zero of the current Physical Archive Member. |
 
 ### 14.2 Presence Rules
 * The Footer MUST be present if and only if `NO_INDEX` (Bit 1) is **not** set.
@@ -3505,10 +3708,10 @@ SAR Stateful Streaming Mode MAY be bound to multiple reliable transport profiles
 
 This specification defines the following transport binding profiles:
 
-| Profile         | Transport             | Stream Multiplexing                 | TLS Availability                   | Notes                                                             |
-| --------------- | --------------------- | ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
-| `SAR-over-TCP`  | TCP byte stream       | Sequential SAR streams only         | Optional, if TCP is wrapped in TLS | SAR streams MUST NOT be byte-interleaved on one TCP connection.   |
-| `SAR-over-QUIC` | QUIC stream transport | Concurrent independent QUIC streams | Mandatory as part of QUIC/TLS      | Each QUIC stream defines an independent SAR byte-stream boundary. |
+| Profile | Transport | Stream Multiplexing | TLS Availability | Notes |
+| ------- | --------- | ------------------- | ---------------- | ----- |
+| `SAR-over-TCP` | TCP byte stream | Sequential SAR streams only | Optional, if TCP is wrapped in TLS | SAR streams MUST NOT be byte-interleaved on one TCP connection. |
+| `SAR-over-QUIC` | QUIC stream transport | Concurrent independent QUIC streams | Mandatory as part of QUIC/TLS | Each QUIC stream defines an independent SAR byte-stream boundary. |
 
 A transport binding profile MUST preserve the byte-stream abstraction required by Section 18.3.1 for every SAR stream it presents to the SAR parser.
 
@@ -3640,8 +3843,8 @@ This profile MUST NOT be used unless the underlying TLS session has completed su
 
 SAR transport bindings using TLS define two SAR-layer security modes:
 
-| Mode                       | Description                                                                                                                                 |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mode                       | Description |
+| -------------------------- | ----------- |
 | Transport-only TLS mode    | TLS protects transport bytes. SAR does not derive SAR-layer AEAD keys from TLS exporter material.                                           |
 | TLS-exporter SAR-AEAD mode | TLS protects transport bytes, and SAR derives SAR-layer AEAD keying material from TLS exporter material using KMS Mode `0x04 TLS_EXPORTER`. |
 
@@ -3658,34 +3861,52 @@ When TLS-exporter SAR-AEAD mode is used, the post-quantum or harvest-now-decrypt
 
 When KMS Mode `0x04 TLS_EXPORTER` is used:
 
-* the SAR AEAD keying material MUST be derived from TLS exporter material;
-* the TLS exporter output MUST NOT be transmitted in SAR frames;
-* the derived SAR AEAD key MUST NOT be transmitted in SAR frames;
+* KMS Master Secret material MUST be derived from TLS exporter material;
+* TLS exporter output MUST NOT be transmitted in SAR frames;
+* a derived KMS Master Secret MUST NOT be transmitted in SAR frames;
+* an Entry encryption key derived from a KMS Master Secret MUST NOT be transmitted in SAR frames;
 * SAR KMS Data MUST contain derivation metadata only;
-* SAR KMS Data MUST NOT contain raw keys, wrapping keys, TLS exporter output, private keys, or plaintext content-encryption keys;
-* the TLS exporter derivation MUST be bound to the SAR session context;
-* the selected SAR AEAD algorithm MUST match the derived key length;
-* unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
+* SAR KMS Data MUST NOT contain raw keys, wrapping keys, TLS exporter output, private keys, KMS Master Secrets, or plaintext Entry encryption keys;
+* TLS exporter derivation MUST be bound to the SAR session context defined in Section 18.6.3;
+* client-to-server and server-to-client traffic MUST use independently derived directional KMS Master Secrets; and
+* unsupported exporter, KDF, hash, transport-profile, context-version, or KMS parameters MUST fail closed.
 
-If exporter keying material is unavailable from the TLS stack, implementations MUST return `SAR_ERR_UNSUPPORTED` or `SAR_ERR_KMS_FAILED`.
+KMS Mode `0x04 TLS_EXPORTER` does not select one SAR encryption algorithm for the session. The LFH `Encr Algo ID` remains authoritative for each Entry with `IS_ENCRYPTED` set.
 
+Each directional TLS exporter invocation produces exactly one 32-byte KMS Master Secret. Each encrypted Entry subsequently derives its native encryption key from that directional KMS Master Secret according to Section 5.3.4.
+
+Multiple Entries, including Entries carried on multiple transport streams belonging to the same SAR session and communication direction, MUST use the same directional KMS Master Secret. Each Entry nevertheless derives its own Entry encryption key according to Section 5.3.4.
+
+Use of multiple transport streams does not create additional KMS Master Secret scopes and does not relax the nonce-uniqueness requirements of Section 8.2.2.
+
+
+If required TLS exporter keying material cannot be obtained from the TLS stack, processing MUST fail closed according to Section 18.6.5.
 
 #### 18.6.3 Exporter Label and Context
 
-The KMS Data for Mode `0x04 TLS_EXPORTER` supplies the TLS exporter label and non-secret derivation parameters used to construct SAR-layer AEAD keying material.
+The KMS Data for Mode `0x04 TLS_EXPORTER` supplies the TLS exporter label and non-secret derivation parameters used to establish directional KMS Master Secrets.
 
 KMS Data is derivation input only. It does not alter, extend, or override the SAR AEAD AAD construction defined in Section 13.2.1.
 
-The exporter label SHOULD be specific to the SAR transport binding profile.
+For Context Version `0x01`, the Exporter Label MUST be the exact ASCII string:
 
-Recommended labels are:
+```text
+EXPORTER-SAR-v1
+```
 
-| Binding          | Recommended Exporter Label  |
-| ---------------- | --------------------------- |
-| SAR-over-QUIC    | `EXPORTER-SAR-v1-QUIC-AEAD` |
-| SAR-over-TCP+TLS | `EXPORTER-SAR-v1-TLS-AEAD`  |
+`Exporter Label Length` MUST equal `15`.
 
-The TLS exporter context MUST bind the derived SAR AEAD keying material to the SAR session, transport binding, cryptographic profile, and key usage.
+The exact Exporter Label byte sequence is:
+
+```text
+45 58 50 4F 52 54 45 52 2D 53 41 52 2D 76 31
+```
+
+No string terminator is included.
+
+The exporter label identifies the TLS_EXPORTER cryptographic construction. It is independent of the outer SAR format version. A SAR format revision that remains compatible with this TLS_EXPORTER construction MAY continue to use the same Exporter Label and Context Version.
+
+The TLS exporter context MUST bind the derived KMS Master Secret to the transport binding, complete Global Header, SAR Stream ID, Session UUID, and communication direction.
 
 When the Mode `0x04 TLS_EXPORTER` KMS Data field `Context Version` is `0x01`, the TLS exporter context MUST be encoded exactly as follows:
 
@@ -3693,90 +3914,101 @@ When the Mode `0x04 TLS_EXPORTER` KMS Data field `Context Version` is `0x01`, th
 | ----- | -------------------------- | ---- | ---------------------------------------------- |
 | 0     | Context Version            | 1B   | MUST be `0x01`.                                |
 | 1     | Transport Profile ID       | 1B   | Transport binding profile identifier.          |
-| 2     | SAR Major Version          | 1B   | SAR major protocol version.                    |
-| 3     | SAR Minor Version          | 1B   | SAR minor protocol version.                    |
-| 4     | Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
-| 5     | Global Header Hash Length  | 1B   | Length of Global Header Hash in bytes.         |
-| 6     | Global Header Hash         | Var  | Hash of the complete encoded Global Header.    |
-| 7     | KMS Mode ID                | 1B   | MUST be `0x04`.                                |
-| 8     | AEAD Algo ID               | 1B   | SAR AEAD algorithm ID.                         |
-| 9     | Stream ID                  | 2B   | SAR Stream ID, little-endian.                  |
-| 10    | Session UUID               | 16B  | Session UUID from `SESSION_INIT`.              |
-| 11    | Key Usage ID               | 1B   | Direction or key-usage identifier.             |
-| 12    | Salt Length                | 1B   | Length of Salt from KMS Data in bytes.         |
-| 13    | Salt                       | Var  | Salt/context bytes from KMS Data.              |
+| 2     | Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
+| 3     | Global Header Hash Length  | 1B   | Digest length of the selected hash algorithm.  |
+| 4     | KMS Mode ID                | 1B   | MUST be `0x04`.                                |
+| 5     | Stream ID                  | 2B   | SAR Stream ID, little-endian.                  |
+| 6     | Session UUID               | 16B  | Session UUID established by `SESSION_INIT`.    |
+| 7     | Key Usage ID               | 1B   | Communication-direction identifier.            |
+| 8     | Salt Length                | 1B   | MUST equal `0`.                                |
+| 9     | Global Header Hash         | Var  | Hash of the complete encoded Global Header.    |
+| 10    | Salt                       | Var  | Salt bytes. Absent when Salt Length is zero.   |
 
-The Global Header Hash MUST be computed over the complete encoded Global Header as transmitted, including KMS Mode ID, KMS Payload Length, and KMS Payload. LFH bytes MUST NOT be included in the Global Header Hash.
+Context Version `0x01` contains no Salt bytes. The Mode `0x04 TLS_EXPORTER` KMS Data field `Salt Length` MUST therefore equal `0`, and the corresponding Salt field MUST be absent.
+
+Security of Context Version `0x01` MUST NOT depend on an independently generated per-stream salt.
+
+The Global Header Hash MUST be computed over the complete encoded Global Header exactly as transmitted, including KMS Mode ID, KMS Payload Length, and the complete KMS Payload. LFH bytes MUST NOT be included in the Global Header Hash.
 
 The `Global Header Hash Algo ID` in the exporter context MUST be identical to the `Global Header Hash Algo ID` declared in the Mode `0x04 TLS_EXPORTER` KMS Data.
 
-`Global Header Hash Algo ID` MUST reference the SAR hash algorithm registry. If the referenced algorithm is unsupported or reserved, implementations MUST fail closed with `SAR_ERR_UNSUPPORTED` or `SAR_ERR_RESERVED_VALUE` as applicable.
+`Global Header Hash Algo ID` MUST reference the SAR hash algorithm registry. The digest length produced by the selected algorithm MUST fit in `Global Header Hash Length`, and `Global Header Hash Length` MUST equal the exact digest length defined by that algorithm.
 
-The `AEAD Algo ID`, `Salt Length`, and `Salt` fields in the exporter context MUST be identical to the corresponding fields declared in the Mode `0x04 TLS_EXPORTER` KMS Data.
+A valid assigned hash algorithm whose complete construction is defined by SAR but is unsupported by the receiving implementation MUST return `SAR_ERR_UNSUPPORTED`. A reserved or unassigned hash algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
-For `KDF Algo ID = 0x00`, the TLS exporter MUST be invoked with the `Exporter Label`, the encoded TLS exporter context defined by `Context Version`, and an output length equal to `Derived Key Length`. The returned bytes are used directly as SAR AEAD keying material.
+For `KDF Algo ID = 0x00`, the TLS exporter MUST be invoked using:
 
-Unsupported `Context Version`, `Transport Profile ID`, `Key Usage ID`, `Global Header Hash Algo ID`, `AEAD Algo ID`, or `KDF Algo ID` values MUST fail closed.
+```text
+Label   = ASCII("EXPORTER-SAR-v1")
+Context = exact Context Version 0x01 byte sequence
+Length  = 32
+```
 
-Implementations MUST use distinct `Key Usage ID` values for distinct key usages. Implementations MUST NOT reuse the same derived AEAD key for both communication directions unless a future profile explicitly defines a safe bidirectional key schedule.
+The exact 32-byte exporter result is the KMS Master Secret for the selected `Key Usage ID`.
+
+The exporter result MUST NOT be used directly as an Entry encryption key. Entry encryption keys MUST be derived according to Section 5.3.4.
+
+The TLS exporter context MUST NOT contain the LFH `Encr Algo ID`. Entry encryption algorithm selection occurs only after KMS Master Secret derivation.
+
+The TLS exporter context MUST NOT contain the SAR Global Header Version, a SAR major version, or a SAR minor version. Compatibility of this exporter construction is determined by the Exporter Label and Context Version rather than by the outer SAR format version.
+
+The TLS exporter context MUST NOT contain a QUIC stream identifier or another transport-level substream identifier.
+
+All permitted transport streams associated with the same SAR Stream ID, Session UUID, and communication direction use the same directional KMS Master Secret. This rule does not expand the set of transport streams or Entry types permitted by the applicable transport binding profile.
+
+Unsupported or reserved Context Version, Transport Profile ID, Key Usage ID, Global Header Hash Algo ID, or KDF Algo ID values MUST fail closed with the applicable error defined by this specification.
 
 **TLS_EXPORTER Transport Profile ID Registry**
 
-| ID        | Name             | Description                                                    |
-| --------- | ---------------- | -------------------------------------------------------------- |
-| 0x01      | SAR_OVER_QUIC    | SAR-over-QUIC profile.                                         |
-| 0x02      | SAR_OVER_TCP_TLS | SAR-over-TCP wrapped in TLS.                                   |
-| 0x03-0xEF | RESERVED         | Reserved for future standard TLS-based SAR transport profiles. |
-| 0xF0-0xFF | CUSTOM           | Implementation-defined transport profiles.                     |
+| ID          | Name               | Description                                                    |
+| ----------- | ------------------ | -------------------------------------------------------------- |
+| `0x01`      | `SAR_OVER_QUIC`    | SAR-over-QUIC profile.                                         |
+| `0x02`      | `SAR_OVER_TCP_TLS` | SAR-over-TCP wrapped in TLS.                                   |
+| `0x03-0xEF` | RESERVED           | Reserved for future standard TLS-based SAR transport profiles. |
+| `0xF0-0xFF` | CUSTOM             | Implementation-defined transport profiles.                     |
+
+A CUSTOM Transport Profile ID requires explicit external agreement between the communicating endpoints. Use of a CUSTOM Transport Profile ID is outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile explicitly defines otherwise.
 
 **TLS_EXPORTER Key Usage ID Registry**
 
-| ID        | Name                   | Description                                          |
-| --------- | ---------------------- | ---------------------------------------------------- |
-| 0x01      | CLIENT_TO_SERVER_ENTRY | SAR entry protection for client-to-server direction. |
-| 0x02      | SERVER_TO_CLIENT_ENTRY | SAR entry protection for server-to-client direction. |
-| 0x03      | SESSION_CONTROL        | SAR session-control protection, if separately keyed. |
-| 0x04-0xEF | RESERVED               | Reserved for future standard key usages.             |
-| 0xF0-0xFF | CUSTOM                 | Implementation-defined key usages.                   |
+| ID          | Name               | Description                                                                        |
+| ----------- | ------------------ | ---------------------------------------------------------------------------------- |
+| `0x01`      | `CLIENT_TO_SERVER` | All SAR-layer encrypted Entries transmitted from the TLS client to the TLS server. |
+| `0x02`      | `SERVER_TO_CLIENT` | All SAR-layer encrypted Entries transmitted from the TLS server to the TLS client. |
+| `0x03-0xEF` | RESERVED           | Reserved for future standard key usages.                                           |
+| `0xF0-0xFF` | CUSTOM             | Implementation-defined key usages.                                                 |
 
-For TLS_EXPORTER key usage, `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` refer to TLS transport roles, not SAR Sender/Receiver roles.
+For TLS_EXPORTER key usage, client and server refer to TLS transport roles, not SAR Sender and Receiver roles.
 
-The TLS client is the endpoint that initiated the TCP+TLS or QUIC connection to the listening endpoint.
+The TLS client is the endpoint that initiated the TCP+TLS or QUIC connection. The TLS server is the endpoint that accepted the connection in the server role.
 
-The TLS server is the endpoint that accepted the TCP+TLS or QUIC connection and presents the server-side TLS identity.
+Every SAR Entry transmitted by the TLS client after TLS-exporter SAR-AEAD activation MUST use the `CLIENT_TO_SERVER` KMS Master Secret.
 
-A SAR entry transmitted by the TLS client MUST use `CLIENT_TO_SERVER_ENTRY`.
+Every SAR Entry transmitted by the TLS server after TLS-exporter SAR-AEAD activation MUST use the `SERVER_TO_CLIENT` KMS Master Secret.
 
-A SAR entry transmitted by the TLS server MUST use `SERVER_TO_CLIENT_ENTRY`.
+These rules apply equally to Filesystem Mode Entries, Session Mode Entries, `SESSION_CONTROL` Entries, primary-stream Entries, and Entries carried on additional transport streams permitted by the active transport binding.
 
-By default, `SESSION_CONTROL` entries MUST use the same directional key usage as ordinary SAR entries sent by the same TLS endpoint.
+A separate `SESSION_CONTROL` KMS Master Secret is not defined.
 
-A `SESSION_CONTROL` entry transmitted by the TLS client therefore uses `CLIENT_TO_SERVER_ENTRY` unless a separate session-control key usage has been explicitly negotiated or mandated by the active transport profile.
-
-A `SESSION_CONTROL` entry transmitted by the TLS server therefore uses `SERVER_TO_CLIENT_ENTRY` unless a separate session-control key usage has been explicitly negotiated or mandated by the active transport profile.
-
-`SESSION_CONTROL` key usage MUST NOT be used unless both endpoints have explicitly negotiated it or the active transport profile mandates it.
-
-Receivers MUST derive and verify using the single key usage selected by the active profile or negotiation. Receivers MUST NOT try multiple key usages to recover from authentication failure.
-
+Receivers MUST derive and verify using the one directional KMS Master Secret selected by the sender's TLS transport role. Receivers MUST NOT try multiple Key Usage IDs in response to authentication failure.
 
 #### 18.6.4 AAD Requirements
 
 This section does not redefine AAD composition rules.
 
-AAD field selection, encoding, and storage are defined in the SAR AEAD/AAD specification Section 13.2 and apply uniformly across all SAR encryption modes.
+AAD field selection, encoding, and storage are defined in Section 13.2 and apply uniformly across SAR encryption modes.
 
 When TLS-exporter SAR-AEAD mode is active, those existing AAD rules MUST be applied without modification.
 
-For entries carried on a primary SAR stream, the Global Header portion of AAD is taken from the Global Header physically present on that primary SAR stream.
+For Entries carried on a primary SAR stream, the Global Header portion of AAD is taken from the Global Header physically present on that primary SAR stream.
 
-For entries carried on an additional QUIC control stream that does not contain a physical Global Header, the Global Header portion of AAD MUST be the canonical encoded Global Header bytes of the active SAR session associated with the LFH Stream ID.
+For Entries carried on an additional QUIC control stream that does not contain a physical Global Header, the Global Header portion of AAD MUST be the exact encoded Global Header byte sequence received on the primary SAR stream of the active session associated with the LFH Stream ID.
 
 For additional QUIC control streams, the LFH portion of AAD MUST be the LFH bytes physically present on that control stream.
 
-An additional QUIC control stream MUST NOT alter or replace the associated session's Global Header bytes, Global Flags, KMS state, transform state, TLS exporter context, or AEAD configuration.
+An additional QUIC control stream MUST NOT alter or replace the associated session's Global Header bytes, Global Flags, KMS state, TLS exporter context, KMS Master Secret scope, or Entry-key derivation rules.
 
-When TLS-exporter SAR-AEAD mode is active, implementations MUST ensure that the TLS-exporter-derived keying context is bound to the SAR session as defined in Section 18.6.3.
+When TLS-exporter SAR-AEAD mode is active, implementations MUST ensure that each directional KMS Master Secret is bound to the SAR session as defined in Section 18.6.3.
 
 Implementations MUST NOT expose plaintext before AEAD authentication succeeds.
 
@@ -3784,37 +4016,40 @@ A missing, malformed, unsupported, or mismatched AAD context MUST produce a hard
 
 `LOSS_TOLERANT` MUST NOT suppress AEAD authentication failures.
 
-
 #### 18.6.5 TLS-Exporter AEAD Activation and Failure Behavior
 
 Endpoints that support TLS-exporter SAR-AEAD SHOULD advertise `CAP_TLS_EXPORTER_AEAD` in `SESSION_CAPABILITIES`.
 
 Advertising `CAP_TLS_EXPORTER_AEAD` does not select TLS-exporter SAR-AEAD.
 
-KMS Mode `0x04 TLS_EXPORTER`, when selected by the SAR Global Header / KMS configuration, is authoritative for selecting TLS-exporter SAR-AEAD for that SAR stream.
+KMS Mode `0x04 TLS_EXPORTER`, when selected by the SAR Global Header and KMS configuration, is authoritative for selecting TLS-exporter SAR-AEAD for that SAR stream.
 
-If KMS Mode `0x04 TLS_EXPORTER` is not selected by the SAR Global Header / KMS configuration, endpoints MUST NOT use TLS-exporter SAR-AEAD for that SAR stream.
+If KMS Mode `0x04 TLS_EXPORTER` is not selected by the SAR Global Header and KMS configuration, endpoints MUST NOT use TLS-exporter SAR-AEAD for that SAR stream.
 
-The TLS exporter secret becomes available only after the underlying TLS session has completed successfully and the TLS peer identity has been validated according to policy.
+TLS exporter material becomes available only after the underlying TLS session has completed successfully and the TLS peer identity has been validated according to application or deployment policy.
 
 For SAR-over-QUIC, the underlying TLS session is the QUIC/TLS session.
 
-TLS exporter availability alone is not sufficient to derive SAR AEAD keying material for a SAR session.
+TLS exporter availability alone is not sufficient to establish a KMS Master Secret for a SAR session.
 
-SAR TLS-exporter AEAD key derivation also requires:
+TLS_EXPORTER KMS Master Secret derivation additionally requires:
 
-* the SAR Global Header;
-* KMS Mode `0x04 TLS_EXPORTER` parameters;
-* Stream ID;
-* Session UUID;
-* key usage;
-* exporter context as defined in Section 18.6.3.
+* the accepted SAR Global Header;
+* valid KMS Mode `0x04 TLS_EXPORTER` parameters;
+* the Stream ID;
+* the Session UUID;
+* the applicable directional Key Usage ID; and
+* the exact exporter context defined in Section 18.6.3.
 
-`SESSION_INIT` is the only mandatory SAR-layer plaintext bootstrap entry for KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`.
+`SESSION_INIT` is the only mandatory SAR-layer plaintext bootstrap Entry for KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`.
 
-`SESSION_INIT` MUST NOT be encrypted with TLS-exporter SAR-AEAD because the Session UUID contained in `SESSION_INIT` is required input to TLS-exporter SAR AEAD key derivation.
+`SESSION_INIT` MUST NOT be encrypted with TLS-exporter SAR-AEAD because the Session UUID contained in `SESSION_INIT` is required input to KMS Master Secret derivation.
 
-If the Global Header selects KMS Mode `0x04 TLS_EXPORTER`, the bootstrap `SESSION_INIT` entry MUST be encoded with Entry Mode Bit 2 (`IS_ENCRYPTED`) unset. Any physically present encryption fields are ignored according to the normal Global Flags / Entry Mode rules.
+If the Global Header selects KMS Mode `0x04 TLS_EXPORTER`, the bootstrap `SESSION_INIT` Entry MUST be encoded with Entry Mode Bit 2 (`IS_ENCRYPTED`) unset.
+
+Because Global Flag `ENCRYPTED` determines LFH field presence, the encryption fields remain physically present in that LFH. They are semantically inert and are interpreted according to the normal Global Flags and Entry Mode rules in Section 6.2.2.
+
+The `SESSION_INIT` LFH and payload remain protected by the authenticated TLS transport. They do not receive independent SAR-layer AEAD protection.
 
 TLS-exporter SAR-AEAD binding for a SAR session becomes active after all of the following conditions are satisfied:
 
@@ -3823,44 +4058,64 @@ TLS-exporter SAR-AEAD binding for a SAR session becomes active after all of the 
 3. the SAR Global Header has been parsed and accepted;
 4. KMS Mode `0x04 TLS_EXPORTER` parameters have been parsed and accepted;
 5. `SESSION_INIT` has successfully bound the Stream ID and Session UUID;
-6. TLS exporter material has been obtained from the TLS stack;
-7. SAR AEAD keying material has been derived successfully for the relevant key usage.
+6. TLS exporter material is available from the TLS stack; and
+7. the applicable 32-byte directional KMS Master Secret has been derived successfully according to Section 18.6.3.
 
-After TLS-exporter SAR-AEAD binding becomes active, every subsequent SAR entry in that session MUST be encrypted and authenticated with the derived SAR AEAD keying material.
+After TLS-exporter SAR-AEAD binding becomes active, every subsequent SAR Entry in that session MUST set `IS_ENCRYPTED`.
 
-This requirement applies to Filesystem Mode entries, Session Mode entries, `SESSION_CONTROL` entries, entries carried on the primary SAR stream, and entries carried on additional QUIC control streams.
+For each such Entry, the sender and receiver MUST derive the Entry encryption key from the applicable directional KMS Master Secret according to Section 5.3.4 before performing SAR-layer encryption or decryption.
 
-An unencrypted SAR entry received after TLS-exporter SAR-AEAD binding is active MUST fail closed.
+This requirement applies to Filesystem Mode Entries, Session Mode Entries, `SESSION_CONTROL` Entries, Entries carried on the primary SAR stream, and Entries carried on additional transport streams permitted by the active transport binding.
 
-By default, `SESSION_CONTROL` entries use the same directional key usage as ordinary SAR entries sent by the same TLS endpoint, as defined in Section 18.6.3.
+An unencrypted SAR Entry received after TLS-exporter SAR-AEAD binding is active MUST fail closed with `SAR_ERR_FLAG_CONFLICT` or a more specific applicable stream-security error defined by this specification.
 
-Additional QUIC control streams opened after TLS-exporter SAR-AEAD binding is active inherit the associated session's Global Header, KMS state, TLS exporter context, AEAD configuration, and active key usage rules.
+Every Entry transmitted by the TLS client uses the `CLIENT_TO_SERVER` KMS Master Secret.
 
-If KMS Mode `0x04 TLS_EXPORTER` is selected and an endpoint does not support it, the endpoint MUST fail closed with `SAR_ERR_UNSUPPORTED`, `SAR_ERR_KMS_FAILED`, or the closest applicable transport error.
+Every Entry transmitted by the TLS server uses the `SERVER_TO_CLIENT` KMS Master Secret.
 
-If bidirectional control is available, the endpoint SHOULD transmit `SESSION_STATUS` before terminating the session.
+`SESSION_CONTROL` Entries use the same directional KMS Master Secret as ordinary Entries transmitted by the same TLS endpoint. No separate `SESSION_CONTROL` key usage exists.
 
-If bidirectional control is not available, the endpoint MUST terminate or reject the affected stream or connection according to the transport binding.
+When multiple permitted QUIC streams are associated with the same SAR session, all Entries sent in one direction use the same directional KMS Master Secret regardless of which QUIC stream carries the Entry.
 
-Failure at any required step MUST prevent decryption and MUST NOT expose plaintext.
+QUIC stream identifiers MUST NOT be incorporated into TLS_EXPORTER derivation or per-Entry key derivation.
+
+Use of multiple QUIC streams MUST NOT create independent nonce-uniqueness scopes. Nonce uniqueness remains scoped according to the applicable KMS Master Secret and encryption algorithm rules.
+
+Additional QUIC control streams opened after TLS-exporter SAR-AEAD binding is active inherit the associated session's Global Header, KMS state, TLS exporter context, directional KMS Master Secret scope, and Entry-key derivation rules.
+
+If KMS Mode `0x04 TLS_EXPORTER` is selected and an endpoint does not implement that KMS mode or the required valid construction, the endpoint MUST fail closed with `SAR_ERR_UNSUPPORTED` or another more specific applicable error.
+
+If the implementation does not implement the TLS exporter capability required by KMS Mode `0x04 TLS_EXPORTER`, it MUST return `SAR_ERR_UNSUPPORTED`.
+
+If that capability is implemented but the required TLS exporter keying material cannot be obtained for the active TLS session, the implementation MUST return `SAR_ERR_KEY_MISSING`.
+
+Either failure MUST prevent SAR-layer encrypted processing and MUST NOT expose plaintext.
 
 Implementations MUST NOT silently downgrade from required TLS-exporter SAR-AEAD mode to transport-only TLS mode.
 
-If an implementation or application policy requires every SAR entry, including `SESSION_INIT`, to be independently protected by SAR-layer AEAD, this requirement cannot be satisfied by KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`. Such a policy requires a future bootstrap or pre-shared session context profile.
-
+If an implementation or application policy requires every SAR Entry, including `SESSION_INIT`, to be independently protected by SAR-layer AEAD, that requirement cannot be satisfied by KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`. Such a policy requires another bootstrap construction defined by an applicable future profile or specification.
 
 #### 18.6.6 Prohibited Behavior
 
 Implementations MUST NOT:
 
-* transmit SAR content-encryption keys in `SESSION_*` messages;
+* transmit KMS Master Secrets in `SESSION_*` messages or other SAR frames;
+* transmit Entry encryption keys in `SESSION_*` messages or other SAR frames;
 * transmit TLS exporter output in SAR frames;
-* place plaintext keys in KMS Data;
-* treat Session UUIDs as authentication secrets;
-* derive SAR AEAD keys without binding them to the SAR session context;
-* reuse exporter-derived SAR AEAD keys across independent sessions unless explicitly allowed by a future rekey profile;
+* place plaintext secret keys in KMS Data;
+* treat Session UUIDs, Stream IDs, exporter labels, Global Header hashes, or TLS_EXPORTER context fields as authentication secrets;
+* derive a TLS_EXPORTER KMS Master Secret without binding it to the exact context defined in Section 18.6.3;
+* derive TLS_EXPORTER KMS Master Secrets using a SAR format version field that is not part of the Context Version `0x01` construction;
+* incorporate a QUIC stream identifier or another transport-level substream identifier into Context Version `0x01`;
+* use the client-to-server KMS Master Secret for server-to-client traffic;
+* use the server-to-client KMS Master Secret for client-to-server traffic;
+* derive or negotiate a separate `SESSION_CONTROL` KMS Master Secret under Context Version `0x01`;
+* treat opening an additional QUIC stream as establishing a new KMS Master Secret scope;
+* treat an additional QUIC stream as establishing an independent Entry-nonce uniqueness scope;
+* reuse a TLS-exporter-derived KMS Master Secret across independent SAR sessions;
+* use a KMS Master Secret directly as an Entry encryption key;
 * expose plaintext before AEAD authentication succeeds;
-* allow `LOSS_TOLERANT` to suppress AEAD failures;
+* allow `LOSS_TOLERANT` to suppress AEAD authentication failures; or
 * silently downgrade from required TLS-exporter SAR-AEAD mode to transport-only TLS mode.
 
 #### 18.6.7 Post-Quantum and Hybrid TLS Key Agreement Policy
@@ -4116,11 +4371,14 @@ When `ENCRYPTED` is unset, the Partition Manifest Entry MUST have `IS_ENCRYPTED`
 
 When `ENCRYPTED` is set, the Partition Manifest Entry MUST set `IS_ENCRYPTED` and MUST use an AEAD-capable SAR encryption algorithm. Every Partition Manifest Entry in one Partition Set MUST use the same AEAD algorithm.
 
+The Partition Manifest Entry uses the KMS Master Secret established by the KMS Extension of the current Partition. Its Entry encryption key MUST be derived from that KMS Master Secret according to the common per-Entry key derivation defined in Section 5.3.4.
+
 The Manifest uses the ordinary SAR AEAD nonce, tag, processing, and AAD rules in Section 13.2. Partitioning does not redefine the general AAD domain.
 
-Mandatory Manifest AEAD protects Partition Set UUID, ordering, count, finality, and predecessor-link metadata that is not included in `Current Partition Hash`. It also provides authenticated Manifest metadata for `NO_INDEX` Partition Sets, where CD signatures are unavailable.
+When Manifest encryption is active, its AEAD authentication protects Partition Set UUID, ordering, count, finality, and predecessor-link metadata that is not included in `Current Partition Hash`. It also provides authenticated Manifest metadata for `NO_INDEX` Partition Sets, where CD signatures are unavailable.
 
 Ordinary non-Manifest Entries retain their normal Entry Mode and encryption choices.
+
 
 #### 19.1.13 Resource Limits and Arithmetic
 
@@ -4300,7 +4558,7 @@ Structural validation MAY always be performed and includes:
 Hash verification MAY be performed only if:
 
 * `Hash_Algorithm_ID` is supported;
-* the physical archive member selected by `Partition_Index` is available;
+* the Physical Archive Member selected by `Partition_Index` is available;
 * the referenced byte range `[Member_Offset, Member_Offset + Compressed_Size)` is readable within that member; and
 * the bounds of that member are available.
 
@@ -4308,9 +4566,9 @@ For an unpartitioned archive, `Partition_Index` MUST be zero and selects the arc
 
 For a Partitioned Archive, `Partition_Index` MUST identify the Partition whose Partition Manifest carries the same `Partition Index` value.
 
-`Member_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within the bounds of the selected physical archive member when those bounds are available.
+`Member_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within the bounds of the selected Physical Archive Member when those bounds are available.
 
-CDC_MAP hash verification is over the exact stored byte range `[Member_Offset, Member_Offset + Compressed_Size)` of the selected physical archive member. This is **not** the same as FASTCDC boundary-regeneration verification.
+CDC_MAP hash verification is over the exact stored byte range `[Member_Offset, Member_Offset + Compressed_Size)` of the selected Physical Archive Member. This is **not** the same as FASTCDC boundary-regeneration verification.
 
 ### 21.2 External Database Integration (`CDC_EXT_PROVIDER`)
 
