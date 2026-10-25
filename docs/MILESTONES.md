@@ -911,8 +911,6 @@ If this milestone document appears to describe library/profile layout differentl
 * update `SECURITY.md` where security posture changed
 * ensure documentation distinguishes current behavior, planned hardening, and future profile policy
 
-# Current and future milestones
-
 ## M13a.1: parser, memory, panic, and DoS audit
 
 * audit Global Header, LFH, TLV, Central Dictionary, Footer, `ArchiveReader`, and `StreamArchiveParser` structural parsing
@@ -987,18 +985,19 @@ If this milestone document appears to describe library/profile layout differentl
 * do not require non-standard duplicate headers/footers in ordinary SAR v1.0 archives
 * record findings, accepted design risks, and specification gaps in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
 
+# Current and future milestones
+
 ## M13a.7: specification gap triage and normative resolution
 
-* review every M13 finding classified as a specification gap
-* confirm that each gap represents missing, ambiguous, or internally inconsistent normative behavior
-* determine the intended interoperable behavior for each confirmed gap
-* update `specification.md` and related normative documentation where required
-* record the normative decision, compatibility impact, and affected implementation areas in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
-* distinguish clarification-only changes from behavioral or wire-format changes
-* define verification expectations after normative resolution
-* assign resulting implementation and test work to the applicable M13b milestone
-* do not implement code remediation in this milestone
-* do not silently resolve specification gaps through implementation choices
+* triage and resolve M13 findings that require normative specification decisions
+* establish deterministic cross-implementation behavior for indexed archives, `NO_INDEX` archives, partitioned archives, and Stateful Streaming Mode
+* resolve specification gaps covering parser semantics, extraction and logical-state behavior, Compliance Profiles, cryptographic interoperability, partitioning, fragmentation, and error/status semantics
+* incorporate accepted clarification, behavioral, and wire-format changes into `specification.md` and maintain affected normative cross-references
+* document each normative decision, compatibility impact, implementation impact, and verification expectation in `docs/machine-readable/M13_AUDIT_FINDINGS.json`
+* track materially distinct gaps as separate findings and assign resulting implementation and test remediation to the applicable M13b milestone
+* complete a final normative consistency and implementation-impact review before M13a.7 is closed
+* limit implementation changes to documentation or source cross-reference corrections directly required by specification changes
+
 
 ## M13b.1: parser, resource, and parser-fuzzing remediation
 

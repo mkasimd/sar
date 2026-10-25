@@ -29,13 +29,27 @@ The following terminology is used throughout this specification:
 
 * **Archive:** A SAR object intended for persistent storage consisting of a Global Header followed by a Data Area and, unless `NO_INDEX` is set, a Central Dictionary and Footer.
 
-* **Entry:** A single logical Application Data Object represented by a Local File Header (LFH) and its associated payload.
+* **Physical Archive Member:** One independently encoded physical SAR archive unit beginning at byte offset zero with a Global Header. For an unpartitioned Archive, the Physical Archive Member is the complete Archive. For a Partitioned Archive, each Partition is one Physical Archive Member.
+
+* **Entry:** A single logical Application Data Object represented by one LFH and its associated payload, or by a group of LFHs and payload fragments when `FILE_FRAGMENTATION` is enabled.
+
+* **Full Logical Entry Path:** The canonical SAR path identifying an Entry. It consists of the LFH `Name String` when the LFH `Path String` is absent or empty, and otherwise consists of the LFH `Path String`, followed by `/`, followed by the LFH `Name String`.
+
+* **Extraction Root:** The directory or filesystem scope selected by the caller or host application before materialization begins and beneath which selected Entries are materialized.
 
 * **Payload:** The application-defined data represented by an Entry after all required transformations and reconstruction steps have completed successfully.
 
 * **Fragment:** A portion of an Entry transmitted or stored independently for subsequent reassembly.
 
-* **Partition:** One physical member of a partitioned SAR archive belonging to a common Partition Set.
+* **Partitioned Archive:** One logical SAR archive divided across one or more physical Partitions.
+
+* **Partition Set:** The complete collection of physical Partitions belonging to one Partitioned Archive.
+
+* **Partition:** A Physical Archive Member belonging to a Partition Set.
+
+* **Partition Set UUID:** A nonzero 16-byte identifier shared by every Partition in one Partition Set.
+
+* **Partition Manifest Entry:** The terminal structural LFH-based Entry that identifies and finalizes one physical Partition.
 
 * **Sender:** The implementation producing or transmitting SAR objects.
 
@@ -45,7 +59,13 @@ The following terminology is used throughout this specification:
 
 * **Transformation:** Any operation altering the encoded representation of an Entry without changing its logical payload, including compression, encryption, delta encoding, fragmentation, or Forward Error Correction (FEC).
 
+* **KMS Master Secret:** A 32-byte secret established by the active standard KMS mode and used exclusively as input to SAR per-Entry key derivation. For encrypted archival processing, one KMS Master Secret is established for each Physical Archive Member from that member's KMS Extension. In Stateful Streaming Mode using PBKDF2, ARGON2, or ASYMMETRIC_WRAP, one KMS Master Secret is established for the SAR stream from that stream's KMS Extension. In Stateful Streaming Mode using `TLS_EXPORTER`, each active directional key usage establishes an independent KMS Master Secret after successful session initialization. A KMS Master Secret MUST NOT be used directly as an Entry encryption key.
+
 * **Structural Determinism:** The property that the presence, ordering, and interpretation of encoded fields are derived exclusively from the Global Flags and Entry Mode bits defined by this specification without heuristic interpretation.
+
+* **Compliance Profile:** A normative implementation capability baseline. A Compliance Profile is not encoded in an archive or stream and does not alter the SAR wire representation.
+
+* **Guaranteed Interoperability Baseline:** The mandatory features, algorithms, KMS modes, parameter ranges, and combinations that every conforming implementation of the same Compliance Profile and applicable role is required to support.
 
 Unless explicitly specified otherwise, references to "objects" within this document refer to Application Data Objects.
 
@@ -89,6 +109,8 @@ SAR addresses this by defining explicit compliance profiles together with mandat
 
 Implementations conforming to the same compliance profile can therefore process the same Application Data Objects without requiring prior capability negotiation while remaining extensible through optional features and future extensions.
 
+This guarantee applies when the encoded output uses only the mandatory features, algorithms, KMS modes, parameter ranges, and combinations of the claimed Compliance Profile. Assigned optional identifiers remain assigned SAR identifiers. Encoded use of an optional construction is valid SAR only where this specification defines its complete normative construction. Valid optional constructions remain outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile makes them mandatory.
+
 ### Security and Integrity
 
 SAR defines a unified security and integrity model that applies consistently to both archival storage and Stateful Streaming Mode.
@@ -114,34 +136,46 @@ A SAR archive consists of four sequential sections, unless the `NO_INDEX` flag i
 
 The CD is a post-hoc index and does not define the canonical structure of the archive, which is always derived from the Data Area. If the `NO_INDEX` flag is set, the CD and Footer are omitted.
 
+For a Partitioned Archive, each physical Partition independently follows this structural model. Every Partition terminates its Data Area with a Partition Manifest Entry. When `NO_INDEX` is unset, every Partition then contains its own partition-local Central Dictionary and Footer. When `NO_INDEX` is set, the Partition Manifest payload is followed by the physical end of that Partition.
+
 ## 5. Global Header & Extension
 The Global Header is located at absolute offset **0**. It defines the archive's identity and the structural rules for all subsequent entries.
 
 ### 5.1 Header Layout
-The archive begins with a fixed-size segment followed by variable sized flags and a conditional extension.
+The archive begins with a fixed-size segment followed by the Global Flags field and any conditional Global Header extensions. For SAR version 1.0, the Global Flags field is exactly 4 bytes.
 
 | Offset | Field | Size | Description |
 | --- | --- | --- | --- |
-| 0 | **Magic Number** | 4B | `0x53 0x41 0x52 0x21` ("SAR!") |
-| 4 | **Version** | 1B | Format version (e.g. 0x01) |
-| 5 | **Reserved** | 1B | MUST be 0x0 |
-| 6 | **Flags Size** | 2B | Size of Global Flags |
-| 8 | **Global Flags** | Var | Bitmask defining the binary layout. |
-|...| **Partition Descriptor** | 96B | Optional; presence governed by `PARTITIONED_ARCHIVE` (Bit 3). |
+| 0 | **Magic Number** | 4B | `0x53 0x41 0x52 0x21` ("SAR!"). |
+| 4 | **Version** | 1B | Format version. `0x01` identifies SAR version 1.0. `0x00` is reserved. All other values are unassigned by this specification. |
+| 5 | **Reserved** | 1B | MUST be 0x0. |
+| 6 | **Flags Size** | 2B | Size of Global Flags; MUST equal `4` for SAR version 1.0. |
+| 8 | **Global Flags** | 4B | Little-endian bitmask defining the binary layout. |
 |...| **KMS Extension** | Var | Optional; Presence governed by Bit 10. |
 
 ### 5.2 Global Flags Registry
-The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be in conflict with each other and MUST NOT be set simultaneously (see section 11.4).
+
+The SAR version 1.0 Global Flags field MUST be a 32-bit little-endian bitmask encoded in exactly 4 bytes. The `Flags Size` field MUST equal `4`.
+
+All unassigned bits in the 32-bit Global Flags field are reserved. A SAR version 1.0 writer MUST set all reserved Global Flags bits to zero.
+
+A decoder encountering a `Flags Size` value other than `4` in a SAR version 1.0 Global Header MUST reject the archive with `SAR_ERR_INVALID_LENGTH`.
+
+A decoder encountering a nonzero reserved Global Flags bit MUST reject the archive with `SAR_ERR_RESERVED_VALUE`.
+
+Certain combinations of assigned flags are invalid and MUST be rejected as defined by Section 13.4.
+
 
 **Category A: Structural & Indexing**
 | Bit | Name | Description |
 | --- | --- | --- |
-| 0 | `64BIT_SIZE` | All size/offset fields are 8 bytes (otherwise 4). |
+| 0 | `64BIT_SIZE` | Data-scale size and offset values explicitly governed by this flag use 8-byte encoding instead of 4-byte encoding. Field-specific sections define which values are governed by `64BIT_SIZE`. |
 | 1 | `NO_INDEX` | Sequential-only mode. No CD or Footer exists. |
 | 2 | `OPT_PRESENT` | CD contains a variable-length Metadata Section (TLV). |
 | 3 | `PARTITIONED_ARCHIVE` | The archive spans multiple physical files. |
-| 4 | `FILE_FRAGMENTATION` | Individual files may be split into non-contiguous fragments. |
+| 4 | `FILE_FRAGMENTATION` | Logical Entries may be segmented across multiple LFH-based fragments. |
 | 5 | `CDC_SUPPORT` | Enables support for Content-Defined Chunking. |
+| 6 - 7 | `RESERVED` | MUST be zero. |
 
 **Category B: Payload Transformations**
 | Bit | Name | Description |
@@ -149,15 +183,17 @@ The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be
 | 8 | `COMPRESSED` | Compression fields present in Local File Headers. |
 | 9 | `HAS_DELTA` | Incremental Mode. Entries may contain binary patches. |
 | 10 | `ENCRYPTED` | Encryption fields present in Local File Headers. |
+| 11 - 15 | `RESERVED` | MUST be zero. |
 
 **Category C: Integrity & Security**
 | Bit | Name | Description |
 | --- | --- | --- |
-| 16 | `HAS_GLOBAL_CRC32` | CD contains a 32-bit global archive CRC. |
+| 16 | `HAS_DATA_AREA_CRC32` | CD contains a 32-bit Data Area CRC32. |
 | 17 | `PER_FILE_CRC` | Local File Headers include file-level CRC32. |
 | 18 | `SIGNED` | CD includes signature TLV. **Requires Bit 2.** |
 | 19 | `HAS_GLOBAL_EC` | CD contains Error Correction (EC) parity data. |
 | 20 | `SELECTIVE_FEC` | LFH may contain Error Correction (EC) parity data.|
+| 21 - 23 | `RESERVED` | MUST be zero. |
 
 **Category D: Filesystem Metadata**
 | Bit | Name | Description |
@@ -169,18 +205,25 @@ The Global Flags are at least 4 bytes in size (Little-Endian). Some flags MAY be
 | 28 | `EXT_TIME` | Headers include 3x 64-bit Unix timestamps (m/a/ctime). |
 | 29 | `DEDUPLICATION` | Headers include content-based hashes (e.g., BLAKE3). |
 | 30 | `SPARSE_FILES` | Support for sparse filesystem holes. |
+| 31 | `RESERVED` | MUST be zero. |
 
 ### 5.3 Global Header Extensions
-If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, otherwise omitted. It provides the necessary parameters to derive or unwrap the keys used in the Data Area.
+If the `ENCRYPTED` flag (Bit 10) is set, the KMS Extension MUST be present, otherwise omitted. It provides the parameters required to establish the KMS Master Secret used as input to Entry-key derivation.
 
-If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST be present, otherwise ommited.
+Every standard KMS mode establishes a 32-byte KMS Master Secret. The KMS Master Secret MUST NOT be used directly as an Entry encryption key.
+
+PBKDF2 and ARGON2 derive the KMS Master Secret from caller-supplied password material. ASYMMETRIC_WRAP recovers the KMS Master Secret from a recipient-specific wrapped representation. TLS_EXPORTER derives directional KMS Master Secrets from an authenticated TLS session after the Stateful Streaming bootstrap defined in Section 18.6.
+
+Except where a CUSTOM KMS or encryption construction explicitly defines another complete key hierarchy, every SAR-defined encrypted Entry derives its native encryption key from the applicable KMS Master Secret according to Section 5.3.4.
+
+The KMS Extension is Global Header state and does not select one encryption algorithm for all Entries. The LFH `Encr Algo ID` remains authoritative for the encryption algorithm of each Entry with `IS_ENCRYPTED` set. Entries using different encryption algorithms MAY coexist under one KMS Extension.
 
 #### 5.3.1 KMS_DATA Structure
 | Field | Size | Description |
 | --- | --- | --- |
-| **KMS Mode ID** | 1B | Defines the method (See 3.3.2). |
+| **KMS Mode ID** | 1B | Defines the method (See Section 5.3.2). |
 | **KMS Payload Length**| 4B | Size of the following payload in bytes. |
-| **KMS Payload** | Var | Mode-specific parameters (See 3.3.3). |
+| **KMS Payload** | Var | Mode-specific parameters (See Section 5.3.3). |
 
 **Rules for KMS Parsing:**
 * **Total Size**: The total size of the Global Header with KMS is `13 + Flags Size + KMS Payload Length` bytes.
@@ -205,149 +248,380 @@ If the `PARTITIONED_ARCHIVE` glag (Bit 3) is set, the Partition Descriptor MUST 
 * If a CUSTOM mode is encountered and not supported, implementations MUST return `SAR_ERR_UNSUPPORTED`.
 
 #### 5.3.3 Mode-Specific Payload Structures
+
 **Mode 0x01 - PBKDF2**
-| Field | Size | Description |
-| --- | --- | --- |
-| PRF Algo ID | 1B | 0x01: HMAC-SHA256, 0x02: HMAC-SHA512, 0x03: HMAC-SHA3-256. |
-| Salt Length | 1B | MUST be ≥ 16. |
-| Salt | Var | Random binary salt. |
-| Iterations | 4B | MUST be ≥ 100,000. |
-| Derived Key Length | 2B | MUST match encryption algorithm requirements. |
+
+| Field              | Size | Description |
+| ------------------ | ---- | ------------------------ |
+| PRF Algo ID        | 1B   | 0x01: HMAC-SHA256, 0x02: HMAC-SHA512, 0x03: HMAC-SHA3-256. |
+| Iterations         | 4B   | PBKDF2 iteration count. |
+| Derived Key Length | 2B   | Length of the derived KMS Master Secret. MUST equal `32`. |
+| Salt Length        | 1B   | Length of Salt in bytes. |
+| Salt               | Var  | Random binary salt. |
 
 **Mode 0x02 - ARGON2**
-| Field | Size | Description |
-| --- | --- | --- |
-| Argon2 Variant | 1B | 0x01: Argon2d, 0x02: Argon2i, 0x03: Argon2id. |
-| Version | 1B | 0x13 RECOMMENDED. |
-| Salt Length | 1B | MUST be ≥ 16. |
-| Salt | Var | Random binary salt. |
-| Memory Cost (KiB) | 4B | MUST be ≥ 64 MiB. |
-| Time Cost | 4B | Number of passes. |
-| Parallelism | 2B | Number of threads. |
-| Derived Key Length | 2B | MUST match algorithm requirements. |
+
+| Field              | Size | Description |
+| ------------------ | ---- | ----------------------- |
+| Argon2 Variant     | 1B   | 0x03: Argon2id. All other values are RESERVED. |
+| Version            | 1B   | Argon2 version identifier. |
+| Memory Cost (KiB)  | 4B   | Argon2 memory cost in KiB. |
+| Time Cost          | 4B   | Number of passes. |
+| Parallelism        | 2B   | Number of Argon2 lanes. |
+| Derived Key Length | 2B   | Length of the derived KMS Master Secret. MUST equal `32`. |
+| Salt Length        | 1B   | Length of Salt in bytes. |
+| Salt               | Var  | Random binary salt. |
 
 **Mode 0x03 - ASYMMETRIC_WRAP**
-| Field | Size | Description |
-| --- | --- | --- |
-| Wrap Algo ID | 1B | 0x01: RSA-OAEP-2048, 0x02: RSA-OAEP-4096, 0x03: X25519, 0x04: ML-KEM-768, 0x05: ML-KEM-1024. |
-| Recipient Count | 1B | MUST be ≥ 1. |
-| *Recipient Loop* | - | Repeat per Recipient: |
-| - Recipient ID Len | 1B | Length of ID. |
-| - Recipient ID | Var | Key ID / Fingerprint. |
-| - Wrapped Key Len | 2B | Length of wrapped blob. |
-| - Wrapped Key Blob | Var | The Wrapped Master Key. |
+
+| Field              | Size | Description |
+| ------------------ | ---- | ---------------------------------- |
+| Wrap Algo ID       | 1B   | Identifies the asymmetric wrapping construction. |
+| Recipient Count    | 1B   | Number of recipient records. |
+| *Recipient Loop*   | -    | Repeat per Recipient: |
+| - Recipient ID Len | 1B   | Length of ID. |
+| - Recipient ID     | Var  | Key ID or fingerprint. |
+| - Wrapped Key Len  | 2B   | Length of wrapped blob. |
+| - Wrapped Key Blob | Var  | Recipient-specific wrapped representation of the KMS Master Secret. |
+
+The Wrap Algo ID assignments and complete wrapping constructions are defined in Section 5.3.4.
 
 **Mode 0x04 - TLS_EXPORTER**
-| Field                      | Size | Description                                                                |
-|----------------------------|------|----------------------------------------------------------------------------|
-| Exporter Label Length      | 1B   | Length of Exporter Label in bytes.                                         |
-| Exporter Label             | Var  | ASCII-encoded TLS exporter label.                                          |
-| Context Version            | 1B   | MUST be `0x01` for this profile.                                           |
-| AEAD Algo ID               | 1B   | SAR AEAD algorithm ID.                                                     |
-| KDF Algo ID                | 1B   | Optional post-export KDF; `0x00` means direct TLS exporter output profile. `0x01 - 0xFF`: RESERVED; nonzero values MUST return `SAR_ERR_RESERVED_VALUE`. |
-| Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding.                             |
-| Salt Length                | 1B   | MAY be `0`; length of non-secret salt/context bytes.                       |
-| Salt                       | Var  | Non-secret salt/context bytes.                                             |
-| Derived Key Length         | 2B   | MUST match the selected AEAD algorithm requirements.                       |
-| Flags                      | 2B   | Profile flags; reserved bits MUST be zero.                                 |
+
+| Field                      | Size | Description |
+| -------------------------- | ---- | ------------ |
+| Context Version            | 1B   | TLS_EXPORTER context format version. MUST equal `0x01`. All other values are RESERVED.|
+| KDF Algo ID | 1B | Post-export derivation identifier. `0x00` means direct TLS exporter output as the KMS Master Secret. Values `0x01-0xFF` are RESERVED. |
+| Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
+| Derived Key Length         | 2B   | Length of the directional KMS Master Secret. MUST equal `32`. |
+| Exporter Label Length | 1B | Length of Exporter Label in bytes. MUST equal `15` for Context Version `0x01`. |
+| Salt Length | 1B | Length of non-secret Salt in bytes. MUST equal `0` for Context Version `0x01`. |
+| Exporter Label | Var | ASCII-encoded TLS exporter label. MUST equal `EXPORTER-SAR-v1` for Context Version `0x01`. |
+| Salt | Var | Non-secret salt bytes. MUST be absent when Salt Length is zero. |
+
+KMS Mode `0x04 TLS_EXPORTER` does not select an Entry encryption algorithm. Each encrypted LFH retains its own authoritative `Encr Algo ID`.
+
+An implementation claiming support for KMS Mode `0x04 TLS_EXPORTER` MUST implement the TLS_EXPORTER SAR AEAD profile defined in Section 18.6.
+
+A decoder MUST NOT attempt TLS exporter derivation or subsequent encrypted Entry processing using a reserved Context Version or KDF Algo ID.
+
+#### 5.3.4 KMS Mode Processing Requirements
+
+Every standard KMS mode establishes a KMS Master Secret of exactly 32 bytes.
+
+The KMS Master Secret is key-derivation material and MUST NOT be supplied directly to a SAR encryption algorithm as its Entry encryption key.
+
+For every Entry with `IS_ENCRYPTED` set and a SAR-defined standard encryption algorithm selected by `Encr Algo ID`, the native Entry encryption key MUST be derived from the applicable KMS Master Secret using HKDF-SHA256 as defined below.
+
+```text
+Entry_Key = HKDF-SHA256(
+    IKM  = KMS_Master_Secret,
+    salt = empty,
+    info = Entry_Key_Info,
+    L    = Native_Key_Length(Encr_Algo_ID)
+)
+```
+
+`KMS_Master_Secret` is the exact 32-byte KMS Master Secret established by the active KMS mode.
+
+`Entry_Key_Info` MUST be the following exact byte sequence:
+
+```text
+ASCII("SAR-v1-entry-key") ||
+Encr_Algo_ID ||
+LFH_IV_Nonce
+```
+
+`ASCII("SAR-v1-entry-key")` is the exact 16-byte ASCII sequence:
+
+```text
+53 41 52 2D 76 31 2D 65 6E 74 72 79 2D 6B 65 79
+```
+
+No string terminator, separator byte, or length prefix is encoded after that label.
+
+`Encr_Algo_ID` is the exact one-byte value encoded in the current LFH `Encr Algo ID` field.
+
+`LFH_IV_Nonce` is the complete 24-byte LFH IV / Nonce field exactly as encoded in the current LFH, including reserved bytes.
+
+`Native_Key_Length(Encr_Algo_ID)` is the exact encryption-key length defined by the selected encryption algorithm in Section 8.2. A SAR-defined standard encryption algorithm MUST define one exact native key length before that algorithm is valid for emission.
+
+HKDF-SHA256 uses SHA-256 as its hash function. The `salt` input above is the zero-length byte string. No Entry-specific state other than the exact `Entry_Key_Info` bytes defined above participates in this derivation.
+
+Different Entries governed by the same KMS Extension MAY select different encryption algorithms and MAY therefore request different native Entry-key lengths where defined by those algorithms.
+
+The LFH IV / Nonce field remains the nonce or IV supplied to the selected encryption algorithm according to Section 8.2.2. Inclusion of that field in `Entry_Key_Info` does not relax or replace any nonce-uniqueness requirement.
+
+The Name String, Path String, Full Logical Entry Path, Entry Mode, Stream ID, Sequence No, physical LFH offset, and other LFH metadata MUST NOT be added to `Entry_Key_Info`.
+
+If `IS_ENCRYPTED` is unset, no Entry encryption key is derived. When Global Flag `ENCRYPTED` is set, the physically present encryption fields are instead treated according to the inert-field rules in Section 6.2.2.
+
+A CUSTOM KMS or encryption construction MAY define another key hierarchy only when its complete externally agreed construction explicitly defines that hierarchy. Such behavior does not alter the standard SAR key hierarchy defined in this section.
+
+##### PBKDF2
+
+PBKDF2 derives the 32-byte KMS Master Secret from caller-supplied password material.
+
+`Derived Key Length` MUST equal `32`. A different value MUST return `SAR_ERR_INVALID_LENGTH`.
+
+Salt Length MUST be at least 16 bytes.
+
+Iterations MUST be at least 100000.
+
+Every implementation supporting KMS Mode `0x01 PBKDF2` MUST support PRF Algo ID `0x01` and all valid parameter combinations within the following mandatory interoperable ranges:
+
+* Salt Length from 16 through 64 bytes inclusive;
+* Iterations from 100000 through 600000 inclusive; and
+* Derived Key Length equal to `32`.
+
+A decoder supporting KMS Mode `0x01 PBKDF2` MUST process every valid parameter combination within these ranges.
+
+An encoder supporting KMS Mode `0x01 PBKDF2` MAY select any valid parameter combination within these ranges.
+
+General-purpose encoders SHOULD use at least 600000 iterations.
+
+Implementations MAY support additional assigned PRFs and valid parameter values outside the mandatory interoperable ranges. Output using such values remains valid SAR where the applicable construction is completely defined, but is outside the Guaranteed Interoperability Baseline unless another applicable Compliance Profile makes those values mandatory.
+
+An encoder claiming a Compliance Profile MAY emit such valid out-of-baseline PBKDF2 output without losing Compliance Profile conformance. That particular output is not guaranteed to be processable by every decoder claiming the same Compliance Profile.
+
+Before beginning derivation, an implementation MUST apply configured resource limits to Iterations and Salt Length.
+
+If a syntactically valid PBKDF2 parameter set exceeds those configured resource limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because a valid work factor lies outside the Guaranteed Interoperability Baseline.
+
+A successful PBKDF2 operation MUST produce exactly 32 bytes. Those bytes are the KMS Master Secret and MUST be used only as input to the per-Entry key derivation defined in this section.
+
+Syntactically invalid, reserved, malformed, or inconsistent parameters MUST return the most specific applicable structural, length, bounds, or reserved-value error.
+
+##### ARGON2
+
+ARGON2 derives the 32-byte KMS Master Secret from caller-supplied password material.
+
+Argon2 Variant `0x03` identifies Argon2id. All other Variant values are RESERVED.
+
+`Derived Key Length` MUST equal `32`. A different value MUST return `SAR_ERR_INVALID_LENGTH`.
+
+Salt Length MUST be at least 16 bytes.
+
+Memory Cost, Time Cost, and Parallelism MUST be greater than zero.
+
+Every implementation supporting KMS Mode `0x02 ARGON2` MUST support Argon2id Version `0x13`.
+
+Such implementations MUST support all valid Argon2id Version `0x13` parameter combinations within the following mandatory interoperable ranges:
+
+* Memory Cost from 19456 KiB through 65536 KiB inclusive;
+* Time Cost from 2 through 3 inclusive;
+* Parallelism from 1 through 4 inclusive;
+* Salt Length from 16 through 64 bytes inclusive; and
+* Derived Key Length equal to `32`.
+
+A decoder supporting KMS Mode `0x02 ARGON2` MUST process every valid Argon2id Version `0x13` parameter combination within these ranges.
+
+An encoder supporting KMS Mode `0x02 ARGON2` MAY select any valid Argon2id Version `0x13` parameter combination within these ranges.
+
+Implementations SHOULD additionally support the applicable recommended Argon2id configurations defined by RFC 9106.
+
+General-purpose encoders SHOULD select an RFC 9106 recommended configuration when the intended processing environment can provide the required memory and processing resources.
+
+Implementations MAY additionally support other Argon2id versions and valid parameter values outside the mandatory interoperable ranges.
+
+If a decoder does not support the encoded Argon2id Version, it MUST return `SAR_ERR_UNSUPPORTED`.
+
+An Argon2 Version value MUST NOT be treated as reserved solely because it is not implemented by the decoder.
+
+Output using another supported Argon2id Version or valid parameters outside the mandatory interoperable ranges remains valid SAR but is outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile defines otherwise.
+
+Before beginning derivation, an implementation MUST apply configured resource limits to Memory Cost, Time Cost, Parallelism, and Salt Length.
+
+If a syntactically valid Argon2 parameter set exceeds those configured resource limits, the implementation MUST return `SAR_ERR_LIMIT_EXCEEDED`. It MUST NOT return `SAR_ERR_UNSUPPORTED` solely because valid parameters lie outside the mandatory interoperable ranges.
+
+A successful ARGON2 operation MUST produce exactly 32 bytes. Those bytes are the KMS Master Secret and MUST be used only as input to the per-Entry key derivation defined in this section.
+
+Syntactically invalid, reserved, malformed, or inconsistent parameters MUST return the most specific applicable structural, length, bounds, or reserved-value error.
+
+##### ASYMMETRIC_WRAP
+
+ASYMMETRIC_WRAP recovers a 32-byte KMS Master Secret from one recipient-specific wrapping record. It does not wrap or recover an Entry-specific encryption key.
+
+The following Wrap Algo IDs are defined:
+
+| ID     | Name            | Construction                                                                                          |
+| ------ | --------------- | ----------------------------------------------------------------------------------------------------- |
+| `0x01` | `RSA-OAEP-2048` | RSAES-OAEP with a 2048-bit RSA modulus.                                                               |
+| `0x02` | `RSA-OAEP-4096` | RSAES-OAEP with a 4096-bit RSA modulus.                                                               |
+| `0x03` | `X25519`        | HPKE Base mode using DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and AES-256-GCM as defined by RFC 9180. |
+| `0x04` | `ML-KEM-768`    | Assigned; complete SAR wrapping construction not yet defined.                                         |
+| `0x05` | `ML-KEM-1024`   | Assigned; complete SAR wrapping construction not yet defined.                                         |
+
+An implementation claiming support for KMS Mode `0x03 ASYMMETRIC_WRAP` MUST support Wrap Algo ID `0x01` (`RSA-OAEP-2048`).
+
+Implementations MAY additionally support any other Wrap Algo ID for which this specification defines a complete wrapping construction.
+
+Recipient Count MUST be at least 1. Recipient ID Len and Wrapped Key Len MUST be greater than zero for every recipient. Every recipient record and Wrapped Key Blob MUST be fully contained within KMS Payload Length.
+
+Recipient ID is an opaque, non-secret identifier for the recipient key. Its namespace and key-resolution mechanism are selected by the caller or key-management environment. Encoders and decoders MUST preserve Recipient ID bytes exactly and MUST NOT infer a key format from those bytes.
+
+###### RSA-OAEP-2048 and RSA-OAEP-4096
+
+Wrap Algo IDs `0x01` and `0x02` use RSAES-OAEP as specified by RFC 8017 with:
+
+* SHA-256 as the OAEP digest;
+* MGF1 with SHA-256 as the mask generation function;
+* the empty byte string as the OAEP label; and
+* no optional or implementation-defined OAEP parameters.
+
+Wrap Algo ID `0x01` requires an RSA modulus of exactly 2048 bits.
+
+Wrap Algo ID `0x02` requires an RSA modulus of exactly 4096 bits.
+
+For both constructions, the OAEP plaintext MUST be exactly the 32-byte KMS Master Secret. It MUST contain no length prefix, encryption algorithm identifier, padding field, or additional SAR context.
+
+For Wrap Algo ID `0x01`, Wrapped Key Len MUST equal `256`.
+
+For Wrap Algo ID `0x02`, Wrapped Key Len MUST equal `512`.
+
+Wrapped Key Blob MUST contain the RSA ciphertext as an unsigned big-endian octet string whose length equals Wrapped Key Len.
+
+After successful RSA-OAEP decoding, the recovered plaintext MUST be exactly 32 bytes. A recovered plaintext of any other length MUST return `SAR_ERR_KEY_REJECTED`.
+
+###### X25519
+
+Wrap Algo ID `0x03` uses HPKE as specified by RFC 9180 with the following fixed ciphersuite:
+
+```text
+Mode = Base
+KEM  = DHKEM(X25519, HKDF-SHA256)
+KDF  = HKDF-SHA256
+AEAD = AES-256-GCM
+```
+
+No other HPKE mode, KEM, KDF, or AEAD combination is valid for Wrap Algo ID `0x03`.
+
+The HPKE recipient public key is the X25519 public key resolved by Recipient ID.
+
+The HPKE plaintext MUST be exactly the 32-byte KMS Master Secret.
+
+The HPKE `info` value MUST be the exact 16-byte ASCII sequence:
+
+```text
+SAR-v1-hpke-wrap
+```
+
+Its exact byte representation is:
+
+```text
+53 41 52 2D 76 31 2D 68 70 6B 65 2D 77 72 61 70
+```
+
+No string terminator, separator, or length prefix is included.
+
+The HPKE AAD value MUST be the exact Recipient ID byte sequence from the current recipient record.
+
+The Wrapped Key Blob MUST be encoded as:
+
+```text
+Wrapped Key Blob = enc || ciphertext
+```
+
+where `enc` is the 32-byte encapsulated key produced by DHKEM(X25519, HKDF-SHA256), and `ciphertext` is the HPKE ciphertext returned by sealing the 32-byte KMS Master Secret.
+
+For this fixed HPKE construction, `ciphertext` is 48 bytes: 32 bytes of encrypted KMS Master Secret followed by the 16-byte AES-256-GCM authentication tag.
+
+Wrapped Key Len MUST therefore equal `80`.
+
+A decoder MUST split the Wrapped Key Blob after the first 32 bytes and supply the resulting `enc` and `ciphertext` values to the RFC 9180 HPKE Base-mode opening operation using the exact `info` and AAD values defined above.
+
+A successful HPKE opening operation MUST recover exactly 32 bytes. Those bytes are the KMS Master Secret.
+
+###### Common Processing Requirements
+
+For archival processing, the successfully recovered 32-byte value is the KMS Master Secret for the current Physical Archive Member. In Stateful Streaming Mode, it is the KMS Master Secret for the current SAR stream.
+
+The recovered KMS Master Secret MUST NOT be used directly as an Entry encryption key. Entry encryption keys MUST be derived according to the common SAR key hierarchy defined earlier in this section.
+
+An implementation exposing both encoder and decoder roles for ASYMMETRIC_WRAP MUST decode every Wrap Algo ID and parameter combination that its encoder role emits.
+
+Failure to locate a recipient key matching any Recipient ID MUST return `SAR_ERR_KEY_MISSING`.
+
+RSA-OAEP decoding failure, RSA recovered-secret length mismatch, HPKE opening failure, HPKE recovered-secret length mismatch, or use of an incompatible recipient key MUST return `SAR_ERR_KEY_REJECTED`. An implementation MUST NOT expose which internal asymmetric-unwrapping validation step failed.
+
+Wrap Algo IDs `0x04` (`ML-KEM-768`) and `0x05` (`ML-KEM-1024`) are assigned but their complete interoperable SAR wrapping constructions are not defined by this specification. A conforming encoder MUST NOT emit those identifiers. A decoder encountering either identifier MUST return `SAR_ERR_UNSUPPORTED`.
+
+An implementation encountering a reserved or unassigned Wrap Algo ID MUST return `SAR_ERR_RESERVED_VALUE`.
 
 
+#### 5.3.5 Partitioned Archive Global Header Rules
 
-#### 5.3.4 The Partition Descriptor
-The Partition Descriptor Extension is present only when Global Flag Bit 3 (`PARTITIONED_ARCHIVE`) is set.
+`PARTITIONED_ARCHIVE` does not add a partition-specific Global Header extension. Partition identity, ordering, finality, and content commitment are carried exclusively by the Partition Manifest Entry defined in Section 19.1.
 
-The Partition Descriptor provides archive-set identification, partition ordering, and partition integrity metadata required to reconstruct a partitioned SAR archive independently of file naming conventions, storage backends, or transport mechanisms.
+Every Partition in one Partition Set MUST use the same Global Header Version, `Flags Size`, and complete Global Flags value. In particular, `NO_INDEX` MUST have the same value in every Partition of the set.
 
-All partitions belonging to the same partitioned archive MUST contain a valid Partition Descriptor and MUST share the same Partition Set UUID.
+When `ENCRYPTED` is set, every Partition in one Partition Set MUST use the same KMS Mode ID. Partition-specific KMS consistency requirements are defined in Section 19.1.11.
 
-The Partition Descriptor SHALL be 96 bytes and SHALL be encoded as follows:
-
-| Order | Field                   | Size | Description                                                                      |
-| ----- | ----------------------- | ---- | -------------------------------------------------------------------------------- |
-| 0     | Partition Set UUID      | 16B  | Identifies the logical archive set.                                              |
-| 1     | Partition Index         | 4B   | Zero-based partition index.                                                      |
-| 2     | Total Partitions        | 4B   | Total number of partitions belonging to the archive set.                         |
-| 3     | Previous Partition Hash | 32B  | Hash of the previous partition's Data Area. Partition 0 MUST contain all zeroes. |
-| 4     | Partition Hash          | 32B  | Hash of this partition's Data Area.                                              |
-| 5     | Reserved                | 8B   | Reserved for future use. Encoders MUST set all bytes to `0x00`.                  |
-
-If `PARTITIONED_ARCHIVE` is set, each partition MUST contain a fixed-size Partition Descriptor immediately after Global Flags.
-
-All partitions belonging to the same archive set MUST carry the same Partition Set UUID.
-
-Each partition MUST declare its zero-based Partition Index and Total Partitions value.
-
-All partitions except the final partition MUST set `NO_INDEX` and MUST NOT contain a Central Dictionary or Footer.
-
-The final partition MUST contain a Central Dictionary and Footer if `NO_INDEX` is unset.
-
-If `NO_INDEX` is set, no partition SHALL contain a Central Dictionary or Footer.
-
-Filesystem-based partition sets SHOULD use deterministic names of the form:
-
-`[Archive_Name].sar.[3-byte zero-padded index]`
-
-Implementations MUST NOT rely on filenames as the sole mechanism for partition discovery, validation, or reconstruction.
-
-Partition discovery, verification, incomplete-set handling, degraded recovery behavior, and integrity validation requirements are defined in Section 19.4.
-
+Each encrypted Partition independently establishes its own KMS Master Secret from that Partition's local KMS Extension. KMS consistency requirements across the Partition Set do not require the resulting KMS Master Secrets to be equal. Mode-permitted local KMS parameters may produce different KMS Master Secrets in different Partitions.
 
 ### 5.4 Version Compatibility
-* Parsers MUST reject archives with a higher major version than supported.
-* Minor or compatible revisions MAY be accepted if backward-compatible.
-* The Global Header Version defines the structure of all LFHs and flags.
+
+* Parsers MUST reject archives with a higher major version than supported. A Global Header Version assigned by a specification revision that the implementation recognizes but does not implement MUST return `SAR_ERR_UNSUPPORTED`. A reserved or unassigned Global Header Version value MUST return `SAR_ERR_RESERVED_VALUE`. A version value that is structurally or normatively invalid, or that contradicts another version binding of the same archive or Partition Set, MUST return `SAR_ERR_INVALID_VERSION`.
+* Minor or compatible revisions MAY be accepted only if their Global Header and Global Flags semantics are backward-compatible with the supported version.
+* The Global Header Version defines the LFH structure, the permitted `Flags Size`, the Global Flags assignments, and the associated structural and transformation semantics.
+* For SAR version 1.0, `Flags Size` MUST equal `4`. A wider or shorter Global Flags field is not a valid SAR version 1.0 extension.
+* A future SAR format version MAY define a different `Flags Size` or additional Global Flags assignments. Such definitions do not alter the SAR version 1.0 requirements in this section.
 * The Central Dictionary Version defines only the CD layout and MAY evolve independently.
 
 ## 6. Local File Header (LFH)
 Each entry in the Data Area begins with an LFH. The sequence of fields is deterministic based on the Global Flags.
 
 ### 6.1 LFH Field Sequence
-The sequence of fields is strictly deterministic and the presence of LFH fields is governed by Global Flags. The Entry Mode bits solely determine whether the data in the affected fields is utilized or ignored such that those fields are treated as reserved / zero (see 4.2). Parsers MUST evaluate the Global Flags in the following order to calculate the current header's size.
 
-| Order | Field | Size | Condition |
-| --- | --- | --- | --- |
-| 1 | Header Size | 4B | Always |
-| 2 | Entry Mode | 2B | Always |
-| 3 | Stream ID | 2B | Always |
-| 4 | Sequence No | 2B | Always |
-| 5 | Uncompressed Size | 4/8B | Always |
-| 6 | Payload Size | 4/8B | Always |
-| 7 | Comp Algo ID | 1B | `COMPRESSED` (Bit 8) |
-| 8 | Patch Algo ID | 1B | `HAS_DELTA` (Bit 9) |
-| 9 | Encr Algo ID | 1B | `ENCRYPTED` (Bit 10) |
-| 10 | CDC Algo ID | 1B | `CDC_SUPPORT` (Bit 5) |
-| 11 | FEC Algo ID | 1B | `SELECTIVE_FEC` (Bit 20) |
-| 12 | Fragment ID | 4B | `FILE_FRAGMENTATION` (Bit 4) |
-| 13 | Fragment Index | 4B | `FILE_FRAGMENTATION` (Bit 4) |
-| 14 | Fragment Descriptor | 12B | `FILE_FRAGMENTATION` (Bit 4) |
-| 15 | IV / Nonce | 24B | `ENCRYPTED` (Bit 10) |
-| 16 | Delta Base Hash | 32B | `HAS_DELTA` (Bit 9) |
-| 17 | File CRC32 | 4B | `PER_FILE_CRC` (Bit 17) |
-| 18 | Content Hash | 32B | `DEDUPLICATION` (Bit 29) |
-| 19 | UID / GID | 4B | `EXT_UID_GID` (Bit 27) |
-| 20 | Timestamps | 24B | `EXT_TIME` (Bit 28) |
-| 21 | Permissions | 2B | `HAS_PERMS` (Bit 25) |
-| 22 | Name Length | 2B | Always |
-| 23 | Path Length | 2B | `HAS_PATH` (Bit 24) |
-| 24 | Sparse Map Size | 4B | `SPARSE_FILES` (Bit 30) |
-| 25 | FEC Size | 3B | `SELECTIVE_FEC` (Bit 20) |
-| 26 | Name String | Var | Always |
-| 27 | Path String | Var | `HAS_PATH` (Bit 24) |
-| 28 | Sparse Map | Var | `SPARSE_FILES` (Bit 30) |
-| 29 | FEC Value | Var | `SELECTIVE_FEC` (Bit 20) |
-| 30 | Payload Data | Var | Size = Payload Size |
+The sequence of fields is strictly deterministic and the presence of LFH fields is governed by Global Flags. Entry Mode bits determine whether the data in affected fields is semantically active or inert as defined by this specification. Parsers MUST evaluate the Global Flags and applicable Entry Mode conditions in the following order to calculate the current header's size.
 
-The physical layout and byte alignment of the LFH are strictly dependent on the evaluation of the Condition column. Fields whose conditions evaluate to false **MUST NOT** be present in the header byte sequence.
+| Order | Field             | Size | Condition                    |
+| ----- | ----------------- | ---- | ---------------------------- |
+| 1     | Header Size       | 4B   | Always                       |
+| 2     | Entry Mode        | 2B   | Always                       |
+| 3     | Stream ID         | 2B   | Always                       |
+| 4     | Sequence No       | 2B   | Always                       |
+| 5     | Uncompressed Size | 4/8B | Always                       |
+| 6     | Payload Size      | 4/8B | Always                       |
+| 7     | Comp Algo ID      | 1B   | `COMPRESSED` (Bit 8)         |
+| 8     | Patch Algo ID     | 1B   | `HAS_DELTA` (Bit 9)          |
+| 9     | Encr Algo ID      | 1B   | `ENCRYPTED` (Bit 10)         |
+| 10    | CDC Algo ID       | 1B   | `CDC_SUPPORT` (Bit 5)        |
+| 11    | FEC Algo ID       | 1B   | `SELECTIVE_FEC` (Bit 20)     |
+| 12    | Fragment ID       | 4B   | `FILE_FRAGMENTATION` (Bit 4) |
+| 13    | Fragment Index    | 4B   | `FILE_FRAGMENTATION` (Bit 4) |
+| 14    | IV / Nonce        | 24B  | `ENCRYPTED` (Bit 10)         |
+| 15    | Delta Base Hash   | 32B  | `HAS_DELTA` (Bit 9)          |
+| 16    | File CRC32        | 4B   | `PER_FILE_CRC` (Bit 17)      |
+| 17    | Content Hash      | 32B  | `DEDUPLICATION` (Bit 29)     |
+| 18    | UID / GID         | 4B   | `EXT_UID_GID` (Bit 27)       |
+| 19    | Timestamps        | 24B  | `EXT_TIME` (Bit 28)          |
+| 20    | Permissions       | 2B   | `HAS_PERMS` (Bit 25)         |
+| 21    | Name Length       | 2B   | Always                       |
+| 22    | Path Length       | 2B   | `HAS_PATH` (Bit 24)          |
+| 23    | Sparse Map Size   | 4B   | `SPARSE_FILES` (Bit 30)      |
+| 24    | FEC Size          | 3B   | `SELECTIVE_FEC` (Bit 20)     |
+| 25    | Name String       | Var  | Always                       |
+| 26    | Path String       | Var  | `HAS_PATH` (Bit 24)          |
+| 27    | Sparse Map        | Var  | `SPARSE_FILES` (Bit 30)      |
+| 28    | FEC Value         | Var  | `SELECTIVE_FEC` (Bit 20)     |
+| 29    | Payload Data      | Var  | Size = Payload Size          |
+
+`Uncompressed Size` and `Payload Size` use 4-byte unsigned integer encoding when `64BIT_SIZE` is unset and 8-byte unsigned integer encoding when `64BIT_SIZE` is set.
+
+`64BIT_SIZE` controls the width of these data-scale size fields. It does not alter the width of `Header Size`, Name Length, Path Length, Sparse Map Size, FEC Size, Fragment ID, Fragment Index, or other independently bounded structural or metadata fields.
+
+The physical layout and byte alignment of the LFH are strictly dependent on the evaluation of the Condition column. Fields whose conditions evaluate to false MUST NOT be present in the header byte sequence.
 
 The presence and value semantics of fields are governed by the following rules:
 
-* **Fixed-Sized Conditional Fields:** If a governing condition is met, all corresponding fixed-size fields **MUST** be present in the header. These fields **MAY** contain a value of zero, which **MAY** denote a feature-specific state rather than field absence.
-* **Variable-Sized Fields:** The presence of a variable-sized field is jointly governed by its condition and its corresponding size or length field.
-  * A variable-sized field **MUST** be present if and only if its structural condition is met **AND** its corresponding size field contains a non-zero value.
-  * If its corresponding size field evaluates to zero, the variable-sized field **MUST NOT** be present in the header, regardless of whether its governing Global Flag is set.
+* **Fixed-Size Conditional Fields:** If a governing condition is met, all corresponding fixed-size fields MUST be present in the header. These fields MAY contain a value of zero where this specification defines zero as a valid, neutral, inert, or feature-specific value.
+* **Variable-Size Fields:** The presence of a variable-size field is jointly governed by its structural condition and its corresponding size or length field.
 
-NOTE:
-For example, if `Name Length` is zero, `Name String` is omitted from the byte sequence; however, because the condition for `Name Length` is "Always", the length field itself is still present.
+  * A variable-size field MUST be present if and only if its structural condition is met and its corresponding size or length field is nonzero.
+  * If its corresponding size or length field is zero, the variable-size field MUST NOT be present, regardless of whether its governing Global Flag is set.
+
+For example, if `Name Length` is zero, `Name String` is omitted from the byte sequence. Because `Name Length` itself is unconditional, the length field remains physically present.
 
 #### 6.1.1 Header Size and Payload Position Semantics
 `Header Size` SHALL define the declared size, in bytes, of the LFH from the first byte of the `Header Size` field through the final byte before Payload Data.
@@ -374,53 +648,359 @@ If `Header Size` is smaller than the fixed LFH prefix size implied by the Global
 
 If `Header Size` causes the header or payload to exceed archive bounds, implementations MUST return `SAR_ERR_BOUNDS` or `SAR_ERR_TRUNCATED` as appropriate.
 
-#### 6.1.2 Size Semantics and Transform Finality
+#### 6.1.2 Size Semantics and Transform Boundaries
 
-The `Uncompressed Size` field MUST represent the size, in bytes, of the fully reconstructed logical file after all applicable transformations have been reversed during decoding.
+`Payload Size` is the exact encoded size in bytes of the current LFH `Payload Data` field.
 
-For encoding, transformations SHALL be applied in the following order where applicable:
+`Uncompressed Size` is the exact size in bytes of the current LFH payload representation after reversal of the compression transformation applicable to that LFH and after removal of encryption framing, but before any subsequent group-wide reconstruction operation.
 
-1. Patch application (`HAS_DELTA`)
-2. Compression (`IS_COMPRESSED`)
-3. Encryption (`IS_ENCRYPTED`)
+`Uncompressed Size` has the same semantic role regardless of whether the Entry is fragmented.
 
-For decoding, transformations SHALL be reversed in the following order:
+If `IS_COMPRESSED` is set, decompression of the current LFH payload representation MUST produce exactly `Uncompressed Size` bytes.
 
-1. Decryption (`IS_ENCRYPTED`)
-2. Decompression (`IS_COMPRESSED`)
-3. Patch application (`HAS_DELTA`)
+If `IS_COMPRESSED` is unset, the payload representation after any applicable authentication and decryption MUST contain exactly `Uncompressed Size` bytes.
 
-The `Uncompressed Size` field therefore represents the size of the logical file after completion of the canonical decode pipeline and not the size of any intermediate representation.
+For an LFH that is neither compressed nor encrypted, `Uncompressed Size` equals `Payload Size`.
 
-Implementations MUST validate that the reconstructed output length exactly matches `Uncompressed Size`.
+For an AEAD-encrypted LFH, `Payload Size` includes the encoded ciphertext and authentication tag, while `Uncompressed Size` excludes AEAD framing and describes the corresponding uncompressed plaintext representation.
 
-Any mismatch MUST result in the most specific applicable error code corresponding to the stage at which reconstruction failed.
+For a fragmented Entry, the byte sequence of exactly `Uncompressed Size` bytes produced by fragment-local decoding is the current fragment's contribution to the Fragment Reassembly Sequence defined in Section 6.1.3.
 
-#### 6.1.2 Fragment Descriptor Semantics
-When `FILE_FRAGMENTATION` is enabled, the **Fragment Descriptor** field SHALL be present in the LFH. All LFHs sharing the same Fragment ID belong to the same logical object.
+`Uncompressed Size` does not declare the final logical output size of a later group-wide reconstruction operation. In particular, it MUST NOT be interpreted as:
 
-The descriptor is structured as:
+* the total size of a completed fragmented Entry;
+* the final target size produced by a delta patch;
+* the final logical size produced by CDC recipe resolution; or
+* the final apparent size of a sparse logical Entry.
 
-| Subfield | Size | Description |
-| --- | --- | --- |
-| Absolute Offset | 8B   | Byte offset within logical reassembled stream |
-| Fragment Size   | 4B   | Size of this fragment in bytes             |
+Those final-size semantics are defined by the corresponding group-wide reconstruction construction.
 
-**Rationale**
+A decoded LFH payload representation whose size differs from `Uncompressed Size` MUST return `SAR_ERR_INVALID_LENGTH` unless a more specific applicable transformation error has already occurred.
 
-* Replaces ambiguous "offset-only" interpretation.
-* Enables **stream reassembly without external state assumptions**.
-* Eliminates dependency on LFH ordering for reconstruction correctness.
-
-**Constraints**
-
-* Fragment Size is independent of Payload Size and refers to the logical fragment size after completion of the canonical decode pipeline.
-* Absolute Offset SHALL refer to the byte offset within the fully reconstructed logical object after completion of the canonical decode pipeline.
-* Fragment Size SHALL refer to the fragment length within the fully reconstructed logical object after completion of the canonical decode pipeline.
-* Overlapping descriptors MUST trigger `SAR_ERR_INVALID_MAP`.
+All size calculations and accumulations MUST use checked arithmetic. Arithmetic overflow MUST return `SAR_ERR_OVERFLOW`.
 
 
-#### 6.1.3 Forward Error Correction (FEC)
+#### 6.1.3 Fragmentation Semantics
+
+When `FILE_FRAGMENTATION` is enabled, the LFH contains `Fragment ID` and `Fragment Index`.
+
+SAR fragmentation is sequential segmentation of one intermediate Entry representation. It does not encode arbitrary fragment reassembly offsets or a separate fragment reassembly extent.
+
+The size of a fragment's contribution to the Fragment Reassembly Sequence is the fragment LFH's `Uncompressed Size` as defined by Section 6.1.2.
+
+##### Fragmented Entry and Fragment Group
+
+A fragment group represents exactly one logical Entry.
+
+All fragments belonging to one group share one Fragment ID within the applicable Fragment ID scope.
+
+The conceptual fragment-group identity is:
+
+```text
+(Fragment Scope, Fragment ID)
+```
+
+Fragment Index 0 establishes the fragmented Entry's logical identity, Full Logical Entry Path, and canonical logical Entry-order position.
+
+Later fragments do not create independent logical Entries, Full Logical Entry Path occurrences, duplicate-path occurrences, or independent state-application operations.
+
+A fragmented Entry participates in final-state determination only after successful complete reconstruction or degraded reconstruction explicitly permitted by `LOSS_TOLERANT`.
+
+##### Fragment ID Scope
+
+For an unpartitioned Archive, Fragment ID scope is the current Physical Archive Member.
+
+For a Partitioned Archive, Fragment ID scope is the complete Partition Set. A fragment group MAY begin in one Partition and continue in later Partitions.
+
+For Stateful Streaming, Fragment ID scope is the active SAR session and Stream ID.
+
+Fragment ID is not required to be globally unique outside its applicable scope.
+
+##### Fragment Index
+
+Fragment Index is a zero-based ordinal identifying the fragment's position in the Fragment Reassembly Sequence.
+
+A complete fragment group containing `N` fragments contains exactly the Fragment Index set:
+
+```text
+0, 1, 2, ..., N - 1
+```
+
+Fragment Index values MUST be unique within one fragment group.
+
+Exactly one fragment in a complete fragment group MUST set `LAST_FRAGMENT`.
+
+The fragment that sets `LAST_FRAGMENT` MUST have the highest Fragment Index in the group. No fragment with a greater Fragment Index is valid for that group.
+
+For archival representations, fragments of one group MUST occur in strictly increasing Fragment Index order under canonical physical Entry order. Physical adjacency is not required. LFHs belonging to unrelated Entries MAY occur between fragments of the same group.
+
+For a Partitioned Archive, canonical physical order for this rule is ascending Partition Index followed by physical LFH order within each Partition.
+
+For Stateful Streaming, transport arrival order does not define canonical logical Entry order. Within one SAR stream, a fragment with Fragment Index greater than zero MAY occur before Fragment Index 0 when the sender emits fragments out of Fragment Index order (Section 18.4.2).
+
+Such a fragment MAY be retained as incomplete fragment-group state, but it MUST NOT establish the logical Entry identity, a Full Logical Entry Path, or a duplicate-path occurrence, MUST NOT authorize logical state application, and MUST NOT redefine application or sequencing order. Fragment Index 0 establishes the logical Entry identity when it becomes available.
+
+Fragment Index defines fragment reassembly order only. Sequence No and any Stateful Streaming state-application ordering remain governed by Section 18 and are independent from Fragment Index.
+
+##### Fragment Reassembly Sequence
+
+The **Fragment Reassembly Sequence** is the byte sequence formed by concatenating fragment contributions in ascending Fragment Index order.
+
+For a complete group:
+
+```text
+Fragment_Reassembly_Sequence =
+    Contribution[0] ||
+    Contribution[1] ||
+    ... ||
+    Contribution[N - 1]
+```
+
+where `Contribution[i]` is the decoded contribution of Fragment Index `i` after all fragment-local processing required before reassembly.
+
+Fragment-local processing consists of, where applicable:
+
+1. FEC recovery over the encoded fragment representation;
+2. AEAD authentication and decryption;
+3. decompression.
+
+Group-wide reconstruction operations occur only after the required fragment contributions have been assembled into the Fragment Reassembly Sequence.
+
+Group-wide reconstruction includes, where applicable:
+
+* delta patch application;
+* CDC recipe interpretation and chunk resolution;
+* sparse reconstruction; and
+* other constructions explicitly defined to operate on the completed Entry representation.
+
+For every fragment, the length of `Contribution[i]` MUST equal that fragment LFH's `Uncompressed Size`. A mismatch MUST return `SAR_ERR_INVALID_LENGTH` unless a more specific applicable transformation error has already occurred.
+
+The length of a complete Fragment Reassembly Sequence is the checked sum of the `Uncompressed Size` values of Fragment Indices `0` through `N - 1`.
+
+SAR does not encode a byte offset or separate contribution-size field for fragment reassembly. Fragment Index determines contribution order, and `Uncompressed Size` determines the decoded length of each contribution.
+
+##### Transformation Scope
+
+Compression and encryption algorithm selection are group-wide construction properties, while their actual processing is fragment-local.
+
+Delta, CDC recipe interpretation, sparse reconstruction, final logical integrity verification, and logical state application are group-wide operations.
+
+FEC state is fragment-local unless an independently defined FEC construction explicitly states otherwise.
+
+Fragmentation MUST NOT be interpreted as defining fragment-specific variants of a patch, CDC recipe, sparse map, encryption construction, or other group-wide representation.
+
+##### Fragmented LFH Field Classification
+
+The following classes define cross-fragment LFH semantics:
+
+* **G - Group invariant:** The field describes the logical Entry or a group-wide construction. When semantically active and physically present on multiple fragments, its value MUST be identical across the group.
+* **I - Index-0 authoritative:** Fragment Index 0 establishes the logical value. Later fragments do not establish another logical value and follow the field-specific repetition or neutral rule below.
+* **C - Completion-authoritative:** The field describes completed logical Entry state. Non-terminal fragments carry the defined neutral value. The `LAST_FRAGMENT` LFH carries the authoritative value.
+* **L - Fragment-local:** The field describes the current physical fragment or its encoding and MAY legitimately differ between fragments.
+* **N - Inert:** The field is physically present because of Global Flags but is semantically inactive under the applicable Entry Mode or construction rules.
+
+The authoritative classification for fragmented LFHs is:
+
+| LFH Field / Semantic         | Class | Fragment Rule                                                                                                        |
+| ---------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------- |
+| Header Size                  | L     | Describes the current physical LFH and MAY differ.                                                                   |
+| Payload Size                 | L     | Describes the current encoded Payload Data and MAY differ.                                                           |
+| Uncompressed Size            | L     | Describes the current LFH's decoded payload representation and fragment contribution length (Section 6.1.2).         |
+| `IS_FRAGMENT`                | G     | MUST be set on every fragment.                                                                                       |
+| `LAST_FRAGMENT`              | L     | MUST be set only on the terminal fragment.                                                                           |
+| `IS_COMPRESSED`              | G     | MUST be identical across the group.                                                                                  |
+| `IS_ENCRYPTED`               | G     | MUST be identical across the group.                                                                                  |
+| `HIDDEN_ATTR`                | G     | MUST be identical across the group.                                                                                  |
+| `LOSS_TOLERANT`              | G     | MUST be identical across the group.                                                                                  |
+| `OP_CODE`                    | G     | MUST be identical across the group.                                                                                  |
+| `ATOMIC_WRITE`               | G     | MUST be identical across the group.                                                                                  |
+| `FORCE_SYNC`                 | G     | MUST be identical across the group.                                                                                  |
+| Stream ID                    | G     | In Stateful Streaming, MUST be identical across the group.                                                           |
+| Sequence No                  | L     | Uses ordinary per-LFH Stateful Streaming sequencing and MAY differ.                                                  |
+| Comp Algo ID                 | G/N   | When `IS_COMPRESSED` is set, MUST be identical across the group. Otherwise ordinary inert-field rules apply.         |
+| Patch Algo ID                | G     | MUST be identical across the group when present.                                                                     |
+| Encr Algo ID                 | G/N   | When `IS_ENCRYPTED` is set, MUST be identical across the group. Otherwise ordinary inert-field rules apply.          |
+| CDC Algo ID                  | G     | MUST be identical across the group when present.                                                                     |
+| FEC Algo ID                  | L     | Describes the current fragment and MAY differ.                                                                       |
+| Fragment ID                  | G     | MUST be identical across the group.                                                                                  |
+| Fragment Index               | L     | MUST identify one unique ordinal within the group.                                                                   |
+| IV / Nonce                   | L/N   | Describes the current encrypted fragment. Ordinary inert-field rules apply when encryption is inactive.              |
+| Delta Base Hash              | G     | MUST be identical across the group when present.                                                                     |
+| File CRC32                   | C     | Neutral on non-terminal fragments; authoritative on `LAST_FRAGMENT`.                                                 |
+| Content Hash                 | C     | Neutral on non-terminal fragments; authoritative on `LAST_FRAGMENT`.                                                 |
+| UID / GID                    | G     | MUST be identical across the group when present.                                                                     |
+| Timestamps                   | G     | MUST be identical across the group when present.                                                                     |
+| Permissions                  | G     | MUST be identical across the group when present.                                                                     |
+| Name Length / Name String    | I     | Fragment Index 0 is authoritative. Later fragments MAY omit or exactly repeat the value as defined below.            |
+| Path Length / Path String    | I     | Fragment Index 0 is authoritative. Later fragments MAY omit or exactly repeat the value as defined below.            |
+| Sparse Map Size / Sparse Map | I     | Fragment Index 0 carries the complete Sparse Map. Later fragments MUST use zero Sparse Map Size and omit Sparse Map. |
+| FEC Size / FEC Value         | L     | Describes FEC state of the current fragment and MAY differ.                                                          |
+| Payload Data                 | L     | Contains the encoded payload of the current physical fragment.                                                       |
+
+A mismatch in an otherwise valid Class G field between fragments of the same group MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+##### Name and Path
+
+Fragment Index 0 establishes the authoritative Name String and Path String of the logical Entry.
+
+A later fragment MAY set `Name Length` to zero and omit Name String.
+
+If a later fragment contains a non-empty Name String, its exact value MUST match Fragment Index 0. A mismatch MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+Where `HAS_PATH` is set, a later fragment MAY set `Path Length` to zero and omit Path String.
+
+If a later fragment contains a non-empty Path String, its exact value MUST match Fragment Index 0. A mismatch MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+Later fragments never establish another Full Logical Entry Path.
+
+##### Completion-Authoritative Integrity Fields
+
+For a fragmented Entry, File CRC32 and Content Hash describe the final reconstructed logical Entry, not an individual physical fragment.
+
+When `PER_FILE_CRC` causes File CRC32 to be physically present:
+
+* every fragment for which `LAST_FRAGMENT` is unset MUST encode File CRC32 as zero;
+* the fragment for which `LAST_FRAGMENT` is set MUST encode the authoritative final logical Entry CRC32 value.
+
+When `DEDUPLICATION` causes Content Hash to be physically present:
+
+* every fragment for which `LAST_FRAGMENT` is unset MUST encode Content Hash as all zero bytes;
+* the fragment for which `LAST_FRAGMENT` is set MUST encode the authoritative final logical Entry Content Hash value.
+
+Neutral integrity values on non-terminal fragments MUST NOT be interpreted as integrity declarations.
+
+The authoritative integrity value is verified only after the complete logical byte sequence required by that integrity construction has been reconstructed.
+
+A genuine authoritative CRC32 or Content Hash value consisting of zero bytes remains valid on the terminal fragment because `LAST_FRAGMENT`, not the encoded numeric value, determines authority.
+
+##### Compression
+
+Compression is applied independently to each fragment.
+
+All fragments in one group MUST use the same `IS_COMPRESSED` value.
+
+When `IS_COMPRESSED` is set, all fragments MUST use the same Comp Algo ID.
+
+Each compressed fragment MUST be decompressed independently before its contribution is inserted into the Fragment Reassembly Sequence.
+
+The resulting decompressed contribution length MUST satisfy Section 6.1.2.
+
+Mixed active compression algorithms within one fragment group are invalid and MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+##### Encryption
+
+Encryption and authentication are applied independently to each fragment.
+
+All fragments in one group MUST use the same `IS_ENCRYPTED` value.
+
+When `IS_ENCRYPTED` is set, all fragments MUST use the same Encr Algo ID.
+
+Each encrypted fragment independently derives its Entry encryption key according to the applicable KMS rules, uses its own LFH IV / Nonce field, carries its own authentication tag where required, and MUST authenticate successfully before its plaintext contributes to the Fragment Reassembly Sequence.
+
+For a fragment group crossing Partition boundaries, each encrypted fragment uses the KMS Master Secret applicable to the Physical Archive Member containing that fragment.
+
+Fragmentation does not alter the KMS hierarchy, nonce-uniqueness rules, or AEAD AAD construction.
+
+Mixed active encryption algorithms within one fragment group are invalid and MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+##### Delta
+
+Patch Algo ID and Delta Base Hash are group-wide metadata.
+
+A fragmented delta Entry represents one complete patch representation divided into sequential fragment contributions.
+
+After fragment-local decoding, the Fragment Reassembly Sequence is interpreted as the complete patch representation and the selected patch algorithm is applied exactly once.
+
+Fragments MUST NOT be interpreted as independently applicable partial patches.
+
+For fragmented delta Entries, no individual fragment's `Uncompressed Size` declares the final patch target size. Final target-size semantics are those defined by the selected patch construction.
+
+##### CDC
+
+CDC Algo ID is group-wide metadata.
+
+When a CDC recipe representation is fragmented, fragment contributions are first joined into the complete Fragment Reassembly Sequence. The resulting complete recipe is then interpreted and resolved once according to the selected CDC construction.
+
+An individual fragment MUST NOT be interpreted as an independently complete CDC recipe merely because it contains a syntactically meaningful partial byte sequence.
+
+`CDC_MAP` remains a separate physical-location mechanism and does not define fragment-group identity or fragment placement.
+
+##### FEC
+
+FEC Algo ID, FEC Size, and FEC Value describe the current physical fragment and MAY differ between fragments.
+
+One fragment MAY use FEC while another fragment in the same group does not, where permitted by the general FEC rules.
+
+FEC does not establish fragment identity or Fragment Reassembly Sequence ordering.
+
+`LOSS_TOLERANT` remains group-wide even though FEC state is fragment-local.
+
+##### Sparse Metadata
+
+When a fragmented Entry uses sparse reconstruction, Fragment Index 0 carries the complete Sparse Map.
+
+Every later fragment MUST encode Sparse Map Size as zero and MUST omit Sparse Map. A later fragment with non-zero Sparse Map Size or a present Sparse Map is a fragment-group metadata violation and MUST return `SAR_ERR_METADATA_CONFLICT`. `SAR_ERR_INVALID_MAP` is reserved for a malformed Sparse Map encoding or content (Section 17.5). Sparse Maps distributed across multiple fragments are not permitted.
+
+The complete Sparse Map carried by Fragment Index 0 includes the authoritative `Sparse Logical Size` defined in Section 17.2. No fragment LFH `Uncompressed Size` value serves as the final apparent sparse logical size.
+
+Fragmentation coordinates do not describe final sparse-file offsets. Sparse placement is defined exclusively by the Sparse Map and occurs after the applicable Fragment Reassembly Sequence has been obtained.
+
+##### Filesystem and State-Application Metadata
+
+UID/GID, timestamps, permissions, hidden-attribute state, `OP_CODE`, `ATOMIC_WRITE`, and `FORCE_SYNC` describe the logical Entry and MUST be group-invariant where applicable.
+
+The logical operation represented by a fragmented Entry MUST be applied exactly once after the fragmented Entry has reached a valid complete or explicitly permitted degraded reconstruction state.
+
+An implementation MUST NOT execute the logical operation independently for each physical fragment.
+
+Receiving or processing `LAST_FRAGMENT` does not by itself authorize state application while required earlier Fragment Indices or required Stateful Streaming sequencing/state conditions remain unsatisfied.
+
+##### Structural Entry Restrictions
+
+A Partition Manifest Entry MUST NOT be fragmented.
+
+An Empty Area MUST NOT be fragmented.
+
+A `SESSION_CONTROL` Entry MUST NOT be fragmented.
+
+A directory Entry MUST NOT be fragmented.
+
+A symbolic-link Entry MUST NOT be fragmented.
+
+If `IS_FRAGMENT` is set together with `PARTITION_MANIFEST`, `SESSION_CONTROL`, `IS_DIRECTORY`, or `IS_SYMLINK`, the implementation MUST return `SAR_ERR_FLAG_CONFLICT`.
+
+Empty Area classification remains governed by its existing structural rules and MUST NOT be used for an LFH with `IS_FRAGMENT` set.
+
+##### Missing, Duplicate, and Conflicting Fragments
+
+A complete group MUST contain every Fragment Index from zero through the terminal Fragment Index.
+
+A missing required Fragment Index is a fragment gap and MUST return `SAR_ERR_FRAGMENT_GAP` unless existing `LOSS_TOLERANT` rules permit a degraded result.
+
+Two canonical fragment LFHs claiming the same Fragment ID scope and Fragment Index MUST NOT both participate as distinct fragments in one logical Entry.
+
+If multiple independently obtained physical candidates exist for the same expected fragment identity, each candidate MAY be validated independently.
+
+Candidates are equivalent replicas only when their complete canonical fragment encodings are identical.
+
+Two different independently valid encodings claiming the same fragment identity constitute a conflict and MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+An independently invalid candidate does not by itself invalidate another independently valid candidate.
+
+A present fragment with conflicting Class G or Index-0-authoritative metadata is a metadata conflict. It MUST NOT be silently reclassified as a missing fragment in order to permit degraded reconstruction.
+
+##### `LOSS_TOLERANT` and Final Integrity
+
+`LOSS_TOLERANT` does not change the meaning of final logical integrity verification.
+
+A degraded result MUST NOT be reported as having successfully passed File CRC32 or Content Hash verification unless the complete byte sequence required by the corresponding integrity field was reconstructed and the authoritative terminal value actually verifies.
+
+Permitted degraded output MAY still return `SAR_WARN_INCOMPLETE` according to Section 6.2.3.
+
+An integrity mismatch, inability to perform complete final logical integrity verification, and successful integrity verification are distinct states. Permitting degraded reconstruction MUST NOT convert either of the first two states into successful integrity verification.
+
+
+#### 6.1.4 Forward Error Correction (FEC)
 
 When `SELECTIVE_FEC` global flag is set, the corresponding LFH fields MUST be present according to the following specifications. The corresponding LFH fields MUST follow the specifications set for the `RECOVERY` block in the Central Dictionary (Section 9.2) such that the fields MUST match the specifications therein as follows.
 
@@ -474,7 +1054,81 @@ SAR FEC recovery is erasure recovery unless an algorithm-specific section explic
 
 If missing or unusable symbol positions cannot be determined, the decoder MUST return `SAR_ERR_RECOVERY_UNAVAILABLE` or `SAR_ERR_EC_FAILED`, whichever is more specific to the failure stage.
 
-For LFH Selective FEC, missing or unusable positions SHALL be derived from the unavailable or corrupted encoded Payload Data byte ranges within the corresponding LFH. For fragmented entries, missing or unusable positions MAY additionally be derived from Fragment Index and Fragment Descriptor metadata when the FEC algorithm operates over fragment-aligned symbols or blocks.
+For LFH Selective FEC, missing or unusable positions SHALL be derived from the unavailable or corrupted encoded Payload Data byte ranges within the corresponding LFH. For fragmented Entries, an unavailable physical fragment is identified by its Fragment ID and Fragment Index. Fragmentation does not provide an independent byte-offset map for FEC recovery.
+
+#### 6.1.5 Name and Path Semantics
+
+The LFH `Path String` identifies the directory containing the Entry. The LFH `Name String` identifies the final path component.
+
+The `Name String` of an ordinary Entry:
+
+* MUST NOT be empty;
+* MUST NOT contain `/`;
+* MUST NOT contain `\`; and
+* MUST NOT contain U+0000.
+
+The `Path String`, when present and non-empty:
+
+* MUST use `/` as the path-component separator;
+* MUST NOT begin or end with `/`;
+* MUST NOT contain `\` or U+0000;
+* MUST NOT contain an empty component;
+* MUST NOT contain a `.` component; and
+* MUST NOT contain a `..` component.
+
+Partition Manifest Entries and Empty Areas do not have a Full Logical Entry Path. For every other Entry, the Full Logical Entry Path is the `Name String` when the `Path String` is absent or empty. Otherwise, it is the `Path String`, followed by `/`, followed by the `Name String`.
+
+Backslash is not valid in an LFH Name String or Path String. Applications archiving filesystems that permit backslash in filename components SHOULD reject such source names or apply an explicit reversible application-layer mapping before encoding. SAR defines no backslash escape mechanism.
+
+Implementations MUST NOT normalize, rewrite, escape, substitute, or otherwise alter a nonconforming Name String or Path String to make it conforming.
+
+A writer receiving a nonconforming Name String or Path String MUST return `SAR_ERR_INVALID_INPUT` and MUST NOT emit the affected Entry.
+
+A reader encountering a nonconforming encoded Name String or Path String MUST return `SAR_ERR_MALFORMED`.
+
+Multiple complete Entries MAY have the same Full Logical Entry Path. Repeated Full Logical Entry Paths are valid.
+
+For archives, canonical Entry order is physical LFH order in the Data Area. The first LFH follows the Global Header and its extensions. Each subsequent LFH begins at the next-LFH position determined under Section 6.1.1 from the preceding LFH and its Payload Data. Central Dictionary order MUST NOT alter canonical Entry order.
+
+For a complete valid partitioned archive, partition Data Areas are ordered by ascending Partition Index. Missing, duplicate, inconsistent, or otherwise invalid partitions remain governed by Section 19.
+
+For Stateful Streaming Mode, canonical Entry order of complete, non-fragmented Entries is the order in which their valid LFHs occur in the reliable byte stream within the active session context. Sequence No validation MUST NOT reorder LFHs or redefine that order.
+
+A fragmented archival Entry occupies the canonical Entry-order position established by Fragment Index 0. Later fragments of the same group do not create additional Entry-order positions.
+
+Stateful Streaming does not derive the logical operation order of a fragmented Entry from arrival or completion order; it is anchored to the Sequence No of Fragment Index 0. Fragmented Stateful Streaming Entries follow the Fragment Index, Sequence No, session-state, and state-application rules defined by Section 6.1.3 and Section 18.
+
+The same final-state rules apply to indexed archives, `NO_INDEX` archives, partitioned archives, and Stateful Streaming Mode.
+
+Complete Entries are applied in canonical Entry order.
+
+A complete Entry replaces an earlier Entry at the same Full Logical Entry Path.
+
+If a non-directory Entry replaces a directory, all earlier descendants of that directory are removed from the final logical state.
+
+If a directory Entry replaces another Entry, existing compatible descendants remain.
+
+If a later Entry requires an ancestor that is absent or is a non-directory, that ancestor becomes an implicit directory and the earlier non-directory object is removed from the final logical state.
+
+An implicit directory has no explicit SAR metadata unless a directory Entry supplies that metadata.
+
+The last complete directory Entry at a Full Logical Entry Path determines the final explicit metadata of that directory.
+
+The final logical state is the state remaining after all complete Entries have been applied in canonical Entry order.
+
+Implementations MAY process Entries internally in another order, provided that the observable successful result is identical to canonical sequential application.
+
+After a complete Entry, or a degraded reconstructed Entry permitted by
+`LOSS_TOLERANT`, establishes another occurrence of an existing Full
+Logical Entry Path, an implementation MAY report `SAR_WARN_DUPLICATE`.
+
+Individual fragments belonging to one fragmented Entry MUST NOT
+independently cause `SAR_WARN_DUPLICATE` to be reported.
+
+Reporting this warning MUST NOT alter archive or stream validity, Entry
+processing, canonical Entry order, final logical state, output, or
+operation success.
+
 
 ### 6.2 The Entry Mode Flags
 While Global Flags determine which LFH entries must be present and what the archive itself may contain (or will never contain), the Entry Mode specifies whether the corresponding fields in the LFH is applicable or not.
@@ -494,12 +1148,38 @@ The 16-bit Entry Mode is split into two functional bytes. The lower byte defines
 | 6 | `LAST_FRAGMENT` | Set if this is the final piece required to complete the logical file. |
 | 7 | `LOSS_TOLERANT` | Entry or fragment group permits degraded reconstruction if fragments are missing or unrecoverable. |
 | 8-11 | `OP_CODE` | Command Enumeration (Context dependent on Bit 13). |
-| 12 | RESERVED | Reserved. |
+| 12 | `PARTITION_MANIFEST` | Identifies the terminal structural Partition Manifest Entry. |
 | 13 | `SESSION_CONTROL` | Context Toggle: If set, Op-Codes are session-level. |
 | 14 | `ATOMIC_WRITE` | Verify CRC before unlinking/committing old data. |
 | 15 | `FORCE_SYNC` | Bypasses local conflict resolution. |
 
-#### 6.2.1 Global vs Entry Flag Consistency Rules
+#### 6.2.1 Partition Manifest Entry Mode Rules
+
+`PARTITION_MANIFEST` MUST NOT be set unless `PARTITIONED_ARCHIVE` is set.
+
+A Partition Manifest Entry MUST NOT set `IS_SYMLINK`, `IS_DIRECTORY`, `IS_COMPRESSED`, `IS_FRAGMENT`, `LAST_FRAGMENT`, `LOSS_TOLERANT`, `SESSION_CONTROL`, `ATOMIC_WRITE`, or `FORCE_SYNC`, and its `OP_CODE` bits MUST be zero.
+
+If a Global Flag causes an LFH field to be physically present, that field remains present in a Partition Manifest LFH. Except for encryption fields when Manifest encryption is active, conditional transformation and Application Data Object metadata fields MUST use the values defined below.
+
+`Comp Algo ID` MUST be `0x00` when present.
+
+`Patch Algo ID` MUST be `0x00` (`STORE_PATCH`) and `Delta Base Hash` MUST be all zero when present.
+
+`CDC Algo ID` MUST be `0x00` when present.
+
+`FEC Algo ID` and `FEC Size` MUST be zero and FEC Value MUST be absent when present.
+
+`Sparse Map Size` MUST be zero and Sparse Map MUST be absent when present. Sparse reconstruction MUST NOT be applied to a Partition Manifest Entry.
+
+`File CRC32`, `Content Hash`, UID/GID, timestamps, and permissions MUST be zero when present and MUST NOT be interpreted as Application Data Object metadata for a Partition Manifest Entry.
+
+`Stream ID` and `Sequence No` MUST be zero. A Partition Manifest Entry MUST NOT participate in session processing.
+
+A Partition Manifest Entry MUST have `Name Length` equal to zero. If `HAS_PATH` is set, `Path Length` MUST equal zero. The corresponding Name String and Path String MUST be absent.
+
+Partition Manifest classification takes precedence over Empty Area classification.
+
+#### 6.2.2 Global vs Entry Flag Consistency Rules
 The Global Flags define **capability and structural schema**, while Entry Mode flags define **per-entry usage** of those capabilities.
 
 The following rules are mandatory:
@@ -531,17 +1211,24 @@ The following rules are mandatory:
      * The effective encryption algorithm SHALL be treated as PLAINTEXT (0x00), regardless of the value present in the Encr Algo ID field.
     
 5. **Fragmentation Behavior**
+
    * `IS_FRAGMENT` MUST NOT be set unless `FILE_FRAGMENTATION` is set globally.
    * `LAST_FRAGMENT` MUST NOT be set unless `IS_FRAGMENT` is also set.
+   * `IS_FRAGMENT` MUST NOT be combined with `PARTITION_MANIFEST`, `SESSION_CONTROL`, `IS_DIRECTORY`, or `IS_SYMLINK`.
+   * When `IS_FRAGMENT` is set, Fragment ID and Fragment Index are interpreted according to Section 6.1.3. The decoded fragment contribution length is defined by the LFH `Uncompressed Size` field according to Sections 6.1.2 and 6.1.3.
+   * Cross-fragment LFH consistency, Fragment ID scope, fragment ordering, completion-authoritative metadata, reconstruction, and fragment-local transformation rules are defined exclusively by Section 6.1.3.
+
+   A violation of an invalid Entry Mode combination MUST return `SAR_ERR_FLAG_CONFLICT`.
+
       
     Violation MUST result in SAR_ERR_FLAG_CONFLICT.
 
-#### 6.2.2 LOSS_TOLERANT behavior
+#### 6.2.3 LOSS_TOLERANT behavior
 If LOSS_TOLERANT is set, implementations MAY continue reconstruction
 despite fragment loss, recovery failure, or unavailable recovery data,
 provided a meaningful degraded logical object can still be produced.
 
-Successful degraded reconstruction MUST return SAR_WARN_INCOMPLETE.
+Successful degraded reconstruction MUST return SAR_WARN_INCOMPLETE. For a fragmented Entry, degraded output is limited to the longest contiguous valid prefix of fragment contributions beginning at Fragment Index 0, as defined by Section 19.4.5.
 
 LOSS_TOLERANT MUST NOT override failures arising from decryption,
 authentication, signature verification, decompression, patch
@@ -582,19 +1269,51 @@ The Session Mode deals with management of the stateful streaming connection (Sec
 | `0x8-0xF` | RESERVED | Reserved for future session-control opcodes. |
 
 ## 7. Central Dictionary (CD)
-The CD is the primary management structure for random access and archive-wide metadata. It is OMITTED if `NO_INDEX` (Bit 1) is set.
+The CD is the post-hoc random-access index and metadata structure for the Data Area of the current Physical Archive Member. It is OMITTED if `NO_INDEX` (Bit 1) is set.
+
+For an unpartitioned archive, the current Physical Archive Member is the complete archive file. For a Partitioned Archive, each Partition has its own local CD when `NO_INDEX` is unset.
 
 | Field | Size | Condition | Description |
 | --- | --- | --- | --- |
-| Version | 1B | Always | Central Dictionary format version (independent of archive version |
-| Reserved | 7B | Always | Padding block reserved for future use |
-| File Count | 4/8B | Always | Supports 64-bit unsigned integer if `64BIT_SIZE` set (otherwise 32-bits) |
-| Partition ID | 2B | `PARTITIONED_ARCHIVE` | The ID of the current physical file (0-indexed). |
-| Total Partitions | 2B | `PARTITIONED_ARCHIVE` | Total number of physical files in this SAR set. |
-| Global CRC | 4B | `HAS_GLOBAL_CRC32` | CRC32 of all payloads combined. |
+| Version | 1B | Always | Central Dictionary format version, independent of archive version. |
+| Reserved | 7B | Always | Reserved; all bytes MUST be zero. |
+| Entry Count | 4/8B | Always | Number of LFHs represented by the Offsets array. Uses 64 bits when `64BIT_SIZE` is set and 32 bits otherwise. |
+| Data Area CRC32 | 4B | `HAS_DATA_AREA_CRC32` | CRC32 of the exact encoded Data Area byte sequence. |
 | MetaSize | 4B | `OPT_PRESENT` | Total size of the Metadata Section in bytes. |
-| Metadata | Var | `OPT_PRESENT` | TLV Blocks (See Section 7). |
-| Offsets | Var | Always | Array of `File Count` * 4/8B absolute pointers. |
+| Metadata | Var | `OPT_PRESENT` | TLV Blocks (See Section 9). |
+| Offsets | Var | Always | Array of `Entry Count` 4-byte or 8-byte LFH offsets. |
+
+### 7.1 Entry Count and Offset Semantics
+
+`Entry Count` MUST equal the number of offsets encoded in the Offsets array.
+
+Each offset MUST identify the first byte of one LFH represented by the CD. Offsets MUST appear in strictly ascending physical order and each indexed LFH MUST appear exactly once.
+
+Empty Areas MUST NOT be represented in the Offsets array. Every other LFH in the Data Area MUST be represented, including every fragment LFH and, for a Partitioned Archive, the Partition Manifest Entry.
+
+For a Partitioned Archive, the final indexed LFH MUST be the Partition Manifest Entry.
+
+For a Partitioned Archive, every offset is measured from byte zero of the current physical Partition and MUST refer only to an LFH physically contained in that Partition. A local CD MUST NOT refer to an earlier Partition, a later Partition, a future Entry, or a virtual concatenated Partition Set address space.
+
+A CD offset that lies outside the current Physical Archive Member MUST return `SAR_ERR_BOUNDS`. An offset that does not identify an LFH boundary or that points into Payload Data, the CD, CD padding, or the Footer MUST return `SAR_ERR_MALFORMED`.
+
+### 7.2 Data Area CRC32
+
+When `HAS_DATA_AREA_CRC32` is set, `Data Area CRC32` MUST equal CRC32 over the exact encoded byte range `[First_LFH_Offset, End_of_Data_Area)`. A mismatch MUST return `SAR_ERR_CRC_MISMATCH`.
+
+The range includes every encoded LFH, Payload Data, AEAD tag, fragment, Empty Area, Selective FEC field and value, and Partition Manifest LFH and payload when present. It excludes the Global Header, Central Dictionary, Central Dictionary alignment padding, and Footer.
+
+For an indexed archive or Partition, `End_of_Data_Area` is the first byte of the Central Dictionary. The CRC can therefore be calculated incrementally while writing the Data Area and does not include its own stored value.
+
+### 7.3 Partition-Local Metadata Scope
+
+In a Partitioned Archive, all CD metadata is local to the current physical Partition. This includes `DATA_HASH`, `RECOVERY`, `SIGNATURE`, Data Area CRC32, metadata TLVs, and the offset array.
+
+A local `SIGNATURE` authenticates only the current local CD according to Sections 9.3, 13.3, and 14.5. A local `DATA_HASH` anchors only the current Partition's Data Area. A local `RECOVERY` block protects only the protected sequence of the current Partition defined in Section 9.2.
+
+A metadata format that explicitly identifies another Partition or archive member, such as CDC_MAP, MAY reference that member according to the rules defined for that metadata format.
+
+No archive-wide Partition Set signature or archive-wide Central Dictionary is defined by SAR version 1.0.
 
 ## 8. Registries
 ### 8.1 Compression Algorithms (`SAR_L_COMP`)
@@ -613,12 +1332,14 @@ The CD is the primary management structure for random access and archive-wide me
 * CUSTOM compression MAY require external metadata negotiated outside SAR.
 
 ### 8.2 Encryption Algorithms (`SAR_L_ENCR`)
-* `0x00`: **PLAINTEXT** (No transformation; skip IV parsing/apply identity)
-* `0x01`: **AES256_GCM** (Authenticated Encryption)
-* `0x02`: **CHACHA20** (RFC 8439 ChaCha20 Stream Cipher)
-* `0x03`: **AES256_CBC** (Block Cipher - Legacy Support)
-* `0x04`: **XCHACHA20_POLY** (XChaCha20-Poly1305 - Recommended AEAD)
-* `0x05`: **CHACHA20_POLY1305** (ChaCha20-Poly1305 AEAD)
+
+* `0x00`: **PLAINTEXT** (No encryption transformation)
+* `0x01`: **AES256_GCM** (AES-256-GCM)
+* `0x02`: RESERVED
+* `0x03`: RESERVED
+* `0x04`: **XCHACHA20_POLY** (XChaCha20-Poly1305)
+* `0x05`: **CHACHA20_POLY1305** (ChaCha20-Poly1305)
+* `0x06`: **ASCON_AEAD128** (Ascon-AEAD128 as specified by NIST SP 800-232)
 * `0x20-0x3F`: RESERVED for post-quantum encryption and KEM algorithms.
 * `0x40-0x5F`: RESERVED for experimental algorithms.
 * `0x60-0xEF`: RESERVED for future standardization.
@@ -626,80 +1347,98 @@ The CD is the primary management structure for random access and archive-wide me
 
 Any algorithm identifier not explicitly assigned in this section is RESERVED.
 
-Implementations encountering a reserved value MUST return SAR_ERR_RESERVED_VALUE.
+Implementations encountering a reserved value MUST return `SAR_ERR_RESERVED_VALUE`.
 
-If decryption or authentication later fails, implementations MUST return SAR_ERR_DECRYPT_FAILED or SAR_ERR_AUTH_FAILED as appropriate.
+If `IS_ENCRYPTED` is set, `Encr Algo ID` MUST identify an assigned encryption algorithm whose construction is valid for encrypted Entry processing. `PLAINTEXT` MUST NOT be selected for an Entry with `IS_ENCRYPTED` set. A violation MUST return `SAR_ERR_FLAG_CONFLICT`.
+
+All standard encryption algorithms currently assigned by this specification other than `PLAINTEXT` are AEAD algorithms.
+
+For standard AEAD algorithms, authentication failure MUST return `SAR_ERR_AUTH_FAILED`.
 
 #### 8.2.1 CUSTOM Encryption Semantics
+
 * Values in `0xF0-0xFF` define user-defined encryption schemes.
-* MUST require matching external specification between encoder and decoder.
-* If the required CUSTOM encryption specification is unavailable or unsupported, implementations MUST return SAR_ERR_UNSUPPORTED. 
+* CUSTOM encryption MUST require a matching external specification between encoder and decoder.
+* If the required CUSTOM encryption specification is unavailable or unsupported, implementations MUST return `SAR_ERR_UNSUPPORTED`.
 * CUSTOM encryption MUST NOT be assumed secure or standardized.
+* A CUSTOM encryption construction MUST completely define its key length, IV or nonce interpretation, authentication behavior, Payload Data encoding, AAD behavior, and any requirements that differ from the standard SAR encryption rules.
 
-#### 8.2.2 IV / Nonce Field Semantics
+#### 8.2.2 Standard Encryption and IV / Nonce Semantics
 
-The LFH IV / Nonce field SHALL always occupy 24 bytes when the
-`ENCRYPTED` flag is set.
+The LFH IV / Nonce field occupies exactly 24 bytes whenever the `ENCRYPTED` Global Flag is set.
 
-Encryption algorithms SHALL interpret the field as follows:
+When `IS_ENCRYPTED` is unset, the encryption fields are semantically inert and MUST be interpreted according to Section 6.2.2.
 
-| Algorithm | IV / Nonce Length |
-|-----------|-------------|
-| PLAINTEXT  | 0 bytes  |
-| AES256_GCM | 12 bytes |
-| CHACHA20 | 12 bytes |
-| AES256_CBC | 16 bytes |
-| XCHACHA20_POLY | 24 bytes |
-| CHACHA20_POLY1305 | 12 bytes |
+When `IS_ENCRYPTED` is set, the selected standard encryption algorithm MUST interpret the 24-byte IV / Nonce field as follows:
 
-For algorithms requiring fewer than 24 bytes, the IV or nonce SHALL
-occupy the first N bytes of the field.
+| Algorithm | Native Key Length | Nonce Length | IV / Nonce Field Encoding | Tag Length |
+| --------- | ----------------- | ------------ | ------------------------- | ---------- |
+| `AES256_GCM`        |  32B | 12B | Bytes `0-11` contain the nonce; bytes `12-23` MUST be zero. | 16B |
+| `XCHACHA20_POLY`    |  32B | 24B | Bytes `0-23` contain the nonce.| 16B |
+| `CHACHA20_POLY1305` |  32B | 12B | Bytes `0-11` contain the nonce; bytes `12-23` MUST be zero. | 16B |
+| `ASCON_AEAD128`     |  16B | 16B | Bytes `0-15` contain the nonce; bytes `16-23` MUST be zero. | 16B |
 
-All remaining bytes SHALL be set to 0x00 by the encoder.
+For algorithms whose nonce is shorter than 24 bytes, every unused byte of the IV / Nonce field is RESERVED and MUST be zero. A decoder encountering a nonzero reserved IV / Nonce byte MUST return `SAR_ERR_RESERVED_VALUE`.
 
-Unused bytes are RESERVED.
+The native Entry encryption key MUST be derived according to Section 5.3.4 using the Native Key Length defined in the table above.
 
-For PLAINTEXT, all 24 bytes of the IV / Nonce field SHALL be set to 0x00 by the encoder and SHALL be ignored by the decoder.
+For every standard AEAD algorithm, `Payload Data` MUST be encoded as:
 
-Decoders MUST ignore unused bytes when constructing the IV or nonce.
+```text
+Payload Data = Ciphertext || Authentication Tag
+```
 
-Implementations operating in strict validation mode MAY verify that
-all reserved bytes are set to 0x00.
+The Authentication Tag immediately follows the Ciphertext and is exactly 16 bytes. Tag truncation MUST NOT be used.
 
-If strict validation mode is enabled, non-zero unused bytes MUST
-result in `SAR_ERR_MALFORMED`.
+`Payload Size` includes both the Ciphertext and Authentication Tag. An encrypted Payload Data field shorter than 16 bytes is invalid and MUST return `SAR_ERR_INVALID_LENGTH`.
 
-For AEAD algorithms, encoders MUST NOT reuse the same nonce with the same encryption key. Within a single archive, every AEAD-encrypted LFH using the same derived encryption key MUST use a unique nonce.
+SAR AAD MUST be supplied as the AEAD associated-data input according to Section 13.2.1.
 
-If an encoder detects that a nonce would be reused with the same encryption key, it MUST abort archive creation and return `SAR_ERR_NONCE_REUSE`.
+**AES256_GCM**
 
-Reuse of a key/nonce pair compromises confidentiality and integrity.
+`AES256_GCM` uses AES-256 in Galois/Counter Mode as specified by NIST SP 800-38D, with the key, nonce, and authentication-tag lengths fixed by this section. Other GCM key, IV, or authentication-tag sizes MUST NOT be used.
 
-Nonce uniqueness requirements apply to encoders.
+**XCHACHA20_POLY**
 
-Decoders are not required to detect nonce reuse and MUST NOT assume that repeated nonce values alone constitute a protocol violation, as different entries MAY utilize different encryption keys.
+`XCHACHA20_POLY` uses XChaCha20-Poly1305 as specified by `draft-irtf-cfrg-xchacha-03`, using the AEAD_CHACHA20_POLY1305 construction defined by RFC 8439. The key, nonce, and authentication-tag lengths are fixed by this section.
 
-NOTE:
-Encryption algorithms providing confidentiality only (e.g.
-AES256_CBC and CHACHA20) do not provide authenticity or integrity
-protection.
+**CHACHA20_POLY1305**
 
-Implementations MAY successfully decrypt data using an incorrect key,
-resulting in corrupted or otherwise invalid output.
+`CHACHA20_POLY1305` uses AEAD_CHACHA20_POLY1305 as specified by RFC 8439. The key, nonce, and authentication-tag lengths are fixed by this section.
 
-Applications requiring reliable key validation and tamper detection
-SHOULD use an authenticated encryption algorithm such as `AES256_GCM`,
-`CHACHA20_POLY1305`, or `XCHACHA20_POLY1305`.
+**ASCON_AEAD128**
+
+`ASCON_AEAD128` uses Ascon-AEAD128 as specified by NIST SP 800-232.
+
+The key, nonce, and authentication-tag lengths are fixed by this section. Tag truncation and the Ascon-AEAD128 nonce-masking option MUST NOT be used.
+
+##### Nonce Uniqueness
+
+For a given KMS Master Secret value and `Encr Algo ID`, an encoder MUST NOT use the same active nonce value for more than one encrypted LFH.
+
+The active nonce value consists only of the algorithm-specific nonce bytes identified in the table above. Reserved trailing bytes are not part of the nonce.
+
+This uniqueness requirement applies across every Entry deriving its key from the same KMS Master Secret and using the same `Encr Algo ID`, including ordinary Entries, fragments, structural encrypted Entries such as Partition Manifests, and Entries carried on multiple transport streams.
+
+Different `Encr Algo ID` values define independent nonce-uniqueness scopes because the algorithm identifier participates in the Entry-key derivation defined in Section 5.3.4.
+
+Different KMS Master Secret values define independent nonce-uniqueness scopes. This includes independently established Partition KMS Master Secrets and the independent directional KMS Master Secrets established by `TLS_EXPORTER`.
+
+Opening an additional QUIC or other transport stream does not create a new nonce-uniqueness scope.
+
+SAR does not mandate random or deterministic nonce generation. An encoder MAY use any generation strategy that satisfies the uniqueness requirement above.
+
+If an encoder detects an attempted nonce reuse within the applicable scope, it MUST abort the affected encoding operation and return `SAR_ERR_NONCE_REUSE`.
+
+Decoders are not required to detect nonce reuse.
 
 #### 8.2.3 Default Encryption Algorithm Selection
 
-When an implementation creates an encrypted SAR archive and no specific encryption algorithm has been explicitly selected by the invoking application, configuration, profile, or user, the implementation MUST select an AEAD-capable encryption algorithm.
+When an implementation creates encrypted SAR output and no specific encryption algorithm has been explicitly selected by the invoking application, configuration, Compliance Profile, or user, the implementation MUST select an assigned standard AEAD algorithm.
 
-Implementations SHOULD prefer `AES256_GCM` as the default AEAD algorithm.
+Implementations SHOULD prefer `AES256_GCM` as the default encryption algorithm.
 
-Implementations MAY provide configuration mechanisms allowing an alternate AEAD-capable algorithm to be selected as the implementation default.
-
-Non-AEAD algorithms (e.g., `AES256_CBC`, `CHACHA20`) MUST NOT be selected as defaults for newly created encrypted archives unless explicitly requested by the invoking application, configuration, profile, or user.
+Implementations MAY provide configuration mechanisms allowing another assigned standard AEAD algorithm to be selected as the implementation default.
 
 ### 8.3 OS Origin Mapping (`OS_ORIGIN`)
 * `0x00`: **UNKNOWN**
@@ -716,7 +1455,7 @@ Patching algorithms are used only when `HAS_DELTA` (Bit 9) is set. The algorithm
 
 | ID          | Name          | Description                                       |
 | ----------- | ------------- | ------------------------------------------------- |
-| `0x00`      | `STORE_PATCH` | Self-contained full-target patch payload.         |
+| `0x00`      | `STORE_PATCH` | Self-contained patch-output payload.              |
 | `0x01`      | `VCDIFF`      | RFC 3284 VCDIFF delta stream.                     |
 | `0x02`      | `BSDIFF`      | SAR BSDIFF v1 delta payload.                      |
 | `0x03`      | `ZSTD_PATCH`  | Zstandard dictionary-based patch profile.         |
@@ -736,34 +1475,18 @@ Implementations encountering a reserved patch algorithm identifier MUST return `
 
 #### Patch Transformation Domain
 
-Patch algorithms operate on decoded patch payload bytes.
+Patch algorithms operate on the decoded patch representation: for an unfragmented Entry, the decoded LFH payload representation; for a fragmented Entry, the complete Fragment Reassembly Sequence.
 
-Patch application occurs after FEC repair, AEAD authentication/decryption, decompression, and fragment reassembly, and before sparse reconstruction.
+The position of the patch stage relative to FEC recovery, AEAD authentication/decryption, decompression, fragment reassembly, CDC resolution, and sparse reconstruction is defined exclusively by Sections 13.1.2 and 13.1.3. This section does not define a separate transformation order.
 
-The delta transformation order is:
+The patch-stage contract is:
 
-```text
-Decode:
-  FEC repair, if applicable
-  Fragment reassembly, if applicable
-  AEAD authentication and decryption, if applicable
-  Decompression, if applicable
-  Patch application
-  Sparse reconstruction, if applicable
-```
+* the patch algorithm is applied exactly once per Entry, to the complete decoded patch representation;
+* the patch algorithm MUST NOT be applied to an individual fragment as an independent patch;
+* the output of the patch stage is the **patch output representation**, which is supplied to the next applicable group-wide reconstruction stage (CDC resolution, sparse reconstruction, or final logical integrity verification); and
+* the patch output representation is not necessarily the final logical Entry. If no later reconstruction stage applies, it is the final logical byte sequence.
 
-Encoding uses the reverse order:
-
-```text
-Encode:
-  Target logical data
-  Patch payload generation
-  Compression, if applicable
-  Encryption, if applicable
-  Fragmentation/FEC, if applicable
-```
-
-Patch algorithms MUST operate on logical patch payload bytes after SAR decompression. Patch algorithms MUST NOT define or apply an additional hidden compression layer unless explicitly defined by the patch algorithm profile.
+Patch algorithms MUST operate on logical patch payload bytes after SAR decompression and, where applicable, fragment reassembly. Patch algorithms MUST NOT define or apply an additional hidden compression layer unless explicitly defined by the patch algorithm profile.
 
 For `STORE_PATCH`, `VCDIFF`, and `BSDIFF`, compression is handled exclusively by the SAR compression layer.
 
@@ -797,11 +1520,18 @@ Implementations MUST NOT perform automatic filesystem lookup, network access, ex
 
 #### Patch Output Size
 
-For all patch algorithms, the reconstructed output size MUST equal the LFH `Uncompressed Size` field after patch application.
+The size of the patch output representation is governed by the selected patch construction and by the group-wide reconstruction stage, if any, that consumes it. It is not declared by any LFH `Uncompressed Size` field.
 
-If the reconstructed output size differs from LFH `Uncompressed Size`, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+LFH `Uncompressed Size` retains the transform-boundary meaning defined by Section 6.1.2:
 
-Implementations MUST enforce configured `ResourceLimits` before allocating the reconstructed target buffer.
+* for an unfragmented delta Entry, it is the size of the decoded patch representation before patch application;
+* for a fragmented delta Entry, each fragment's `Uncompressed Size` is the size of that fragment's decoded contribution to the reassembled patch representation.
+
+An implementation MUST NOT compare the patch output representation length against LFH `Uncompressed Size`.
+
+Each patch algorithm defines its own deterministic output length and output validation in its algorithm-specific subsection. A violation of those rules MUST return `SAR_ERR_PATCH_FAILED`.
+
+Implementations MUST enforce configured `ResourceLimits` before allocating the patch output representation.
 
 #### Patch Error Behavior
 
@@ -811,7 +1541,7 @@ Missing required base objects, dictionaries, or reconstruction inputs MUST retur
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
 
-`LOSS_TOLERANT` MUST NOT suppress patch failures.
+`LOSS_TOLERANT` MUST NOT suppress patch failures, including failures caused by an incomplete or degraded Fragment Reassembly Sequence supplied to the patch stage. A patch MUST NOT be applied to a partial patch representation.
 
 Implementations MUST NOT release finalized reconstructed output after patch failure.
 
@@ -831,22 +1561,23 @@ For custom patch algorithms, the following rules apply:
 * `CUSTOM` patch semantics MAY be used without explicit application-layer negotiation in controlled or closed environments where both encoder and decoder implementations are known to support the same custom algorithm. In interoperable or heterogeneous environments, explicit negotiation is RECOMMENDED.
 * Unknown or unnegotiated custom patch algorithms MUST fail with `SAR_ERR_UNSUPPORTED`.
 * Custom patch algorithms that require external reconstruction input MUST follow the base/reconstruction-input rules in Section 8.4.
+* Custom patch algorithms MUST define deterministic patch-output length semantics and resource bounds, and MUST NOT infer patch output size from LFH `Uncompressed Size`.
 
 #### 8.4.2 STORE_PATCH (`0x00`)
 
 `STORE_PATCH` is the baseline delta patch algorithm.
 
-For `STORE_PATCH`, the patch payload is the complete target logical byte sequence.
+For `STORE_PATCH`, the decoded patch payload is the complete patch output representation.
 
 No copy instructions, base reads, external dictionaries, or external base-object lookups are performed by the `STORE_PATCH` algorithm.
 
-When applying `STORE_PATCH`, the decoder SHALL treat the decoded patch payload as the reconstructed target logical data.
+When applying `STORE_PATCH`, the decoder SHALL treat the decoded patch payload as the patch output representation, without modification. If `STORE_PATCH` is the final applicable reconstruction stage, that representation is the final logical byte sequence. If CDC resolution or sparse reconstruction follows, it is the representation consumed by that stage.
 
 `STORE_PATCH` does not require base object bytes to be available for patch application.
 
 If `Delta Base Hash` is nonzero, implementations MAY expose it as metadata or use it for diagnostics, but `STORE_PATCH` application MUST NOT fail solely because the base object is unavailable.
 
-For `STORE_PATCH`, a malformed payload is one whose decoded payload length does not exactly equal LFH `Uncompressed Size`, or whose decoded payload cannot be obtained because FEC repair, decryption, decompression, or an earlier decoding stage failed.
+For `STORE_PATCH`, a malformed payload is one whose decoded payload (or, for a fragmented Entry, decoded fragment contribution) cannot be obtained because FEC repair, decryption, decompression, or an earlier decoding stage failed, or whose decoded length does not equal the LFH `Uncompressed Size` as required by Section 6.1.2. `Uncompressed Size` validates the decoded `STORE_PATCH` payload representation before patch application; it is not a separate patch-output size declaration.
 
 #### 8.4.3 VCDIFF (`0x01`)
 
@@ -868,8 +1599,10 @@ The decoder MUST enforce configured `ResourceLimits` for:
 * VCDIFF window count;
 * VCDIFF instruction count;
 * decoded target window size;
-* reconstructed target size;
+* reconstructed patch output size;
 * total patch working set.
+
+The VCDIFF construction determines the bytes and length produced by the decoded target windows. That output is the patch output representation. Its length is not cross-checked against LFH `Uncompressed Size`.
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
 
@@ -906,7 +1639,7 @@ The header is 32 bytes:
 | `Magic`                | 8 bytes | ASCII string `SARBSD01`.                                |
 | `Control_Block_Length` | 8 bytes | Length in bytes of the uncompressed control block.      |
 | `Diff_Block_Length`    | 8 bytes | Length in bytes of the uncompressed diff block.         |
-| `New_File_Size`        | 8 bytes | Size in bytes of the reconstructed target logical data. |
+| `New_File_Size`        | 8 bytes | Size in bytes of the BSDIFF patch output representation. |
 
 `Control_Block_Length`, `Diff_Block_Length`, and `New_File_Size` use the SAR BSDIFF signed 64-bit integer encoding.
 
@@ -914,7 +1647,9 @@ For SAR BSDIFF v1, these values MUST be non-negative.
 
 Negative block lengths or target sizes MUST be rejected with `SAR_ERR_PATCH_FAILED`.
 
-`New_File_Size` MUST equal the LFH `Uncompressed Size` after patch application. If it does not match, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+`New_File_Size` is authoritative for the number of bytes produced by BSDIFF patch application. The actual BSDIFF output length MUST equal `New_File_Size`; otherwise the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+
+`New_File_Size` describes the patch output representation, which MAY still undergo CDC resolution or sparse reconstruction. It is not compared against LFH `Uncompressed Size`.
 
 ##### Blocks
 
@@ -987,7 +1722,7 @@ Implementations MUST enforce configured `ResourceLimits` for:
 * Extra Block size;
 * control triple count;
 * base size;
-* reconstructed target size;
+* reconstructed patch output size;
 * total patch working set.
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
@@ -997,6 +1732,8 @@ Missing base data MUST return `SAR_ERR_BASE_MISSING`.
 #### 8.4.5 ZSTD_PATCH (`0x03`)
 
 `ZSTD_PATCH` (`0x03`) is reserved for a SAR-defined Zstandard dictionary-based patch profile.
+
+Any supported `ZSTD_PATCH` profile, and any `CUSTOM` patch algorithm, MUST define deterministic patch-output length semantics and resource bounds. Patch output size MUST NOT be inferred from LFH `Uncompressed Size`.
 
 The exact dictionary identity, dictionary source, dictionary verification method, payload format, and reconstruction semantics are not defined in this version of the specification.
 
@@ -1057,7 +1794,7 @@ If `OPT_PRESENT` (Bit 2) is set, metadata is stored in Type-Length-Value blocks.
 * **Length**: 4 bytes (Little-Endian, declaring the size in Bytes of the following value field).
 * **TLV Value**: Variable length data.
 
-If the TLV block does not end on an 8-byte boundary, zero padding bytes MUST be appended after the TLV Value field. Padding SHALL be calculated relative to the beginning of the TLV block, starting at the Type ID field. The total TLV block size, including Type ID, Length, Value, and padding, SHALL be a multiple of 8 bytes. Padding bytes MUST be set to 0x00 and MUST NOT be included in the TLV Length field.
+If the TLV block does not end on an 8-byte boundary, zero padding bytes MUST be appended after the TLV Value field. Padding SHALL be calculated relative to the beginning of the TLV block, starting at the Type ID field. The total TLV block size, including Type ID, Length, Value, and padding, SHALL be a multiple of 8 bytes. Padding bytes MUST be set to 0x00 and MUST NOT be included in the TLV Length field. A decoder encountering a non-zero TLV padding byte MUST return `SAR_ERR_MALFORMED`.
 
 ### 9.1 Metadata Type Registry (`SAR_G_META`)
 The Type IDs MUST be set such that the IDs in the range of 0x00 - 0x0F are utilized for a specific type each and the IDs in the range of 0x10 - 0xFF are utilized such that the most-significant nibble (4 bits) determines the TLV type and the least-significant nibble SHOULD enumerate between differing implementations, algorithms or specific sub-types.
@@ -1091,7 +1828,7 @@ For a RECOVERY TLV, the protected byte sequence SHALL be the exact byte sequence
 
 This range includes Global Flags, any Global Header extensions, all Local File Headers, all Payload Data, Empty Areas, and all explicitly encoded padding bytes before the Central Dictionary.
 
-This range excludes Magic Number, Version, Reserved, Flags Size, the Central Dictionary, and the Footer.
+This range excludes Magic Number, Version, Reserved, Flags Size, the Central Dictionary, and the Footer. For a Partitioned Archive, the protected sequence is evaluated independently within each physical Partition and ends immediately before that Partition's local Central Dictionary.
 
 The algorithm used SHALL be identified by the least-significant nibble (4 bits) of the one-octet TLV Type field:
 
@@ -1974,9 +2711,11 @@ Parity Data Length == ceil(Parity Data Bit Length / 8)
 
 Any mismatch MUST return `SAR_ERR_INVALID_LENGTH`.
 
+**External Recovery Metadata.** SAR v1.0 defines no interoperable external recovery-sidecar format and no normative mechanism for binding external recovery metadata to an archive. Implementations MAY use storage-layer, application-specific, or implementation-private external recovery metadata, but such metadata is outside SAR v1.0 interoperability. Conforming SAR processing MUST NOT require such external information unless a future, separately standardized SAR mechanism explicitly defines it. The discovery, format, integrity, lifecycle, and binding of such information are outside SAR v1.0. A future SAR specification or separately standardized extension MAY define such a mechanism.
+
 
 ### 9.3 Signature (ID 0x20 - 0x2F)
-The `SIGNATURE` block MUST fulfil the requirements as outlined in section 11.3.
+The `SIGNATURE` block MUST fulfil the requirements as outlined in section 13.3.
 
 The algorithm used MUST be set by the least-significant nibble (4 bits) of the 1 byte TLV Type ID:
 
@@ -2006,7 +2745,7 @@ Implementations encountering an assigned but unsupported signature algorithm ide
 Implementations encountering a reserved signature algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
 ### 9.4 Data Integrity Hashing (ID 0x30 - 0x3F)
-The `DATA_HASH` block anchors the Central Dictionary to the Data Area. When the `SIGNED` flag is set, this block MUST be present to ensure that the files themselves have not been swapped or altered. Also see section 11.3.
+The `DATA_HASH` block anchors the Central Dictionary to the Data Area. When the `SIGNED` flag is set, this block MUST be present to ensure that the files themselves have not been swapped or altered. Also see section 13.3.
 
 The algorithm used MUST be set by the least-significant nibble (4 bits) of the 1 byte TLV Type ID:
  * `0x30`: SHA256
@@ -2049,74 +2788,247 @@ Implementations encountering a reserved CDC metadata TLV Type ID MUST return `SA
 
 
 ## 10. Error and Status Mapping
-Standardized status, warning, and error return values for SAR API implementations and session status reporting:
+Standardized status, warning, and error return values for SAR API implementations and session status reporting.
+
+### 10.1 Status Value Space
+
+A status value is an unsigned 16-bit integer. Values in this registry MAY be used as local API return values and MAY also be carried in `SESSION_STATUS` frames where session status reporting is supported (Section 18.3.4).
+
+The status value space is allocated as follows:
+
+| Range | Allocation |
+|-------|------------|
+| `0` | `SAR_OK` |
+| `1-99` | Warnings and other non-failure statuses |
+| `100-199` | Structural, format, and malformed-input errors |
+| `200-299` | Unsupported, reserved, and capability errors |
+| `300-399` | Integrity, authentication, and cryptographic-keying errors |
+| `400-499` | Fragmentation, reconstruction, and recovery errors |
+| `500-599` | Resource, size, and limit errors |
+| `600-699` | Streaming, session, and partition-state errors |
+| `700-799` | Path, metadata, and logical-state conflict errors |
+| `800-899` | I/O, environment, and internal errors |
+| `900-32767` | Reserved for future standardized SAR allocation |
+| `32768-65534` | Implementation-private or vendor-defined |
+| `65535` (`0xFFFF`) | `SAR_ERR_GENERIC` |
+
+These blocks organize allocation only. An implementation MUST NOT infer semantics, severity, or success from the numeric range of a value it does not recognize. A nonzero value that an implementation does not recognize MUST NOT be treated as `SAR_OK`.
+
+Values in `900-32767` are reserved. Implementations MUST NOT emit them except as assigned by a future revision of this specification. Implementation-private values in `32768-65534` have no interoperable meaning. They MUST NOT be used to carry any condition that this registry defines.
+
+`SAR_ERR_GENERIC` was historically written as the signed value `-1`. That signed alias is documentation only. Its canonical value is `65535` (`0xFFFF`).
+
+Assigned values are permanent. A retired value (Section 10.3) MUST NOT be reassigned to a different meaning.
+
+### 10.2 Status Registry
+
+#### 10.2.1 Success and Warnings (`0`, `1-99`)
 
 | Value | Constant | Meaning |
 |---------|----------|---------|
-| 0 | `SAR_OK` | Success. |
-| -1 | `SAR_ERR_GENERIC` | Unspecified failure. |
-| 1 | `SAR_ERR_NOT_FOUND` | Entry, file, stream, metadata object, or referenced resource not found. |
-| 2 | `SAR_ERR_INVALID_MAGIC` | Header magic mismatch or archive corruption detected during format identification. |
-| 3 | `SAR_ERR_IO` | Hardware, network, storage, filesystem, or transport-layer I/O error. |
-| 4 | `SAR_ERR_CRC_MISMATCH` | CRC validation failed. |
-| 5 | `SAR_ERR_AUTH_FAILED` | Authentication failed during cryptographic verification. |
-| 6 | `SAR_ERR_MALLOC` | Memory allocation or memory exhaustion failure. |
-| 7 | `SAR_ERR_UNSUPPORTED` | Valid SAR feature, flag, profile, algorithm, or extension is not implemented by the current implementation. |
-| 8 | `SAR_ERR_FLAG_CONFLICT` | Invalid flag combination or required dependency missing. |
-| 9 | `SAR_ERR_PATCH_FAILED` | Binary patch application failed or base-file verification failed. |
-| 10 | `SAR_ERR_BASE_MISSING` | Required base file is unavailable or its identity cannot be verified. |
-| 11 | `SAR_ERR_INVALID_MAP` | Declared offset, length, extent, or mapping exceeds permitted bounds. |
-| 12 | `SAR_ERR_NO_SPACE` | Insufficient storage space on the destination filesystem or device. |
-| 13 | `SAR_ERR_PARTITION_MISSING` | Required archive partition or physical volume is not present. |
-| 14 | `SAR_ERR_FRAGMENT_GAP` | One or more fragments are missing. Ignored when `LOSS_TOLERANT` is enabled. |
-| 15 | `SAR_ERR_REASSEMBLY_BUFFER_FULL` | Reassembly buffers exceeded implementation-supported limits. |
-| 16 | `SAR_ERR_PARTITION_MISMATCH` | Partition identifier, UUID, archive identifier, or magic value does not match the expected archive set. |
-| 17 | `SAR_ERR_FRAGMENT_TIMEOUT` | Required fragment did not arrive before the configured timeout expired. |
-| 18 | `SAR_WARN_INCOMPLETE` | Non-fatal warning: object reconstructed with missing fragments, missing data, or degraded recovery quality. |
-| 19 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
-| 20 | `SAR_ERR_CDC_MISMATCH` | Reassembled CDC object hash does not match the declared Content Hash. |
-| 21 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
-| 22 | `SAR_ERR_TRUNCATED` | Archive, stream, header, metadata, or payload terminated unexpectedly before completion. |
-| 23 | `SAR_ERR_MALFORMED` | Archive structure, metadata structure, or protocol structure is syntactically invalid. |
-| 24 | `SAR_ERR_BOUNDS` | Declared offset, length, count, size, or computed range exceeds valid bounds. |
-| 25 | `SAR_ERR_RESERVED_VALUE` | Encountered a reserved, prohibited, or unassigned registry value. |
-| 26 | `SAR_ERR_OVERFLOW` | Integer overflow or arithmetic overflow detected during processing. |
-| 27 | `SAR_ERR_LIMIT_EXCEEDED` | Implementation-defined limit exceeded (memory, size, count, nesting depth, fragment count, etc.). |
-| 28 | `SAR_ERR_INVALID_ALIGNMENT` | Required alignment or padding constraints are violated. |
-| 29 | `SAR_ERR_INVALID_LENGTH` | Length field is inconsistent with the declared structure or payload. |
-| 30 | `SAR_ERR_CHECKSUM_MISMATCH` | Non-cryptographic checksum validation failed. |
-| 31 | `SAR_ERR_HASH_MISMATCH` | Cryptographic hash validation failed. |
-| 32 | `SAR_ERR_DECRYPT_FAILED` | Decryption operation failed. |
-| 33 | `SAR_ERR_SIGNATURE_FAILED` | Digital signature validation failed. |
-| 34 | `SAR_ERR_ANCHOR_HASH_FAILED` | Anchor Hash validation failed. |
-| 35 | `SAR_ERR_INVALID_VERSION` | Archive version, profile version, or protocol version is unsupported or invalid. |
-| 36 | `SAR_ERR_KEY_MISSING` | Required decryption, signing, or verification key is unavailable. |
-| 37 | `SAR_ERR_KEY_REJECTED` | Provided cryptographic key is invalid, revoked, expired, or incompatible. |
-| 38 | `SAR_ERR_STREAM_CLOSED` | Stream terminated unexpectedly before completion. |
-| 39 | `SAR_ERR_STREAM_STATE` | Invalid stream state, stream lifecycle violation, protocol sequencing error, or Stream ID conflict. |
-| 40 | `SAR_ERR_METADATA_MISSING` | Required metadata field, TLV, or structure is absent. |
-| 41 | `SAR_ERR_METADATA_CONFLICT` | Metadata fields contain conflicting or mutually exclusive information. |
-| 42 | `SAR_ERR_RECOVERY_UNAVAILABLE` | Recovery data is required but unavailable. |
-| 43 | `SAR_ERR_RECOVERY_CORRUPTED` | Recovery metadata or parity data is corrupted or unusable. |
-| 44 | `SAR_ERR_COMPRESSION_FAILED` | Compression operation failed. |
-| 45 | `SAR_ERR_DECOMPRESSION_FAILED` | Decompression operation failed. |
-| 46 | `SAR_ERR_WRITE_PROTECTED` | Archive, partition, stream, or destination is write-protected. |
-| 47 | `SAR_ERR_ALREADY_EXISTS` | Requested object already exists and overwrite is not permitted. |
-| 48 | `SAR_ERR_CANCELLED` | Operation was cancelled by the user or host application. |
-| 49 | `SAR_ERR_TIMEOUT` | General operation timeout occurred. |
-| 50 | `SAR_ERR_INTERNAL` | Internal implementation error or invariant violation. |
-| 51 | `SAR_ERR_NONCE_REUSE` | AEAD nonce reuse detected for the same encryption key. |
-| 52 | `SAR_ERR_TOO_MANY_STREAMS` | Implementation-defined concurrent or active stream limit exceeded. |
+| 0 | `SAR_OK` | Success. The requested operation completed and every verification it was required to perform succeeded. |
+| 1 | `SAR_WARN_INCOMPLETE` | Non-failure. A permitted operation completed with a degraded or incomplete result. It never implies complete reconstruction or successful integrity verification. For fragmented Entries it is used exactly as defined by Sections 6.2.3 and 19.4.5. |
+| 2 | `SAR_WARN_DUPLICATE` | Optional non-fatal diagnostic indicating that a repeated Full Logical Entry Path occurrence was encountered. |
+| 3 | `SAR_WARN_SKIPPED` | Non-failure aggregate result of explicitly enabled incomplete processing (Section 12.4) in which one or more selected Entries requiring assigned but unsupported features were safely skipped. If permitted degraded reconstruction also occurred in the same aggregate operation, the aggregate status is `SAR_WARN_INCOMPLETE` and this condition is preserved per skipped Entry in diagnostics. The underlying `SAR_ERR_UNSUPPORTED` reason for each skipped Entry is reported diagnostically. |
 
-Values in this registry MAY be used as local API return values and MAY also be carried in `SESSION_STATUS` frames where session status reporting is supported.
+`SAR_WARN_INCOMPLETE` MUST NOT convert any of the following into a warning:
 
-SAR_ERR_UNSUPPORTED SHALL be returned only when a SAR-defined feature, algorithm, profile, or extension is valid according to this specification but is not implemented by the current implementation.
+* failed authentication;
+* failed integrity verification;
+* failure of a mandatory transformation;
+* a metadata conflict;
+* an unsupported required feature (outside the explicit Section 12.4 mode);
+* incomplete input to a mandatory group-wide stage (`SAR_ERR_FRAGMENT_GAP`).
+
+#### 10.2.2 Structural Errors (`100-199`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 100 | `SAR_ERR_MALFORMED` | Archive, metadata, or protocol structure is syntactically invalid. |
+| 101 | `SAR_ERR_INVALID_MAGIC` | Global Header Magic Number mismatch. |
+| 102 | `SAR_ERR_INVALID_VERSION` | A version value is structurally or normatively invalid (Section 10.4.3). |
+| 103 | `SAR_ERR_TRUNCATED` | Physical input ended before the bytes declared by the currently parsed structure were available. |
+| 104 | `SAR_ERR_INVALID_LENGTH` | An exact encoded or decoded length relationship required by this specification is violated. |
+| 105 | `SAR_ERR_BOUNDS` | A parsed offset, range, count, or computed position lies outside its enclosing allowed domain. |
+| 106 | `SAR_ERR_INVALID_MAP` | Malformed or invalid Sparse Map structure or Sparse Extent relationships. |
+| 108 | `SAR_ERR_FLAG_CONFLICT` | Invalid flag combination or required flag dependency missing. |
+
+#### 10.2.3 Unsupported, Reserved, and Capability Errors (`200-299`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 200 | `SAR_ERR_UNSUPPORTED` | A SAR-defined feature, flag, profile, algorithm, version, or extension is assigned by this specification but not implemented by the current implementation. |
+| 201 | `SAR_ERR_RESERVED_VALUE` | A reserved, prohibited, or unassigned registry value was encountered. |
+
+#### 10.2.4 Integrity, Authentication, and Keying Errors (`300-399`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 300 | `SAR_ERR_AUTH_FAILED` | AEAD authentication failed. |
+| 301 | `SAR_ERR_CRC_MISMATCH` | A CRC32 verification failed (`File CRC32`, `Data Area CRC32`). |
+| 302 | `SAR_ERR_HASH_MISMATCH` | A cryptographic hash verification failed (Section 10.4.1). |
+| 303 | `SAR_ERR_SIGNATURE_FAILED` | Digital signature verification failed. |
+| 304 | `SAR_ERR_KEY_MISSING` | Required cryptographic key or keying material is unavailable. |
+| 305 | `SAR_ERR_KEY_REJECTED` | Provided key material was rejected, including a rejected asymmetric key unwrap. |
+| 306 | `SAR_ERR_NONCE_REUSE` | The encoder detected AEAD nonce reuse for the same encryption key. |
+
+#### 10.2.5 Fragmentation, Reconstruction, and Recovery Errors (`400-499`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 400 | `SAR_ERR_FRAGMENT_GAP` | One or more required Fragment Indices are missing. Under `LOSS_TOLERANT`, only the degraded prefix output permitted by Section 19.4.5 may be produced, and it is reported with `SAR_WARN_INCOMPLETE`. Incomplete input to a mandatory group-wide stage always returns this error. |
+| 401 | `SAR_ERR_FRAGMENT_TIMEOUT` | The fragment-group timeout of Section 19.4.1 expired for a live or incremental context. |
+| 402 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
+| 403 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
+| 404 | `SAR_ERR_RECOVERY_UNAVAILABLE` | Recovery data is required but unavailable. |
+| 405 | `SAR_ERR_RECOVERY_CORRUPTED` | Recovery metadata or parity data is corrupted or unusable. |
+| 406 | `SAR_ERR_PATCH_FAILED` | Patch payload is malformed, patch application failed, or the patch output violates its algorithm-defined output rules. |
+| 407 | `SAR_ERR_BASE_MISSING` | A required delta base cannot be resolved. |
+
+#### 10.2.6 Resource, Size, and Limit Errors (`500-599`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 500 | `SAR_ERR_OVERFLOW` | Checked arithmetic cannot represent a required result. |
+| 501 | `SAR_ERR_LIMIT_EXCEEDED` | An implementation-defined or configured resource cap was exceeded (memory, size, count, nesting depth, fragment count, and similar). |
+| 502 | `SAR_ERR_REASSEMBLY_BUFFER_FULL` | The fragment-reassembly buffer capacity or the concurrent fragment-group tracking cap was exceeded. |
+| 503 | `SAR_ERR_NO_SPACE` | Insufficient storage space on the destination filesystem or device. |
+
+#### 10.2.7 Streaming, Session, and Partition-State Errors (`600-699`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 600 | `SAR_ERR_STREAM_STATE` | Invalid stream state, stream lifecycle violation, protocol sequencing error, or Stream ID conflict. |
+| 601 | `SAR_ERR_TOO_MANY_STREAMS` | The implementation-defined concurrent or active stream limit was exceeded. |
+| 602 | `SAR_ERR_STREAM_CLOSED` | The ordered SAR or transport stream terminated while the session remained active, when no more specific structural error applies (Section 10.4.4). |
+| 603 | `SAR_ERR_PARTITION_MISSING` | A required archive Partition or physical volume is not present. |
+| 604 | `SAR_ERR_PARTITION_MISMATCH` | Partition identifier, UUID, archive identifier, predecessor link, or magic value does not match the expected Partition Set. |
+| 605 | `SAR_ERR_SESSION_TIMEOUT` | The session inactivity watchdog of Section 18.3.3 expired. |
+
+#### 10.2.8 Path, Metadata, and Logical-State Conflict Errors (`700-799`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 700 | `SAR_ERR_PATH_COLLISION` | Conflicting SAR logical-path identity: during materialization, distinct Full Logical Entry Paths map to the same destination filesystem object. |
+| 701 | `SAR_ERR_PATH_ESCAPE` | During materialization, an Entry destination or effective symbolic-link target escapes the selected scope, or confinement cannot be established. |
+| 702 | `SAR_ERR_METADATA_MISSING` | Required SAR interpretation or application metadata is absent. |
+| 703 | `SAR_ERR_METADATA_CONFLICT` | Metadata fields contain conflicting or mutually exclusive information. |
+| 704 | `SAR_ERR_ALREADY_EXISTS` | The destination or environment object already exists and the operation's semantics do not permit overwriting it. |
+| 705 | `SAR_ERR_NOT_FOUND` | A generic referenced Entry, object, or resource lookup failed, when no more specific code applies. |
+
+#### 10.2.9 I/O, Environment, and Internal Errors (`800-899`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 800 | `SAR_ERR_IO` | Hardware, network, storage, filesystem, or transport-layer I/O error. |
+| 801 | `SAR_ERR_WRITE_PROTECTED` | Archive, Partition, stream, or destination is write-protected. |
+| 802 | `SAR_ERR_INTERNAL` | Internal implementation error or invariant violation. |
+| 803 | `SAR_ERR_INVALID_INPUT` | Nonconforming caller-supplied input to an encoder or API operation. |
+
+#### 10.2.10 Generic Failure (`65535`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 65535 (`0xFFFF`) | `SAR_ERR_GENERIC` | Unspecified failure. Implementations SHOULD use a more specific code whenever one applies. |
+
+### 10.3 Retired and Reserved Values
+
+The following constants are retired. Their values are permanently reserved. They MUST NOT be reassigned, and conforming implementations MUST NOT emit them.
+
+| Value | Retired Constant | Former Value | Replacement |
+|-------|------------------|--------------|-------------|
+| 107 | `SAR_ERR_INVALID_ALIGNMENT` | 28 | `SAR_ERR_MALFORMED` for non-zero padding, otherwise the applicable structural code |
+| 390 | `SAR_ERR_CHECKSUM_MISMATCH` | 30 | `SAR_ERR_CRC_MISMATCH` |
+| 391 | `SAR_ERR_CDC_MISMATCH` | 20 | `SAR_ERR_HASH_MISMATCH` |
+| 392 | `SAR_ERR_DECRYPT_FAILED` | 32 | `SAR_ERR_AUTH_FAILED` |
+| 393 | `SAR_ERR_ANCHOR_HASH_FAILED` | 34 | `SAR_ERR_HASH_MISMATCH` |
+| 490 | `SAR_ERR_COMPRESSION_FAILED` | 44 | `SAR_ERR_INVALID_INPUT` or `SAR_ERR_INTERNAL` |
+| 491 | `SAR_ERR_DECOMPRESSION_FAILED` | 45 | `SAR_ERR_MALFORMED` or `SAR_ERR_LIMIT_EXCEEDED` |
+| 590 | `SAR_ERR_MALLOC` | 6 | `SAR_ERR_LIMIT_EXCEEDED` |
+| 690 | `SAR_ERR_TIMEOUT` | 49 | `SAR_ERR_SESSION_TIMEOUT` or `SAR_ERR_FRAGMENT_TIMEOUT` |
+| 890 | `SAR_ERR_CANCELLED` | 48 | Host-application concern; use an implementation-private value if needed |
+
+Former values are the pre-registry-reorganization numbers of the draft specification. They are recorded for migration only and carry no meaning in the current registry.
+
+### 10.4 Condition-to-Status Mappings
+
+When a single condition below applies, the mapped status is normative. This section does not prescribe the order in which independent conditions are detected.
+
+#### 10.4.1 Integrity and Authentication
+
+| Condition | Status |
+|-----------|--------|
+| AEAD authentication failure | `SAR_ERR_AUTH_FAILED` |
+| `File CRC32` mismatch | `SAR_ERR_CRC_MISMATCH` |
+| `Data Area CRC32` mismatch | `SAR_ERR_CRC_MISMATCH` |
+| `Content Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| Partition hash (`Current Partition Hash`) mismatch | `SAR_ERR_HASH_MISMATCH` |
+| `Previous Partition Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| `Delta Base Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| Anchor Hash (`DATA_HASH`) mismatch | `SAR_ERR_HASH_MISMATCH` |
+| CDC verified chunk hash mismatch | `SAR_ERR_HASH_MISMATCH` |
+| Signature verification failure | `SAR_ERR_SIGNATURE_FAILED` |
+| Missing keying material | `SAR_ERR_KEY_MISSING` |
+| Rejected asymmetric key unwrap | `SAR_ERR_KEY_REJECTED` |
+| Encoder nonce reuse | `SAR_ERR_NONCE_REUSE` |
+
+#### 10.4.2 Length, Bounds, and Truncation
+
+| Status | Meaning |
+|--------|---------|
+| `SAR_ERR_INVALID_LENGTH` | An exact encoded or decoded length relationship is violated. |
+| `SAR_ERR_BOUNDS` | A parsed offset or range lies outside the enclosing allowed domain. |
+| `SAR_ERR_INVALID_MAP` | A Sparse Map structure or its extent relationships are malformed or invalid. |
+| `SAR_ERR_TRUNCATED` | Physical input ends before the declared bytes are available. |
+| `SAR_ERR_OVERFLOW` | Checked arithmetic cannot represent the required result. |
+
+#### 10.4.3 Versions and Registry Values
+
+| Condition | Status |
+|-----------|--------|
+| A version value that is structurally or normatively invalid, including contradictory version bindings within one archive or Partition Set (Sections 5.4 and 19.1.10) | `SAR_ERR_INVALID_VERSION` |
+| A version value assigned by this specification (or by a revision the implementation recognizes) but not implemented | `SAR_ERR_UNSUPPORTED` |
+| A reserved or unassigned version value, including Global Header Version `0x00` and any Global Header Version not assigned by a revision the implementation recognizes | `SAR_ERR_RESERVED_VALUE` |
+| An assigned but unsupported feature, algorithm, or extension identifier | `SAR_ERR_UNSUPPORTED` |
+| A reserved or unassigned identifier | `SAR_ERR_RESERVED_VALUE` |
+| A resource cap exceeded | `SAR_ERR_LIMIT_EXCEEDED` |
+| Checked arithmetic overflow | `SAR_ERR_OVERFLOW` |
+
+#### 10.4.4 Fragmentation, Streaming, and Sessions
+
+| Condition | Status |
+|-----------|--------|
+| A required Fragment Index is missing | `SAR_ERR_FRAGMENT_GAP` |
+| Fragment-group timeout expiry (Section 19.4.1) | `SAR_ERR_FRAGMENT_TIMEOUT` |
+| Conflicting fragment metadata | `SAR_ERR_METADATA_CONFLICT` |
+| Permitted degraded fragment reconstruction | `SAR_WARN_INCOMPLETE` |
+| Session inactivity watchdog expiry (Section 18.3.3) | `SAR_ERR_SESSION_TIMEOUT` |
+| Physical input ended before the bytes declared by the currently parsed structure were available | `SAR_ERR_TRUNCATED` |
+| The ordered SAR or transport stream terminated while the session remained active, and no more specific structural truncation error applies | `SAR_ERR_STREAM_CLOSED` |
+| Stream lifecycle, sequencing, or Stream ID conflict | `SAR_ERR_STREAM_STATE` |
+| Stream limit exceeded | `SAR_ERR_TOO_MANY_STREAMS` |
+
+#### 10.4.5 Paths and Objects
+
+| Condition | Status |
+|-----------|--------|
+| Conflicting SAR logical-path identity at materialization | `SAR_ERR_PATH_COLLISION` |
+| Destination object already exists and overwrite is not permitted | `SAR_ERR_ALREADY_EXISTS` |
+| Generic referenced object or resource lookup failure | `SAR_ERR_NOT_FOUND` |
+| Required delta base cannot be resolved | `SAR_ERR_BASE_MISSING` |
+| Required SAR interpretation or application metadata absent | `SAR_ERR_METADATA_MISSING` |
+
+### 10.5 General Rules
+
+`SAR_ERR_UNSUPPORTED` SHALL be returned only when a SAR-defined feature, algorithm, profile, version, or extension is assigned according to this specification but is not implemented by the current implementation.
 
 Reserved, malformed, prohibited, or syntactically invalid values SHALL use the corresponding specific error codes defined in this section.
 
-If an implementation encounters archive behavior, field combinations, or value semantics not defined by this specification, it MUST NOT infer semantics. The implementation MUST fail closed and return the most specific applicable error code. If no more specific error code applies, it MUST return SAR_ERR_MALFORMED.
+If an implementation encounters archive behavior, field combinations, or value semantics not defined by this specification, it MUST NOT infer semantics. The implementation MUST fail closed and return the most specific applicable error code. If no more specific error code applies, it MUST return `SAR_ERR_MALFORMED`.
 
-If the behavior is defined by a valid but unsupported SAR extension, implementations MUST return SAR_ERR_UNSUPPORTED.
+If the behavior is defined by a valid but unsupported SAR extension, implementations MUST return `SAR_ERR_UNSUPPORTED`.
+
+The order in which independent validation conditions are detected, and therefore which of several simultaneously applicable errors is reported first, is implementation-defined. Condition-to-status mappings in this specification are normative when a single stated condition applies. Wire-observable Stateful Streaming status conditions MUST use their explicitly specified status.
 
 ## 11. Abstract Stream Processing Model
 ### 11.1 SAR Byte Stream Definition
@@ -2164,7 +3076,7 @@ Following successful Global Header resolution, the parser:
 2. **MUST** compute the exact LFH size based on Global Flags prior to consuming variable-length fields.
 3. **MUST** advance the stream position strictly as defined in section 6.1.1.
 5. **MUST NOT** reorder entries during parsing.
-6. **MUST NOT** infer missing entries except as explicitly defined by error handling rules in Section 8.
+6. **MUST NOT** infer missing entries except as explicitly defined by error handling rules in Section 10.
 
 #### 11.2.3 Transformation Resolution Phase
 After LFH parsing and payload acquisition, the implementation:
@@ -2192,18 +3104,44 @@ are defined exclusively in:
 
 Implementations **MUST NOT** conflate the SAR Byte Stream model defined in this section with Stateful Streaming semantics defined in Section 18.
 
-
 ## 12. Compliance Profiles
 
-SAR defines multiple compliance profiles to facilitate interoperability across implementations ranging from resource-constrained embedded systems to full-featured archival and replication platforms.
+SAR Compliance Profiles define normative implementation capability baselines. They are not encoded archive or stream profiles, do not alter the SAR wire representation, and are not selected by archive or stream metadata.
 
-All profiles remain bitstream-compatible and SHALL follow the parsing, validation, security, and error-handling requirements defined elsewhere in this specification.
+All Compliance Profiles remain bitstream-compatible and SHALL follow the parsing, validation, security, and error-handling requirements defined elsewhere in this specification.
 
-### 12.1 Standard Compliance Profile
+A Compliance Profile may be claimed for one of the following roles:
 
-The Standard Compliance Profile represents a fully conformant SAR implementation.
+* an encoder-only implementation;
+* a decoder-only implementation; or
+* an encoder-decoder implementation.
 
-A Standard implementation MUST satisfy all requirements of both the Minimal Interoperable Archive Profile (Section 12.2) and the Minimal Interoperable Streaming Profile (Section 12.3).
+An encoder-only implementation MUST implement every mandatory encoding behavior applicable to its claimed Compliance Profile. It is not required to contain a decoder when its conformance claim is explicitly role-qualified.
+
+A decoder-only implementation MUST implement every mandatory decoding behavior applicable to its claimed Compliance Profile.
+
+An encoder-decoder implementation MUST satisfy both the encoder-only and decoder-only requirements of its claimed Compliance Profile.
+
+It MUST decode every optional algorithm, KMS mode, parameter value, and parameter combination that its encoder role can emit.
+
+An encoder-decoder implementation MAY implement decoding support for algorithms, KMS modes, parameter values, or parameter combinations that its encoder role does not emit.
+
+Additional decoder support does not require the encoder role to emit those constructions and does not place those constructions within the Guaranteed Interoperability Baseline.
+
+Conformance claims SHOULD identify both the Compliance Profile and the implemented role, for example `Minimal Interoperable Archive Profile encoder-only implementation`, `Minimal Interoperable Archive Profile decoder-only implementation`, or `Minimal Interoperable Archive Profile encoder-decoder implementation`.
+
+The Guaranteed Interoperability Baseline of a Compliance Profile consists of its mandatory features, algorithms, KMS modes, parameter ranges, and required combinations.
+
+Every conforming same-profile decoder of the applicable role MUST process conforming output within that Guaranteed Interoperability Baseline without returning `SAR_ERR_UNSUPPORTED`.
+
+An implementation MAY support and emit assigned optional algorithms, KMS modes, and parameters when this specification defines their complete normative construction and the implementation implements that construction. Such output remains valid SAR but is outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile makes the construction mandatory. Negotiated, configured, or otherwise known support may permit interoperable use of an optional construction but does not expand the Guaranteed Interoperability Baseline. The writer implementation remains profile-conforming, but the output MUST NOT be represented as guaranteed consumable by every implementation claiming that Compliance Profile.
+
+
+### 12.1 Standard Interoperable Profile
+
+The Standard Interoperable Profile represents a fully conformant SAR implementation for its claimed role.
+
+A Standard implementation MUST satisfy all requirements of both the Minimal Interoperable Archive Profile (Section 12.2) and the Minimal Interoperable Streaming Profile (Section 12.3) applicable to that role.
 
 In addition, Standard implementations MUST support all SAR-defined core feature sets defined by this specification as listed below:
 
@@ -2217,23 +3155,26 @@ In addition, Standard implementations MUST support all SAR-defined core feature 
 * Digital Signatures
 * Data Integrity Hashing
 * LOSS_TOLERANT processing according to Section 19.4.5.
-* FEC / Recovery encoding and decoding according to sections 6.1.3 and 9.2
+* FEC / Recovery encoding and decoding according to Sections 6.1.4 and 9.2
 
-The following algorithms MUST be supported:
+The following algorithms and KMS modes MUST be supported for the applicable role:
 
-| Feature        | Required Algorithms                                  |
-| -------------- | ---------------------------------------------------- |
-| Compression    | STORE (`0x00`), DEFLATE (`0x01`), ZSTD (`0x02`)      |
-| Encryption     | AES256_GCM (`0x01`), XCHACHA20_POLY (`0x04`)         |
-| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)                  |
-| CDC            | FASTCDC (`0x02`)                                     |
-| Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)                |
-| Signatures     | Ed25519 (raw) (`0x24`), RSA-PSS (ASN.1-DER) (`0x23`) |
-| Hashing        | SHA256 (`0x30`), BLAKE3 (`0x31`)                     |
+| Feature        | Required Algorithms or Modes                           |
+| -------------- | ------------------------------------------------------ |
+| Compression    | STORE (`0x00`), DEFLATE (`0x01`), ZSTD (`0x02`)        |
+| Encryption     | AES256_GCM (`0x01`), XCHACHA20_POLY (`0x04`)           |
+| KMS            | PBKDF2 (`0x01`), ARGON2 with Argon2id (`0x02`)         |
+| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)                    |
+| CDC            | FASTCDC (`0x02`)                                       |
+| Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)                  |
+| Signatures     | Ed25519 (raw) (`0x24`), RSA-PSS (ASN.1-DER) (`0x23`)   |
+| Hashing        | SHA256 (`0x30`), BLAKE3 (`0x31`)                       |
+
+Standard PBKDF2 and ARGON2 support MUST satisfy the mandatory interoperability requirements defined for those KMS modes in Section 5.3.4.
 
 Additional algorithms defined by this specification MAY be implemented.
 
-Algorithms not listed as required for the Standard Compliance Profile are OPTIONAL unless explicitly designated as mandatory elsewhere in this specification.
+Algorithms not listed as required for the Standard Interoperable Profile are OPTIONAL unless explicitly designated as mandatory elsewhere in this specification.
 
 Implementations encountering assigned but unsupported optional algorithms MUST return `SAR_ERR_UNSUPPORTED`.
 
@@ -2247,37 +3188,43 @@ For Stateful Streaming Mode (Section 18), Standard implementations SHOULD suppor
 
 The Minimal Interoperable Archive Profile is intended for resource-constrained systems that require SAR archive interoperability but do not require Stateful Streaming Mode.
 
-A Minimal Interoperable Archive implementation MUST implement:
+A Minimal Interoperable Archive implementation MUST implement the following behavior applicable to its claimed role:
 
-1. LFH Parsing and validation.
+1. LFH parsing, production, and validation.
 2. Header Size and Payload Size processing.
 3. Sequential archive processing.
 4. Central Dictionary processing when present.
 5. NO_INDEX archive processing.
-6. Filename extraction.
+6. Filename extraction or encoding.
 7. Error code mappings applicable to implemented features.
 8. Flag dependency validation.
-9. AEAD authentication verification according to Section 13.2.
+9. AEAD authentication generation or verification according to Section 13.2.
 
-The following algorithms MUST be supported:
+The following algorithms and KMS modes MUST be supported for the applicable role:
 
-| Feature     | Required Algorithms              |
-| ----------- | -------------------------------- |
-| Compression | STORE (`0x00`), DEFLATE (`0x01`) |
-| Encryption  | AES256_GCM (`0x01`)              |
+| Feature     | Required Algorithms or Modes       |
+| ----------- | ---------------------------------- |
+| Compression | STORE (`0x00`), DEFLATE (`0x01`)   |
+| Encryption  | AES256_GCM (`0x01`)                |
+| KMS         | PBKDF2 (`0x01`) with HMAC-SHA256   |
+
+PBKDF2 support MUST satisfy the mandatory interoperability requirements defined for that KMS mode in Section 5.3.4.
 
 Support for ZSTD (`0x02`) is RECOMMENDED but OPTIONAL.
+
+Argon2id, TLS, TLS_EXPORTER, and ASYMMETRIC_WRAP are not required by this profile.
 
 Stateful Streaming Mode (Section 18) is OPTIONAL.
 
 ### 12.3 Minimal Interoperable Streaming Profile
 
 The Minimal Interoperable Streaming Profile is intended for resource-constrained systems that require real-time replication and streaming but do not require support for archive-oriented SAR features.
+
 The Minimal Interoperable Streaming Profile is not a subset of the Minimal Interoperable Archive Profile and is optimized for interoperability within Stateful Streaming Mode (Section 18) rather than general-purpose archival processing.
 
-A Minimal Interoperable Streaming implementation MUST implement:
+A Minimal Interoperable Streaming implementation MUST implement the following behavior applicable to its claimed role:
 
-1. LFH Parsing and validation.
+1. LFH parsing, production, and validation.
 2. Header Size and Payload Size processing.
 3. NO_INDEX stream processing.
 4. Stream ID handling.
@@ -2285,30 +3232,35 @@ A Minimal Interoperable Streaming implementation MUST implement:
 6. SESSION_INIT processing.
 7. SESSION_CLOSE processing.
 8. SESSION_HEARTBEAT processing.
-9. SESSION_CAPABILITIES processing
+9. SESSION_CAPABILITIES processing.
 10. Session timeout handling.
 11. Stream state validation.
 12. Error code mappings applicable to implemented features.
 13. Flag dependency validation.
-14. AEAD authentication verification according to Section 13.2.
-15. Forward Error Correction (FEC) encoding and decoding.
-16. Delta patch processing.
+14. AEAD authentication generation or verification according to Section 13.2.
+15. Forward Error Correction encoding or decoding.
+16. Delta patch encoding or processing.
 17. `LOSS_TOLERANT` processing according to Section 19.4.5.
-18. Fragmentation according to Sections 19.2 and 19.5.
+18. Fragmentation according to Sections 6.1.3, 18.4.2, 19.2, 19.4, and 19.5.
 19. Sparse file reconstruction according to Sections 17 and 19.6.
 
-The following algorithms MUST be supported:
+The following algorithms and KMS modes MUST be supported for the applicable role:
 
-| Feature        | Required Algorithms                 |
-| -------------- | ----------------------------------- |
-| Compression    | STORE (`0x00`), DEFLATE (`0x01`)    |
-| Encryption     | AES256_GCM (`0x01`)                 |
-| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`) |
-| Delta | STORE_PATCH (`0x00`), VCDIFF (`0x01`) |
+| Feature        | Required Algorithms or Modes       |
+| -------------- | ---------------------------------- |
+| Compression    | STORE (`0x00`), DEFLATE (`0x01`)   |
+| Encryption     | AES256_GCM (`0x01`)                |
+| KMS            | PBKDF2 (`0x01`) with HMAC-SHA256   |
+| FEC / Recovery | Reed-Solomon (`0x11`), XOR (`0x14`)|
+| Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)|
 
-Minimal Interoperable Streaming implementations MUST support `LOSS_TOLERANT` Entry Mode semantics as defined in Sections 6.2.2 and 19.4.5.
+PBKDF2 support MUST satisfy the mandatory interoperability requirements defined for that KMS mode in Section 5.3.4.
 
-If `LOSS_TOLERANT` is set, missing or unrecoverable fragments MAY be discarded and streaming MAY continue, provided the affected payload type or transformation chain defines safe partial-output semantics.
+PBKDF2 remains mandatory because SAR-over-TCP without TLS is a valid baseline transport binding.
+
+Minimal Interoperable Streaming implementations MUST support `LOSS_TOLERANT` Entry Mode semantics as defined in Sections 6.2.3 and 19.4.5.
+
+If `LOSS_TOLERANT` is set, an incomplete fragmented Entry MAY produce degraded output only as defined by Sections 6.2.3 and 19.4.5. Other missing or unrecoverable data MAY be discarded and streaming MAY continue only where the affected payload type or transformation chain defines safe partial-output semantics.
 
 If degraded reconstruction succeeds, the implementation MUST report `SAR_WARN_INCOMPLETE`.
 
@@ -2335,123 +3287,223 @@ Other transport bindings MAY be implemented, but support for such bindings does 
 
 ### 12.4 Unsupported Features
 
-Implementations MAY support only the features required by their selected compliance profile.
+An implementation MAY support assigned optional SAR features, algorithms, KMS modes, and parameter values in addition to those required by its claimed Compliance Profile when this specification defines the complete normative construction required for their use.
 
-If an implementation supports a feature but encounters an assigned algorithm identifier that is not implemented by the selected profile, it MUST return `SAR_ERR_UNSUPPORTED`.
+A valid optional feature, algorithm, KMS mode, or parameter combination whose complete normative construction is defined by this specification but is not implemented locally MUST result in `SAR_ERR_UNSUPPORTED`, unless a more specific applicable error exists.
 
-If an implementation encounters a reserved algorithm identifier, it MUST return `SAR_ERR_RESERVED_VALUE`.
+A reserved or unassigned identifier MUST result in `SAR_ERR_RESERVED_VALUE`.
 
-If an implementation encounters a valid SAR feature that is not implemented by the selected profile, it MUST return `SAR_ERR_UNSUPPORTED`, unless a more specific error code applies.
+A conforming decoder MUST NOT return `SAR_ERR_UNSUPPORTED` for conforming input within the Guaranteed Interoperability Baseline of its claimed Compliance Profile and applicable role.
 
-If the size of an unsupported structure can be determined safely from the LFH and Global Flags, implementations MAY perform Transparent Skip by using the `Header Size` and `Payload Size` fields without interpreting the skipped metadata.
+Ordinary decoding, verification, reconstruction, extraction, materialization, or state application MUST fail closed when a selected Entry requires an unsupported transformation. Such a transformation MUST NOT be silently skipped.
 
-Transparent Skip MUST NOT be used for transformations required to reconstruct payload contents, including compression, encryption, delta patching, CDC reconstruction, or Forward Error Correction (FEC) encoding and decoding.
+If the size and end position of an unsupported structure can be determined safely from the Global Flags, `Header Size`, `Payload Size`, and applicable structural rules, an implementation MAY continue structural parsing without interpreting or reconstructing the unsupported contents. This behavior is called Transparent Skip.
 
-Unknown or reserved structural features MUST NOT be skipped and MUST result in `SAR_ERR_UNSUPPORTED`, `SAR_ERR_RESERVED_VALUE`, or another more specific error code as applicable.
+Transparent Skip means only that structural parsing can continue. It does not mean that the skip is invisible to the caller and does not constitute successful decoding, verification, reconstruction, extraction, materialization, or complete state application of the affected Entry.
+
+Unknown, reserved, malformed, or structurally ambiguous features MUST NOT be skipped when their boundaries cannot be established safely. The implementation MUST return `SAR_ERR_RESERVED_VALUE`, `SAR_ERR_MALFORMED`, `SAR_ERR_INVALID_LENGTH`, `SAR_ERR_BOUNDS`, or another more specific applicable error.
+
+An implementation MAY provide an incomplete processing mode that skips selected Entries requiring assigned but unsupported SAR features or algorithms.
+
+This mode MUST NOT be enabled by default and MUST be explicitly selected by the caller before the first skip condition occurs. Archive or stream metadata MUST NOT enable this mode.
+
+An Entry MAY be skipped only when its boundaries and the location of the next structure can be determined safely.
+
+The implementation MUST identify every skipped selected Entry and the unsupported feature or algorithm that caused the skip.
+
+If one or more selected Entries are skipped and no degraded reconstruction occurs, the operation MUST return `SAR_WARN_SKIPPED` and MUST be reported as incomplete. `SAR_WARN_SKIPPED` is an aggregate non-failure result. It does not imply that any skipped Entry was decoded, verified, or applied. The implementation MUST preserve and report the underlying `SAR_ERR_UNSUPPORTED` reason for each skipped Entry diagnostically. `SAR_WARN_SKIPPED` is the specific condition for explicitly enabled unsupported-Entry skipping; `SAR_WARN_INCOMPLETE` is the specific condition for permitted degraded reconstruction under Section 6.2.3. If both conditions occur during one aggregate operation, the aggregate operation status MUST be `SAR_WARN_INCOMPLETE`, and `SAR_WARN_SKIPPED` MUST be preserved in diagnostics for each applicable skipped Entry. A single scalar status MUST NOT be described as returning both values.
+
+Implementations are not required to provide this incomplete processing mode.
 
 ## 13. Security and Integrity
 ## 13.1 Transformation Sequence (Canonical Pipeline)
 SAR defines a strict and unambiguous transformation pipeline for all payload data. Implementations MUST adhere to this order to ensure interoperability.
 
 ### 13.1.1 Logical Model
-All transformations operate on the logical file data in the following conceptual order:
+Payload transformations are divided into **fragment-local stages**, which operate on one physical LFH and its Payload Data, and **group-wide stages**, which operate on the complete intermediate Entry representation.
 
-```
-Logical Data → Patch → Compress → Encrypt
+Fragment-local stages are:
+
+* Selective FEC protection and recovery (Section 6.1.4);
+* AEAD encryption and authentication (Sections 8.2 and 13.2); and
+* compression and decompression (Section 8.1).
+
+Group-wide stages are:
+
+* Fragment Reassembly Sequence formation and segmentation (Section 6.1.3);
+* patch generation and application (Sections 8.4 and 16);
+* CDC recipe generation and resolution (Sections 20 and 21);
+* sparse gathering and reconstruction (Section 17); and
+* final logical integrity verification (Sections 6.1.3 and 17.4.3).
+
+For an unfragmented Entry, the single LFH is the only fragment-local unit and the Fragment Reassembly Sequence stage is not applicable.
+
+The conceptual logical-to-stored model for one Entry is:
+
+```text
+Logical Entry
+  -> sparse gather, if applicable
+  -> CDC recipe construction, if applicable
+  -> patch generation, if applicable
+  -> intermediate Entry representation
+  -> fragment segmentation, if applicable
+  -> per-fragment: compress -> encrypt -> Selective FEC protection
+  -> physical LFH
 ```
 
-FEC in contrast is not a payload transformation that changes the logical payload. FEC protects the encoded SAR byte sequence selected by its scope. When FEC protects Payload Data, FEC encoding SHALL be applied after compression and encryption during encoding. During decoding, FEC repair SHALL be performed before decryption, decompression, and patch application.
+FEC is not a transformation of the logical payload. Selective FEC protects the encoded SAR byte sequence selected by its scope (Section 6.1.4). When it protects Payload Data, FEC encoding is applied after compression and encryption during encoding, and FEC recovery is applied before decryption and decompression during decoding.
+
+Only the stages enabled for the current Entry are performed. The algorithm-specific semantics of each stage are defined by the section cited above and are not redefined here.
 
 ### 13.1.2 Encoding Procedure (Writer Side)
-When creating an archive entry:
+When creating an Entry, the encoder applies the enabled stages in the following order. This order is the exact inverse of Section 13.1.3.
 
-1. **Patch Stage (Optional)**
-   If `HAS_DELTA` is set, the encoder MUST:
+**Group-wide encoding stages**
 
-   * Compute a binary delta between the base object and the target data.
-   * The result of this stage is the **patch payload**, representing the logical transformation.
+1. **Sparse Gather (Optional)**
+   If `SPARSE_FILES` is active for the Entry, the encoder produces the Sparse Map (including `Sparse Logical Size`) and the gathered-data representation according to Section 17.
 
-   If `HAS_DELTA` is not set, the input data proceeds unchanged.
+2. **CDC Recipe Construction (Optional)**
+   If a non-literal `CDC Algo ID` is active, the encoder produces the Hash Recipe representation according to Section 20.
 
-2. **Compression Stage (Optional)**
-   If `IS_COMPRESSED` is set:
+3. **Patch Stage (Optional)**
+   If `HAS_DELTA` is set, the encoder computes the patch payload according to Section 8.4. The result is the patch representation of the preceding stage's output.
 
-   * The encoder MUST compress the output of the previous stage using `Comp Algo ID`.
+   If `HAS_DELTA` is not set, the data proceeds unchanged.
 
-   If `IS_COMPRESSED` is not set:
+The output of the group-wide encoding stages is the **intermediate Entry representation**.
 
-   * The data MUST be treated as `STORE` (no compression), even if the `COMPRESSED` global flag is enabled.
+4. **Fragment Segmentation (Optional)**
+   If the Entry is fragmented, the encoder divides the intermediate Entry representation into sequential contributions, assigns Fragment Index values `0` through `N - 1` in segment order, and sets `LAST_FRAGMENT` on Fragment Index `N - 1` only (Section 6.1.3).
 
-3. **Encryption Stage (Optional)**
-   If `IS_ENCRYPTED` is set:
+   If the Entry is not fragmented, the intermediate Entry representation is the single contribution.
 
-   * The encoder MUST encrypt the output of the compression stage using the selected encryption algorithm.
+**Fragment-local encoding stages** (applied independently to each contribution)
+
+5. **Compression Stage (Optional)**
+   If `IS_COMPRESSED` is set, the encoder MUST compress the contribution using `Comp Algo ID`.
+
+   If `IS_COMPRESSED` is not set, the contribution MUST be treated as `STORE` (no compression), even if the `COMPRESSED` global flag is enabled.
+
+   The contribution length before compression is the LFH `Uncompressed Size` (Section 6.1.2).
+
+6. **Encryption Stage (Optional)**
+   If `IS_ENCRYPTED` is set, the encoder MUST encrypt the output of the compression stage using the selected encryption algorithm, according to Sections 8.2 and 13.2.
+
+7. **Selective FEC Protection (Optional)**
+   If Selective FEC is active for the LFH, the encoder protects the encoded sequence selected by its scope according to Section 6.1.4.
+
+The result of the fragment-local stages is the LFH `Payload Data` of the physical LFH.
+
+Final logical integrity values (`File CRC32`, `Content Hash`) are computed over the final logical Entry and encoded according to Section 6.1.3 for fragmented Entries.
 
 ### 13.1.3 Decoding Procedure (Reader Side)
-To reconstruct the original data, implementations MUST apply the inverse operations in strict reverse order:
+To reconstruct the Entry, implementations MUST apply the inverse operations in strict reverse order of Section 13.1.2:
 
-```
-Decrypt → Decompress → Apply Patch
+```text
+physical LFH
+  -> Selective FEC recovery, if active
+  -> AEAD authentication/decryption, if active
+  -> decompression, if active
+  -> fragment contribution
+  -> Fragment Reassembly Sequence, if fragmented
+  -> patch application, if applicable
+  -> CDC recipe resolution, if applicable
+  -> sparse reconstruction, if applicable
+  -> final logical integrity verification
 ```
 
-1. **Decryption**
+**Fragment-local decoding stages** (performed on each physical LFH, before reassembly)
+
+1. **Selective FEC Recovery**
+   If Selective FEC is active, recovery is performed over the encoded representation selected by its scope according to Section 6.1.4 before any later stage consumes that representation.
+
+2. **Decryption**
    If `IS_ENCRYPTED` is set:
 
    * The payload MUST be decrypted before any further processing.
-   * For AEAD modes, authentication MUST be verified before proceeding.
+   * For AEAD modes, authentication MUST be verified before proceeding, and plaintext MUST NOT contribute to any later stage unless authentication succeeds (Section 13.2).
 
-2. **Decompression**
-   If `IS_COMPRESSED` is set:
+3. **Decompression**
+   If `IS_COMPRESSED` is set, the payload MUST be decompressed using `Comp Algo ID`.
 
-   * The payload MUST be decompressed using `Comp Algo ID`.
+The result is the **fragment contribution**. Its length MUST equal the LFH `Uncompressed Size` (Section 6.1.2). For an unfragmented Entry, the contribution is the complete intermediate Entry representation.
 
-3. **Patch Application**
-   If `HAS_DELTA` is set:
+**Group-wide decoding stages** (performed after all required contributions are available)
 
-   * The patch MUST be applied to the resolved base object using `Patch Algo ID`.
-   * The result MUST match `Uncompressed Size`.
+4. **Fragment Reassembly**
+   For a fragmented Entry, contributions are concatenated in ascending Fragment Index order to form the Fragment Reassembly Sequence (Section 6.1.3). This stage MUST NOT occur before the fragment-local stages above have completed for each contribution.
 
-After completion of the final decoding stage, the reconstructed logical object MUST exactly match `Uncompressed Size` regardless of whether patching was performed.
-Also consider section 17.4.3 with regards to integrity verification and section 17.4.4 with regards to error correction.
+5. **Patch Application**
+   If `HAS_DELTA` is set, the patch algorithm selected by `Patch Algo ID` is applied exactly once to the complete reassembled patch representation and the resolved base object, according to Sections 8.4 and 16. The final size of the patch output is defined by the selected patch construction.
+
+6. **CDC Recipe Resolution**
+   If a non-literal `CDC Algo ID` is active, the complete representation produced by the preceding stage is interpreted as the Hash Recipe and resolved once according to Section 20.
+
+7. **Sparse Reconstruction**
+   If `SPARSE_FILES` is active for the Entry, the representation produced by the preceding stage is the gathered-data representation and is reconstructed according to Section 17. The final apparent size is defined by `Sparse Logical Size`.
+
+8. **Final Logical Integrity Verification**
+   `File CRC32` and `Content Hash`, where applicable, are verified against the final logical Entry according to Sections 6.1.3 and 17.4.3.
+
+Only stages enabled for the current Entry are performed. Logical state application occurs after this decoding procedure according to Section 6.1.3 and, for Stateful Streaming, Section 18.
+
+The final logical size of an Entry is defined by the final applicable decoding stage: the patch construction, CDC resolution, or `Sparse Logical Size`. Where an Entry is unfragmented and none of those stages applies, the final logical Entry is its single decoded contribution, whose length equals `Uncompressed Size` by Section 6.1.2. An LFH `Uncompressed Size` is never by itself the required size of a fragmented, patched, CDC-resolved, or sparse logical Entry.
+
+Section 17.4.4 governs the relationship between sparse reconstruction and error correction.
 
 ### 13.1.4 Invariants
-* Patch algorithms MUST operate on **uncompressed logical data**, never on compressed streams.
+* Patch algorithms MUST operate on the complete decoded patch representation (the Fragment Reassembly Sequence for a fragmented Entry), never on compressed streams, ciphertext, or an individual fragment.
 * Compression MUST NOT be applied to already encrypted data.
-* Decryption MUST occur before any decompression or patch processing.
-* The output of the final stage MUST represent the fully reconstructed logical file.
+* Selective FEC recovery, AEAD authentication/decryption, and decompression MUST each be completed for a fragment before its contribution participates in Fragment Reassembly.
+* Decryption MUST occur before any decompression, reassembly, or patch processing.
+* Group-wide stages MUST NOT be applied to individual fragments as if they were independent Entries.
+* The output of the final stage MUST represent the fully reconstructed logical Entry.
 
 ### 13.2 Authenticated Encryption (AEAD)
-When `ENCRYPTED` is set, AEAD algorithms (e.g., `AES256_GCM`, `XCHACHA20_POLY`, `CHACHA20_POLY1305`) MUST verify the authentication tag before decompression to prevent "Decompression Bomb" attacks and chosen-ciphertext exploits.
+
+When `IS_ENCRYPTED` is set, AEAD encryption algorithms MUST verify the authentication tag before decompression to prevent "Decompression Bomb" attacks and chosen-ciphertext exploits.
 
 #### 13.2.1 AEAD Additional Authenticated Data (AAD) Binding
-To provide integrity protection over LFH metadata (not just payload confidentiality), implementations using an AEAD-capable encryption algorithm MUST bind the LFH fields to the AEAD authentication tag via the Additional Authenticated Data (AAD) mechanism.
+
+To provide integrity protection over SAR header metadata, implementations using an AEAD-capable encryption algorithm MUST bind the complete encoded Global Header and the applicable LFH fields to the AEAD authentication tag through Additional Authenticated Data (AAD).
 
 **AAD Construction**
 
-The AAD for a given LFH MUST be constructed as follows:
+The AAD for a given LFH MUST be the concatenation, in order, of:
 
-* All bytes of the Global Header from archive offset 0 through the final byte of the Global Flags field, in their encoded on-wire representation.
-* All bytes of the LFH from the first byte of the `Header Size` field through the last byte of the LFH header, in their encoded on-wire representation, except that when SELECTIVE_FEC is active and FEC Algo ID is non-zero, the FEC Size field and FEC Value field SHALL be excluded from the AAD.
+* the complete encoded Global Header, from its first byte through the byte immediately preceding the first LFH; and
+* all bytes of the current LFH from the first byte of the `Header Size` field through the final byte of the LFH header, except that when `SELECTIVE_FEC` is active and FEC Algo ID is non-zero, the FEC Size field and FEC Value field MUST be excluded.
 
-This is equivalent to the concatenation of:
+For a Physical Archive Member, the Global Header AAD component is therefore the exact byte range:
 
-* bytes in range `[0, GlobalHeader_End)`
-* bytes in range `[LFH_Start, LFH_Start + Header Size)`, excluding the `FEC Size` field and `FEC Value` field when `SELECTIVE_FEC` is active and `FEC Algo ID` is non-zero.
+```text
+[0 : First_LFH_Offset]
+```
 
-where `GlobalHeader_End` denotes the first byte immediately following the Global Flags field.
+The complete Global Header AAD component includes all encoded Global Header fields and extensions, including the complete KMS Extension when present.
 
-The KMS Extension, if present, SHALL NOT be included in AAD.
+The LFH AAD component is:
 
-The `FEC Algo ID` field, if present, SHALL remain included in AAD.
+```text
+[LFH_Start : LFH_Start + Header Size)
+```
+
+with the FEC Size and FEC Value fields omitted when `SELECTIVE_FEC` is active and FEC Algo ID is non-zero.
+
+The `FEC Algo ID` field, when present, remains included in AAD.
+
+All AAD bytes MUST be used exactly as encoded. Implementations MUST NOT normalize, reconstruct, reinterpret, or canonicalize encoded field values before supplying them as AAD.
 
 **Normative Requirements**
 
-* Encoders MUST pass this AAD to the AEAD encryption operation when generating the ciphertext and authentication tag.
-* Decoders MUST pass the same AAD to the AEAD cipher when verifying the authentication tag. Verification MUST occur before decompression, patch application, or any state-mutating operation.
-* If authentication tag verification fails, the implementation MUST return `SAR_ERR_AUTH_FAILED` and MUST NOT proceed with any further processing of the payload or LFH metadata.
+* Encoders MUST pass the AAD defined above to the AEAD encryption operation when generating the ciphertext and authentication tag.
+* Decoders MUST pass the identical AAD byte sequence to the AEAD verification operation.
+* AEAD authentication MUST succeed before decompression, patch application, plaintext release, or any state-mutating operation.
+* If authentication fails, the implementation MUST return `SAR_ERR_AUTH_FAILED` and MUST NOT continue processing the protected payload.
 
 #### 13.2.2 AEAD Tag Placement and Payload Parsing
-For AEAD algorithms (e.g. `AES256_GCM`, `XCHACHA20_POLY`, `CHACHA20_POLY1305`), the per-entry authentication tag (computed over ciphertext and AAD) MUST be encoded at the **end** of `Payload Data` using this layout:
+For all AEAD algorithms, the per-entry authentication tag (computed over ciphertext and AAD) MUST be encoded at the **end** of `Payload Data` using this layout:
 
 `Payload Data = Ciphertext || Tag`
 
@@ -2493,7 +3545,7 @@ Until successful AEAD authentication has occurred, implementations SHOULD treat 
 
 * `SIGNED`
 * `OPT_PRESENT`
-* `HAS_GLOBAL_CRC32`
+* `HAS_DATA_AREA_CRC32`
 * `HAS_GLOBAL_EC`
 
 Implementations performing random access MAY parse the first LFH solely for the purpose of locating and verifying the authentication tag prior to trusting Central Dictionary metadata.
@@ -2501,7 +3553,7 @@ Implementations performing random access MAY parse the first LFH solely for the 
 Applications or deployment profiles requiring signed archives MUST enforce signature verification independently of the archive-provided `SIGNED` flag.
 
 ### 13.3 Digital Signatures and Binding
-To ensure global payload integrity, the `DATA_HASH` (ID `0x30 - 0x3F`) MUST be present and included in the signed CD when the `SIGNED` flag is set. The signature MUST be calculated over the entire Central Dictionary excluding the SIGNATURE TLV itself. Implementations MUST NOT trust or act upon Central Dictionary offsets or metadata until signature verification (if SIGNED) and DATA_HASH validation have successfully completed. If SIGNED is not set, implementations SHOULD treat the Central Dictionary as untrusted and MAY validate entries against the Data Area before use. Also see section 9.5.
+To ensure global payload integrity, the `DATA_HASH` (ID `0x30 - 0x3F`) MUST be present and included in the signed CD when the `SIGNED` flag is set. The signature MUST be calculated over the entire Central Dictionary excluding the SIGNATURE TLV itself. For a Partitioned Archive, this signature and DATA_HASH scope is local to the current physical Partition and does not aggregate the Partition Set. Implementations MUST NOT trust or act upon Central Dictionary offsets or metadata until signature verification (if SIGNED) and DATA_HASH validation have successfully completed. A signature verification failure MUST return `SAR_ERR_SIGNATURE_FAILED`. A `DATA_HASH` (Anchor Hash) mismatch MUST return `SAR_ERR_HASH_MISMATCH`. If SIGNED is not set, implementations SHOULD treat the Central Dictionary as untrusted and MAY validate entries against the Data Area before use. Also see sections 9.3 and 9.4.
 
 #### 13.3.1 Signature Scope and Threat Model
 The SAR signature (when `SIGNED` is set) covers the Central Dictionary, which in turn anchors the Data Area via the `DATA_HASH` TLV. The Global Header (including Global Flags and KMS Extension) is intentionally outside the signature scope. This is a deliberate design choice, because the Central Dictionary is fully optional in SAR (`NO_INDEX` mode), and because:
@@ -2512,19 +3564,36 @@ The SAR signature (when `SIGNED` is set) covers the Central Dictionary, which in
 Implementations and deployers MUST account for this boundary when assessing the security posture of a SAR-based system. Where end-to-end integrity of the complete archive structure (including Global Header) is required, deployments SHOULD combine `SIGNED` (Bit 18) with an AEAD-capable encryption algorithm.
 
 ### 13.4 Flag Dependency and Conflict Rules
-Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (8).
+Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (108).
 
 1. **Signature Anchor**: If `SIGNED` (Bit 18) is set, `OPT_PRESENT` (Bit 2) MUST be set **AND** `DATA_HASH` (ID 0x30 - 0x3F) MUST be present in the CD.
 2. **Encryption Anchor**: If `ENCRYPTED` (Bit 10) is set, the `KMS_DATA` Global Extension MUST be present (Also see section 5.3.1).
-3. **Index Conflict**: If `NO_INDEX` (Bit 1) is set, the following MUST NOT be set: `OPT_PRESENT`, `HAS_GLOBAL_CRC32`, `HAS_GLOBAL_EC`, `SIGNED`.
+3. **Index Conflict**: If `NO_INDEX` (Bit 1) is set, the following MUST NOT be set: `OPT_PRESENT`, `HAS_DATA_AREA_CRC32`, `HAS_GLOBAL_EC`, `SIGNED`.
 
 ### 13.5 Delta Security
-When `HAS_DELTA` (Bit 9) is utilized, the `Delta Base Hash` in the LFH MUST be verified against the hash of the local base file before the patching algorithm is executed. If the base hash does not match, the implementation MUST return `SAR_ERR_PATCH_FAILED` (9). In streaming mode, if the Base Hash is unknown, the parser MUST buffer the patch or return a specific error `SAR_ERR_BASE_MISSING` (10).
+
+When `HAS_DELTA` (Bit 9) is set, patch processing MUST follow the algorithm-specific base and reconstruction-input requirements defined in Section 8.4.
+
+A patch algorithm that requires a base object, dictionary, or other external reconstruction input MUST NOT be applied until that required input has been resolved and validated according to Section 8.4. Missing required reconstruction input MUST result in `SAR_ERR_BASE_MISSING`. Failure to validate required reconstruction input MUST result in `SAR_ERR_HASH_MISMATCH` when the input's computed hash does not match `Delta Base Hash`, and otherwise in `SAR_ERR_PATCH_FAILED`.
+
+`STORE_PATCH` (`0x00`) is self-contained and MUST NOT require base-object resolution solely because `HAS_DELTA` is set.
 
 ### 13.6 Path Handling and Installation Profiles
-* **Relative Paths**: Normal archival.
-* **Absolute Paths**: Used for `SYSTEM_INSTALL` profiles.
-* **Profiles**: `0x00 SANDBOXED` (Strips leading `/`) | `0x01 SYSTEM_INSTALL` (Permits absolute paths).
+
+Before materialization, the caller or host application MUST select an Extraction Root or an explicitly authorized installation scope.
+
+Archive or stream metadata MUST NOT select or change the Extraction Root or authorized installation scope.
+
+The following extraction profiles are defined:
+
+* `0x00 SANDBOXED`: Entries are materialized beneath the selected Extraction Root.
+* `0x01 SYSTEM_INSTALL`: Entries may be materialized within an installation scope explicitly authorized by the caller or host application.
+* Custom profiles MAY define additional path-mapping rules.
+
+Selection of `SYSTEM_INSTALL` or another privileged scope MUST be explicit. An LFH Name String, Path String, empty destination value, leading separator, drive prefix, share prefix, or device prefix MUST NOT implicitly select a privileged or unconfined scope.
+
+All profiles remain subject to Section 22.4.
+
 
 ## 13.7 Global Invariants (Normative)
 This section defines mandatory invariants that apply to all SAR archives. These rules ensure deterministic parsing, structural consistency, and interoperability across implementations. Any violation of these invariants MUST result in a parsing failure unless explicitly stated otherwise.
@@ -2565,23 +3634,38 @@ This section defines mandatory invariants that apply to all SAR archives. These 
 
 ### 13.7.4 Transformation Pipeline Invariant
 1. **Canonical Encoding Order**
-   Payload data MUST be transformed in the following order: `Stored Payload = Encrypt(Compress(Patch(Data)))`
+   The canonical encoding and decoding order, including the distinction between fragment-local and group-wide stages, is defined exclusively by Sections 13.1.2 and 13.1.3. In summary:
+
+   ```text
+   Stored LFH Payload =
+       FEC(Encrypt(Compress(Segment(Patch(CDC(SparseGather(Data)))))))
+   ```
+
+   where each of `Compress`, `Encrypt`, and `FEC` is applied per fragment, and each stage is applied only when enabled for the Entry.
 
 2. **Canonical Decoding Order**
-   Payload data MUST be reconstructed in the following order: `Data = ApplyPatch(Decompress(Decrypt(Payload)))`
+   ```text
+   Data =
+       SparseReconstruct(CDCResolve(ApplyPatch(Reassemble(
+           Decompress(Decrypt(FECRecover(LFH Payload)))))))
+   ```
+
+   `FECRecover`, `Decrypt`, and `Decompress` are performed per fragment. `Reassemble`, `ApplyPatch`, `CDCResolve`, and `SparseReconstruct` are group-wide.
 
 3. **Processing Requirements**
-* Decryption MUST occur before any other transformation.
-* Decompression MUST occur before patch application.
-* Patch algorithms MUST operate on fully decompressed logical data.
+* Fragment-local stages MUST complete for a fragment before its contribution participates in reassembly.
+* Group-wide stages MUST NOT begin until the complete Fragment Reassembly Sequence has been obtained. Under `LOSS_TOLERANT`, degraded output is limited to the contiguous prefix defined by Section 19.4.5 and MUST NOT be supplied to a group-wide construction requiring a complete representation (`SAR_ERR_FRAGMENT_GAP`).
+* Decryption MUST occur before decompression and before any group-wide stage.
+* Patch algorithms MUST operate on the complete decompressed, reassembled patch representation.
 * Compression MUST NOT be applied to encrypted data.
+* This section does not redefine the semantics of any individual stage; see the sections cited in Section 13.1.1.
 
 ### 13.7.5 Identity and Referential Integrity
 1. **Fragment Uniqueness**
-   The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within the archive. Duplicate indices for the same Fragment ID MUST result in an error.
+   The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within its Fragment ID scope (Section 6.1.3): the current Physical Archive Member, the complete Partition Set for a Partitioned Archive, or the active SAR session and Stream ID for Stateful Streaming. Duplicate indices for the same Fragment ID within that scope MUST be handled according to Section 6.1.3.
 
 2. **Delta Base Resolution**
-   The `Delta Base Hash` MUST uniquely identify a valid base object. If no matching base is found, or multiple matches exist, the operation MUST fail.
+   The `Delta Base Hash` MUST uniquely identify a valid base object. If no matching base is found, or multiple candidate bases match so that the base cannot be resolved unambiguously, the operation MUST return `SAR_ERR_BASE_MISSING`. If a candidate base object's computed hash does not match the `Delta Base Hash`, the operation MUST return `SAR_ERR_HASH_MISMATCH`.
 
 3. **Central Dictionary Authority**
    If a Central Dictionary is present:
@@ -2604,13 +3688,13 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    The Sparse Map SHALL describe the layout of the fully reconstructed file and MUST NOT apply to individual fragments.
 
 3. **Sparse Map Location Constraint**
-   The Sparse Map MUST appear only in the fragment with `Fragment Index = 0`. Presence in any other fragment MUST result in `SAR_ERR_INVALID_MAP`.
+   The Sparse Map MUST appear only in the fragment with `Fragment Index = 0`. Presence in any other fragment MUST result in `SAR_ERR_METADATA_CONFLICT`.
 
 4. **Dependency Enforcement**
    If both `SPARSE_FILES` and `FILE_FRAGMENTATION` are enabled, implementations MUST complete fragment reassembly before applying sparse reconstruction.
 
 ### 13.7.7 Empty Area Invariant
-1. **Identification Rule**: An entry with `Name Length == 0` and `IS_FRAGMENT == 0` MUST be interpreted as an Empty Area.
+1. **Identification Rule**: An Entry with `Name Length == 0`, `IS_FRAGMENT == 0`, and `PARTITION_MANIFEST == 0` MUST be interpreted as an Empty Area. A Partition Manifest Entry MUST NOT be interpreted as an Empty Area.
 
 2. **Isolation Requirement** Empty Areas MUST NOT:
 ** Be referenced in the Central Dictionary
@@ -2643,12 +3727,12 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    Errors encountered while processing an entry MUST NOT compromise the ability to continue parsing subsequent entries, unless the error is classified as fatal.
 
 ## 14. Footer (Fixed: 8 Bytes)
-The Footer is located at the final 8 bytes of the archive and provides a pointer to the start of the Central Dictionary.
+The Footer is located at the final 8 bytes of the current Physical Archive Member and provides a pointer to the start of its Central Dictionary.
 
 ### 14.1 Structure
 | Field | Size | Description |
 | --- | --- | --- |
-| CD Offset | 8B   | Unsigned 64-bit integer indicating the absolute byte offset of the Central Dictionary |
+| CD Offset | 8B | Unsigned 64-bit integer indicating the byte offset of the Central Dictionary from byte zero of the current Physical Archive Member. |
 
 ### 14.2 Presence Rules
 * The Footer MUST be present if and only if `NO_INDEX` (Bit 1) is **not** set.
@@ -2666,10 +3750,12 @@ To ensure consistent layout and compatibility with memory-mapped access:
 
 3. The Footer MUST immediately follow this padding.
 
+A decoder encountering a non-zero required-zero Central Dictionary alignment padding byte MUST return `SAR_ERR_MALFORMED`.
+
 Padding bytes inserted for alignment are considered part of the Central Dictionary region for the purposes of signature calculation, but are not part of the logical Central Dictionary structure.
 
 ### 14.4 Offset Semantics
-* The `CD Offset` MUST point to the **first byte of the Central Dictionary**, not including any padding.
+* The `CD Offset` MUST point to the **first byte of the Central Dictionary**, not including any padding. For a Partitioned Archive, the offset is relative to byte zero of the current physical Partition and MUST NOT use a virtual Partition Set address space.
 * The offset MUST satisfy:
 
   * `CD Offset ≥ End of Data Area`
@@ -2729,12 +3815,32 @@ An Empty Area is represented by a valid LFH that points to a "null" file.
 ### 15.2 Mandatory Extraction Behavior for Empty Areas
 All SAR parsers MUST be able to identify and skip Empty Areas.
 
-* A parser encountering an LFH with `Name Length == 0` AND `IS_FRAGMENT == 0` SHALL interpret this as an Empty Area.
+* A parser encountering an LFH with `Name Length == 0` AND `IS_FRAGMENT == 0` AND `PARTITION_MANIFEST == 0` SHALL interpret this as an Empty Area.
 * The parser MUST skip `Payload Size` bytes to arrive at the next header.
-* Empty Areas MUST NOT be included in the `File Count` of the Central Dictionary.
+* Empty Areas MUST NOT be included in the `Entry Count` of the Central Dictionary.
 
 ### 15.3 Definition of a symlink file
-The symlink file represents a symlink reconstructed by using the Payload Data as the target path. Implementations MUST NOT treat this payload as file data, but as a string to be passed to the host system's symlink creation utility.
+
+An Entry whose `IS_SYMLINK` Entry Mode bit is set represents a symbolic link. Its reconstructed Payload Data contains the symbolic-link target encoded as UTF-8.
+
+A symbolic-link target MUST NOT contain U+0000.
+
+The Full Logical Entry Path identifies the symbolic-link object. The payload identifies its target.
+
+A symbolic-link target MAY be absolute, relative, parent-traversing, dangling, platform-specific, or directed to an object that has not yet been materialized. These properties do not make the Entry malformed.
+
+A writer receiving a target that is not valid UTF-8 or contains U+0000 MUST return `SAR_ERR_INVALID_INPUT` and MUST NOT emit the affected Entry.
+
+A reader encountering an encoded target that is not valid UTF-8 or contains U+0000 MUST return `SAR_ERR_MALFORMED`.
+
+Readers MUST preserve valid symbolic-link targets without normalization or rewriting.
+
+Writers MUST preserve valid symbolic-link targets supplied by the caller.
+
+Reading, listing, verifying, copying, or transforming an Entry MUST NOT fail solely because its symbolic-link target cannot be safely materialized under a particular local extraction policy.
+
+Symbolic-link materialization is governed by Section 22.4.
+
 
 ## 16. Binary Delta & Patching Protocol
 The Delta protocol enables efficient storage of multi-versioned files by storing only the differences between a current file and its predecessor. This section is consistent with and subordinate to the canonical transformation pipeline defined in Section 13.1.
@@ -2742,68 +3848,194 @@ The Delta protocol enables efficient storage of multi-versioned files by storing
 ### 16.1 Process Logic
 By separating `Comp Algo ID` and `Patch Algo ID`, SAR version 1.0 supports **Compressed Binary Patches**.
 
-1. Identify that the `HAS_DELTA` flag is active.
-2. Retrieve the `Delta Base Hash` from the LFH.
-3. Locate the base file and verify its hash.
-4. If `IS_COMPRESSED` is set, decompress the payload using `Comp Algo ID`.
-5. Apply the patching algorithm specified in the `Patch Algo ID` field (Section 8.4) to the (decompressed) patch and the base file.
-6. The resulting uncompressed data size MUST match the `Uncompressed Size` field in the LFH.
+The position of patch application in the transformation pipeline is defined exclusively by Section 13.1. This section defines only the patch-stage inputs and handling.
+
+When the `HAS_DELTA` flag is active for an Entry:
+
+1. Retrieve the `Delta Base Hash` from the LFH. It MUST be identical across all fragments of a fragmented Entry (Section 6.1.3).
+2. Resolve the base object, dictionary, or other reconstruction input required by the selected `Patch Algo ID`, and verify it according to Section 8.4. `STORE_PATCH` requires none.
+3. Obtain the complete decoded patch representation according to Section 13.1.3:
+   * for an unfragmented Entry, the decoded LFH payload representation, after FEC recovery, AEAD authentication/decryption, and decompression, where applicable;
+   * for a fragmented Entry, the Fragment Reassembly Sequence formed from the per-fragment decoded contributions.
+4. Apply the algorithm specified in the `Patch Algo ID` field (Section 8.4) exactly once to the complete decoded patch representation and the resolved base input.
+5. Validate the patch output representation according to the algorithm-specific rules in Section 8.4. LFH `Uncompressed Size` is not a patch-output size and MUST NOT be used to validate patch output.
+6. Supply the patch output representation to the next applicable group-wide reconstruction stage (CDC resolution, sparse reconstruction, or final logical integrity verification), as defined by Section 13.1.3.
+
+`LOSS_TOLERANT` does not suppress patch failure (Section 8.4).
 
 ## 17. Sparse File Reconstruction Algorithm
-This section defines the mandatory procedure for reconstructing files when the `SPARSE_FILES` flag (Global Bit 30) and the corresponding `IS_DIRECTORY` (Entry Mode Bit 1) is NOT set.
+This section defines the mandatory sparse-reconstruction procedure when `SPARSE_FILES` (Global Bit 30) is set and the Entry is not a directory.
+
+Sparse reconstruction is a group-wide reconstruction stage. For a fragmented Entry, sparse reconstruction occurs only after the required Fragment Reassembly Sequence has been obtained according to Section 6.1.3 and after any other preceding group-wide reconstruction stage defined by the canonical transformation pipeline.
 
 ### 17.1 Theory of Operation
-Sparse file support allows SAR to archive large files containing "holes" (long sequences of null bytes) without physically storing those zeros. The reconstruction process uses a "Scatter-Gather" approach: the Payload Data (the "Gathered" data) is read sequentially and "Scattered" into a new file at specific offsets defined by the Sparse Map.
+Sparse file support allows SAR to represent logical files containing holes without physically storing the bytes corresponding to those holes.
+
+The sparse representation consists of:
+
+1. a `Sparse Logical Size`, declaring the exact apparent size of the final sparse logical Entry;
+2. zero or more ordered Sparse Extent descriptors identifying logical ranges containing stored data; and
+3. a gathered-data representation containing the bytes assigned to those extents in descriptor order.
+
+Sparse reconstruction consumes the gathered-data representation sequentially and places those bytes into the logical ranges identified by the Sparse Extents.
+
+Logical ranges not covered by a Sparse Extent are holes and reconstruct as zero bytes.
+
+The sparse representation therefore supports leading, intermediate, and trailing holes without relying on LFH `Uncompressed Size` to declare the final sparse logical size.
 
 ### 17.2 Sparse Map Interpretation
-The `Sparse Map` field in the LFH consists of a contiguous array of Fragment Descriptors. The number of descriptors is determined by dividing the `Sparse Map Size` field value by the descriptor size.
+The `Sparse Map` field in the LFH consists of one `Sparse Logical Size` value followed by zero or more Sparse Extent descriptors.
 
-**Descriptor Size**:
+The integer width of `Sparse Logical Size` and of each Sparse Extent `Offset` and `Length` value is controlled by Global Flag `64BIT_SIZE`.
 
-* If `64BIT_SIZE` (Bit 0) is **OFF**: 8 bytes (`uint32_t offset`, `uint32_t length`).
-* If `64BIT_SIZE` (Bit 0) is **ON**: 16 bytes (`uint64_t offset`, `uint64_t length`).
+| `64BIT_SIZE` | `Sparse Logical Size` | Sparse Extent `Offset` | Sparse Extent `Length` |
+| --- | ---: | ---: | ---: |
+| unset | 4B | 4B | 4B |
+| set | 8B | 8B | 8B |
 
-Each descriptor defines a range of valid data. Any gap between the end of one fragment and the start of the next (or between the start of the file and the first fragment) MUST be interpreted as a "hole" consisting of null bytes (0x00).
+The encoded Sparse Map is:
+
+```text
+Sparse Map =
+    Sparse Logical Size ||
+    Sparse Extent[0] ||
+    Sparse Extent[1] ||
+    ...
+```
+
+`Sparse Logical Size` is the exact apparent size in bytes of the final reconstructed sparse logical Entry.
+
+Each Sparse Extent consists of:
+
+```text
+Offset || Length
+```
+
+and identifies one contiguous logical range containing gathered data.
+
+The size of one Sparse Extent descriptor is:
+
+* 8 bytes when `64BIT_SIZE` is unset; and
+* 16 bytes when `64BIT_SIZE` is set.
+
+`Sparse Map Size` includes the encoded `Sparse Logical Size` and all Sparse Extent descriptors.
+
+`Sparse Map Size` MUST be at least the encoded width of `Sparse Logical Size`.
+
+After subtracting the encoded width of `Sparse Logical Size`, the remaining Sparse Map byte count MUST be an exact multiple of the Sparse Extent descriptor size. Otherwise the Sparse Map is malformed and the decoder MUST return `SAR_ERR_INVALID_MAP`.
+
+Sparse Extents MUST be ordered by strictly increasing logical range position and MUST NOT overlap.
+
+Each Sparse Extent `Length` MUST be greater than zero.
+
+For each Sparse Extent, the checked sum `Offset + Length` MUST be less than or equal to `Sparse Logical Size`. Arithmetic overflow MUST return `SAR_ERR_OVERFLOW`.
+
+Any logical range within `[0, Sparse Logical Size)` that is not covered by a Sparse Extent is a hole and reconstructs as zero bytes. This includes:
+
+* a leading hole before the first Sparse Extent;
+* holes between Sparse Extents; and
+* a trailing hole between the end of the final Sparse Extent and `Sparse Logical Size`.
+
+A Sparse Map containing no Sparse Extent descriptors represents an all-hole logical Entry of exactly `Sparse Logical Size` bytes.
+
+For a fragmented sparse Entry, Fragment Index 0 carries the complete Sparse Map according to Section 6.1.3. Fragments with Fragment Index greater than zero MUST encode `Sparse Map Size` as zero and MUST omit the Sparse Map; a violation MUST return `SAR_ERR_METADATA_CONFLICT` (Section 6.1.3). A Sparse Map MUST NOT be distributed or partitioned across multiple fragments.
 
 ### 17.3 Reconstruction Procedure
-Implementations MUST follow these steps to ensure filesystem integrity:
+Sparse reconstruction operates on the complete gathered-data representation produced by all preceding applicable transformation and reconstruction stages.
 
-1. **File Creation**: Create a new file handle. The file's initial size SHOULD be set to the `Uncompressed Size` field to pre-allocate space or define the "Apparent Size."
-2. **Payload Preparation**: If `IS_COMPRESSED` (Entry Mode Bit 3) is set, decompress the Payload Data into a temporary buffer or a streaming pipe.
-3. **Iteration**: For each descriptor in the Sparse Map:
-* **Seek**: Move the file pointer of the target file to the descriptor's `offset`.
-* **Write**: Read `length` bytes from the (decompressed) payload and write them to the target file.
-4. **Truncation**: After the final fragment is written, the implementation MUST ensure the file is exactly `Uncompressed Size` bytes long (e.g., using `ftruncate` or equivalent). This is critical if the file ends with a "hole."
+Implementations MUST reconstruct a sparse Entry as follows:
+
+1. Parse and validate `Sparse Logical Size` and all Sparse Extent descriptors according to Section 17.2.
+2. Obtain the complete gathered-data representation from the preceding stage of the canonical decoding pipeline.
+3. Initialize the final logical output with an apparent size of exactly `Sparse Logical Size`.
+4. Process Sparse Extents in encoded order.
+5. For each Sparse Extent, consume exactly `Length` bytes from the gathered-data representation and place those bytes beginning at logical byte offset `Offset`.
+6. Treat every logical range not covered by a Sparse Extent as zero bytes.
+7. Verify that no gathered-data bytes remain unconsumed after the final Sparse Extent.
+8. Verify that the final logical Entry has exactly `Sparse Logical Size` bytes.
+
+The sum of all Sparse Extent `Length` values MUST use checked arithmetic. For complete reconstruction, the gathered-data length MUST equal that sum exactly. If the gathered-data representation is shorter or longer than the checked sum of all Sparse Extent lengths, the decoder MUST return `SAR_ERR_INVALID_LENGTH`.
+
+`Sparse Logical Size` is authoritative for the final apparent size of a sparse logical Entry. LFH `Uncompressed Size` MUST NOT be interpreted as a second declaration of the final sparse logical size.
+
+For a fragmented sparse Entry, each fragment's `Uncompressed Size` retains the fragment-local transform semantics defined by Section 6.1.2. For an unfragmented sparse Entry, `Uncompressed Size` likewise retains the ordinary transformation-size semantics defined by Section 6.1.2; sparse final-size semantics are defined exclusively by `Sparse Logical Size`.
 
 ### 17.4 Implementation Considerations
 #### 17.4.1 Native Sparse Support
-On systems supporting sparse files (e.g., Linux with `lseek(SEEK_HOLE)`, Windows with `FSCTL_SET_SPARSE`), implementations SHOULD utilize system calls to mark the file as sparse. This prevents the OS from physically writing zeros to the disk for the "holes", preserving the storage efficiency of the archive.
+On systems supporting native sparse files, implementations SHOULD use the available sparse-file facilities to avoid physically materializing hole bytes.
+
+The implementation MAY establish the declared `Sparse Logical Size` using a seek, truncate, extent-allocation operation, or equivalent host mechanism.
+
+Host filesystem behavior does not alter the SAR wire semantics defined by this section.
 
 #### 17.4.2 Non-Sparse Fallback
-If the host filesystem does not support sparse files, the implementation MUST manually fill the holes with null bytes or rely on standard file-seeking behavior which typically pads skipped ranges with zeros on most modern Operating Systems.
+If the host environment cannot represent sparse extents natively, the implementation MUST produce an equivalent logical byte sequence by materializing hole ranges as zero bytes. The final logical result MUST be identical regardless of whether native sparse-file facilities are used.
 
 #### 17.4.3 Integrity Verification
-The `File CRC32` and `Content Hash` fields MUST be calculated against the **fully reconstructed file** (including holes). Implementations MUST NOT calculate hashes based only on the stored payload fragments, as this would fail to detect corruption in the sparse structure itself.
+`File CRC32` and `Content Hash`, when applicable, are calculated and verified against the final reconstructed logical Entry, including bytes represented by sparse holes. A `File CRC32` mismatch MUST return `SAR_ERR_CRC_MISMATCH`. A `Content Hash` mismatch MUST return `SAR_ERR_HASH_MISMATCH`.
+
+For fragmented Entries, the completion-authoritative integrity rules of Section 6.1.3 apply.
+
+Implementations MUST NOT calculate final logical integrity values solely over the gathered-data representation, because doing so would omit the logical hole ranges defined by the Sparse Map.
+
+Permitted degraded reconstruction under `LOSS_TOLERANT` does not convert unavailable or failed final logical integrity verification into successful verification.
 
 #### 17.4.4 Error Correction
-The `SELECTIVE_FEC` and `HAS_GLOBAL_EC` MUST be calculated against the **fully reconstructed file** (including holes). Any error correction operation SHOULD be applied only if an integrity verification operation (section 17.4.3) fails.
+Sparse reconstruction does not redefine the protection domain or processing order of any FEC or global error-correction construction.
+
+Selective FEC is LFH-local and operates according to Section 6.1.4 before the protected fragment contribution is used by later decoding or reconstruction stages.
+
+`HAS_GLOBAL_EC` remains governed by the Central Dictionary and recovery semantics defined for that feature.
+
+Neither `SELECTIVE_FEC` nor `HAS_GLOBAL_EC` is recalculated over the reconstructed sparse logical file merely because `SPARSE_FILES` is active.
 
 ### 17.5 Error Conditions
-* **SAR_ERR_INVALID_MAP**: Triggered if any descriptor `offset + length` exceeds the `Uncompressed Size`.
-* **SAR_ERR_NO_SPACE**: Triggered if the host filesystem has insufficient space to expand the sparse file to its apparent size.
+The following sparse-specific error conditions apply:
+
+* `SAR_ERR_INVALID_MAP`: The Sparse Map is structurally invalid, including an invalid `Sparse Map Size`, malformed descriptor alignment, a zero-length Sparse Extent, unordered or overlapping Sparse Extents, or a Sparse Extent whose checked end exceeds `Sparse Logical Size`.
+* `SAR_ERR_INVALID_LENGTH`: The complete gathered-data representation length does not exactly equal the checked sum of all Sparse Extent lengths.
+* `SAR_ERR_OVERFLOW`: Arithmetic required to parse, validate, accumulate, or reconstruct sparse ranges exceeds the applicable integer representation.
+* `SAR_ERR_NO_SPACE`: The target environment cannot represent or materialize the declared `Sparse Logical Size`.
+
+General errors from preceding decoding stages remain governed by their respective sections.
 
 ### 17.6 Transformation Ordering and Sparse Applicability
-When `SPARSE_FILES`, `COMPRESSED`, and/or `HAS_DELTA` are simultaneously enabled, implementations MUST apply transformations in the following canonical order before sparse reconstruction:
+Sparse reconstruction is a group-wide reconstruction stage. For a fragmented Entry, fragment-local processing MUST occur before fragment reassembly.
 
-1. Fragment Reassembly (`FILE_FRAGMENTATION`, if enabled)
-2. Decryption (`ENCRYPTED`, if enabled)
-3. Decompression (`COMPRESSED`, if enabled)
-4. Patch Application (`HAS_DELTA`, if enabled)
-5. Sparse Reconstruction (`SPARSE_FILES`, if enabled)
+The applicable canonical decoding relationship is:
 
-Sparse reconstruction MUST operate exclusively on the fully materialized logical file after all prior transformations have completed.
+```text
+Fragment-local FEC recovery, if applicable
+    ->
+Fragment-local AEAD authentication/decryption, if applicable
+    ->
+Fragment-local decompression, if applicable
+    ->
+Fragment Reassembly Sequence, if applicable
+    ->
+Patch application, if applicable
+    ->
+CDC or other applicable group-wide reconstruction
+    ->
+Sparse reconstruction, if applicable
+    ->
+Final logical integrity verification
+```
 
-Sparse maps MUST NOT reference compressed, encrypted, or delta-encoded representations.
+Only stages enabled for the current Entry are performed.
+
+Sparse reconstruction consumes the gathered-data representation supplied by the immediately preceding applicable reconstruction stage.
+
+Sparse Extent offsets address the final sparse logical address space. They MUST NOT address:
+
+* encoded Payload Data;
+* ciphertext;
+* compressed fragment data;
+* individual physical fragments;
+* Fragment Reassembly Sequence positions; or
+* delta-patch instruction positions.
+
+Fragmentation does not define sparse placement. Sparse placement is defined exclusively by `Sparse Logical Size` and the Sparse Extent descriptors.
 
 ## 18. Stream Persistence and Session Recovery
 This section governs the behavior of SAR when utilized as a real-time, state-aware replication journal over persistent connections.
@@ -2823,7 +4055,7 @@ Each SAR stream:
 * MUST be identified by a non-zero Stream ID.
 * MUST begin with a SAR Global Header.
 * MUST establish a session by means of a valid `SESSION_INIT` message.
-* MUST maintain independent Global Flags, KMS state, Session UUID, Sequence Number state, and LFH parsing context.
+* MUST maintain independent Global Flags, KMS state, Session UUID, Sequence Number state, fragment-group reassembly state (Section 18.4.2), and LFH parsing context.
 
 A Stream ID MUST NOT be reused while an active session remains bound to that Stream ID on the same transport connection.
 
@@ -2881,6 +4113,11 @@ A Stream ID that is already active on the same transport connection MUST NOT be 
 A duplicate `SESSION_INIT` for an already-active Stream ID on the same transport connection MUST fail closed with `SAR_ERR_STREAM_STATE`.
 
 The Session Flags field describes bidirectional behavior requested or required by the endpoint that transmitted `SESSION_INIT`.
+
+A sender establishing a new SAR session on an existing transport connection MUST use a Session UUID that has not previously been used for another SAR session on that transport connection.
+
+This requirement applies even when a previously closed Stream ID is reused.
+
 
 | Bit  | Name                              | Description                                                                                                                                              |
 | ---- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2961,6 +4198,11 @@ The Sequence No:
 * MUST NOT be used as a substitute for transport reliability mechanisms
 * MUST NOT influence byte-stream reconstruction order at the transport layer
 
+##### Sequence No and Fragmented Entries
+Each fragment of a fragmented Entry is a complete LFH and carries its own `Sequence No` under the rules above. Fragmentation does not alter Sequence No semantics.
+
+`Sequence No` and `Fragment Index` are independent. `Sequence No` is the LFH continuity token of the session; `Fragment Index` is the ordinal of a fragment within one fragment group (Section 6.1.3). Neither replaces the other, and neither MUST be used to infer the other. Fragmented Entry handling is defined in Section 18.4.2.
+
 ##### Failure Detection Role
 The Sequence No MAY be used by receivers for detection of:
 
@@ -2980,7 +4222,7 @@ To ensure session persistence during periods of payload inactivity, the followin
 
 * Mandatory Interval: The Sender MUST emit a `SESSION_HEARTBEAT` (Op 0x3) or any other valid LFH at least once every 60 seconds.
 * Minimum Value: To prevent network congestion and unnecessary CPU overhead, heartbeats MUST NOT be emitted more frequently than once every 5 seconds.
-* Inactivity Timeout: The Receiver SHOULD implement a session watchdog. If no valid LFH (Data or Heartbeat) is received within 180 seconds (3x the mandatory interval), the Receiver SHALL terminate the session and return `SAR_ERR_TIMEOUT`.
+* Inactivity Timeout: The Receiver SHOULD implement a session watchdog. If no valid LFH (Data or Heartbeat) is received within 180 seconds (3x the mandatory interval), the Receiver SHALL terminate the session and return `SAR_ERR_SESSION_TIMEOUT`.
 * Sequence Continuity: Heartbeats MUST increment the `Sequence No` field like any other entry to ensure the application-layer continuity token remains valid.
 
 `SESSION_HEARTBEAT` payload size SHALL be 0 bytes.
@@ -2991,7 +4233,7 @@ Status SHALL be communicated by utilizing `SESSION_STATUS` (Op 0x4). The payload
 | Order | Field Name | Size | Description |
 | --- | --- | --- | --- |
 | 0 | REF_SEQUENCE | 2B | The sequence number this status message refers to. |
-| 1 | STATUS_CODE | 2B | Holds the status code value as defined in section 10 (-1 encoded as 0xFFFF). |
+| 1 | STATUS_CODE | 2B | Holds the unsigned 16-bit status value defined in Section 10. `SAR_ERR_GENERIC` is encoded as `0xFFFF`. |
 | 2 | MESSAGE_SIZE | 1B | Size of the status message in bytes. |
 | 3 | STATUS_MESSAGE | var | Status message. |
 
@@ -3026,6 +4268,8 @@ ACK_FLAGS MAY contain multiple bits.
 
 Reserved ACK_FLAGS bits MUST be set to 0. Receivers encountering non-zero reserved bits MUST return `SAR_ERR_RESERVED_VALUE`.
 
+When `REF_SEQUENCE` references a fragment LFH, `ACK` and `OK` describe only that LFH. `ACK` and `OK` remain per physical fragment LFH. `SUCCESS` is valid only after the complete fragmented logical operation has been reconstructed, validated, and applied successfully according to Section 18.4.2. For a fragmented Entry, an acknowledgement with `SUCCESS` MUST reference, through `REF_SEQUENCE`, the `Sequence No` of the `LAST_FRAGMENT` LFH. `SUCCESS` MUST NOT be set in an acknowledgement referencing any other fragment LFH.
+
 ### 18.3.6 End of Session
 
 To terminate an active session, a sender SHALL transmit a `SESSION_CLOSE` message containing a zero-length payload.
@@ -3038,9 +4282,13 @@ Upon receiving `SESSION_CLOSE`, implementations MUST:
 * release any session-specific state maintained for that stream;
 * cease accepting additional data associated with the terminated Stream ID.
 
+Incomplete fragment groups bound to the terminated session MUST be discarded and MUST NOT be applied to final state.
+
 If bidirectional control is active and `SESSION_ACK` is supported, the receiver SHOULD transmit a `SESSION_ACK` message referencing the received `SESSION_CLOSE`.
 
 The underlying transport connection MAY remain open after a session has been terminated.
+
+If the ordered SAR or transport stream terminates while the session remains active (no `SESSION_CLOSE` was processed) and the termination does not occur inside a structure whose declared bytes were incompletely received, the receiver MUST treat the condition as `SAR_ERR_STREAM_CLOSED`. If the stream ends before all bytes declared by the currently parsed structure (for example an LFH, a Payload Data field, or a `SESSION_CONTROL` payload) were available, the receiver MUST use `SAR_ERR_TRUNCATED` instead. In either case, incomplete fragment groups bound to the session MUST be discarded and MUST NOT be applied to final state.
 
 A transport connection MAY continue carrying other active SAR streams that remain bound to the connection.
 
@@ -3052,6 +4300,8 @@ When session resumption is attempted, the sender SHALL transmit a `SESSION_RESUM
 If the supplied Session UUID matches the UUID bound to the Stream ID, the receiver MUST resume the session or return `SAR_ERR_UNSUPPORTED` if resumption is not supported.
 
 If the supplied Session UUID does not match the UUID bound to the Stream ID, the receiver MUST return `SAR_ERR_STREAM_STATE`.
+
+Incomplete fragment groups do not survive interruption or resumption. Upon resumption, the receiver MUST discard all incomplete fragment-group state and MUST NOT apply it. Fragments received before resumption and fragments received after resumption MUST NOT be combined into one logical Entry. A sender retransmitting a fragmented Entry after resumption MUST transmit a new complete, valid fragment group, beginning with Fragment Index 0 under the ordering rules of Section 18.4.2.
 
 If reverse control is not available and the receiver encounters an error state, implementations MUST terminate the connection.
 
@@ -3115,12 +4365,19 @@ If bidirectional control is active, both endpoints SHOULD transmit `SESSION_CAPA
 
 `SESSION_CAPABILITIES` advertises support. It does not select SAR-layer AEAD, change KMS state, alter Global Flags, or override the SAR Global Header.
 
-`CAP_TLS_EXPORTER_AEAD` indicates that the transmitting endpoint supports deriving SAR-layer AEAD keying material from TLS exporter material using KMS Mode `0x04 TLS_EXPORTER`.
+`CAP_TLS_EXPORTER_AEAD` indicates that the transmitting endpoint supports deriving SAR-layer AEAD keying material using KMS Mode `0x04 TLS_EXPORTER`.
 
-KMS Mode `0x04 TLS_EXPORTER`, when selected by the SAR Global Header / KMS configuration, is authoritative for selecting TLS-exporter SAR-AEAD for that SAR stream.
+The capability does not select or enable KMS Mode `0x04 TLS_EXPORTER` for the SAR stream carrying the capability advertisement.
 
 Failure behavior for unsupported KMS Mode `0x04 TLS_EXPORTER` is defined in Section 18.6.5.
 
+`SESSION_CAPABILITIES` advertises capabilities of the transmitting endpoint. It does not select, enable, disable, or modify capabilities, KMS state, Global Flags, transformation semantics, or security modes of the SAR stream carrying the message.
+
+Capability information received from an endpoint MAY be used when configuring a subsequent SAR stream on the same transport connection, subject to application policy and the requirements of the applicable transport binding.
+
+Capability exchange MUST NOT alter the interpretation, KMS mode, or cryptographic state of an already active SAR stream.
+
+A capability-dependent property selected through the Global Header or KMS configuration can take effect only in a new SAR stream with a new Global Header.
 
 ### 18.4 Stateful Execution Semantics
 This subsection defines execution guarantees that apply **only when Stateful Streaming Mode is active (Section 18.1)**.
@@ -3143,11 +4400,70 @@ The implementation MUST:
 3. Only upon successful verification, perform an atomic `rename()` (or equivalent filesystem atomic replace operation supported by the host environment)
 4. Ensure that at no point is a partially-written final object visible to other consumers of the resource namespace
 
-If CRC verification fails:
+If CRC verification fails, the implementation MUST return `SAR_ERR_CRC_MISMATCH` and:
 
 * The shadow data MUST be discarded
 * No mutation to the final namespace MUST occur
 * The operation MUST be treated as failed at the state layer, even if transport delivery succeeded
+
+For a fragmented Entry, the shadow location holds the reconstructed logical Entry, and the integrity verification above is the final logical integrity verification defined by Section 6.1.3. Fragmented Entry handling is defined in Section 18.4.2.
+
+#### 18.4.2 Fragmented Entries in Stateful Streaming
+This subsection integrates the fragmentation semantics of Sections 6.1.3 and 6.1.5 with Stateful Streaming. It does not define a second ordering mechanism.
+
+##### Distinct Concepts
+The following concepts MUST NOT be conflated:
+
+* **Fragment Index:** the ordinal of a fragment within one fragment group.
+* **Sequence No:** the session's LFH continuity token (Section 18.3.2).
+* **LFH occurrence order:** the order in which LFHs occur in the ordered byte stream of one SAR stream. Within one SAR stream it is identical to `Sequence No` order. Network or transport-level arrival timing is not a SAR ordering concept.
+
+Fragment Index does not replace Sequence No. Sequence No does not replace Fragment Index. Neither defines the other.
+
+##### Fragment Groups
+A fragmented Entry is composed of complete LFHs. Each fragment LFH carries its own `Sequence No` according to Section 18.3.2.
+
+All fragments of one fragment group MUST use the same `Stream ID`. A fragment group is identified within the active SAR session by:
+
+```text
+(active SAR session, Stream ID, Fragment ID)
+```
+
+and each fragment within that group by its Fragment Index. A fragment group never spans SAR sessions or Stream IDs.
+
+A `SESSION_CONTROL` Entry MUST NOT be fragmented (Section 6.1.3). Session-control messages MAY occur between fragments of a fragment group and do not affect fragment-group state.
+
+##### Fragment Availability
+All fragments of one group share one Stream ID, and each SAR stream is an ordered byte stream (Section 18.3.1). Out-of-index behavior therefore means that the sender's emission order, and hence the LFH occurrence order, differs from Fragment Index order. It does not mean transport reordering within a SAR stream. In particular, a fragment with Fragment Index greater than zero MAY occur before Fragment Index 0.
+
+Such a fragment MAY be buffered as incomplete fragment-group state. Before Fragment Index 0 has occurred, a fragment with a greater Fragment Index MUST NOT:
+
+* establish logical Entry identity;
+* establish a Full Logical Entry Path;
+* create duplicate-path semantics;
+* authorize state application; or
+* redefine sequencing or operation order.
+
+Fragment Index 0 establishes the logical Entry identity when it occurs.
+
+`LAST_FRAGMENT` identifies the terminal Fragment Index of the group. It is not a transport or session flush marker. Receipt of `LAST_FRAGMENT` alone MUST NOT cause state application while earlier required fragments or Stateful Streaming sequencing requirements remain unresolved.
+
+##### Ordering
+Sequence No ordering is exactly as defined by Section 18.3.2. Fragmentation does not introduce an additional global ordering rule.
+
+The canonical operation position of a fragmented logical Entry is established by the `Sequence No` of its Fragment Index 0 LFH. Later fragments do not create new operation positions. Completion of reconstruction does not move that position. Implementations MAY execute later Entries internally before the fragmented Entry completes only when the observable results remain equivalent to canonical sequential application (Section 6.1.5).
+
+Logical Entry order MUST NOT be derived from wall-clock time, completion time, or network arrival order, including across concurrent transport streams. Concurrent transport streams carry distinct SAR sessions; no canonical Entry order is defined between them by this specification.
+
+##### State Application
+The logical operation of a fragmented Entry MUST be applied exactly once, and only after all of the following hold:
+
+* all required Fragment Indices are available, or existing `LOSS_TOLERANT` rules permit a valid degraded reconstruction;
+* fragment-local processing and all required group-wide reconstruction (Section 13.1.3) have completed;
+* the applicable Sequence No and session-state requirements are satisfied; and
+* the required integrity and authentication conditions are satisfied.
+
+An implementation MUST NOT execute the logical operation independently for each fragment.
 
 ### 18.5 SAR Transport Binding Profiles
 
@@ -3155,10 +4471,10 @@ SAR Stateful Streaming Mode MAY be bound to multiple reliable transport profiles
 
 This specification defines the following transport binding profiles:
 
-| Profile         | Transport             | Stream Multiplexing                 | TLS Availability                   | Notes                                                             |
-| --------------- | --------------------- | ----------------------------------- | ---------------------------------- | ----------------------------------------------------------------- |
-| `SAR-over-TCP`  | TCP byte stream       | Sequential SAR streams only         | Optional, if TCP is wrapped in TLS | SAR streams MUST NOT be byte-interleaved on one TCP connection.   |
-| `SAR-over-QUIC` | QUIC stream transport | Concurrent independent QUIC streams | Mandatory as part of QUIC/TLS      | Each QUIC stream defines an independent SAR byte-stream boundary. |
+| Profile | Transport | Stream Multiplexing | TLS Availability | Notes |
+| ------- | --------- | ------------------- | ---------------- | ----- |
+| `SAR-over-TCP` | TCP byte stream | Sequential SAR streams only | Optional, if TCP is wrapped in TLS | SAR streams MUST NOT be byte-interleaved on one TCP connection. |
+| `SAR-over-QUIC` | QUIC stream transport | Concurrent independent QUIC streams | Mandatory as part of QUIC/TLS | Each QUIC stream defines an independent SAR byte-stream boundary. |
 
 A transport binding profile MUST preserve the byte-stream abstraction required by Section 18.3.1 for every SAR stream it presents to the SAR parser.
 
@@ -3178,7 +4494,17 @@ A new SAR stream MAY begin on an existing TCP connection only after the precedin
 
 If a receiver encounters an invalid or rejected SAR stream and cannot safely determine the end of that stream without fully accepting it, the receiver MUST close the TCP connection.
 
-If TLS is layered over TCP and the TLS stack exposes exporter keying material, the resulting TLS session MAY be used with KMS Mode `0x04 TLS_EXPORTER`. Endpoints that do not support KMS Mode `0x04 TLS_EXPORTER` fail closed as defined in Section 18.6.5.
+SAR-over-TCP MAY operate over plaintext TCP or over TCP protected by TLS.
+
+Support for SAR-over-TCP does not require TLS support.
+
+An implementation claiming support for TLS-exporter SAR-AEAD over SAR-over-TCP MUST support KMS Mode `0x04 TLS_EXPORTER` and the TLS_EXPORTER SAR AEAD profile defined in Section 18.6.
+
+Mutual support for TLS-exporter SAR-AEAD MAY be established through `CAP_TLS_EXPORTER_AEAD` as defined in Section 18.3.9, through explicit application or deployment configuration, through an out-of-band agreement, or through another negotiation mechanism defined by an applicable application protocol.
+
+Capability information exchanged in one SAR stream MAY be used when creating a subsequent SAR stream on the same TCP or TLS connection as defined in Section 18.3.9. Such capability exchange does not modify the KMS mode or cryptographic state of the stream carrying the capability advertisement.
+
+To enable TLS-exporter SAR-AEAD after capability exchange, the sender MUST begin a new SAR stream with a new Global Header selecting KMS Mode `0x04 TLS_EXPORTER`.
 
 If TCP is not protected by TLS, KMS Mode `0x04 TLS_EXPORTER` MUST NOT be used.
 
@@ -3257,7 +4583,7 @@ A stream-local error SHOULD NOT require closing the entire QUIC connection unles
 
 Termination of a SAR session MUST unbind the SAR Stream ID and Session UUID on that QUIC connection and MUST cause QUIC streams associated exclusively with that SAR session to be closed, reset, drained, or disassociated according to transport policy.
 
-SAR-over-QUIC endpoints SHOULD support `CAP_TLS_EXPORTER_AEAD`.
+SAR-over-QUIC implementations MUST support KMS Mode `0x04 TLS_EXPORTER`. Endpoints that advertise session capabilities SHOULD advertise `CAP_TLS_EXPORTER_AEAD` when TLS-exporter SAR-AEAD is available for the active session.
 
 SAR-over-QUIC deployments SHOULD use SAR-layer AEAD protection derived through KMS Mode `0x04 TLS_EXPORTER`.
 
@@ -3267,27 +4593,21 @@ SAR-over-QUIC deployments concerned with harvest-now-decrypt-later attacks SHOUL
 
 ### 18.6 TLS_EXPORTER SAR AEAD Profile
 
-The `TLS_EXPORTER` SAR AEAD profile defines how SAR derives SAR-layer AEAD keying material from an authenticated TLS-based transport session.
+The `TLS_EXPORTER` SAR AEAD profile defines how SAR derives SAR-layer AEAD keying material from an authenticated TLS-based transport session using KMS Mode `0x04 TLS_EXPORTER`.
 
-This profile applies to any SAR transport binding that uses TLS and exposes TLS exporter keying material, including:
+A SAR-over-QUIC implementation MUST support KMS Mode `0x04 TLS_EXPORTER` and this profile. This requirement mandates implementation support and does not require every SAR-over-QUIC stream to select TLS-exporter SAR-AEAD mode.
 
-* SAR-over-QUIC
-* SAR-over-TCP when TCP is wrapped in TLS
-* future TLS-based SAR transport bindings
+A SAR-over-TCP implementation MUST support KMS Mode `0x04 TLS_EXPORTER` and this profile only if it claims support for TLS-exporter SAR-AEAD over TCP protected by TLS. Support for SAR-over-TCP, including SAR-over-TCP protected by TLS, does not otherwise require support for KMS Mode `0x04 TLS_EXPORTER`.
 
-This profile MUST NOT be used unless the underlying TLS session has completed successfully and the peer authentication policy required by the application has been satisfied.
-
-For SAR-over-QUIC, the TLS session is the QUIC/TLS session.
-
-For SAR-over-TCP+TLS, the TLS session is the TLS session carried over TCP.
+This profile MUST NOT be used unless the underlying TLS session has completed successfully, TLS exporter keying material is available to the SAR implementation, and the peer authentication policy required by the application has been satisfied.
 
 
 #### 18.6.1 Security Modes
 
 SAR transport bindings using TLS define two SAR-layer security modes:
 
-| Mode                       | Description                                                                                                                                 |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mode                       | Description |
+| -------------------------- | ----------- |
 | Transport-only TLS mode    | TLS protects transport bytes. SAR does not derive SAR-layer AEAD keys from TLS exporter material.                                           |
 | TLS-exporter SAR-AEAD mode | TLS protects transport bytes, and SAR derives SAR-layer AEAD keying material from TLS exporter material using KMS Mode `0x04 TLS_EXPORTER`. |
 
@@ -3304,34 +4624,52 @@ When TLS-exporter SAR-AEAD mode is used, the post-quantum or harvest-now-decrypt
 
 When KMS Mode `0x04 TLS_EXPORTER` is used:
 
-* the SAR AEAD keying material MUST be derived from TLS exporter material;
-* the TLS exporter output MUST NOT be transmitted in SAR frames;
-* the derived SAR AEAD key MUST NOT be transmitted in SAR frames;
+* KMS Master Secret material MUST be derived from TLS exporter material;
+* TLS exporter output MUST NOT be transmitted in SAR frames;
+* a derived KMS Master Secret MUST NOT be transmitted in SAR frames;
+* an Entry encryption key derived from a KMS Master Secret MUST NOT be transmitted in SAR frames;
 * SAR KMS Data MUST contain derivation metadata only;
-* SAR KMS Data MUST NOT contain raw keys, wrapping keys, TLS exporter output, private keys, or plaintext content-encryption keys;
-* the TLS exporter derivation MUST be bound to the SAR session context;
-* the selected SAR AEAD algorithm MUST match the derived key length;
-* unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
+* SAR KMS Data MUST NOT contain raw keys, wrapping keys, TLS exporter output, private keys, KMS Master Secrets, or plaintext Entry encryption keys;
+* TLS exporter derivation MUST be bound to the SAR session context defined in Section 18.6.3;
+* client-to-server and server-to-client traffic MUST use independently derived directional KMS Master Secrets; and
+* unsupported exporter, KDF, hash, transport-profile, context-version, or KMS parameters MUST fail closed.
 
-If exporter keying material is unavailable from the TLS stack, implementations MUST return `SAR_ERR_UNSUPPORTED` or `SAR_ERR_KMS_FAILED`.
+KMS Mode `0x04 TLS_EXPORTER` does not select one SAR encryption algorithm for the session. The LFH `Encr Algo ID` remains authoritative for each Entry with `IS_ENCRYPTED` set.
 
+Each directional TLS exporter invocation produces exactly one 32-byte KMS Master Secret. Each encrypted Entry subsequently derives its native encryption key from that directional KMS Master Secret according to Section 5.3.4.
+
+Multiple Entries, including Entries carried on multiple transport streams belonging to the same SAR session and communication direction, MUST use the same directional KMS Master Secret. Each Entry nevertheless derives its own Entry encryption key according to Section 5.3.4.
+
+Use of multiple transport streams does not create additional KMS Master Secret scopes and does not relax the nonce-uniqueness requirements of Section 8.2.2.
+
+
+If required TLS exporter keying material cannot be obtained from the TLS stack, processing MUST fail closed according to Section 18.6.5.
 
 #### 18.6.3 Exporter Label and Context
 
-The KMS Data for Mode `0x04 TLS_EXPORTER` supplies the TLS exporter label and non-secret derivation parameters used to construct SAR-layer AEAD keying material.
+The KMS Data for Mode `0x04 TLS_EXPORTER` supplies the TLS exporter label and non-secret derivation parameters used to establish directional KMS Master Secrets.
 
 KMS Data is derivation input only. It does not alter, extend, or override the SAR AEAD AAD construction defined in Section 13.2.1.
 
-The exporter label SHOULD be specific to the SAR transport binding profile.
+For Context Version `0x01`, the Exporter Label MUST be the exact ASCII string:
 
-Recommended labels are:
+```text
+EXPORTER-SAR-v1
+```
 
-| Binding          | Recommended Exporter Label  |
-| ---------------- | --------------------------- |
-| SAR-over-QUIC    | `EXPORTER-SAR-v1-QUIC-AEAD` |
-| SAR-over-TCP+TLS | `EXPORTER-SAR-v1-TLS-AEAD`  |
+`Exporter Label Length` MUST equal `15`.
 
-The TLS exporter context MUST bind the derived SAR AEAD keying material to the SAR session, transport binding, cryptographic profile, and key usage.
+The exact Exporter Label byte sequence is:
+
+```text
+45 58 50 4F 52 54 45 52 2D 53 41 52 2D 76 31
+```
+
+No string terminator is included.
+
+The exporter label identifies the TLS_EXPORTER cryptographic construction. It is independent of the outer SAR format version. A SAR format revision that remains compatible with this TLS_EXPORTER construction MAY continue to use the same Exporter Label and Context Version.
+
+The TLS exporter context MUST bind the derived KMS Master Secret to the transport binding, complete Global Header, SAR Stream ID, Session UUID, and communication direction.
 
 When the Mode `0x04 TLS_EXPORTER` KMS Data field `Context Version` is `0x01`, the TLS exporter context MUST be encoded exactly as follows:
 
@@ -3339,90 +4677,101 @@ When the Mode `0x04 TLS_EXPORTER` KMS Data field `Context Version` is `0x01`, th
 | ----- | -------------------------- | ---- | ---------------------------------------------- |
 | 0     | Context Version            | 1B   | MUST be `0x01`.                                |
 | 1     | Transport Profile ID       | 1B   | Transport binding profile identifier.          |
-| 2     | SAR Major Version          | 1B   | SAR major protocol version.                    |
-| 3     | SAR Minor Version          | 1B   | SAR minor protocol version.                    |
-| 4     | Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
-| 5     | Global Header Hash Length  | 1B   | Length of Global Header Hash in bytes.         |
-| 6     | Global Header Hash         | Var  | Hash of the complete encoded Global Header.    |
-| 7     | KMS Mode ID                | 1B   | MUST be `0x04`.                                |
-| 8     | AEAD Algo ID               | 1B   | SAR AEAD algorithm ID.                         |
-| 9     | Stream ID                  | 2B   | SAR Stream ID, little-endian.                  |
-| 10    | Session UUID               | 16B  | Session UUID from `SESSION_INIT`.              |
-| 11    | Key Usage ID               | 1B   | Direction or key-usage identifier.             |
-| 12    | Salt Length                | 1B   | Length of Salt from KMS Data in bytes.         |
-| 13    | Salt                       | Var  | Salt/context bytes from KMS Data.              |
+| 2     | Global Header Hash Algo ID | 1B   | Hash algorithm used for Global Header binding. |
+| 3     | Global Header Hash Length  | 1B   | Digest length of the selected hash algorithm.  |
+| 4     | KMS Mode ID                | 1B   | MUST be `0x04`.                                |
+| 5     | Stream ID                  | 2B   | SAR Stream ID, little-endian.                  |
+| 6     | Session UUID               | 16B  | Session UUID established by `SESSION_INIT`.    |
+| 7     | Key Usage ID               | 1B   | Communication-direction identifier.            |
+| 8     | Salt Length                | 1B   | MUST equal `0`.                                |
+| 9     | Global Header Hash         | Var  | Hash of the complete encoded Global Header.    |
+| 10    | Salt                       | Var  | Salt bytes. Absent when Salt Length is zero.   |
 
-The Global Header Hash MUST be computed over the complete encoded Global Header as transmitted, including KMS Mode ID, KMS Payload Length, and KMS Payload. LFH bytes MUST NOT be included in the Global Header Hash.
+Context Version `0x01` contains no Salt bytes. The Mode `0x04 TLS_EXPORTER` KMS Data field `Salt Length` MUST therefore equal `0`, and the corresponding Salt field MUST be absent.
+
+Security of Context Version `0x01` MUST NOT depend on an independently generated per-stream salt.
+
+The Global Header Hash MUST be computed over the complete encoded Global Header exactly as transmitted, including KMS Mode ID, KMS Payload Length, and the complete KMS Payload. LFH bytes MUST NOT be included in the Global Header Hash.
 
 The `Global Header Hash Algo ID` in the exporter context MUST be identical to the `Global Header Hash Algo ID` declared in the Mode `0x04 TLS_EXPORTER` KMS Data.
 
-`Global Header Hash Algo ID` MUST reference the SAR hash algorithm registry. If the referenced algorithm is unsupported or reserved, implementations MUST fail closed with `SAR_ERR_UNSUPPORTED` or `SAR_ERR_RESERVED_VALUE` as applicable.
+`Global Header Hash Algo ID` MUST reference the SAR hash algorithm registry. The digest length produced by the selected algorithm MUST fit in `Global Header Hash Length`, and `Global Header Hash Length` MUST equal the exact digest length defined by that algorithm.
 
-The `AEAD Algo ID`, `Salt Length`, and `Salt` fields in the exporter context MUST be identical to the corresponding fields declared in the Mode `0x04 TLS_EXPORTER` KMS Data.
+A valid assigned hash algorithm whose complete construction is defined by SAR but is unsupported by the receiving implementation MUST return `SAR_ERR_UNSUPPORTED`. A reserved or unassigned hash algorithm identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
-For `KDF Algo ID = 0x00`, the TLS exporter MUST be invoked with the `Exporter Label`, the encoded TLS exporter context defined by `Context Version`, and an output length equal to `Derived Key Length`. The returned bytes are used directly as SAR AEAD keying material.
+For `KDF Algo ID = 0x00`, the TLS exporter MUST be invoked using:
 
-Unsupported `Context Version`, `Transport Profile ID`, `Key Usage ID`, `Global Header Hash Algo ID`, `AEAD Algo ID`, or `KDF Algo ID` values MUST fail closed.
+```text
+Label   = ASCII("EXPORTER-SAR-v1")
+Context = exact Context Version 0x01 byte sequence
+Length  = 32
+```
 
-Implementations MUST use distinct `Key Usage ID` values for distinct key usages. Implementations MUST NOT reuse the same derived AEAD key for both communication directions unless a future profile explicitly defines a safe bidirectional key schedule.
+The exact 32-byte exporter result is the KMS Master Secret for the selected `Key Usage ID`.
+
+The exporter result MUST NOT be used directly as an Entry encryption key. Entry encryption keys MUST be derived according to Section 5.3.4.
+
+The TLS exporter context MUST NOT contain the LFH `Encr Algo ID`. Entry encryption algorithm selection occurs only after KMS Master Secret derivation.
+
+The TLS exporter context MUST NOT contain the SAR Global Header Version, a SAR major version, or a SAR minor version. Compatibility of this exporter construction is determined by the Exporter Label and Context Version rather than by the outer SAR format version.
+
+The TLS exporter context MUST NOT contain a QUIC stream identifier or another transport-level substream identifier.
+
+All permitted transport streams associated with the same SAR Stream ID, Session UUID, and communication direction use the same directional KMS Master Secret. This rule does not expand the set of transport streams or Entry types permitted by the applicable transport binding profile.
+
+Unsupported or reserved Context Version, Transport Profile ID, Key Usage ID, Global Header Hash Algo ID, or KDF Algo ID values MUST fail closed with the applicable error defined by this specification.
 
 **TLS_EXPORTER Transport Profile ID Registry**
 
-| ID        | Name             | Description                                                    |
-| --------- | ---------------- | -------------------------------------------------------------- |
-| 0x01      | SAR_OVER_QUIC    | SAR-over-QUIC profile.                                         |
-| 0x02      | SAR_OVER_TCP_TLS | SAR-over-TCP wrapped in TLS.                                   |
-| 0x03-0xEF | RESERVED         | Reserved for future standard TLS-based SAR transport profiles. |
-| 0xF0-0xFF | CUSTOM           | Implementation-defined transport profiles.                     |
+| ID          | Name               | Description                                                    |
+| ----------- | ------------------ | -------------------------------------------------------------- |
+| `0x01`      | `SAR_OVER_QUIC`    | SAR-over-QUIC profile.                                         |
+| `0x02`      | `SAR_OVER_TCP_TLS` | SAR-over-TCP wrapped in TLS.                                   |
+| `0x03-0xEF` | RESERVED           | Reserved for future standard TLS-based SAR transport profiles. |
+| `0xF0-0xFF` | CUSTOM             | Implementation-defined transport profiles.                     |
+
+A CUSTOM Transport Profile ID requires explicit external agreement between the communicating endpoints. Use of a CUSTOM Transport Profile ID is outside the Guaranteed Interoperability Baseline unless an applicable Compliance Profile explicitly defines otherwise.
 
 **TLS_EXPORTER Key Usage ID Registry**
 
-| ID        | Name                   | Description                                          |
-| --------- | ---------------------- | ---------------------------------------------------- |
-| 0x01      | CLIENT_TO_SERVER_ENTRY | SAR entry protection for client-to-server direction. |
-| 0x02      | SERVER_TO_CLIENT_ENTRY | SAR entry protection for server-to-client direction. |
-| 0x03      | SESSION_CONTROL        | SAR session-control protection, if separately keyed. |
-| 0x04-0xEF | RESERVED               | Reserved for future standard key usages.             |
-| 0xF0-0xFF | CUSTOM                 | Implementation-defined key usages.                   |
+| ID          | Name               | Description                                                                        |
+| ----------- | ------------------ | ---------------------------------------------------------------------------------- |
+| `0x01`      | `CLIENT_TO_SERVER` | All SAR-layer encrypted Entries transmitted from the TLS client to the TLS server. |
+| `0x02`      | `SERVER_TO_CLIENT` | All SAR-layer encrypted Entries transmitted from the TLS server to the TLS client. |
+| `0x03-0xEF` | RESERVED           | Reserved for future standard key usages.                                           |
+| `0xF0-0xFF` | CUSTOM             | Implementation-defined key usages.                                                 |
 
-For TLS_EXPORTER key usage, `CLIENT_TO_SERVER_ENTRY` and `SERVER_TO_CLIENT_ENTRY` refer to TLS transport roles, not SAR Sender/Receiver roles.
+For TLS_EXPORTER key usage, client and server refer to TLS transport roles, not SAR Sender and Receiver roles.
 
-The TLS client is the endpoint that initiated the TCP+TLS or QUIC connection to the listening endpoint.
+The TLS client is the endpoint that initiated the TCP+TLS or QUIC connection. The TLS server is the endpoint that accepted the connection in the server role.
 
-The TLS server is the endpoint that accepted the TCP+TLS or QUIC connection and presents the server-side TLS identity.
+Every SAR Entry transmitted by the TLS client after TLS-exporter SAR-AEAD activation MUST use the `CLIENT_TO_SERVER` KMS Master Secret.
 
-A SAR entry transmitted by the TLS client MUST use `CLIENT_TO_SERVER_ENTRY`.
+Every SAR Entry transmitted by the TLS server after TLS-exporter SAR-AEAD activation MUST use the `SERVER_TO_CLIENT` KMS Master Secret.
 
-A SAR entry transmitted by the TLS server MUST use `SERVER_TO_CLIENT_ENTRY`.
+These rules apply equally to Filesystem Mode Entries, Session Mode Entries, `SESSION_CONTROL` Entries, primary-stream Entries, and Entries carried on additional transport streams permitted by the active transport binding.
 
-By default, `SESSION_CONTROL` entries MUST use the same directional key usage as ordinary SAR entries sent by the same TLS endpoint.
+A separate `SESSION_CONTROL` KMS Master Secret is not defined.
 
-A `SESSION_CONTROL` entry transmitted by the TLS client therefore uses `CLIENT_TO_SERVER_ENTRY` unless a separate session-control key usage has been explicitly negotiated or mandated by the active transport profile.
-
-A `SESSION_CONTROL` entry transmitted by the TLS server therefore uses `SERVER_TO_CLIENT_ENTRY` unless a separate session-control key usage has been explicitly negotiated or mandated by the active transport profile.
-
-`SESSION_CONTROL` key usage MUST NOT be used unless both endpoints have explicitly negotiated it or the active transport profile mandates it.
-
-Receivers MUST derive and verify using the single key usage selected by the active profile or negotiation. Receivers MUST NOT try multiple key usages to recover from authentication failure.
-
+Receivers MUST derive and verify using the one directional KMS Master Secret selected by the sender's TLS transport role. Receivers MUST NOT try multiple Key Usage IDs in response to authentication failure.
 
 #### 18.6.4 AAD Requirements
 
 This section does not redefine AAD composition rules.
 
-AAD field selection, encoding, and storage are defined in the SAR AEAD/AAD specification Section 13.2 and apply uniformly across all SAR encryption modes.
+AAD field selection, encoding, and storage are defined in Section 13.2 and apply uniformly across SAR encryption modes.
 
 When TLS-exporter SAR-AEAD mode is active, those existing AAD rules MUST be applied without modification.
 
-For entries carried on a primary SAR stream, the Global Header portion of AAD is taken from the Global Header physically present on that primary SAR stream.
+For Entries carried on a primary SAR stream, the Global Header portion of AAD is taken from the Global Header physically present on that primary SAR stream.
 
-For entries carried on an additional QUIC control stream that does not contain a physical Global Header, the Global Header portion of AAD MUST be the canonical encoded Global Header bytes of the active SAR session associated with the LFH Stream ID.
+For Entries carried on an additional QUIC control stream that does not contain a physical Global Header, the Global Header portion of AAD MUST be the exact encoded Global Header byte sequence received on the primary SAR stream of the active session associated with the LFH Stream ID.
 
 For additional QUIC control streams, the LFH portion of AAD MUST be the LFH bytes physically present on that control stream.
 
-An additional QUIC control stream MUST NOT alter or replace the associated session's Global Header bytes, Global Flags, KMS state, transform state, TLS exporter context, or AEAD configuration.
+An additional QUIC control stream MUST NOT alter or replace the associated session's Global Header bytes, Global Flags, KMS state, TLS exporter context, KMS Master Secret scope, or Entry-key derivation rules.
 
-When TLS-exporter SAR-AEAD mode is active, implementations MUST ensure that the TLS-exporter-derived keying context is bound to the SAR session as defined in Section 18.6.3.
+When TLS-exporter SAR-AEAD mode is active, implementations MUST ensure that each directional KMS Master Secret is bound to the SAR session as defined in Section 18.6.3.
 
 Implementations MUST NOT expose plaintext before AEAD authentication succeeds.
 
@@ -3430,37 +4779,40 @@ A missing, malformed, unsupported, or mismatched AAD context MUST produce a hard
 
 `LOSS_TOLERANT` MUST NOT suppress AEAD authentication failures.
 
-
 #### 18.6.5 TLS-Exporter AEAD Activation and Failure Behavior
 
 Endpoints that support TLS-exporter SAR-AEAD SHOULD advertise `CAP_TLS_EXPORTER_AEAD` in `SESSION_CAPABILITIES`.
 
 Advertising `CAP_TLS_EXPORTER_AEAD` does not select TLS-exporter SAR-AEAD.
 
-KMS Mode `0x04 TLS_EXPORTER`, when selected by the SAR Global Header / KMS configuration, is authoritative for selecting TLS-exporter SAR-AEAD for that SAR stream.
+KMS Mode `0x04 TLS_EXPORTER`, when selected by the SAR Global Header and KMS configuration, is authoritative for selecting TLS-exporter SAR-AEAD for that SAR stream.
 
-If KMS Mode `0x04 TLS_EXPORTER` is not selected by the SAR Global Header / KMS configuration, endpoints MUST NOT use TLS-exporter SAR-AEAD for that SAR stream.
+If KMS Mode `0x04 TLS_EXPORTER` is not selected by the SAR Global Header and KMS configuration, endpoints MUST NOT use TLS-exporter SAR-AEAD for that SAR stream.
 
-The TLS exporter secret becomes available only after the underlying TLS session has completed successfully and the TLS peer identity has been validated according to policy.
+TLS exporter material becomes available only after the underlying TLS session has completed successfully and the TLS peer identity has been validated according to application or deployment policy.
 
 For SAR-over-QUIC, the underlying TLS session is the QUIC/TLS session.
 
-TLS exporter availability alone is not sufficient to derive SAR AEAD keying material for a SAR session.
+TLS exporter availability alone is not sufficient to establish a KMS Master Secret for a SAR session.
 
-SAR TLS-exporter AEAD key derivation also requires:
+TLS_EXPORTER KMS Master Secret derivation additionally requires:
 
-* the SAR Global Header;
-* KMS Mode `0x04 TLS_EXPORTER` parameters;
-* Stream ID;
-* Session UUID;
-* key usage;
-* exporter context as defined in Section 18.6.3.
+* the accepted SAR Global Header;
+* valid KMS Mode `0x04 TLS_EXPORTER` parameters;
+* the Stream ID;
+* the Session UUID;
+* the applicable directional Key Usage ID; and
+* the exact exporter context defined in Section 18.6.3.
 
-`SESSION_INIT` is the only mandatory SAR-layer plaintext bootstrap entry for KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`.
+`SESSION_INIT` is the only mandatory SAR-layer plaintext bootstrap Entry for KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`.
 
-`SESSION_INIT` MUST NOT be encrypted with TLS-exporter SAR-AEAD because the Session UUID contained in `SESSION_INIT` is required input to TLS-exporter SAR AEAD key derivation.
+`SESSION_INIT` MUST NOT be encrypted with TLS-exporter SAR-AEAD because the Session UUID contained in `SESSION_INIT` is required input to KMS Master Secret derivation.
 
-If the Global Header selects KMS Mode `0x04 TLS_EXPORTER`, the bootstrap `SESSION_INIT` entry MUST be encoded with Entry Mode Bit 2 (`IS_ENCRYPTED`) unset. Any physically present encryption fields are ignored according to the normal Global Flags / Entry Mode rules.
+If the Global Header selects KMS Mode `0x04 TLS_EXPORTER`, the bootstrap `SESSION_INIT` Entry MUST be encoded with Entry Mode Bit 2 (`IS_ENCRYPTED`) unset.
+
+Because Global Flag `ENCRYPTED` determines LFH field presence, the encryption fields remain physically present in that LFH. They are semantically inert and are interpreted according to the normal Global Flags and Entry Mode rules in Section 6.2.2.
+
+The `SESSION_INIT` LFH and payload remain protected by the authenticated TLS transport. They do not receive independent SAR-layer AEAD protection.
 
 TLS-exporter SAR-AEAD binding for a SAR session becomes active after all of the following conditions are satisfied:
 
@@ -3469,44 +4821,64 @@ TLS-exporter SAR-AEAD binding for a SAR session becomes active after all of the 
 3. the SAR Global Header has been parsed and accepted;
 4. KMS Mode `0x04 TLS_EXPORTER` parameters have been parsed and accepted;
 5. `SESSION_INIT` has successfully bound the Stream ID and Session UUID;
-6. TLS exporter material has been obtained from the TLS stack;
-7. SAR AEAD keying material has been derived successfully for the relevant key usage.
+6. TLS exporter material is available from the TLS stack; and
+7. the applicable 32-byte directional KMS Master Secret has been derived successfully according to Section 18.6.3.
 
-After TLS-exporter SAR-AEAD binding becomes active, every subsequent SAR entry in that session MUST be encrypted and authenticated with the derived SAR AEAD keying material.
+After TLS-exporter SAR-AEAD binding becomes active, every subsequent SAR Entry in that session MUST set `IS_ENCRYPTED`.
 
-This requirement applies to Filesystem Mode entries, Session Mode entries, `SESSION_CONTROL` entries, entries carried on the primary SAR stream, and entries carried on additional QUIC control streams.
+For each such Entry, the sender and receiver MUST derive the Entry encryption key from the applicable directional KMS Master Secret according to Section 5.3.4 before performing SAR-layer encryption or decryption.
 
-An unencrypted SAR entry received after TLS-exporter SAR-AEAD binding is active MUST fail closed.
+This requirement applies to Filesystem Mode Entries, Session Mode Entries, `SESSION_CONTROL` Entries, Entries carried on the primary SAR stream, and Entries carried on additional transport streams permitted by the active transport binding.
 
-By default, `SESSION_CONTROL` entries use the same directional key usage as ordinary SAR entries sent by the same TLS endpoint, as defined in Section 18.6.3.
+An unencrypted SAR Entry received after TLS-exporter SAR-AEAD binding is active MUST fail closed with `SAR_ERR_FLAG_CONFLICT` or a more specific applicable stream-security error defined by this specification.
 
-Additional QUIC control streams opened after TLS-exporter SAR-AEAD binding is active inherit the associated session's Global Header, KMS state, TLS exporter context, AEAD configuration, and active key usage rules.
+Every Entry transmitted by the TLS client uses the `CLIENT_TO_SERVER` KMS Master Secret.
 
-If KMS Mode `0x04 TLS_EXPORTER` is selected and an endpoint does not support it, the endpoint MUST fail closed with `SAR_ERR_UNSUPPORTED`, `SAR_ERR_KMS_FAILED`, or the closest applicable transport error.
+Every Entry transmitted by the TLS server uses the `SERVER_TO_CLIENT` KMS Master Secret.
 
-If bidirectional control is available, the endpoint SHOULD transmit `SESSION_STATUS` before terminating the session.
+`SESSION_CONTROL` Entries use the same directional KMS Master Secret as ordinary Entries transmitted by the same TLS endpoint. No separate `SESSION_CONTROL` key usage exists.
 
-If bidirectional control is not available, the endpoint MUST terminate or reject the affected stream or connection according to the transport binding.
+When multiple permitted QUIC streams are associated with the same SAR session, all Entries sent in one direction use the same directional KMS Master Secret regardless of which QUIC stream carries the Entry.
 
-Failure at any required step MUST prevent decryption and MUST NOT expose plaintext.
+QUIC stream identifiers MUST NOT be incorporated into TLS_EXPORTER derivation or per-Entry key derivation.
+
+Use of multiple QUIC streams MUST NOT create independent nonce-uniqueness scopes. Nonce uniqueness remains scoped according to the applicable KMS Master Secret and encryption algorithm rules.
+
+Additional QUIC control streams opened after TLS-exporter SAR-AEAD binding is active inherit the associated session's Global Header, KMS state, TLS exporter context, directional KMS Master Secret scope, and Entry-key derivation rules.
+
+If KMS Mode `0x04 TLS_EXPORTER` is selected and an endpoint does not implement that KMS mode or the required valid construction, the endpoint MUST fail closed with `SAR_ERR_UNSUPPORTED` or another more specific applicable error.
+
+If the implementation does not implement the TLS exporter capability required by KMS Mode `0x04 TLS_EXPORTER`, it MUST return `SAR_ERR_UNSUPPORTED`.
+
+If that capability is implemented but the required TLS exporter keying material cannot be obtained for the active TLS session, the implementation MUST return `SAR_ERR_KEY_MISSING`.
+
+Either failure MUST prevent SAR-layer encrypted processing and MUST NOT expose plaintext.
 
 Implementations MUST NOT silently downgrade from required TLS-exporter SAR-AEAD mode to transport-only TLS mode.
 
-If an implementation or application policy requires every SAR entry, including `SESSION_INIT`, to be independently protected by SAR-layer AEAD, this requirement cannot be satisfied by KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`. Such a policy requires a future bootstrap or pre-shared session context profile.
-
+If an implementation or application policy requires every SAR Entry, including `SESSION_INIT`, to be independently protected by SAR-layer AEAD, that requirement cannot be satisfied by KMS Mode `0x04 TLS_EXPORTER` Context Version `0x01`. Such a policy requires another bootstrap construction defined by an applicable future profile or specification.
 
 #### 18.6.6 Prohibited Behavior
 
 Implementations MUST NOT:
 
-* transmit SAR content-encryption keys in `SESSION_*` messages;
+* transmit KMS Master Secrets in `SESSION_*` messages or other SAR frames;
+* transmit Entry encryption keys in `SESSION_*` messages or other SAR frames;
 * transmit TLS exporter output in SAR frames;
-* place plaintext keys in KMS Data;
-* treat Session UUIDs as authentication secrets;
-* derive SAR AEAD keys without binding them to the SAR session context;
-* reuse exporter-derived SAR AEAD keys across independent sessions unless explicitly allowed by a future rekey profile;
+* place plaintext secret keys in KMS Data;
+* treat Session UUIDs, Stream IDs, exporter labels, Global Header hashes, or TLS_EXPORTER context fields as authentication secrets;
+* derive a TLS_EXPORTER KMS Master Secret without binding it to the exact context defined in Section 18.6.3;
+* derive TLS_EXPORTER KMS Master Secrets using a SAR format version field that is not part of the Context Version `0x01` construction;
+* incorporate a QUIC stream identifier or another transport-level substream identifier into Context Version `0x01`;
+* use the client-to-server KMS Master Secret for server-to-client traffic;
+* use the server-to-client KMS Master Secret for client-to-server traffic;
+* derive or negotiate a separate `SESSION_CONTROL` KMS Master Secret under Context Version `0x01`;
+* treat opening an additional QUIC stream as establishing a new KMS Master Secret scope;
+* treat an additional QUIC stream as establishing an independent Entry-nonce uniqueness scope;
+* reuse a TLS-exporter-derived KMS Master Secret across independent SAR sessions;
+* use a KMS Master Secret directly as an Entry encryption key;
 * expose plaintext before AEAD authentication succeeds;
-* allow `LOSS_TOLERANT` to suppress AEAD failures;
+* allow `LOSS_TOLERANT` to suppress AEAD authentication failures; or
 * silently downgrade from required TLS-exporter SAR-AEAD mode to transport-only TLS mode.
 
 #### 18.6.7 Post-Quantum and Hybrid TLS Key Agreement Policy
@@ -3574,26 +4946,248 @@ Implementations MAY record the negotiated TLS key agreement algorithm or policy 
 ## 19. Archive Partitioning and File Fragmentation
 This section formalizes how SAR handles data that is physically or logically non-contiguous.
 
-### 19.1 Archive Partitioning (Multi-part Archives)
-When `PARTITIONED_ARCHIVE` (Global Bit 3) is set, a logical SAR archive is split across multiple physical `.sar` files.
-* **Global Header**: Every physical file MUST contain the same Global Flags.
-* **Central Dictionary**: Only the **final partition** contains the Central Dictionary and Footer.
-* **Cross-Partition Offsets**: If `64BIT_SIZE` is active, offsets in the CD are absolute across the entire logical set (treating all files as one continuous byte-stream).
+### 19.1 Archive Partitioning
+When `PARTITIONED_ARCHIVE` (Global Bit 3) is set, one logical Partitioned Archive is represented by one or more independently parseable physical Partitions belonging to one Partition Set.
+
+Every Partition MUST begin at physical byte offset zero with a complete SAR Global Header and MUST end its Data Area with exactly one Partition Manifest Entry.
+
+When `NO_INDEX` is unset, every Partition MUST contain exactly one partition-local Central Dictionary and one Footer after the Partition Manifest Entry. When `NO_INDEX` is set, no Partition may contain a Central Dictionary or Footer and the Partition Manifest payload MUST end at the physical end of the Partition.
+
+A complete Partition Set MUST be processable without filename conventions, storage-backend conventions, a final archive-wide Central Dictionary, or a virtual concatenated offset space.
+
+#### 19.1.1 Partition Manifest Entry
+
+The Partition Manifest Entry is an LFH-based structural Entry identified by Entry Mode bit 12 (`PARTITION_MANIFEST`). It MUST be present exactly once in every Partition and MUST be the final LFH in that Partition's Data Area.
+
+The Manifest MUST be wholly contained in the current Partition. No LFH may follow it in the Data Area.
+
+The Manifest restrictions in Section 6.2.1 apply. The Manifest is not an Application Data Object and has no Full Logical Entry Path.
+
+#### 19.1.2 Manifest Version 1 Binary Layout
+
+The decoded Manifest Version 1 payload is exactly 100 bytes and is encoded as follows:
+
+| Offset | Field | Size | Encoding |
+| ---: | --- | ---: | --- |
+| `0` | Manifest Version | 1B | Unsigned integer; MUST equal `1`. |
+| `1` | Hash Algorithm ID | 1B | SAR DATA_HASH algorithm identifier. |
+| `2` | Manifest Flags | 2B | Little-endian bit field. |
+| `4` | Partition Index | 4B | Little-endian unsigned zero-based index. |
+| `8` | Total Partitions | 4B | Little-endian known count or unknown sentinel. |
+| `12` | Committed Content Length | 8B | Little-endian encoded byte count. |
+| `20` | Partition Set UUID | 16B | Opaque nonzero identity bytes. |
+| `36` | Previous Partition Hash | 32B | Digest selected by Hash Algorithm ID. |
+| `68` | Current Partition Hash | 32B | Digest selected by Hash Algorithm ID. |
+
+`Uncompressed Size` MUST equal `100` for Manifest Version 1. For a plaintext Manifest, `Payload Size` MUST equal `100`. For an AEAD-encrypted Manifest, `Payload Size` MUST equal `100 + TagLen` for the selected AEAD algorithm.
+
+Manifest Version 1 defines Manifest Flags bit 0 as `FINAL_PARTITION`. Bits 1 through 15 are reserved and MUST be zero. A receiver encountering a nonzero reserved Manifest Flags bit MUST return `SAR_ERR_RESERVED_VALUE`.
+
+An unsupported Manifest Version that is structurally bounded by its LFH MUST return `SAR_ERR_UNSUPPORTED`. A Version 1 Manifest whose decoded size is not exactly 100 bytes MUST return `SAR_ERR_INVALID_LENGTH`.
+
+#### 19.1.3 Partition Identity, Ordering, and Count
+
+`Partition Set UUID` identifies the logical Partition Set. The all-zero UUID is invalid and MUST return `SAR_ERR_MALFORMED`.
+
+`Partition Index` is the authoritative zero-based ordinal position of a Partition.
+
+`Total Partitions` has the following meanings:
+
+| Value | Meaning |
+| ---: | --- |
+| `0x00000000` | Invalid. |
+| `0x00000001` through `0xFFFFFFFE` | Known total number of Partitions. |
+| `0xFFFFFFFF` | Total number of Partitions is not yet known. |
+
+A known total MUST satisfy `Partition Index < Total Partitions`. An unknown total MUST NOT be combined with `FINAL_PARTITION`.
+
+The final Partition MUST set `FINAL_PARTITION`, MUST contain the exact known Total Partitions value, and MUST satisfy `Partition Index == Total Partitions - 1`.
+
+A non-final Partition with a known total MUST satisfy `Partition Index < Total Partitions - 1`.
+
+All known Total Partitions values within one Partition Set MUST agree. Exactly one Partition in a complete Partition Set MUST set `FINAL_PARTITION`.
+
+EOF, end-of-tape, transport closure, storage enumeration exhaustion, filename absence, or receipt of a valid non-final Partition MUST NOT independently establish logical completion.
+
+Partition-capable conforming implementations MUST support complete Partition Sets containing 1 through 65535 Partitions inclusive. Implementations MAY support larger sets. A valid count exceeding a configured or implementation limit MUST return `SAR_ERR_LIMIT_EXCEEDED`.
+
+#### 19.1.4 Partition Content Commitment and Hash Linkage
+
+Manifest Version 1 uses the existing SAR DATA_HASH algorithm identifier namespace. SHA256 (`0x30`), BLAKE3 (`0x31`), and SHA3_256 (`0x32`) produce the required 32-byte digest size. A partition-capable implementation MUST support SHA256 for Partition Manifest hashing.
+
+Every Manifest in one Partition Set MUST use the same Hash Algorithm ID.
+
+`Committed Content Length` MUST equal the physical byte offset of the Partition Manifest LFH from byte zero of the current Partition.
+
+`Current Partition Hash` MUST equal:
+
+```text
+H(Partition bytes [0 : Committed Content Length])
+```
+
+The committed range includes the complete Global Header and every encoded byte before the Manifest LFH. It excludes the Manifest LFH and payload, local Central Dictionary, Central Dictionary alignment padding, and Footer.
+
+Partition Index 0 MUST contain 32 zero bytes in `Previous Partition Hash`.
+
+For every Partition Index greater than zero:
+
+```text
+Partition[i].Previous Partition Hash = Partition[i - 1].Current Partition Hash
+```
+
+Partition Index determines order. Hash linkage verifies the committed content of the expected predecessor and MUST NOT be used as an alternative ordering mechanism.
+
+A Current Partition Hash mismatch MUST return `SAR_ERR_HASH_MISMATCH`. A predecessor-link mismatch MUST return `SAR_ERR_PARTITION_MISMATCH`.
+
+
+#### 19.1.5 Physical Partition Boundaries
+
+A physical Partition boundary may occur only between complete encoded SAR structures.
+
+An LFH, all variable LFH fields, Payload Data, AEAD authentication tag, and Selective FEC data belonging to that LFH MUST be wholly contained in one Partition. The Partition Manifest Entry, local Central Dictionary, permitted CD alignment padding, and Footer MUST likewise each be wholly contained in the current Partition.
+
+A logical Application Data Object may span Partitions only through ordinary SAR fragmentation. Partitioning MUST NOT introduce a second fragmentation representation.
+
+No transformation state required to interpret an Entry may cross a Partition boundary implicitly. Cross-Partition dependencies MUST be represented by explicit SAR identifiers and dependency fields.
+
+#### 19.1.6 Fragmentation Across Partitions
+
+Within a Partitioned Archive, Fragment ID scope is the complete Partition Set.
+
+Fragment Index 0 MAY occur in one Partition and later fragments of the same Entry MAY occur in later Partitions. Each fragment remains one complete LFH-based fragment contained in one Partition.
+
+Canonical physical ordering across a complete Partition Set is ascending Partition Index and then physical LFH order within each Partition. A fragmented Entry retains the canonical Entry-order position established by Fragment Index 0.
+
+A Partition may be structurally complete even when a fragmented Entry continues in a later Partition. A complete Partition Set MUST NOT be reported as completely reconstructed while required fragments remain unavailable unless existing `LOSS_TOLERANT` rules permit a degraded result.
+
+A partition-local CD indexes each fragment LFH separately. General fragment field presence and consistency requirements remain defined by the fragmentation rules and are not altered by partitioning.
+
+#### 19.1.7 Partition-Local Central Dictionary and Footer
+
+When `NO_INDEX` is unset, every Partition MUST contain one local Central Dictionary and Footer. The local CD describes only LFHs physically present in the same Partition according to Section 7.
+
+When `NO_INDEX` is set, no Partition contains a CD or Footer. The `NO_INDEX` Global Flag MUST have the same value in every Partition of one Partition Set.
+
+All local CD offsets and the Footer `CD Offset` are measured from byte zero of the current physical Partition. No virtual concatenated Partition Set address space exists.
+
+#### 19.1.8 Completion and Missing Members
+
+A Partition Set is complete only when exactly one valid final Partition establishes the exact Total Partitions value, every Partition Index from zero through `Total Partitions - 1` is available exactly once after duplicate resolution, all Partition Set UUID and known-count relationships agree, every Current Partition Hash validates, every Previous Partition Hash relationship validates, and every required local structural rule succeeds.
+
+If complete processing is requested and one or more required members are unavailable, the implementation MUST return `SAR_ERR_PARTITION_MISSING`.
+
+Implementations MAY provide explicitly application-controlled incomplete or degraded Partition Set processing consistent with Section 12.4, but MUST NOT report complete Partition Set reconstruction while a required Partition is unavailable. Fragmented Entries affected by unavailable Partition members are additionally subject to Sections 6.1.3 and 19.4.5.
+
+Incomplete or degraded Partition Set processing MUST NOT infer completion of a fragmented Entry from the exhaustion of available Partition members alone. A fragmented Entry whose Fragment ID scope is the Partition Set MAY be concluded as incomplete only when the exact Partition Set boundary is known from valid Partition Set metadata. If the final Partition, or other information required to establish the exact boundary, is unavailable, an incomplete fragmented Entry MUST remain unresolved and MUST NOT be applied as degraded logical output.
+
+If the exact boundary is known but one or more Partition members are unavailable, a fragmented Entry affected by those members MAY produce degraded output only when all requirements of `LOSS_TOLERANT`, Section 6.1.3, and Section 19.4.5 are satisfied. In particular:
+
+* Fragment Index 0 MUST be available to establish logical Entry identity;
+* degraded output MUST consist only of the longest contiguous valid fragment prefix beginning at Fragment Index 0;
+* fragments after the first missing or unusable Fragment Index MUST NOT contribute to degraded logical output;
+* an incomplete Fragment Reassembly Sequence MUST NOT be supplied to a group-wide reconstruction stage that requires the complete representation; and
+* degraded output MUST NOT be reported as integrity-verified unless the complete integrity domain was reconstructed and verified.
+
+A missing Partition member has unknown contents. It MUST NOT be treated as proving that any particular Fragment Index was absent from the encoded Partition Set.
+
+#### 19.1.9 Duplicate Partition Candidates
+
+Physical candidates are grouped for duplicate resolution by the tuple `(Partition Set UUID, Partition Index)`.
+
+For duplicate-resolution purposes, Partition identity is determined by the canonical Data Area and the Manifest values that bind that Data Area to the Partition Set. The local Central Dictionary, its metadata, alignment padding, and Footer are auxiliary structures and are not part of Partition identity.
+
+Each candidate MUST independently satisfy all validation requirements applicable to that physical Partition before it may participate in duplicate resolution. A candidate that fails validation MUST NOT be used as a replica and MUST NOT by itself cause an otherwise valid candidate for the same tuple to be treated as conflicting.
+
+Because candidates are grouped by identical Partition Set UUID and Partition Index before replica comparison, those two values are already equal and are not repeated in the replica-equivalence criteria below.
+
+Two or more valid candidates for the same tuple are equivalent replicas if they agree on Manifest Version, Hash Algorithm ID, Total Partitions, finality, Committed Content Length, Previous Partition Hash, and verified Current Partition Hash.
+
+When Manifest encryption is active, equivalent replicas MAY differ in the encoded Manifest ciphertext, nonce, and authentication tag, provided each Manifest independently authenticates and decodes to the values required for replica equivalence.
+
+Equivalent replicas MAY differ in their local Central Dictionary, Central Dictionary metadata, signatures, recovery data, alignment padding, and Footer, provided each candidate independently satisfies all applicable validation requirements. Such differences do not alter the canonical Data Area represented by the Partition.
+
+For operations defined solely by the canonical Data Area, an implementation MAY use any equivalent replica.
+
+For operations that depend on auxiliary Central Dictionary metadata or other replica-local structures, an implementation MAY use the corresponding independently validated information from any equivalent replica. An implementation MUST NOT treat differing auxiliary metadata between equivalent replicas as a Partition conflict solely because the metadata differs.
+
+Information from multiple equivalent replicas MUST NOT be combined in a manner that violates the validation, scope, ordering, or consistency rules of the metadata formats being used.
+
+If two or more valid candidates for the same tuple disagree on any value required for replica equivalence, they are conflicting candidates and processing of the Partition Set MUST fail with `SAR_ERR_PARTITION_MISMATCH`.
+
+Different Partition Indices within the same Partition Set identify distinct physical Partitions and are not duplicate candidates.
+
+#### 19.1.10 Global Header Consistency
+
+Every Partition in one Partition Set MUST contain the same Global Header Version, `Flags Size`, and complete Global Flags value. A Global Header Version that differs between Partitions of one Partition Set MUST return `SAR_ERR_INVALID_VERSION`.
+
+Global Header byte-for-byte equality is not required because partition-local KMS parameters may vary as permitted by Section 19.1.11.
+
+#### 19.1.11 Partition-Specific KMS Consistency
+
+When `ENCRYPTED` is set, every Partition in one Partition Set MUST use the same KMS Mode ID.
+
+For PBKDF2, every Partition MUST use the same PRF Algo ID. Salt, Iterations, and other permitted partition-local parameters MAY differ.
+
+For ARGON2, every Partition MUST use the same Argon2 Variant and Version. Salt, Memory Cost, Time Cost, Parallelism, and other permitted partition-local parameters MAY differ.
+
+For ASYMMETRIC_WRAP, every Partition MUST use the same Wrap Algo ID and the same logical recipient set. Recipient ordering MAY differ and randomized Wrapped Key Blob bytes MAY differ.
+
+For TLS_EXPORTER, every Partition MUST use the same Context Version and KDF Algo ID.
+
+A cross-Partition mismatch in these set-defining KMS properties MUST return `SAR_ERR_PARTITION_MISMATCH`.
+
+These rules define only the consistency required for Partition Set interpretation. General KMS security and interoperability requirements remain governed by the KMS sections of this specification.
+
+#### 19.1.12 Manifest Encryption
+
+Partitioning does not require archive encryption.
+
+When `ENCRYPTED` is unset, the Partition Manifest Entry MUST have `IS_ENCRYPTED` unset and its payload is plaintext.
+
+When `ENCRYPTED` is set, the Partition Manifest Entry MUST set `IS_ENCRYPTED` and MUST use an AEAD-capable SAR encryption algorithm. Every Partition Manifest Entry in one Partition Set MUST use the same AEAD algorithm.
+
+The Partition Manifest Entry uses the KMS Master Secret established by the KMS Extension of the current Partition. Its Entry encryption key MUST be derived from that KMS Master Secret according to the common per-Entry key derivation defined in Section 5.3.4.
+
+The Manifest uses the ordinary SAR AEAD nonce, tag, processing, and AAD rules in Section 13.2. Partitioning does not redefine the general AAD domain.
+
+When Manifest encryption is active, its AEAD authentication protects Partition Set UUID, ordering, count, finality, and predecessor-link metadata that is not included in `Current Partition Hash`. It also provides authenticated Manifest metadata for `NO_INDEX` Partition Sets, where CD signatures are unavailable.
+
+Ordinary non-Manifest Entries retain their normal Entry Mode and encryption choices.
+
+
+#### 19.1.13 Resource Limits and Arithmetic
+
+Implementations MUST apply configured resource limits before allocating or retaining state based on Partition metadata.
+
+Limits MUST cover at least claimed Total Partitions, discovered candidates, simultaneously open members, aggregate encoded size, aggregate reconstructed size, temporary storage, duplicate-candidate retention, fragment maps, hash-verification work, relationship traversal, local CD Entry Count, and offset-array storage.
+
+All arithmetic involving counts, indices, offsets, lengths, aggregate sizes, and offset-array sizes MUST use checked arithmetic. Overflow MUST return `SAR_ERR_OVERFLOW`. A syntactically valid value exceeding a configured implementation limit MUST return `SAR_ERR_LIMIT_EXCEEDED`.
+
+#### 19.1.14 Manifest Validation
+
+A decoder MUST validate the Manifest's structural classification, exact Version 1 decoded size, supported version, reserved flag bits, nonzero Partition Set UUID, Partition Index, Total Partitions, finality relationship, configured count limits, checked arithmetic, Committed Content Length, Hash Algorithm ID, Current Partition Hash, Previous Partition Hash relationship when the predecessor is available, Global Header consistency, required KMS consistency, and local CD/Footer presence according to `NO_INDEX`.
+
+A missing required Manifest MUST return `SAR_ERR_METADATA_MISSING`. More than one Manifest in one Partition MUST return `SAR_ERR_METADATA_CONFLICT`. A Manifest without `PARTITIONED_ARCHIVE` MUST return `SAR_ERR_FLAG_CONFLICT`. A Manifest that is not the final LFH in the Data Area MUST return `SAR_ERR_MALFORMED`.
 
 ### 19.2 File Fragmentation (Multiplexing)
 When `FILE_FRAGMENTATION` (Global Bit 4) is set, a single file (e.g., `video.mp4`) can be broken into $N$ fragments. This is critical for real-time streaming where large assets must be interleaved with control commands or other data.
 
 #### 19.2.1 Fragment Identification
-Each fragment of the same file MUST share the same **Fragment ID** LFH field value.
-* **Fragment Index**: A 0-based monotonic counter. The receiver uses this to reassemble the bytes in the correct order.
-* **Name/Path Persistence**: Only the first fragment (Index 0) is REQUIRED to carry the `Name String` and `Path String`. Subsequent fragments SHOULD set `Name Length` to 0 to save bandwidth, as the `Fragment ID` serves as the primary lookup.
+The fragment wire model, fragment-group scope, metadata classes, and Name/Path rules are defined by Section 6.1.3 and are not restated here. Each fragment is a complete LFH carrying `Fragment ID` and `Fragment Index`.
+
+* **Fragment Group Scope**: `Fragment ID` is meaningful only within its applicable fragment scope (Section 6.1.3): the archive, or the complete Partition Set for a Partitioned Archive (Section 19.1.6), or the active SAR session and Stream ID for Stateful Streaming (Section 18.4.2). A bare `Fragment ID` value MUST NOT be used as a lookup key outside that scope.
+* **Fragment Index**: The ordinal of a fragment within its group. The Fragment Reassembly Sequence is the concatenation of decoded fragment contributions in ascending Fragment Index order.
+* **Name/Path**: Name and Path presence and consistency for fragments with Fragment Index greater than zero are governed by Section 6.1.3. The Full Logical Entry Path is established only by Fragment Index 0.
 
 #### 19.2.2 Reassembly Logic
 A receiver encountering `IS_FRAGMENT` (Entry Mode Bit 5) MUST:
-1. Check its local reassembly buffer for the `Fragment ID`.
-2. Append the `Payload Data` to the buffer at the position dictated by `Fragment Index`.
-3. If `LAST_FRAGMENT` (Bit 6) is encountered, the file is considered complete.
-4. Perform `File CRC32` or `Content Hash` verification only **after** the final fragment is joined. If `LOSS_TOLERANT` is active, the `SAR_WARN_INCOMPLETE` status SHOULD be used to signal that the file was committed despite a hash mismatch.
+1. Locate or create the fragment-group state for the applicable fragment scope and `Fragment ID`.
+2. Validate the fragment LFH, including Class G consistency with the group (Section 6.1.3), and process it through the fragment-local stages of Section 13.1.3 (Selective FEC recovery, AEAD authentication/decryption, decompression). The resulting fragment contribution MUST have length equal to the fragment's `Uncompressed Size`.
+3. Record the contribution under its `Fragment Index`. Raw `Payload Data` MUST NOT be appended directly to the group buffer; only the decoded contribution is retained.
+4. Treat `LAST_FRAGMENT` (Bit 6) as identifying the terminal Fragment Index. It does not by itself complete the group, authorize application, or constitute a failure.
+5. When every Fragment Index from zero through the terminal Fragment Index is present (or `LOSS_TOLERANT` permits degraded reconstruction), form the Fragment Reassembly Sequence in ascending Fragment Index order and perform the required group-wide reconstruction stages of Section 13.1.3.
+6. Perform `File CRC32` or `Content Hash` verification over the final logical Entry only after group-wide reconstruction, using the completion-authoritative values of Section 6.1.3. A failed verification MUST NOT result in the Entry being committed or reported as verified. `LOSS_TOLERANT` does not alter this (Section 19.4.5).
+7. In Stateful Streaming, apply the logical operation exactly once according to Section 18.4.2.
 
 ### 19.3 Streaming Considerations
 In e.g. a real-time dia-show application, the sender might stream `image_01.jpg`, then start streaming `background_audio.mp3` in fragments while `image_02.jpg` is being prepared. This allows the application to begin playing the audio before the entire file has arrived, while still allowing other small files to "jump the queue" in the stream.
@@ -3602,97 +5196,51 @@ In e.g. a real-time dia-show application, the sender might stream `image_01.jpg`
 Managing non-contiguous data requires the Receiver to act as a stateful buffer manager. This section defines the mandatory error recovery logic.
 
 ### 19.4.1 Reassembly Timeouts (The "Dead-Drop" Rule)
-In `FILE_FRAGMENTATION` mode (Global Bit 4), the Receiver MUST implement a **Fragment TTL (Time To Live)**.
+In live or incremental contexts, namely Stateful Streaming (Section 18), the Receiver MUST implement a **Fragment TTL (Time To Live)**. Ordinary archive decoding has no fragment wall-clock timeout.
 * **Problem**: A Sender starts a 4GB transfer in fragments but crashes after fragment 10. Without a timeout, the Receiver's memory remains "poisoned" with an incomplete reassembly buffer.
-* **Requirement**: If no new fragment for a specific `Fragment ID` arrives within a set window (default 60s), the Receiver SHALL discard the buffer and return `SAR_ERR_FRAGMENT_TIMEOUT` (17).
+* **Requirement**: Timeout state is keyed by `(active SAR session, Stream ID, Fragment ID)`. If no new fragment for that group occurs within a set window (default 60s), the Receiver SHALL discard the group's buffered state and return `SAR_ERR_FRAGMENT_TIMEOUT` (401).
+* **Archival Conclusion**: In archival processing a fragment group is concluded by structure, not time: an unpartitioned group is concluded at the end of its Physical Archive Member, and a partitioned group only at the end of its Partition Set (Section 19.1.6), which requires the exact Partition Set boundary to be known (Section 19.1.8). Exhaustion of the available members alone does not conclude a group. Required Fragment Indices still missing at conclusion produce `SAR_ERR_FRAGMENT_GAP`, subject to `LOSS_TOLERANT` (Section 19.4.5).
+* **Non-Application**: A discarded incomplete group MUST NOT be applied to final state.
 
 ### 19.4.2 Out-of-Order Handling
-While the **Sequence No** field ensures transport-layer sanity, the **Fragment Index** field allows the logical file to be reassembled even if fragments are interleaved with other files.
-* **Requirement**: If a fragment arrives with a `Fragment Index` that creates a gap, the Receiver SHOULD buffer subsequent indices and wait for the missing parts.
-* **Critical Failure**: If `LAST_FRAGMENT` (Bit 6) arrives while gaps exist in the index sequence, the Receiver MUST return `SAR_ERR_FRAGMENT_GAP` (14) **UNLESS Bit 7 (`LOSS_TOLERANT`) is set**.
+`Fragment Index`, `Sequence No`, and LFH occurrence order are distinct (Section 18.4.2). The **Fragment Index** field allows the logical file to be reassembled even if fragments are interleaved with other Entries or occur out of Fragment Index order.
+* **Requirement**: If a fragment occurs with a `Fragment Index` that creates a gap, the Receiver MAY buffer it as incomplete fragment-group state and wait for the missing fragments, subject to Sections 19.4.1 and 19.4.3.
+* **Missing Fragments**: `LAST_FRAGMENT` (Bit 6) identifies the terminal Fragment Index. Its occurrence while gaps exist does not by itself fail the group, because missing lower indices MAY still become available. A group that is concluded (at the end of its Physical Archive Member or Partition Set in archival mode, by the TTL of Section 19.4.1 or by session termination or resumption in Stateful Streaming) while any Fragment Index from zero through the terminal Fragment Index is missing is a fragment gap and MUST return `SAR_ERR_FRAGMENT_GAP` (400) unless existing `LOSS_TOLERANT` (Bit 7) rules permit a degraded result (Section 19.4.5).
+* **Duplicates and Conflicts**: Duplicate, replica, and conflicting fragments are governed by Section 6.1.3.
 
 ### 19.4.3 Resource Exhaustion & DoS Protection
 Fragmentation is a potential vector for a **"Memory Exhaustion Attack"** (where a malicious sender starts thousands of fragmented transfers but never sends the `LAST_FRAGMENT`).
-* **The "Concurrency Cap"**: Implementations SHOULD limit the number of concurrent "Active Fragments" they will track. If a new `Fragment ID` arrives that exceeds this limit, the Receiver SHALL return `SAR_ERR_REASSEMBLY_BUFFER_FULL` (15).
+* **The "Concurrency Cap"**: Implementations SHOULD limit the number of concurrent "Active Fragments" they will track. If a new fragment group (distinct applicable fragment scope and `Fragment ID`) occurs that exceeds this limit, or if the fragment-reassembly buffer capacity is exhausted, the Receiver SHALL return `SAR_ERR_REASSEMBLY_BUFFER_FULL` (502).
 
 ### 19.4.4 Partition Discovery, Verification, and Recovery
 
-For `PARTITIONED_ARCHIVE` mode (Global Bit 3), Receivers MUST verify that all partitions belong to the same logical archive set before processing archive payloads.
+Partition discovery, association, ordering, completion, duplicate-candidate handling, hash linkage, and missing-member behavior are defined in Section 19.1.
 
-#### Partition Association
-
-Partitions MUST be associated using the Partition Descriptor defined in Section 5.
-
-All partitions belonging to the same archive set MUST:
-
-* Contain the same `Partition Set UUID`.
-* Declare a unique `Partition Index`.
-* Declare the same `Total Partitions` value.
-
-Matching filenames, archive names, Magic values, or Global Flags alone MUST NOT be treated as sufficient proof that partitions belong to the same archive set.
-
-Filesystem-based partition sets SHOULD use deterministic names of the form:
-
-`[Archive_Name].sar.[3-byte zero-padded index]`
-
-Implementations MUST NOT rely on filenames as the sole mechanism for partition discovery or verification.
-
-#### Partition Integrity Verification
-
-Partition integrity SHOULD be verified before extraction begins.
-
-Verification MAY be performed using:
-
-* Digital Signatures when the `SIGNED` flag is present.
-* Partition Hash and Previous Partition Hash values contained within the Partition Descriptor.
-* Archive-wide integrity mechanisms defined elsewhere in this specification.
-
-Partition 0 MUST contain a zero-filled `Previous Partition Hash`.
-
-Receivers MUST verify that all discovered partitions form a continuous and valid partition chain.
-
-#### Incomplete Partition Sets
-
-If one or more required partitions are unavailable, the Receiver MUST return `SAR_ERR_PARTITION_MISSING`.
-
-Extraction SHOULD NOT begin until all required partitions have been located and verified.
-
-#### Degraded Recovery Mode
-
-Implementations MAY provide an application-controlled degraded recovery mode.
-
-In degraded recovery mode, available partitions MAY be processed sequentially without relying on the final Central Dictionary.
-
-When degraded recovery mode is used:
-
-* Missing partitions MUST result in `SAR_WARN_INCOMPLETE`.
-* Entries spanning unavailable partitions MUST be skipped.
-* Integrity verification MUST be limited to metadata available within the recovered partitions.
-* Implementations MUST NOT claim successful archive reconstruction if one or more required partitions are unavailable.
-
-The use of degraded recovery mode is implementation-defined and MUST NOT be enabled implicitly.
+Filenames, archive names, storage enumeration order, and storage-backend metadata MAY assist discovery but MUST NOT establish Partition Set identity, Partition order, or logical completion.
 
 
 ### 19.4.5 Lossy Reassembly and Best-Effort Streaming
 When the `LOSS_TOLERANT` flag (Bit 7) is active, SAR transitions to a "continuity-first" delivery model suitable for temporal data (audio, video, telemetry).
-1. **Gap-Filling**: Upon receipt of the `LAST_FRAGMENT`, any missing indices SHALL be filled with **Null Bytes (0x00)** or maintained as unwritten regions in a sparse file.
-2. **Integrity Bypass**: If gaps are present, a hash mismatch is expected. If Bit 7 is set, a failed `File CRC32` or `Content Hash` SHOULD NOT be treated as a fatal error. The Receiver SHALL commit the data and return `SAR_WARN_INCOMPLETE` (18).
-3. **Out-of-Order Discard**: In time-sensitive streaming, if a "belated" fragment arrives after the file has already been committed or played, the Receiver MAY discard it without error.
-4. **Authentication Preservation**: `LOSS_TOLERANT` applies only to missing, late, truncated, or otherwise unavailable data. It MUST NOT permit processing of payload data that fails cryptographic authentication. If AEAD authentication fails for an encrypted fragment or entry, the affected data MUST be discarded. Implementations MAY continue processing subsequent fragments, entries, or stream data when `LOSS_TOLERANT` is set, but MUST NOT expose, reconstruct, decode, decompress, patch, execute, or otherwise process unauthenticated payload contents.
+1. **No Synthetic or Shifted Content**: Fragments carry no offsets and a missing contribution's length is unknown. Implementations MUST NOT synthesize bytes (including null bytes) for a missing Fragment Index, and MUST NOT concatenate contributions that follow a missing Fragment Index, because that would shift later bytes to invented positions. Degraded logical output is only the longest contiguous valid prefix of contributions beginning at Fragment Index 0, in ascending Fragment Index order. If Fragment Index 0 is missing, no degraded logical Entry may be applied. Fragments after the first gap MAY be retained diagnostically but MUST NOT contribute to logical output.
+2. **Degradation Limits**: An incomplete Fragment Reassembly Sequence MUST NOT be passed to patch application, CDC resolution, sparse reconstruction, or any other group-wide construction requiring a complete representation. If such a stage is required and any Fragment Index is missing, the Receiver MUST return `SAR_ERR_FRAGMENT_GAP`, regardless of `LOSS_TOLERANT`.
+3. **Integrity Is Not Bypassed**: Permitted degraded output MUST return `SAR_WARN_INCOMPLETE` (1) according to Section 6.2.3, and MUST NOT be described as integrity-verified unless the complete integrity domain was actually reconstructed and verified (Section 6.1.3). A failed integrity verification MUST NOT be treated as a successful commit. In Stateful Streaming, the application conditions of Section 18.4.2 remain in force.
+4. **Late Fragments**: In time-sensitive streaming, if a belated fragment occurs after its group has already been concluded, delivered, or discarded, the Receiver MAY discard it without error. It MUST NOT be combined with a previously concluded group, and in Stateful Streaming MUST NOT be combined across session resumption (Section 18.3.7).
+5. **Authentication Preservation**: `LOSS_TOLERANT` applies only to missing, late, truncated, or otherwise unavailable data. It MUST NOT permit processing of payload data that fails cryptographic authentication. If AEAD authentication fails for an encrypted fragment or entry, the affected data MUST be discarded. Implementations MAY continue processing subsequent fragments, entries, or stream data when `LOSS_TOLERANT` is set, but MUST NOT expose, reconstruct, decode, decompress, patch, execute, or otherwise process unauthenticated payload contents.
 
 ## 19.5 Fragmentation Strategies
 For large fragmented files, Receivers SHOULD NOT reassemble entirely in RAM.
-* **Strategy**: When a `Fragment ID` is first encountered, the Receiver creates a **Sparse Shadow File** on disk.
-* **Action**: Each incoming fragment is `seek()`ed to its correct offset based on `Fragment Index * Fragment_Size` and written directly.
-* **Result**: This allows for reassembling 100GB files without consuming 100GB of RAM, leveraging the **Sparse File Logic (Section 17)** we already established.
+* **Strategy**: Receivers MAY spool decoded fragment contributions to temporary storage, keyed by fragment group and `Fragment Index`, and stream them in ascending Fragment Index order when forming the Fragment Reassembly Sequence.
+* **No Positional Assumption**: Fragment contributions have variable lengths defined by each fragment's `Uncompressed Size`. A contribution's position is determined only by the lengths of all lower-index contributions, so it MUST NOT be computed from `Fragment Index` and a fixed fragment size, and a contribution MUST NOT be written to its final position before all lower-index contributions are known.
+* **Sparse Files Are Unrelated**: Native sparse-file facilities MAY be used only for final sparse reconstruction under Section 17, not as a mechanism for placing ordinary fragments.
+* **Result**: Large files can be reassembled without holding the complete Entry in RAM, with no change to the wire semantics, resource limits, or verification order defined by Sections 6.1.3 and 13.1.3.
 
 ### 19.6 Sparse File Interaction
 When both `SPARSE_FILES` (Bit 30) and `FILE_FRAGMENTATION` (Bit 4) are active, the following rules apply:
 
-1. **Global Scope**: The Sparse Map describes the layout of the fully reconstructed file, not individual fragments.
-2. **Fragment Constraints**: Individual fragments MUST NOT contain independent Sparse Maps. The Sparse Map MUST be present only in the first fragment (Fragment Index 0).
-3. **Reassembly Requirement**: The Receiver MUST first reassemble all fragments into a logical contiguous payload before applying Sparse Map reconstruction.
-4. **Streaming Optimization (Optional)**: Implementations MAY apply sparse reconstruction incrementally during fragment arrival, provided correctness is maintained.
+1. **Global Scope**: The Sparse Map, including `Sparse Logical Size`, describes the layout of the fully reconstructed logical Entry, not individual fragments (Section 17.2).
+2. **Fragment Constraints**: Individual fragments MUST NOT contain independent Sparse Maps. The Sparse Map MUST be present only in the first fragment (Fragment Index 0); fragments with Fragment Index greater than zero MUST encode `Sparse Map Size` as zero and omit the Sparse Map, otherwise the Receiver MUST return `SAR_ERR_METADATA_CONFLICT` (Section 6.1.3).
+3. **Reassembly Requirement**: The Receiver MUST first form the complete Fragment Reassembly Sequence, and complete any intervening group-wide stage, before applying sparse reconstruction (Sections 13.1.3 and 17.3). The Fragment Reassembly Sequence is the gathered-data representation consumed by sparse reconstruction, not the sparse logical file.
+4. **Streaming Optimization (Optional)**: Implementations MAY apply sparse reconstruction incrementally only when the observable result is identical to complete reconstruction, and only once every lower-index contribution needed to determine the gathered-data position is known.
 5. **Integrity Verification**: All integrity checks (CRC32, Content Hash) MUST be performed on the fully reconstructed sparse file.
 
 ## 20. Content-Defined Chunking (CDC) Protocol
@@ -3705,20 +5253,21 @@ If `CDC_SUPPORT` (Bit 5) is active globally, every LFH MUST be evaluated based o
 2. **Recipe Mode (`> 0x00`)**: The payload is interpreted as a **Hash Recipe**. Each hash in the payload refers to a unique chunk stored in a **Catalog**.
 
 ### 20.2 The Hash Recipe Structure
-In Recipe Mode, the `Payload Data` (after decryption and decompression) MUST be parsed as a contiguous array of binary hashes.
+In Recipe Mode, the representation supplied to CDC resolution MUST be parsed as a contiguous array of binary hashes. That representation is the decoded `Payload Data` of an unfragmented Entry, or the Fragment Reassembly Sequence of a fragmented Entry, after any preceding group-wide stage (for example patch application) per Section 13.1.3.
 
 * **Hash Algorithm**: The length and type of hashes in the recipe are determined by the `DEDUPLICATION` (Bit 29) setting.
-* **Logical Continuity**: The order of hashes in the payload defines the exact byte-sequence of the reconstructed file.
+* **Logical Continuity**: The order of hashes in the recipe defines the exact byte-sequence of the reconstructed file.
+* **Completeness**: A Recipe MUST be complete. A fragmented Recipe Entry with a missing Fragment Index MUST return `SAR_ERR_FRAGMENT_GAP` even when `LOSS_TOLERANT` is set (Section 19.4.5), and a Recipe MUST NOT be parsed from a partial Fragment Reassembly Sequence.
 
 ### 20.3 Recipe Resolution and Transformation
-The `CDC Algo ID` is the final stage of the decoding pipeline.
+CDC resolution is a group-wide stage whose position in the decoding pipeline is defined exclusively by Section 13.1.3.
 
-1. **Pipeline Resolution**: Apply Decrypt, Decompress, and Patch to the payload as defined in Section 13.7.4.
-2. **Recipe Interpretation**: The resulting byte-block is the Recipe.
+1. **Pipeline Resolution**: Obtain the Recipe through the applicable preceding stages of Section 13.1.3: for each fragment (if fragmented), Selective FEC recovery, AEAD authentication/decryption, and decompression; then Fragment Reassembly; then patch application, if applicable.
+2. **Recipe Interpretation**: The resulting representation is the Recipe.
 3. **Chunk Fetching**: The implementation SHALL iterate through the hashes in the Recipe, retrieving the corresponding bytes from either:
     * A local SAR **CDC_MAP** (Central Dictionary TLV).
     * An external Content-Addressable Storage (CAS) database.
-4. **Final Reassembly**: Chunks are appended to the logical file.
+4. **Final Reassembly**: Chunks are appended to the logical byte sequence, which is then supplied to sparse reconstruction, if applicable, and final logical integrity verification (Section 13.1.3).
 
 ## 21. CDC Cataloging and Metadata
 
@@ -3734,7 +5283,7 @@ For self-contained archives, the Catalog is stored as a Metadata TLV block in th
 
 * **TLV Type ID**: `0x40` (`CDC_MAP`)
 * **Structure**: A 16-byte `CDC_MAP_Header` followed by `Record_Count` 48-byte `CDC_MAP_Record` entries.
-* **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, this TLV SHOULD be present.
+* **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, a self-contained archive SHOULD provide sufficient `CDC_MAP` metadata in its Central Dictionary metadata to resolve its Recipe entries. In a Partitioned Archive, this metadata MAY be distributed across partition-local Central Dictionaries, and a `CDC_MAP` record MAY reference any Partition belonging to the same Partition Set.
 * **Verification Scope**: Structural validation of stored CDC metadata is always permitted. Hash verification over stored byte ranges is permitted when the hash algorithm is supported and archive bounds are available.
 
 `CDC_MAP` is **self-describing** via the `Hash_Algorithm_ID` field in its header.  Parsers MUST read `Hash_Algorithm_ID` from the header to determine which hash algorithm is used for record hashes.  Parsers MUST NOT hard-code an unnamed hash algorithm or treat the LFH `CDC Algo ID` (chunking algorithm) as the hash algorithm for CDC_MAP records.
@@ -3762,12 +5311,13 @@ TLV Length MUST equal `16 + Record_Count × Record_Size`.  Both the multiplicati
 
 #### CDC_MAP_Record v1 (48 bytes)
 
-| Field             | Size     | Description                                                                     |
-| ----------------- | -------- | ------------------------------------------------------------------------------- |
-| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID`.                   |
-| `Partition_ID`    | 4 bytes  | Partition identifier containing the referenced chunk.                           |
-| `Absolute_Offset` | 8 bytes  | Absolute byte offset of the referenced chunk from the beginning of the archive. |
-| `Compressed_Size` | 4 bytes  | Size in bytes of the referenced stored chunk payload.                           |
+| Field             |     Size | Description                                                                                                                                                                                          |
+| ----------------- | -------: | --------------- |
+| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID`. |
+| `Partition_Index` |  4 bytes | Physical member selector. MUST be `0` for an unpartitioned archive. For a Partitioned Archive, MUST equal the Partition Manifest `Partition Index` of the Partition containing the referenced chunk. |
+| `Member_Offset`   |  8 bytes | Byte offset of the referenced chunk from physical byte zero of the archive member selected by `Partition_Index`. |
+| `Compressed_Size` |  4 bytes | Size in bytes of the referenced stored chunk payload. |
+
 
 #### CDC_MAP hash algorithm registry
 
@@ -3785,21 +5335,26 @@ Structural validation MAY always be performed and includes:
 * TLV Length equals `16 + Record_Count × Record_Size`;
 * all arithmetic is checked;
 * `Hash_Algorithm_ID` is in the registry.
+* for an unpartitioned archive, `Partition_Index` is zero for every record;
+* for a Partitioned Archive, each `Partition_Index` identifies a Partition belonging to the same Partition Set before the referenced location is used;
+* `Member_Offset + Compressed_Size` uses checked arithmetic.
 
 #### CDC_MAP hash verification
 
 Hash verification MAY be performed only if:
 
 * `Hash_Algorithm_ID` is supported;
-* the referenced byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)` is readable;
-* archive bounds are available.
+* the Physical Archive Member selected by `Partition_Index` is available;
+* the referenced byte range `[Member_Offset, Member_Offset + Compressed_Size)` is readable within that member; and
+* the bounds of that member are available.
 
-`Absolute_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within archive bounds when archive bounds are available.
+For an unpartitioned archive, `Partition_Index` MUST be zero and selects the archive itself.
 
-CDC_MAP hash verification is over the exact stored byte range `[Absolute_Offset, Absolute_Offset + Compressed_Size)`.  This is **not** the same as FASTCDC boundary-regeneration verification.
+For a Partitioned Archive, `Partition_Index` MUST identify the Partition whose Partition Manifest carries the same `Partition Index` value.
 
-A parser does not require knowledge of the CDC chunking algorithm (as defined by the LFH `CDC Algo ID` in Section 8.5) to parse the `CDC_MAP` structure itself. The CDC algorithm determines how chunks are produced, but the `CDC_MAP` is a catalog of already materialized chunk metadata.
+`Member_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within the bounds of the selected Physical Archive Member when those bounds are available.
 
+CDC_MAP hash verification is over the exact stored byte range `[Member_Offset, Member_Offset + Compressed_Size)` of the selected Physical Archive Member. This is **not** the same as FASTCDC boundary-regeneration verification.
 
 ### 21.2 External Database Integration (`CDC_EXT_PROVIDER`)
 
@@ -3807,7 +5362,7 @@ In distributed environments, such as Edge-to-Cloud streaming, the Catalog MAY be
 
 * **TLV Type ID**: `0x41` (`CDC_EXT_PROVIDER`)
 * **Value**: A UTF-8 URI string pointing to the external chunk provider, for example `sarp+https://chunks.provider.net/v1`.
-* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`19`).
+* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`402`).
 
 **Security Considerations**: The use of external provider URIs introduces potential security risks, including unauthorized data access, data exfiltration, or interaction with untrusted endpoints. Implementations SHOULD validate and sanitize all URIs before use. Implementations MAY restrict acceptable URI schemes, enforce allowlists of trusted domains, or apply other policy controls in an implementation-defined manner. Implementations SHOULD provide mechanisms to disable external provider resolution entirely or require explicit user consent before accessing external resources.
 
@@ -3827,14 +5382,60 @@ Implementations SHOULD utilize Selective Deduplication to optimize streaming thr
 * **Packed Structs**: Because SAR headers are "packed" without alignment padding, C/C++ developers SHOULD use `#pragma pack(push, 1)` or `__attribute__((packed))` to ensure the binary structure matches the specification.
 
 ### 22.2 Sparse File Handling
-see section 17.4
+see sections 17 and 19.6
 
 ### 22.3 Fragmentation Strategies
-see sections 19.4 and 19.5
+see sections 19.2, 19.4 and 19.5
 
 ### 22.4 Path Security
-* **Canonicalization**: Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
-* **Privilege Gating**: `SYSTEM_INSTALL` operations SHOULD require administrative privileges and SHOULD verify digital signatures (`SIGNED` Bit 18) before modifying system directories.
+
+Before materializing an Entry, an implementation MUST derive its destination from the selected Extraction Root or explicitly authorized installation scope and the Entry's Full Logical Entry Path.
+
+Archive or stream metadata MUST NOT override the selected scope.
+
+Every filesystem mutation performed during materialization MUST remain within the selected scope.
+
+Implementations MUST account for pre-existing symbolic links, symbolic links created by earlier Entries, path-component replacement, and other filesystem behavior that could redirect a mutation outside the selected scope. Lexical path validation alone is insufficient.
+
+If an Entry destination escapes the selected scope, or confinement cannot be established, the implementation MUST return `SAR_ERR_PATH_ESCAPE` and MUST NOT perform the affected mutation.
+
+The destination of a symbolic-link object and its stored target MUST be evaluated separately.
+
+A relative symbolic-link target SHALL be evaluated lexically from the directory containing the symbolic-link object. The target is not required to exist.
+
+If the lexical result escapes the selected scope, the implementation MUST return `SAR_ERR_PATH_ESCAPE` and MUST NOT create the symbolic link.
+
+An absolute or platform-specific symbolic-link target remains valid archive metadata. Ordinary materialization MUST return `SAR_ERR_PATH_ESCAPE` if the target is outside the selected scope or its confinement cannot be established.
+
+A materializer MUST NOT rewrite a symbolic-link target to make it conform to local security policy.
+
+Later filesystem operations performed by the materialization operation MUST NOT follow a materialized or pre-existing symbolic link outside the selected scope.
+
+Ordinary extraction or state application MUST fail if a selected Entry cannot be safely materialized.
+
+Skipping a selected Entry MUST NOT be enabled by default or selected implicitly.
+
+An implementation MAY skip a selected Entry only when the caller explicitly selected best-effort or other incomplete behavior before the skip condition occurred.
+
+Such an operation MUST:
+
+* identify skipped Entries;
+* report the operation as incomplete; and
+* not report complete extraction or state-application success.
+
+If two distinct Full Logical Entry Paths map to the same destination filesystem object, the implementation MUST return `SAR_ERR_PATH_COLLISION`.
+
+Such collisions include those caused by case folding, Unicode normalization, reserved-name handling, trailing-dot or trailing-space handling, separator conversion, path aliases, or other destination filesystem behavior.
+
+Host-specific pathname restrictions do not make an otherwise conforming Full Logical Entry Path malformed.
+
+An implementation MUST NOT resolve a path collision by silently renaming, merging, discarding, or rewriting either Entry.
+
+Repeated occurrences of the same Full Logical Entry Path are not path collisions and are governed by Section 6.1.5.
+
+Actual filesystem or host API failures not otherwise covered by this section MUST return `SAR_ERR_IO` or another more specific applicable error.
+
+`SYSTEM_INSTALL` operations SHOULD require administrative privileges and SHOULD verify digital signatures (`SIGNED` Bit 18) before modifying system directories.
 
 ### 22.5 Transport and Session Sanity
 * **Sequence Wraparound**: The 2-byte Sequence No wraps at 65.535. This is sufficient for detecting stream desync but is not a substitute for TCP sequence numbers.
@@ -3849,6 +5450,24 @@ Implementations SHOULD provide three standard levels of archive inspection for t
 | 0x01 | `METADATA` | Parses names, uncompressed sizes, path information, and timestamps. Suitable for standard views. |
 | 0x02 | `TECHNICAL` | Exhaustive parse; includes absolute offsets, algorithm IDs, internal KMS metadata, and all TLV data blocks. |
 
+These modes perform structural inspection. When an Entry and the following structure can be located safely, an implementation MAY inspect structurally available information even if the Entry payload requires an unsupported transformation.
+
+Depending on the selected mode and physically available fields, inspection MAY report Name String, Path String, declared sizes, timestamps, offsets, algorithm identifiers, KMS metadata, and TLV blocks.
+
+Successful listing or structural inspection does not establish payload reconstruction, decryption, cryptographic authentication, content-hash verification, patch application, extraction, materialization, or complete state application.
+
+Inspection of an unsupported Entry MUST NOT be represented as successful decoding or verification of that Entry.
+
+#### 22.6.1 Non-Normative Implementation Profiles and Privilege Separation
+
+NOTE: This subsection is non-normative.
+
+Implementations may provide restricted libraries, application presets, build-time capability subsets, privilege-separated components, or reduced attack-surface configurations.
+
+For example, a privileged component may use a separately built library exposing fewer operations than a general user-space archive tool.
+
+Such implementation-specific profiles and configurations are not SAR Compliance Profiles, are not encoded in archives or streams, do not alter SAR archive or stream validity, and do not alter the normative interoperability requirements of Section 12.
+
 ### 22.7 Random Access
 The `MetaSize` field in the Central Dictionary enables jumping to the offset array, bypassing variable-length metadata blocks. Implementations SHOULD use memory-mapped files (mmap) for the Data Area to leverage OS-level caching during random-access operations.
 
@@ -3856,64 +5475,62 @@ The `MetaSize` field in the Central Dictionary enables jumping to the offset arr
 In streaming mode over untrusted networks, requiring the `ENCRYPTED` flag (Bit 10) to be enabled with an AEAD-capable algorithm is strongly recommended. This ensures that the `SESSION_INIT` and `SESSION_RESUME` payloads (UUIDs) are authenticated. Without AEAD, the protocol relies entirely on transport-layer security or network isolation to prevent session hijacking.
 
 ## Appendix A. Byte-Level LFH Example: Encrypted Fragment
-The following represents a single LFH entry for **Fragment Index 1** of a larger logical file. Note that because this is not the first fragment, the `Name` and `Path` strings are omitted (Length = 0), leveraging the `Fragment ID` for reassembly.
+The following represents a single LFH entry for **Fragment Index 1** of a larger logical file. Note that because this is not the first fragment, the `Name` and `Path` strings are omitted (Length = 0); the Full Logical Entry Path is established only by Fragment Index 0 (Section 6.1.3).
 
-This example assumes the following global flags are active: `ENCRYPTED` (Bit 10), `FILE_FRAGMENTATION` (Bit 4), and `HAS_PATH` (Bit 24). The `64BIT_SIZE` flag is NOT set, so standard size/offset LFH fields are 4 bytes.
+This example assumes the following global flags are active: `ENCRYPTED` (Bit 10), `FILE_FRAGMENTATION` (Bit 4), and `HAS_PATH` (Bit 24). The `64BIT_SIZE` flag is NOT set, so the data-scale size fields (`Uncompressed Size`, `Payload Size`) are 4 bytes. `COMPRESSED` is not set.
 
 ### A.1. Hexadecimal Representation
 ```text
 Offset       Byte Values (Hex)                        Description
 -------------------------------------------------------------------------------------------------------
-00000000     43 00 00 00                              Header Size: 67 bytes (4B)
+00000000     37 00 00 00                              Header Size: 55 bytes (4B)
 00000004     24 00                                    Entry Mode: IS_ENCRYPTED | IS_FRAGMENT (2B)
 00000006     05 00                                    Stream ID: 0x0005 (2B)
 00000008     2A 00                                    Sequence No: 42 (0x002A) (2B)
-0000000A     00 28 00 00                              Uncompressed Size: 10240 bytes (4B)
+0000000A     F0 03 00 00                              Uncompressed Size: 1008 bytes (4B)
 0000000E     00 04 00 00                              Payload Size: 1024 Bytes (4B)
 00000012     04                                       Encr Algo ID: XCHACHA20_POLY (0x04) (1B)
 00000013     DE AD C0 DE                              Fragment ID: 0xDEADC0DE (4B)
 00000017     01 00 00 00                              Fragment Index: 1 (4B)
-0000001B     00 08 00 00 00 00 00 00                  Frag Desc: Absolute Offset (2048) (8B)
-00000023     00 04 00 00                              Frag Desc: Fragment Size (1024) (4B)
-00000027     FF EE DD CC BB AA 99 88                  IV / Nonce (Bytes 1-8)
-0000002F     77 66 55 44 33 22 11 00                  IV / Nonce (Bytes 9-16)
-00000037     A1 B2 C3 D4 E5 F6 A7 B8                  IV / Nonce (Bytes 17-24) [Total: 24B]
-0000003F     00 00                                    Name Length: 0 (Deferred) (2B)
-00000041     00 00                                    Path Length: 0 (Deferred) (2B)
-00000043     [... 1024 Bytes of Payload ...]          Encrypted & Fragmented Data
+0000001B     FF EE DD CC BB AA 99 88                  IV / Nonce (Bytes 1-8)
+00000023     77 66 55 44 33 22 11 00                  IV / Nonce (Bytes 9-16)
+0000002B     A1 B2 C3 D4 E5 F6 A7 B8                  IV / Nonce (Bytes 17-24) [Total: 24B]
+00000033     00 00                                    Name Length: 0 (2B)
+00000035     00 00                                    Path Length: 0 (2B)
+00000037     [... 1024 Bytes of Payload ...]          Ciphertext (1008 B) || Authentication Tag (16 B)
 ```
 
 
 ### A.2. Field Breakdown and Logic
 | Field | Value | Logic / Invariant |
 | --- | --- | --- |
-| **Header Size** | `0x43` (67) | Byte count from start of LFH to the byte immediately before `Payload Data`. Derived from active global flags. |
-| **Entry Mode** | `0x0024` | Bits 2 and 5 set. Signals AEAD verification is required and this is a partial file piece. |
+| **Header Size** | `0x37` (55) | Byte count from start of LFH to the byte immediately before `Payload Data`. Derived from active global flags. |
+| **Entry Mode** | `0x0024` | Bits 2 and 5 set. Signals AEAD verification is required and this is a fragment of a larger logical Entry. |
 | **Stream ID** | `0x0005` | Matches the active session handle established via `SESSION_INIT`. |
-| **Sequence No** | `0x002A` | Monotonic heartbeat; must be exactly `Previous_Seq + 1`. |
-| **Uncompressed Size** | `10240` | Total reconstructed size of the complete logical file (not this fragment alone). |
-| **Payload Size** | `1024` | Defines the actual byte-count to read from the stream after the header. |
+| **Sequence No** | `0x002A` | Stateful Streaming LFH sequencing token; must be exactly `Previous_Seq + 1`. It is independent of `Fragment Index` (Section 18.4.2). |
+| **Uncompressed Size** | `1008` | Length of this fragment's decoded contribution (no compression is active, so equal to the ciphertext length). It does not declare the size of the complete logical file (Section 6.1.2). |
+| **Payload Size** | `1024` | Encoded ciphertext (1008 B) plus the 16-byte authentication tag; defines the byte count to read after the header. |
 | **Encr Algo ID** | `0x04` | XChaCha20-Poly1305. The parser must use the IV below for the AEAD tag verification. |
-| **Fragment ID** | `0xDEADC0DE` | Unique identifier linking this payload to the reassembly buffer for this file. |
-| **Fragment Index** | `1` | Informs the Scatter-Gather logic that this is the second block of the file. |
-| **Fragment Descriptor** | `Offset: 2048, Size: 1024` | **Crucial:** Directs the receiver to write the decrypted payload starting at byte 2048 of the logical file. |
-| **Name Length** | `0` | Since `Fragment Index > 0`, the name is already known by the receiver's state machine. |
-| **Path Length** | `0` | Evaluated conditionally based on the `HAS_PATH` global bitmask. |
+| **Fragment ID** | `0xDEADC0DE` | Identifies the fragment group, within its applicable fragment scope (here: the active SAR session and Stream ID), that this fragment belongs to. |
+| **Fragment Index** | `1` | The ordinal of this fragment in the group. Its contribution follows the contribution of Fragment Index 0 in the Fragment Reassembly Sequence. |
+| **Name Length** | `0` | Since `Fragment Index > 0`, the Name is established by Fragment Index 0. |
+| **Path Length** | `0` | Evaluated conditionally based on the `HAS_PATH` global bitmask; zero here for the same reason. |
 ### A.3. Transformation Pipeline Execution
-To process the payload in the example above, the implementation must follow the **Canonical Decoding Order** (Section 13.7.4):
+To process this fragment, the implementation follows the fragment-local portion of the **Canonical Decoding Order** (Section 13.1.3):
 
 1. **Read Payload**: Consume 1024 bytes following the header.
-2. **Decrypt**: Apply XChaCha20-Poly1305 with the provided IV and the Master Key (from KMS). Verify the Poly1305 tag.
-3. **Decompress**: If the logical file is compressed (check `Fragment Index 0` state), decompress the decrypted block.
-4. **Position**: Move the file pointer of the target resource (File ID `0xDEADC0DE`) to logical offset `2048`.
-5. **Commit**: Write the transformed data to the target resource.
+2. **Decrypt**: Apply XChaCha20-Poly1305 with the provided IV and the Entry key derived from the KMS Master Secret. Verify the Poly1305 tag before releasing plaintext.
+3. **Decompress**: Not applicable here (no `COMPRESSED`). If compression were active, this fragment's decrypted contribution would be decompressed independently.
+4. **Contribution**: The resulting 1008-byte value is the decoded fragment contribution and MUST equal `Uncompressed Size`.
+5. **Retain**: Record the contribution under (`Stream ID` 5, `Fragment ID` `0xDEADC0DE`, `Fragment Index` 1). The fragment is **not** applied to any target resource at this point.
+6. **Complete the Group**: When Fragment Indices 0 through the `LAST_FRAGMENT` index are all available, concatenate the contributions in ascending Fragment Index order to form the Fragment Reassembly Sequence, perform any applicable group-wide stages (patch, CDC, sparse reconstruction), verify final logical integrity, and apply the logical operation exactly once (Section 18.4.2).
 
 
-### A.4. Implementation Note: Native 64-bit Addressing for Fragment Descriptors
-Note that the `Fragment Descriptor` strictly utilizes a full 8-byte (64-bit) Absolute Offset and a 4-byte (32-bit) Fragment Size, regardless of whether the global `64BIT_SIZE` flag is toggled for standard file metrics.
+### A.4. Implementation Note: No Positional Fields
+The fragment wire model contains only `Fragment ID` and `Fragment Index`. There is no absolute offset, fragment size, or reassembled-size field.
 
-This is an intentional protocol design decision that guarantees:
+This is an intentional design decision:
 
-* **Exabyte-Scale Future Proofing:** The protocol natively supports reassembling individual logical files up to 16 Exabytes ($2^{64}$ bytes) without requiring architecture-breaking revision changes.
-* **CPU-Native Alignment:** 64-bit runtime environments (x86_64, ARM64) can parse, cast, and map the absolute offsets directly into registers using single-cycle CPU instructions.
-* **Reduced Metadata Bloat:** A fragment size of 4 bytes allows individual data fragments to scale up to 4 GB. This drastically decreases the absolute number of required fragments for large datasets, minimizing LFH wrapper overhead across the archive.
+* **Position Is Derived:** A contribution's position in the Fragment Reassembly Sequence is the sum of the `Uncompressed Size` values of all lower-index fragments. It is never read from a field and never computed from a fixed fragment size.
+* **Variable Contribution Lengths:** Fragments of one group MAY have different contribution lengths, so writing a contribution to its final position requires all lower-index contributions to be known.
+* **Reduced Metadata:** Omitting positional fields minimizes LFH wrapper overhead and removes an entire class of inconsistency between positional metadata and the actual payload.

@@ -7,7 +7,7 @@
 //! Forward Error Correction (FEC) codecs for SAR Protocol v1.0 (Milestones 6–7).
 //!
 //! Implements archive-level Data Recovery TLVs (Section 9.2) and file-level
-//! Selective FEC (Section 6.1.3) for the following algorithms:
+//! Selective FEC (Section 6.1.4) for the following algorithms:
 //!
 //! * XOR FEC `0x14` (Milestone 6)
 //! * Reed-Solomon FEC `0x11` (Milestone 7)
