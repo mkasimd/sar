@@ -147,7 +147,7 @@ The archive begins with a fixed-size segment followed by the Global Flags field 
 | Offset | Field | Size | Description |
 | --- | --- | --- | --- |
 | 0 | **Magic Number** | 4B | `0x53 0x41 0x52 0x21` ("SAR!"). |
-| 4 | **Version** | 1B | Format version (e.g. 0x01). |
+| 4 | **Version** | 1B | Format version. `0x01` identifies SAR version 1.0. `0x00` is reserved. All other values are unassigned by this specification. |
 | 5 | **Reserved** | 1B | MUST be 0x0. |
 | 6 | **Flags Size** | 2B | Size of Global Flags; MUST equal `4` for SAR version 1.0. |
 | 8 | **Global Flags** | 4B | Little-endian bitmask defining the binary layout. |
@@ -561,7 +561,7 @@ Each encrypted Partition independently establishes its own KMS Master Secret fro
 
 ### 5.4 Version Compatibility
 
-* Parsers MUST reject archives with a higher major version than supported.
+* Parsers MUST reject archives with a higher major version than supported. A Global Header Version assigned by a specification revision that the implementation recognizes but does not implement MUST return `SAR_ERR_UNSUPPORTED`. A reserved or unassigned Global Header Version value MUST return `SAR_ERR_RESERVED_VALUE`. A version value that is structurally or normatively invalid, or that contradicts another version binding of the same archive or Partition Set, MUST return `SAR_ERR_INVALID_VERSION`.
 * Minor or compatible revisions MAY be accepted only if their Global Header and Global Flags semantics are backward-compatible with the supported version.
 * The Global Header Version defines the LFH structure, the permitted `Flags Size`, the Global Flags assignments, and the associated structural and transformation semantics.
 * For SAR version 1.0, `Flags Size` MUST equal `4`. A wider or shorter Global Flags field is not a valid SAR version 1.0 extension.
@@ -1299,7 +1299,7 @@ A CD offset that lies outside the current Physical Archive Member MUST return `S
 
 ### 7.2 Data Area CRC32
 
-When `HAS_DATA_AREA_CRC32` is set, `Data Area CRC32` MUST equal CRC32 over the exact encoded byte range `[First_LFH_Offset, End_of_Data_Area)`.
+When `HAS_DATA_AREA_CRC32` is set, `Data Area CRC32` MUST equal CRC32 over the exact encoded byte range `[First_LFH_Offset, End_of_Data_Area)`. A mismatch MUST return `SAR_ERR_CRC_MISMATCH`.
 
 The range includes every encoded LFH, Payload Data, AEAD tag, fragment, Empty Area, Selective FEC field and value, and Partition Manifest LFH and payload when present. It excludes the Global Header, Central Dictionary, Central Dictionary alignment padding, and Footer.
 
@@ -1794,7 +1794,7 @@ If `OPT_PRESENT` (Bit 2) is set, metadata is stored in Type-Length-Value blocks.
 * **Length**: 4 bytes (Little-Endian, declaring the size in Bytes of the following value field).
 * **TLV Value**: Variable length data.
 
-If the TLV block does not end on an 8-byte boundary, zero padding bytes MUST be appended after the TLV Value field. Padding SHALL be calculated relative to the beginning of the TLV block, starting at the Type ID field. The total TLV block size, including Type ID, Length, Value, and padding, SHALL be a multiple of 8 bytes. Padding bytes MUST be set to 0x00 and MUST NOT be included in the TLV Length field.
+If the TLV block does not end on an 8-byte boundary, zero padding bytes MUST be appended after the TLV Value field. Padding SHALL be calculated relative to the beginning of the TLV block, starting at the Type ID field. The total TLV block size, including Type ID, Length, Value, and padding, SHALL be a multiple of 8 bytes. Padding bytes MUST be set to 0x00 and MUST NOT be included in the TLV Length field. A decoder encountering a non-zero TLV padding byte MUST return `SAR_ERR_MALFORMED`.
 
 ### 9.1 Metadata Type Registry (`SAR_G_META`)
 The Type IDs MUST be set such that the IDs in the range of 0x00 - 0x0F are utilized for a specific type each and the IDs in the range of 0x10 - 0xFF are utilized such that the most-significant nibble (4 bits) determines the TLV type and the least-significant nibble SHOULD enumerate between differing implementations, algorithms or specific sub-types.
@@ -2786,78 +2786,247 @@ Implementations encountering a reserved CDC metadata TLV Type ID MUST return `SA
 
 
 ## 10. Error and Status Mapping
-Standardized status, warning, and error return values for SAR API implementations and session status reporting:
+Standardized status, warning, and error return values for SAR API implementations and session status reporting.
+
+### 10.1 Status Value Space
+
+A status value is an unsigned 16-bit integer. Values in this registry MAY be used as local API return values and MAY also be carried in `SESSION_STATUS` frames where session status reporting is supported (Section 18.3.4).
+
+The status value space is allocated as follows:
+
+| Range | Allocation |
+|-------|------------|
+| `0` | `SAR_OK` |
+| `1-99` | Warnings and other non-failure statuses |
+| `100-199` | Structural, format, and malformed-input errors |
+| `200-299` | Unsupported, reserved, and capability errors |
+| `300-399` | Integrity, authentication, and cryptographic-keying errors |
+| `400-499` | Fragmentation, reconstruction, and recovery errors |
+| `500-599` | Resource, size, and limit errors |
+| `600-699` | Streaming, session, and partition-state errors |
+| `700-799` | Path, metadata, and logical-state conflict errors |
+| `800-899` | I/O, environment, and internal errors |
+| `900-32767` | Reserved for future standardized SAR allocation |
+| `32768-65534` | Implementation-private or vendor-defined |
+| `65535` (`0xFFFF`) | `SAR_ERR_GENERIC` |
+
+These blocks organize allocation only. An implementation MUST NOT infer semantics, severity, or success from the numeric range of a value it does not recognize. A nonzero value that an implementation does not recognize MUST NOT be treated as `SAR_OK`.
+
+Values in `900-32767` are reserved. Implementations MUST NOT emit them except as assigned by a future revision of this specification. Implementation-private values in `32768-65534` have no interoperable meaning. They MUST NOT be used to carry any condition that this registry defines.
+
+`SAR_ERR_GENERIC` was historically written as the signed value `-1`. That signed alias is documentation only. Its canonical value is `65535` (`0xFFFF`).
+
+Assigned values are permanent. A retired value (Section 10.3) MUST NOT be reassigned to a different meaning.
+
+### 10.2 Status Registry
+
+#### 10.2.1 Success and Warnings (`0`, `1-99`)
 
 | Value | Constant | Meaning |
 |---------|----------|---------|
-| 0 | `SAR_OK` | Success. |
-| -1 | `SAR_ERR_GENERIC` | Unspecified failure. |
-| 1 | `SAR_ERR_NOT_FOUND` | Entry, file, stream, metadata object, or referenced resource not found. |
-| 2 | `SAR_ERR_INVALID_MAGIC` | Header magic mismatch or archive corruption detected during format identification. |
-| 3 | `SAR_ERR_IO` | Hardware, network, storage, filesystem, or transport-layer I/O error. |
-| 4 | `SAR_ERR_CRC_MISMATCH` | CRC validation failed. |
-| 5 | `SAR_ERR_AUTH_FAILED` | Authentication failed during cryptographic verification. |
-| 6 | `SAR_ERR_MALLOC` | Memory allocation or memory exhaustion failure. |
-| 7 | `SAR_ERR_UNSUPPORTED` | Valid SAR feature, flag, profile, algorithm, or extension is not implemented by the current implementation. |
-| 8 | `SAR_ERR_FLAG_CONFLICT` | Invalid flag combination or required dependency missing. |
-| 9 | `SAR_ERR_PATCH_FAILED` | Binary patch application failed or base-file verification failed. |
-| 10 | `SAR_ERR_BASE_MISSING` | Required base file is unavailable or its identity cannot be verified. |
-| 11 | `SAR_ERR_INVALID_MAP` | Declared offset, length, extent, or mapping exceeds permitted bounds. |
-| 12 | `SAR_ERR_NO_SPACE` | Insufficient storage space on the destination filesystem or device. |
-| 13 | `SAR_ERR_PARTITION_MISSING` | Required archive partition or physical volume is not present. |
-| 14 | `SAR_ERR_FRAGMENT_GAP` | One or more fragments are missing. Ignored when `LOSS_TOLERANT` is enabled. |
-| 15 | `SAR_ERR_REASSEMBLY_BUFFER_FULL` | Reassembly buffers exceeded implementation-supported limits. |
-| 16 | `SAR_ERR_PARTITION_MISMATCH` | Partition identifier, UUID, archive identifier, or magic value does not match the expected archive set. |
-| 17 | `SAR_ERR_FRAGMENT_TIMEOUT` | Required fragment did not arrive before the configured timeout expired. |
-| 18 | `SAR_WARN_INCOMPLETE` | Non-fatal warning: processing completed with missing, degraded, or intentionally skipped output. |
-| 19 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
-| 20 | `SAR_ERR_CDC_MISMATCH` | Reassembled CDC object hash does not match the declared Content Hash. |
-| 21 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
-| 22 | `SAR_ERR_TRUNCATED` | Archive, stream, header, metadata, or payload terminated unexpectedly before completion. |
-| 23 | `SAR_ERR_MALFORMED` | Archive structure, metadata structure, or protocol structure is syntactically invalid. |
-| 24 | `SAR_ERR_BOUNDS` | Declared offset, length, count, size, or computed range exceeds valid bounds. |
-| 25 | `SAR_ERR_RESERVED_VALUE` | Encountered a reserved, prohibited, or unassigned registry value. |
-| 26 | `SAR_ERR_OVERFLOW` | Integer overflow or arithmetic overflow detected during processing. |
-| 27 | `SAR_ERR_LIMIT_EXCEEDED` | Implementation-defined limit exceeded (memory, size, count, nesting depth, fragment count, etc.). |
-| 28 | `SAR_ERR_INVALID_ALIGNMENT` | Required alignment or padding constraints are violated. |
-| 29 | `SAR_ERR_INVALID_LENGTH` | Length field is inconsistent with the declared structure or payload. |
-| 30 | `SAR_ERR_CHECKSUM_MISMATCH` | Non-cryptographic checksum validation failed. |
-| 31 | `SAR_ERR_HASH_MISMATCH` | Cryptographic hash validation failed. |
-| 32 | `SAR_ERR_DECRYPT_FAILED` | Decryption operation failed. |
-| 33 | `SAR_ERR_SIGNATURE_FAILED` | Digital signature validation failed. |
-| 34 | `SAR_ERR_ANCHOR_HASH_FAILED` | Anchor Hash validation failed. |
-| 35 | `SAR_ERR_INVALID_VERSION` | Archive version, profile version, or protocol version is unsupported or invalid. |
-| 36 | `SAR_ERR_KEY_MISSING` | Required cryptographic key or keying material is unavailable. |
-| 37 | `SAR_ERR_KEY_REJECTED` | Provided cryptographic key is invalid, revoked, expired, or incompatible. |
-| 38 | `SAR_ERR_STREAM_CLOSED` | Stream terminated unexpectedly before completion. |
-| 39 | `SAR_ERR_STREAM_STATE` | Invalid stream state, stream lifecycle violation, protocol sequencing error, or Stream ID conflict. |
-| 40 | `SAR_ERR_METADATA_MISSING` | Required metadata field, TLV, or structure is absent. |
-| 41 | `SAR_ERR_METADATA_CONFLICT` | Metadata fields contain conflicting or mutually exclusive information. |
-| 42 | `SAR_ERR_RECOVERY_UNAVAILABLE` | Recovery data is required but unavailable. |
-| 43 | `SAR_ERR_RECOVERY_CORRUPTED` | Recovery metadata or parity data is corrupted or unusable. |
-| 44 | `SAR_ERR_COMPRESSION_FAILED` | Compression operation failed. |
-| 45 | `SAR_ERR_DECOMPRESSION_FAILED` | Decompression operation failed. |
-| 46 | `SAR_ERR_WRITE_PROTECTED` | Archive, partition, stream, or destination is write-protected. |
-| 47 | `SAR_ERR_ALREADY_EXISTS` | Requested object already exists and overwrite is not permitted. |
-| 48 | `SAR_ERR_CANCELLED` | Operation was cancelled by the user or host application. |
-| 49 | `SAR_ERR_TIMEOUT` | General operation timeout occurred. |
-| 50 | `SAR_ERR_INTERNAL` | Internal implementation error or invariant violation. |
-| 51 | `SAR_ERR_NONCE_REUSE` | AEAD nonce reuse detected for the same encryption key. |
-| 52 | `SAR_ERR_TOO_MANY_STREAMS` | Implementation-defined concurrent or active stream limit exceeded. |
-| 53 | `SAR_ERR_PATH_COLLISION` | During materialization, distinct Full Logical Entry Paths map to the same destination filesystem object. |
-| 54 | `SAR_WARN_DUPLICATE` | Optional non-fatal diagnostic indicating that a repeated Full Logical Entry Path occurrence was encountered. |
-| 55 | `SAR_ERR_PATH_ESCAPE` | During materialization, an Entry destination or effective symbolic-link target escapes the selected scope, or confinement cannot be established. |
-| 56 | `SAR_ERR_INVALID_INPUT` | Nonconforming caller-supplied input to an encoder or API operation. |
+| 0 | `SAR_OK` | Success. The requested operation completed and every verification it was required to perform succeeded. |
+| 1 | `SAR_WARN_INCOMPLETE` | Non-failure. A permitted operation completed with a degraded or incomplete result. It never implies complete reconstruction or successful integrity verification. For fragmented Entries it is used exactly as defined by Sections 6.2.3 and 19.4.5. |
+| 2 | `SAR_WARN_DUPLICATE` | Optional non-fatal diagnostic indicating that a repeated Full Logical Entry Path occurrence was encountered. |
+| 3 | `SAR_WARN_SKIPPED` | Non-failure aggregate result of explicitly enabled incomplete processing (Section 12.4) in which one or more selected Entries requiring assigned but unsupported features were safely skipped. If permitted degraded reconstruction also occurred in the same aggregate operation, the aggregate status is `SAR_WARN_INCOMPLETE` and this condition is preserved per skipped Entry in diagnostics. The underlying `SAR_ERR_UNSUPPORTED` reason for each skipped Entry is reported diagnostically. |
 
-Values in this registry MAY be used as local API return values and MAY also be carried in `SESSION_STATUS` frames where session status reporting is supported.
+`SAR_WARN_INCOMPLETE` MUST NOT convert any of the following into a warning:
 
-`SAR_ERR_UNSUPPORTED` SHALL be returned only when a SAR-defined feature, algorithm, profile, or extension is valid according to this specification but is not implemented by the current implementation.
+* failed authentication;
+* failed integrity verification;
+* failure of a mandatory transformation;
+* a metadata conflict;
+* an unsupported required feature (outside the explicit Section 12.4 mode);
+* incomplete input to a mandatory group-wide stage (`SAR_ERR_FRAGMENT_GAP`).
+
+#### 10.2.2 Structural Errors (`100-199`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 100 | `SAR_ERR_MALFORMED` | Archive, metadata, or protocol structure is syntactically invalid. |
+| 101 | `SAR_ERR_INVALID_MAGIC` | Global Header Magic Number mismatch. |
+| 102 | `SAR_ERR_INVALID_VERSION` | A version value is structurally or normatively invalid (Section 10.4.3). |
+| 103 | `SAR_ERR_TRUNCATED` | Physical input ended before the bytes declared by the currently parsed structure were available. |
+| 104 | `SAR_ERR_INVALID_LENGTH` | An exact encoded or decoded length relationship required by this specification is violated. |
+| 105 | `SAR_ERR_BOUNDS` | A parsed offset, range, count, or computed position lies outside its enclosing allowed domain. |
+| 106 | `SAR_ERR_INVALID_MAP` | Malformed or invalid Sparse Map structure or Sparse Extent relationships. |
+| 108 | `SAR_ERR_FLAG_CONFLICT` | Invalid flag combination or required flag dependency missing. |
+
+#### 10.2.3 Unsupported, Reserved, and Capability Errors (`200-299`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 200 | `SAR_ERR_UNSUPPORTED` | A SAR-defined feature, flag, profile, algorithm, version, or extension is assigned by this specification but not implemented by the current implementation. |
+| 201 | `SAR_ERR_RESERVED_VALUE` | A reserved, prohibited, or unassigned registry value was encountered. |
+
+#### 10.2.4 Integrity, Authentication, and Keying Errors (`300-399`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 300 | `SAR_ERR_AUTH_FAILED` | AEAD authentication failed. |
+| 301 | `SAR_ERR_CRC_MISMATCH` | A CRC32 verification failed (`File CRC32`, `Data Area CRC32`). |
+| 302 | `SAR_ERR_HASH_MISMATCH` | A cryptographic hash verification failed (Section 10.4.1). |
+| 303 | `SAR_ERR_SIGNATURE_FAILED` | Digital signature verification failed. |
+| 304 | `SAR_ERR_KEY_MISSING` | Required cryptographic key or keying material is unavailable. |
+| 305 | `SAR_ERR_KEY_REJECTED` | Provided key material was rejected, including a rejected asymmetric key unwrap. |
+| 306 | `SAR_ERR_NONCE_REUSE` | The encoder detected AEAD nonce reuse for the same encryption key. |
+
+#### 10.2.5 Fragmentation, Reconstruction, and Recovery Errors (`400-499`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 400 | `SAR_ERR_FRAGMENT_GAP` | One or more required Fragment Indices are missing. Under `LOSS_TOLERANT`, only the degraded prefix output permitted by Section 19.4.5 may be produced, and it is reported with `SAR_WARN_INCOMPLETE`. Incomplete input to a mandatory group-wide stage always returns this error. |
+| 401 | `SAR_ERR_FRAGMENT_TIMEOUT` | The fragment-group timeout of Section 19.4.3 expired for a live or incremental context. |
+| 402 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
+| 403 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
+| 404 | `SAR_ERR_RECOVERY_UNAVAILABLE` | Recovery data is required but unavailable. |
+| 405 | `SAR_ERR_RECOVERY_CORRUPTED` | Recovery metadata or parity data is corrupted or unusable. |
+| 406 | `SAR_ERR_PATCH_FAILED` | Patch payload is malformed, patch application failed, or the patch output violates its algorithm-defined output rules. |
+| 407 | `SAR_ERR_BASE_MISSING` | A required delta base cannot be resolved. |
+
+#### 10.2.6 Resource, Size, and Limit Errors (`500-599`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 500 | `SAR_ERR_OVERFLOW` | Checked arithmetic cannot represent a required result. |
+| 501 | `SAR_ERR_LIMIT_EXCEEDED` | An implementation-defined or configured resource cap was exceeded (memory, size, count, nesting depth, fragment count, and similar). |
+| 502 | `SAR_ERR_REASSEMBLY_BUFFER_FULL` | The fragment-reassembly buffer capacity or the concurrent fragment-group tracking cap was exceeded. |
+| 503 | `SAR_ERR_NO_SPACE` | Insufficient storage space on the destination filesystem or device. |
+
+#### 10.2.7 Streaming, Session, and Partition-State Errors (`600-699`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 600 | `SAR_ERR_STREAM_STATE` | Invalid stream state, stream lifecycle violation, protocol sequencing error, or Stream ID conflict. |
+| 601 | `SAR_ERR_TOO_MANY_STREAMS` | The implementation-defined concurrent or active stream limit was exceeded. |
+| 602 | `SAR_ERR_STREAM_CLOSED` | The ordered SAR or transport stream terminated while the session remained active, when no more specific structural error applies (Section 10.4.4). |
+| 603 | `SAR_ERR_PARTITION_MISSING` | A required archive Partition or physical volume is not present. |
+| 604 | `SAR_ERR_PARTITION_MISMATCH` | Partition identifier, UUID, archive identifier, predecessor link, or magic value does not match the expected Partition Set. |
+| 605 | `SAR_ERR_SESSION_TIMEOUT` | The session inactivity watchdog of Section 18.3.3 expired. |
+
+#### 10.2.8 Path, Metadata, and Logical-State Conflict Errors (`700-799`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 700 | `SAR_ERR_PATH_COLLISION` | Conflicting SAR logical-path identity: during materialization, distinct Full Logical Entry Paths map to the same destination filesystem object. |
+| 701 | `SAR_ERR_PATH_ESCAPE` | During materialization, an Entry destination or effective symbolic-link target escapes the selected scope, or confinement cannot be established. |
+| 702 | `SAR_ERR_METADATA_MISSING` | Required SAR interpretation or application metadata is absent. |
+| 703 | `SAR_ERR_METADATA_CONFLICT` | Metadata fields contain conflicting or mutually exclusive information. |
+| 704 | `SAR_ERR_ALREADY_EXISTS` | The destination or environment object already exists and the operation's semantics do not permit overwriting it. |
+| 705 | `SAR_ERR_NOT_FOUND` | A generic referenced Entry, object, or resource lookup failed, when no more specific code applies. |
+
+#### 10.2.9 I/O, Environment, and Internal Errors (`800-899`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 800 | `SAR_ERR_IO` | Hardware, network, storage, filesystem, or transport-layer I/O error. |
+| 801 | `SAR_ERR_WRITE_PROTECTED` | Archive, Partition, stream, or destination is write-protected. |
+| 802 | `SAR_ERR_INTERNAL` | Internal implementation error or invariant violation. |
+| 803 | `SAR_ERR_INVALID_INPUT` | Nonconforming caller-supplied input to an encoder or API operation. |
+
+#### 10.2.10 Generic Failure (`65535`)
+
+| Value | Constant | Meaning |
+|---------|----------|---------|
+| 65535 (`0xFFFF`) | `SAR_ERR_GENERIC` | Unspecified failure. Implementations SHOULD use a more specific code whenever one applies. |
+
+### 10.3 Retired and Reserved Values
+
+The following constants are retired. Their values are permanently reserved. They MUST NOT be reassigned, and conforming implementations MUST NOT emit them.
+
+| Value | Retired Constant | Former Value | Replacement |
+|-------|------------------|--------------|-------------|
+| 107 | `SAR_ERR_INVALID_ALIGNMENT` | 28 | `SAR_ERR_MALFORMED` for non-zero padding, otherwise the applicable structural code |
+| 390 | `SAR_ERR_CHECKSUM_MISMATCH` | 30 | `SAR_ERR_CRC_MISMATCH` |
+| 391 | `SAR_ERR_CDC_MISMATCH` | 20 | `SAR_ERR_HASH_MISMATCH` |
+| 392 | `SAR_ERR_DECRYPT_FAILED` | 32 | `SAR_ERR_AUTH_FAILED` |
+| 393 | `SAR_ERR_ANCHOR_HASH_FAILED` | 34 | `SAR_ERR_HASH_MISMATCH` |
+| 490 | `SAR_ERR_COMPRESSION_FAILED` | 44 | `SAR_ERR_INVALID_INPUT` or `SAR_ERR_INTERNAL` |
+| 491 | `SAR_ERR_DECOMPRESSION_FAILED` | 45 | `SAR_ERR_MALFORMED` or `SAR_ERR_LIMIT_EXCEEDED` |
+| 590 | `SAR_ERR_MALLOC` | 6 | `SAR_ERR_LIMIT_EXCEEDED` |
+| 690 | `SAR_ERR_TIMEOUT` | 49 | `SAR_ERR_SESSION_TIMEOUT` or `SAR_ERR_FRAGMENT_TIMEOUT` |
+| 890 | `SAR_ERR_CANCELLED` | 48 | Host-application concern; use an implementation-private value if needed |
+
+Former values are the pre-registry-reorganization numbers of the draft specification. They are recorded for migration only and carry no meaning in the current registry.
+
+### 10.4 Condition-to-Status Mappings
+
+When a single condition below applies, the mapped status is normative. This section does not prescribe the order in which independent conditions are detected.
+
+#### 10.4.1 Integrity and Authentication
+
+| Condition | Status |
+|-----------|--------|
+| AEAD authentication failure | `SAR_ERR_AUTH_FAILED` |
+| `File CRC32` mismatch | `SAR_ERR_CRC_MISMATCH` |
+| `Data Area CRC32` mismatch | `SAR_ERR_CRC_MISMATCH` |
+| `Content Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| Partition hash (`Current Partition Hash`) mismatch | `SAR_ERR_HASH_MISMATCH` |
+| `Previous Partition Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| `Delta Base Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| Anchor Hash (`DATA_HASH`) mismatch | `SAR_ERR_HASH_MISMATCH` |
+| CDC verified chunk hash mismatch | `SAR_ERR_HASH_MISMATCH` |
+| Signature verification failure | `SAR_ERR_SIGNATURE_FAILED` |
+| Missing keying material | `SAR_ERR_KEY_MISSING` |
+| Rejected asymmetric key unwrap | `SAR_ERR_KEY_REJECTED` |
+| Encoder nonce reuse | `SAR_ERR_NONCE_REUSE` |
+
+#### 10.4.2 Length, Bounds, and Truncation
+
+| Status | Meaning |
+|--------|---------|
+| `SAR_ERR_INVALID_LENGTH` | An exact encoded or decoded length relationship is violated. |
+| `SAR_ERR_BOUNDS` | A parsed offset or range lies outside the enclosing allowed domain. |
+| `SAR_ERR_INVALID_MAP` | A Sparse Map structure or its extent relationships are malformed or invalid. |
+| `SAR_ERR_TRUNCATED` | Physical input ends before the declared bytes are available. |
+| `SAR_ERR_OVERFLOW` | Checked arithmetic cannot represent the required result. |
+
+#### 10.4.3 Versions and Registry Values
+
+| Condition | Status |
+|-----------|--------|
+| A version value that is structurally or normatively invalid, including contradictory version bindings within one archive or Partition Set (Sections 5.4 and 19.1.10) | `SAR_ERR_INVALID_VERSION` |
+| A version value assigned by this specification (or by a revision the implementation recognizes) but not implemented | `SAR_ERR_UNSUPPORTED` |
+| A reserved or unassigned version value, including Global Header Version `0x00` and any Global Header Version not assigned by a revision the implementation recognizes | `SAR_ERR_RESERVED_VALUE` |
+| An assigned but unsupported feature, algorithm, or extension identifier | `SAR_ERR_UNSUPPORTED` |
+| A reserved or unassigned identifier | `SAR_ERR_RESERVED_VALUE` |
+| A resource cap exceeded | `SAR_ERR_LIMIT_EXCEEDED` |
+| Checked arithmetic overflow | `SAR_ERR_OVERFLOW` |
+
+#### 10.4.4 Fragmentation, Streaming, and Sessions
+
+| Condition | Status |
+|-----------|--------|
+| A required Fragment Index is missing | `SAR_ERR_FRAGMENT_GAP` |
+| Fragment-group timeout expiry (Section 19.4.3) | `SAR_ERR_FRAGMENT_TIMEOUT` |
+| Conflicting fragment metadata | `SAR_ERR_METADATA_CONFLICT` |
+| Permitted degraded fragment reconstruction | `SAR_WARN_INCOMPLETE` |
+| Session inactivity watchdog expiry (Section 18.3.3) | `SAR_ERR_SESSION_TIMEOUT` |
+| Physical input ended before the bytes declared by the currently parsed structure were available | `SAR_ERR_TRUNCATED` |
+| The ordered SAR or transport stream terminated while the session remained active, and no more specific structural truncation error applies | `SAR_ERR_STREAM_CLOSED` |
+| Stream lifecycle, sequencing, or Stream ID conflict | `SAR_ERR_STREAM_STATE` |
+| Stream limit exceeded | `SAR_ERR_TOO_MANY_STREAMS` |
+
+#### 10.4.5 Paths and Objects
+
+| Condition | Status |
+|-----------|--------|
+| Conflicting SAR logical-path identity at materialization | `SAR_ERR_PATH_COLLISION` |
+| Destination object already exists and overwrite is not permitted | `SAR_ERR_ALREADY_EXISTS` |
+| Generic referenced object or resource lookup failure | `SAR_ERR_NOT_FOUND` |
+| Required delta base cannot be resolved | `SAR_ERR_BASE_MISSING` |
+| Required SAR interpretation or application metadata absent | `SAR_ERR_METADATA_MISSING` |
+
+### 10.5 General Rules
+
+`SAR_ERR_UNSUPPORTED` SHALL be returned only when a SAR-defined feature, algorithm, profile, version, or extension is assigned according to this specification but is not implemented by the current implementation.
 
 Reserved, malformed, prohibited, or syntactically invalid values SHALL use the corresponding specific error codes defined in this section.
 
 If an implementation encounters archive behavior, field combinations, or value semantics not defined by this specification, it MUST NOT infer semantics. The implementation MUST fail closed and return the most specific applicable error code. If no more specific error code applies, it MUST return `SAR_ERR_MALFORMED`.
 
 If the behavior is defined by a valid but unsupported SAR extension, implementations MUST return `SAR_ERR_UNSUPPORTED`.
+
+The order in which independent validation conditions are detected, and therefore which of several simultaneously applicable errors is reported first, is implementation-defined. Condition-to-status mappings in this specification are normative when a single stated condition applies. Wire-observable Stateful Streaming status conditions MUST use their explicitly specified status.
 
 ## 11. Abstract Stream Processing Model
 ### 11.1 SAR Byte Stream Definition
@@ -3140,7 +3309,7 @@ An Entry MAY be skipped only when its boundaries and the location of the next st
 
 The implementation MUST identify every skipped selected Entry and the unsupported feature or algorithm that caused the skip.
 
-If one or more selected Entries are skipped, the operation MUST return `SAR_WARN_INCOMPLETE` and MUST be reported as incomplete.
+If one or more selected Entries are skipped and no degraded reconstruction occurs, the operation MUST return `SAR_WARN_SKIPPED` and MUST be reported as incomplete. `SAR_WARN_SKIPPED` is an aggregate non-failure result. It does not imply that any skipped Entry was decoded, verified, or applied. The implementation MUST preserve and report the underlying `SAR_ERR_UNSUPPORTED` reason for each skipped Entry diagnostically. `SAR_WARN_SKIPPED` is the specific condition for explicitly enabled unsupported-Entry skipping; `SAR_WARN_INCOMPLETE` is the specific condition for permitted degraded reconstruction under Section 6.2.3. If both conditions occur during one aggregate operation, the aggregate operation status MUST be `SAR_WARN_INCOMPLETE`, and `SAR_WARN_SKIPPED` MUST be preserved in diagnostics for each applicable skipped Entry. A single scalar status MUST NOT be described as returning both values.
 
 Implementations are not required to provide this incomplete processing mode.
 
@@ -3382,7 +3551,7 @@ Implementations performing random access MAY parse the first LFH solely for the 
 Applications or deployment profiles requiring signed archives MUST enforce signature verification independently of the archive-provided `SIGNED` flag.
 
 ### 13.3 Digital Signatures and Binding
-To ensure global payload integrity, the `DATA_HASH` (ID `0x30 - 0x3F`) MUST be present and included in the signed CD when the `SIGNED` flag is set. The signature MUST be calculated over the entire Central Dictionary excluding the SIGNATURE TLV itself. For a Partitioned Archive, this signature and DATA_HASH scope is local to the current physical Partition and does not aggregate the Partition Set. Implementations MUST NOT trust or act upon Central Dictionary offsets or metadata until signature verification (if SIGNED) and DATA_HASH validation have successfully completed. If SIGNED is not set, implementations SHOULD treat the Central Dictionary as untrusted and MAY validate entries against the Data Area before use. Also see sections 9.3 and 9.4.
+To ensure global payload integrity, the `DATA_HASH` (ID `0x30 - 0x3F`) MUST be present and included in the signed CD when the `SIGNED` flag is set. The signature MUST be calculated over the entire Central Dictionary excluding the SIGNATURE TLV itself. For a Partitioned Archive, this signature and DATA_HASH scope is local to the current physical Partition and does not aggregate the Partition Set. Implementations MUST NOT trust or act upon Central Dictionary offsets or metadata until signature verification (if SIGNED) and DATA_HASH validation have successfully completed. A signature verification failure MUST return `SAR_ERR_SIGNATURE_FAILED`. A `DATA_HASH` (Anchor Hash) mismatch MUST return `SAR_ERR_HASH_MISMATCH`. If SIGNED is not set, implementations SHOULD treat the Central Dictionary as untrusted and MAY validate entries against the Data Area before use. Also see sections 9.3 and 9.4.
 
 #### 13.3.1 Signature Scope and Threat Model
 The SAR signature (when `SIGNED` is set) covers the Central Dictionary, which in turn anchors the Data Area via the `DATA_HASH` TLV. The Global Header (including Global Flags and KMS Extension) is intentionally outside the signature scope. This is a deliberate design choice, because the Central Dictionary is fully optional in SAR (`NO_INDEX` mode), and because:
@@ -3403,7 +3572,7 @@ Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (8).
 
 When `HAS_DELTA` (Bit 9) is set, patch processing MUST follow the algorithm-specific base and reconstruction-input requirements defined in Section 8.4.
 
-A patch algorithm that requires a base object, dictionary, or other external reconstruction input MUST NOT be applied until that required input has been resolved and validated according to Section 8.4. Missing required reconstruction input MUST result in `SAR_ERR_BASE_MISSING`. Failure to validate required reconstruction input MUST result in `SAR_ERR_PATCH_FAILED`.
+A patch algorithm that requires a base object, dictionary, or other external reconstruction input MUST NOT be applied until that required input has been resolved and validated according to Section 8.4. Missing required reconstruction input MUST result in `SAR_ERR_BASE_MISSING`. Failure to validate required reconstruction input MUST result in `SAR_ERR_HASH_MISMATCH` when the input's computed hash does not match `Delta Base Hash`, and otherwise in `SAR_ERR_PATCH_FAILED`.
 
 `STORE_PATCH` (`0x00`) is self-contained and MUST NOT require base-object resolution solely because `HAS_DELTA` is set.
 
@@ -3494,7 +3663,7 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within its Fragment ID scope (Section 6.1.3): the current Physical Archive Member, the complete Partition Set for a Partitioned Archive, or the active SAR session and Stream ID for Stateful Streaming. Duplicate indices for the same Fragment ID within that scope MUST be handled according to Section 6.1.3.
 
 2. **Delta Base Resolution**
-   The `Delta Base Hash` MUST uniquely identify a valid base object. If no matching base is found, or multiple matches exist, the operation MUST fail.
+   The `Delta Base Hash` MUST uniquely identify a valid base object. If no matching base is found, or multiple candidate bases match so that the base cannot be resolved unambiguously, the operation MUST return `SAR_ERR_BASE_MISSING`. If a candidate base object's computed hash does not match the `Delta Base Hash`, the operation MUST return `SAR_ERR_HASH_MISMATCH`.
 
 3. **Central Dictionary Authority**
    If a Central Dictionary is present:
@@ -3578,6 +3747,8 @@ To ensure consistent layout and compatibility with memory-mapped access:
    * Padding bytes MUST be set to `0x00`.
 
 3. The Footer MUST immediately follow this padding.
+
+A decoder encountering a non-zero required-zero Central Dictionary alignment padding byte MUST return `SAR_ERR_MALFORMED`.
 
 Padding bytes inserted for alignment are considered part of the Central Dictionary region for the purposes of signature calculation, but are not part of the logical Central Dictionary structure.
 
@@ -3799,7 +3970,7 @@ Host filesystem behavior does not alter the SAR wire semantics defined by this s
 If the host environment cannot represent sparse extents natively, the implementation MUST produce an equivalent logical byte sequence by materializing hole ranges as zero bytes. The final logical result MUST be identical regardless of whether native sparse-file facilities are used.
 
 #### 17.4.3 Integrity Verification
-`File CRC32` and `Content Hash`, when applicable, are calculated and verified against the final reconstructed logical Entry, including bytes represented by sparse holes.
+`File CRC32` and `Content Hash`, when applicable, are calculated and verified against the final reconstructed logical Entry, including bytes represented by sparse holes. A `File CRC32` mismatch MUST return `SAR_ERR_CRC_MISMATCH`. A `Content Hash` mismatch MUST return `SAR_ERR_HASH_MISMATCH`.
 
 For fragmented Entries, the completion-authoritative integrity rules of Section 6.1.3 apply.
 
@@ -4049,7 +4220,7 @@ To ensure session persistence during periods of payload inactivity, the followin
 
 * Mandatory Interval: The Sender MUST emit a `SESSION_HEARTBEAT` (Op 0x3) or any other valid LFH at least once every 60 seconds.
 * Minimum Value: To prevent network congestion and unnecessary CPU overhead, heartbeats MUST NOT be emitted more frequently than once every 5 seconds.
-* Inactivity Timeout: The Receiver SHOULD implement a session watchdog. If no valid LFH (Data or Heartbeat) is received within 180 seconds (3x the mandatory interval), the Receiver SHALL terminate the session and return `SAR_ERR_TIMEOUT`.
+* Inactivity Timeout: The Receiver SHOULD implement a session watchdog. If no valid LFH (Data or Heartbeat) is received within 180 seconds (3x the mandatory interval), the Receiver SHALL terminate the session and return `SAR_ERR_SESSION_TIMEOUT`.
 * Sequence Continuity: Heartbeats MUST increment the `Sequence No` field like any other entry to ensure the application-layer continuity token remains valid.
 
 `SESSION_HEARTBEAT` payload size SHALL be 0 bytes.
@@ -4060,7 +4231,7 @@ Status SHALL be communicated by utilizing `SESSION_STATUS` (Op 0x4). The payload
 | Order | Field Name | Size | Description |
 | --- | --- | --- | --- |
 | 0 | REF_SEQUENCE | 2B | The sequence number this status message refers to. |
-| 1 | STATUS_CODE | 2B | Holds the status code value as defined in section 10 (-1 encoded as 0xFFFF). |
+| 1 | STATUS_CODE | 2B | Holds the unsigned 16-bit status value defined in Section 10. `SAR_ERR_GENERIC` is encoded as `0xFFFF`. |
 | 2 | MESSAGE_SIZE | 1B | Size of the status message in bytes. |
 | 3 | STATUS_MESSAGE | var | Status message. |
 
@@ -4114,6 +4285,8 @@ Incomplete fragment groups bound to the terminated session MUST be discarded and
 If bidirectional control is active and `SESSION_ACK` is supported, the receiver SHOULD transmit a `SESSION_ACK` message referencing the received `SESSION_CLOSE`.
 
 The underlying transport connection MAY remain open after a session has been terminated.
+
+If the ordered SAR or transport stream terminates while the session remains active (no `SESSION_CLOSE` was processed) and the termination does not occur inside a structure whose declared bytes were incompletely received, the receiver MUST treat the condition as `SAR_ERR_STREAM_CLOSED`. If the stream ends before all bytes declared by the currently parsed structure (for example an LFH, a Payload Data field, or a `SESSION_CONTROL` payload) were available, the receiver MUST use `SAR_ERR_TRUNCATED` instead. In either case, incomplete fragment groups bound to the session MUST be discarded and MUST NOT be applied to final state.
 
 A transport connection MAY continue carrying other active SAR streams that remain bound to the connection.
 
@@ -4225,7 +4398,7 @@ The implementation MUST:
 3. Only upon successful verification, perform an atomic `rename()` (or equivalent filesystem atomic replace operation supported by the host environment)
 4. Ensure that at no point is a partially-written final object visible to other consumers of the resource namespace
 
-If CRC verification fails:
+If CRC verification fails, the implementation MUST return `SAR_ERR_CRC_MISMATCH` and:
 
 * The shadow data MUST be discarded
 * No mutation to the final namespace MUST occur
@@ -4943,7 +5116,7 @@ Different Partition Indices within the same Partition Set identify distinct phys
 
 #### 19.1.10 Global Header Consistency
 
-Every Partition in one Partition Set MUST contain the same Global Header Version, `Flags Size`, and complete Global Flags value.
+Every Partition in one Partition Set MUST contain the same Global Header Version, `Flags Size`, and complete Global Flags value. A Global Header Version that differs between Partitions of one Partition Set MUST return `SAR_ERR_INVALID_VERSION`.
 
 Global Header byte-for-byte equality is not required because partition-local KMS parameters may vary as permitted by Section 19.1.11.
 
@@ -5023,7 +5196,7 @@ Managing non-contiguous data requires the Receiver to act as a stateful buffer m
 ### 19.4.1 Reassembly Timeouts (The "Dead-Drop" Rule)
 In live or incremental contexts, namely Stateful Streaming (Section 18), the Receiver MUST implement a **Fragment TTL (Time To Live)**. Ordinary archive decoding has no fragment wall-clock timeout.
 * **Problem**: A Sender starts a 4GB transfer in fragments but crashes after fragment 10. Without a timeout, the Receiver's memory remains "poisoned" with an incomplete reassembly buffer.
-* **Requirement**: Timeout state is keyed by `(active SAR session, Stream ID, Fragment ID)`. If no new fragment for that group occurs within a set window (default 60s), the Receiver SHALL discard the group's buffered state and return `SAR_ERR_FRAGMENT_TIMEOUT` (17).
+* **Requirement**: Timeout state is keyed by `(active SAR session, Stream ID, Fragment ID)`. If no new fragment for that group occurs within a set window (default 60s), the Receiver SHALL discard the group's buffered state and return `SAR_ERR_FRAGMENT_TIMEOUT` (401).
 * **Archival Conclusion**: In archival processing a fragment group is concluded by structure, not time: an unpartitioned group is concluded at the end of its Physical Archive Member, and a partitioned group only at the end of its Partition Set (Section 19.1.6), which requires the exact Partition Set boundary to be known (Section 19.1.8). Exhaustion of the available members alone does not conclude a group. Required Fragment Indices still missing at conclusion produce `SAR_ERR_FRAGMENT_GAP`, subject to `LOSS_TOLERANT` (Section 19.4.5).
 * **Non-Application**: A discarded incomplete group MUST NOT be applied to final state.
 
@@ -5035,7 +5208,7 @@ In live or incremental contexts, namely Stateful Streaming (Section 18), the Rec
 
 ### 19.4.3 Resource Exhaustion & DoS Protection
 Fragmentation is a potential vector for a **"Memory Exhaustion Attack"** (where a malicious sender starts thousands of fragmented transfers but never sends the `LAST_FRAGMENT`).
-* **The "Concurrency Cap"**: Implementations SHOULD limit the number of concurrent "Active Fragments" they will track. If a new fragment group (distinct applicable fragment scope and `Fragment ID`) occurs that exceeds this limit, the Receiver SHALL return `SAR_ERR_REASSEMBLY_BUFFER_FULL` (15).
+* **The "Concurrency Cap"**: Implementations SHOULD limit the number of concurrent "Active Fragments" they will track. If a new fragment group (distinct applicable fragment scope and `Fragment ID`) occurs that exceeds this limit, or if the fragment-reassembly buffer capacity is exhausted, the Receiver SHALL return `SAR_ERR_REASSEMBLY_BUFFER_FULL` (502).
 
 ### 19.4.4 Partition Discovery, Verification, and Recovery
 
@@ -5048,7 +5221,7 @@ Filenames, archive names, storage enumeration order, and storage-backend metadat
 When the `LOSS_TOLERANT` flag (Bit 7) is active, SAR transitions to a "continuity-first" delivery model suitable for temporal data (audio, video, telemetry).
 1. **No Synthetic or Shifted Content**: Fragments carry no offsets and a missing contribution's length is unknown. Implementations MUST NOT synthesize bytes (including null bytes) for a missing Fragment Index, and MUST NOT concatenate contributions that follow a missing Fragment Index, because that would shift later bytes to invented positions. Degraded logical output is only the longest contiguous valid prefix of contributions beginning at Fragment Index 0, in ascending Fragment Index order. If Fragment Index 0 is missing, no degraded logical Entry may be applied. Fragments after the first gap MAY be retained diagnostically but MUST NOT contribute to logical output.
 2. **Degradation Limits**: An incomplete Fragment Reassembly Sequence MUST NOT be passed to patch application, CDC resolution, sparse reconstruction, or any other group-wide construction requiring a complete representation. If such a stage is required and any Fragment Index is missing, the Receiver MUST return `SAR_ERR_FRAGMENT_GAP`, regardless of `LOSS_TOLERANT`.
-3. **Integrity Is Not Bypassed**: Permitted degraded output MUST return `SAR_WARN_INCOMPLETE` (18) according to Section 6.2.3, and MUST NOT be described as integrity-verified unless the complete integrity domain was actually reconstructed and verified (Section 6.1.3). A failed integrity verification MUST NOT be treated as a successful commit. In Stateful Streaming, the application conditions of Section 18.4.2 remain in force.
+3. **Integrity Is Not Bypassed**: Permitted degraded output MUST return `SAR_WARN_INCOMPLETE` (1) according to Section 6.2.3, and MUST NOT be described as integrity-verified unless the complete integrity domain was actually reconstructed and verified (Section 6.1.3). A failed integrity verification MUST NOT be treated as a successful commit. In Stateful Streaming, the application conditions of Section 18.4.2 remain in force.
 4. **Late Fragments**: In time-sensitive streaming, if a belated fragment occurs after its group has already been concluded, delivered, or discarded, the Receiver MAY discard it without error. It MUST NOT be combined with a previously concluded group, and in Stateful Streaming MUST NOT be combined across session resumption (Section 18.3.7).
 5. **Authentication Preservation**: `LOSS_TOLERANT` applies only to missing, late, truncated, or otherwise unavailable data. It MUST NOT permit processing of payload data that fails cryptographic authentication. If AEAD authentication fails for an encrypted fragment or entry, the affected data MUST be discarded. Implementations MAY continue processing subsequent fragments, entries, or stream data when `LOSS_TOLERANT` is set, but MUST NOT expose, reconstruct, decode, decompress, patch, execute, or otherwise process unauthenticated payload contents.
 
@@ -5187,7 +5360,7 @@ In distributed environments, such as Edge-to-Cloud streaming, the Catalog MAY be
 
 * **TLV Type ID**: `0x41` (`CDC_EXT_PROVIDER`)
 * **Value**: A UTF-8 URI string pointing to the external chunk provider, for example `sarp+https://chunks.provider.net/v1`.
-* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`19`).
+* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`402`).
 
 **Security Considerations**: The use of external provider URIs introduces potential security risks, including unauthorized data access, data exfiltration, or interaction with untrusted endpoints. Implementations SHOULD validate and sanitize all URIs before use. Implementations MAY restrict acceptable URI schemes, enforce allowlists of trusted domains, or apply other policy controls in an implementation-defined manner. Implementations SHOULD provide mechanisms to disable external provider resolution entirely or require explicit user consent before accessing external resources.
 
