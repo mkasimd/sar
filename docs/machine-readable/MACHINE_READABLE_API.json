@@ -967,7 +967,7 @@
               "module": "error",
               "path": "src/error.rs"
             },
-            "signature": "pub const fn SarStatus::code(self) -> i32"
+            "signature": "pub const fn SarStatus::code(self) -> u16"
           },
           {
             "name": "SarStatus::name",
@@ -2186,7 +2186,7 @@
           },
           {
             "name": "SarStatus",
-            "description": "SAR status and error registry values (`#[repr(i32)]`).",
+            "description": "SAR status and error registry values (`#[repr(u16)]`).",
             "metadata": {
               "since_milestone": "1",
               "stability": "stable",
@@ -2205,7 +2205,7 @@
           },
           {
             "name": "SarStatusParseError",
-            "description": "Error returned when converting an unknown integer into SarStatus.",
+            "description": "Error returned when converting an unknown u16 value into SarStatus.",
             "metadata": {
               "since_milestone": "1",
               "stability": "stable",
@@ -2220,7 +2220,7 @@
               "path": "src/error.rs"
             },
             "kind": "struct",
-            "signature": "pub struct SarStatusParseError(pub i32);"
+            "signature": "pub struct SarStatusParseError(pub u16);"
           },
           {
             "name": "FecSummary",
@@ -7696,7 +7696,7 @@
             "signature": "pub fn process_available(&mut self, now_ms: Option<u64>) -> Result<Vec<TransportAction>, SarError>",
             "errors": [
               "SarError::StreamClosed on EOF or after connection is closed.",
-              "SarError::Timeout when inactivity watchdog fires.",
+              "SarError::SessionTimeout when inactivity watchdog fires.",
               "SarError::Io on underlying stream I/O error."
             ]
           },

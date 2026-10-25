@@ -981,9 +981,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 return Err(SarError::Truncated("CD parse exceeded available bytes"));
             }
             if cd_bytes[consumed_cd..].iter().any(|byte| *byte != 0) {
-                return Err(SarError::InvalidAlignment(
-                    "CD alignment padding must be all zero",
-                ));
+                return Err(SarError::Malformed("CD alignment padding must be all zero"));
             }
 
             let has_recovery_tlv = cd

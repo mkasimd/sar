@@ -441,7 +441,7 @@ fn tcp_loopback_inactivity_timeout_returns_timeout_error() {
     let far_future = 200_000u64; // 200 s, well past 1 s inactivity_timeout_ms
     let result = receiver.process_available(Some(far_future));
     assert!(
-        matches!(result, Err(SarError::Timeout(_))),
+        matches!(result, Err(SarError::SessionTimeout(_))),
         "expected Timeout error, got: {result:?}"
     );
 }

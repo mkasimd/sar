@@ -1,25 +1,174 @@
 // SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 // SPDX-License-Identifier: Apache-2.0
 
+use sar_core::error::SarStatusParseError;
 use sar_core::{SarError, SarStatus};
+
+/// Section 10.2 registry: exactly the 50 standardized assignments.
+const REGISTRY: [(SarStatus, u16, &str); 50] = [
+    (SarStatus::Ok, 0, "SAR_OK"),
+    (SarStatus::WarnIncomplete, 1, "SAR_WARN_INCOMPLETE"),
+    (SarStatus::WarnDuplicate, 2, "SAR_WARN_DUPLICATE"),
+    (SarStatus::WarnSkipped, 3, "SAR_WARN_SKIPPED"),
+    (SarStatus::ErrMalformed, 100, "SAR_ERR_MALFORMED"),
+    (SarStatus::ErrInvalidMagic, 101, "SAR_ERR_INVALID_MAGIC"),
+    (SarStatus::ErrInvalidVersion, 102, "SAR_ERR_INVALID_VERSION"),
+    (SarStatus::ErrTruncated, 103, "SAR_ERR_TRUNCATED"),
+    (SarStatus::ErrInvalidLength, 104, "SAR_ERR_INVALID_LENGTH"),
+    (SarStatus::ErrBounds, 105, "SAR_ERR_BOUNDS"),
+    (SarStatus::ErrInvalidMap, 106, "SAR_ERR_INVALID_MAP"),
+    (SarStatus::ErrFlagConflict, 108, "SAR_ERR_FLAG_CONFLICT"),
+    (SarStatus::ErrUnsupported, 200, "SAR_ERR_UNSUPPORTED"),
+    (SarStatus::ErrReservedValue, 201, "SAR_ERR_RESERVED_VALUE"),
+    (SarStatus::ErrAuthFailed, 300, "SAR_ERR_AUTH_FAILED"),
+    (SarStatus::ErrCrcMismatch, 301, "SAR_ERR_CRC_MISMATCH"),
+    (SarStatus::ErrHashMismatch, 302, "SAR_ERR_HASH_MISMATCH"),
+    (
+        SarStatus::ErrSignatureFailed,
+        303,
+        "SAR_ERR_SIGNATURE_FAILED",
+    ),
+    (SarStatus::ErrKeyMissing, 304, "SAR_ERR_KEY_MISSING"),
+    (SarStatus::ErrKeyRejected, 305, "SAR_ERR_KEY_REJECTED"),
+    (SarStatus::ErrNonceReuse, 306, "SAR_ERR_NONCE_REUSE"),
+    (SarStatus::ErrFragmentGap, 400, "SAR_ERR_FRAGMENT_GAP"),
+    (
+        SarStatus::ErrFragmentTimeout,
+        401,
+        "SAR_ERR_FRAGMENT_TIMEOUT",
+    ),
+    (
+        SarStatus::ErrRecipeUnresolvable,
+        402,
+        "SAR_ERR_RECIPE_UNRESOLVABLE",
+    ),
+    (SarStatus::ErrEcFailed, 403, "SAR_ERR_EC_FAILED"),
+    (
+        SarStatus::ErrRecoveryUnavailable,
+        404,
+        "SAR_ERR_RECOVERY_UNAVAILABLE",
+    ),
+    (
+        SarStatus::ErrRecoveryCorrupted,
+        405,
+        "SAR_ERR_RECOVERY_CORRUPTED",
+    ),
+    (SarStatus::ErrPatchFailed, 406, "SAR_ERR_PATCH_FAILED"),
+    (SarStatus::ErrBaseMissing, 407, "SAR_ERR_BASE_MISSING"),
+    (SarStatus::ErrOverflow, 500, "SAR_ERR_OVERFLOW"),
+    (SarStatus::ErrLimitExceeded, 501, "SAR_ERR_LIMIT_EXCEEDED"),
+    (
+        SarStatus::ErrReassemblyBufferFull,
+        502,
+        "SAR_ERR_REASSEMBLY_BUFFER_FULL",
+    ),
+    (SarStatus::ErrNoSpace, 503, "SAR_ERR_NO_SPACE"),
+    (SarStatus::ErrStreamState, 600, "SAR_ERR_STREAM_STATE"),
+    (
+        SarStatus::ErrTooManyStreams,
+        601,
+        "SAR_ERR_TOO_MANY_STREAMS",
+    ),
+    (SarStatus::ErrStreamClosed, 602, "SAR_ERR_STREAM_CLOSED"),
+    (
+        SarStatus::ErrPartitionMissing,
+        603,
+        "SAR_ERR_PARTITION_MISSING",
+    ),
+    (
+        SarStatus::ErrPartitionMismatch,
+        604,
+        "SAR_ERR_PARTITION_MISMATCH",
+    ),
+    (SarStatus::ErrSessionTimeout, 605, "SAR_ERR_SESSION_TIMEOUT"),
+    (SarStatus::ErrPathCollision, 700, "SAR_ERR_PATH_COLLISION"),
+    (SarStatus::ErrPathEscape, 701, "SAR_ERR_PATH_ESCAPE"),
+    (
+        SarStatus::ErrMetadataMissing,
+        702,
+        "SAR_ERR_METADATA_MISSING",
+    ),
+    (
+        SarStatus::ErrMetadataConflict,
+        703,
+        "SAR_ERR_METADATA_CONFLICT",
+    ),
+    (SarStatus::ErrAlreadyExists, 704, "SAR_ERR_ALREADY_EXISTS"),
+    (SarStatus::ErrNotFound, 705, "SAR_ERR_NOT_FOUND"),
+    (SarStatus::ErrIo, 800, "SAR_ERR_IO"),
+    (SarStatus::ErrWriteProtected, 801, "SAR_ERR_WRITE_PROTECTED"),
+    (SarStatus::ErrInternal, 802, "SAR_ERR_INTERNAL"),
+    (SarStatus::ErrInvalidInput, 803, "SAR_ERR_INVALID_INPUT"),
+    (SarStatus::ErrGeneric, 0xFFFF, "SAR_ERR_GENERIC"),
+];
+
+/// Section 10.3 retired allocations.
+const RETIRED: [u16; 10] = [107, 390, 391, 392, 393, 490, 491, 590, 690, 890];
+
+#[test]
+fn section10_status_registry_has_exactly_50_assignments() {
+    assert_eq!(REGISTRY.len(), 50);
+    let accepted = (0..=u16::MAX)
+        .filter(|code| SarStatus::try_from(*code).is_ok())
+        .count();
+    assert_eq!(
+        accepted, 50,
+        "TryFrom<u16> must accept exactly the registry"
+    );
+}
 
 #[test]
 fn section10_status_registry_roundtrip_codes() {
-    let all_codes = [
-        -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
-        24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-        47, 48, 49, 50, 51, 52,
-    ];
-    for code in all_codes {
-        let status = SarStatus::try_from(code).expect("known section 10 code");
+    for (status, code, name) in REGISTRY {
         assert_eq!(status.code(), code);
-        assert!(status.name().starts_with("SAR_"));
+        assert_eq!(u16::from(status), code);
+        assert_eq!(status.name(), name);
+        assert_eq!(SarStatus::try_from(code), Ok(status));
+        assert_eq!(status.to_string(), format!("{name} ({code})"));
     }
 }
 
 #[test]
-fn section10_status_rejects_unknown_code() {
-    assert!(SarStatus::try_from(999).is_err());
+fn section10_generic_status_is_0xffff() {
+    assert_eq!(SarStatus::ErrGeneric.code(), 0xFFFF_u16);
+    assert_eq!(u16::from(SarStatus::ErrGeneric), 0xFFFF_u16);
+    assert_eq!(SarStatus::try_from(0xFFFF_u16), Ok(SarStatus::ErrGeneric));
+}
+
+#[test]
+fn section10_only_zero_is_success() {
+    for code in 0..=u16::MAX {
+        if let Ok(status) = SarStatus::try_from(code) {
+            assert_eq!(status == SarStatus::Ok, code == 0);
+        }
+    }
+}
+
+#[test]
+fn section10_retired_values_are_rejected() {
+    for code in RETIRED {
+        assert_eq!(SarStatus::try_from(code), Err(SarStatusParseError(code)));
+    }
+}
+
+#[test]
+fn section10_unassigned_reserved_and_private_values_are_rejected() {
+    let unassigned_in_block = [
+        4, 99, 109, 199, 202, 299, 307, 399, 408, 499, 504, 599, 606, 699, 706, 799, 804, 899,
+    ];
+    // 900-32767 reserved; 32768-65534 implementation-private; boundaries included.
+    let outside_blocks = [900, 1000, 32767, 32768, 40000, 65534];
+    for code in unassigned_in_block.into_iter().chain(outside_blocks) {
+        assert_eq!(SarStatus::try_from(code), Err(SarStatusParseError(code)));
+    }
+}
+
+#[test]
+fn section10_legacy_draft_numbers_are_not_aliases() {
+    // Draft-era values 1..=52 must not resolve to the legacy meaning.
+    assert_eq!(SarStatus::try_from(18), Err(SarStatusParseError(18)));
+    assert_eq!(SarStatus::try_from(39), Err(SarStatusParseError(39)));
+    assert_eq!(SarStatus::try_from(1), Ok(SarStatus::WarnIncomplete));
 }
 
 #[test]
@@ -46,20 +195,47 @@ fn section10_error_mapping_includes_required_cases() {
             SarError::AuthFailed("auth placeholder"),
             SarStatus::ErrAuthFailed,
         ),
+        (SarError::CrcMismatch("crc"), SarStatus::ErrCrcMismatch),
+        (SarError::HashMismatch("hash"), SarStatus::ErrHashMismatch),
         (
-            SarError::DecryptFailed("decrypt placeholder"),
-            SarStatus::ErrDecryptFailed,
+            SarError::SessionTimeout("watchdog"),
+            SarStatus::ErrSessionTimeout,
         ),
+        (
+            SarError::FragmentTimeout("fragment"),
+            SarStatus::ErrFragmentTimeout,
+        ),
+        (
+            SarError::PathCollision("collision"),
+            SarStatus::ErrPathCollision,
+        ),
+        (SarError::PathEscape("escape"), SarStatus::ErrPathEscape),
+        (SarError::InvalidInput("input"), SarStatus::ErrInvalidInput),
+        (SarError::Internal("internal"), SarStatus::ErrInternal),
+        (SarError::Generic, SarStatus::ErrGeneric),
+        (SarError::Io(std::io::Error::other("io")), SarStatus::ErrIo),
     ];
     for (error, status) in cases {
         assert_eq!(error.status(), status);
+        assert!(
+            !matches!(
+                status,
+                SarStatus::Ok
+                    | SarStatus::WarnIncomplete
+                    | SarStatus::WarnDuplicate
+                    | SarStatus::WarnSkipped
+            ),
+            "SarError must never map to a success or warning status"
+        );
     }
 }
 
 #[test]
 fn warning_status_is_exposed() {
-    assert_eq!(SarStatus::WarnIncomplete.code(), 18);
+    assert_eq!(SarStatus::WarnIncomplete.code(), 1);
     assert_eq!(SarStatus::WarnIncomplete.name(), "SAR_WARN_INCOMPLETE");
+    assert_eq!(SarStatus::WarnDuplicate.code(), 2);
+    assert_eq!(SarStatus::WarnSkipped.code(), 3);
 }
 
 // ---------------------------------------------------------------------------

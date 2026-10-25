@@ -562,19 +562,22 @@ impl SessionCapabilitiesFrame {
     }
 }
 
+/// First and last implementation-private status values (Section 10.1).
+const PRIVATE_STATUS_RANGE: std::ops::RangeInclusive<u16> = 32768..=65534;
+
 fn decode_status_code(code: u16) -> Result<SarStatus, SarError> {
-    let signed = if code == u16::MAX {
-        -1
-    } else {
-        i32::from(code)
-    };
-    SarStatus::try_from(signed).map_err(|_| SarError::ReservedValue("unknown session status code"))
+    SarStatus::try_from(code).map_err(|_| {
+        if PRIVATE_STATUS_RANGE.contains(&code) {
+            // Private values have no interoperable meaning (10.1); 10.5 requires
+            // fail-closed handling with SAR_ERR_MALFORMED when nothing more specific applies.
+            SarError::Malformed("implementation-private session status code")
+        } else {
+            // Retired, reserved, and unassigned values (10.1, 10.2.3, 10.3).
+            SarError::ReservedValue("reserved, retired, or unassigned session status code")
+        }
+    })
 }
 
 fn encode_status_code(status: SarStatus) -> u16 {
-    if status.code() == -1 {
-        u16::MAX
-    } else {
-        status.code() as u16
-    }
+    u16::from(status)
 }

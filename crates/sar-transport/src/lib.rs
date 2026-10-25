@@ -520,7 +520,9 @@ impl InMemoryTransport {
         if let Some(last) = self.connection_last_activity_ms
             && now_ms.saturating_sub(last) > self.config.inactivity_timeout_ms
         {
-            return Err(SarError::Timeout("transport inactivity watchdog expired"));
+            return Err(SarError::SessionTimeout(
+                "transport inactivity watchdog expired",
+            ));
         }
         Ok(Vec::new())
     }
@@ -626,7 +628,7 @@ impl InMemoryTransport {
         match status {
             SarStatus::ErrTooManyStreams => SarError::TooManyStreams("transport policy rejection"),
             SarStatus::ErrFlagConflict => SarError::FlagConflict("transport policy rejection"),
-            SarStatus::ErrTimeout => SarError::Timeout("transport policy rejection"),
+            SarStatus::ErrSessionTimeout => SarError::SessionTimeout("transport policy rejection"),
             SarStatus::ErrLimitExceeded => SarError::LimitExceeded("transport policy rejection"),
             SarStatus::ErrStreamState => SarError::StreamState("transport policy rejection"),
             _ => SarError::StreamState("transport policy rejection"),

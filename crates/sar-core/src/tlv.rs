@@ -79,7 +79,7 @@ pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, Sar
         if pad > 0 {
             let padding = cursor.read_bytes(pad)?;
             if padding.iter().any(|byte| *byte != 0) {
-                return Err(SarError::InvalidAlignment("non-zero TLV padding"));
+                return Err(SarError::Malformed("non-zero TLV padding"));
             }
         }
 
