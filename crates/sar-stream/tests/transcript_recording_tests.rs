@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use sar_core::{
-    EntryMode, GlobalFlags, GlobalHeader, LocalFileHeader, SarStatus,
+    EntryMode, GlobalFlags, GlobalHeader, LocalFileHeader, SarError, SarStatus,
     format::{write_global_header, write_lfh},
 };
 use sar_stream::{
@@ -146,7 +146,7 @@ fn recording_does_not_weaken_validation() {
 }
 
 #[test]
-fn recording_reports_io_failure_distinctly() {
+fn recording_reports_existing_destination_as_already_exists() {
     let transcript = build_valid_transcript();
     let path = unique_temp_path("already-exists.sar");
     fs::write(&path, b"old").expect("precreate file");
@@ -157,8 +157,26 @@ fn recording_reports_io_failure_distinctly() {
             overwrite: false,
         },
     };
-    let err = validate_stream_transcript_with_options(&transcript, &options).expect_err("io fail");
-    assert_eq!(err.status(), SarStatus::ErrIo);
+    let err = validate_stream_transcript_with_options(&transcript, &options).expect_err("exists");
+    assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+    assert_eq!(err.status(), SarStatus::ErrAlreadyExists);
+    assert_eq!(fs::read(&path).expect("read"), b"old");
 
     let _ = fs::remove_file(&path);
+}
+
+#[test]
+fn recording_reports_other_io_failure_as_io() {
+    let transcript = build_valid_transcript();
+    let path = unique_temp_path("missing-dir").join("nested").join("t.sar");
+
+    let options = StreamTranscriptValidationOptions {
+        recording: TranscriptRecording::Path {
+            path,
+            overwrite: false,
+        },
+    };
+    let err = validate_stream_transcript_with_options(&transcript, &options).expect_err("io");
+    assert!(matches!(err, SarError::Io(_)), "{err:?}");
+    assert_eq!(err.status(), SarStatus::ErrIo);
 }

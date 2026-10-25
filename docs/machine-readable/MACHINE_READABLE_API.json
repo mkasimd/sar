@@ -955,7 +955,7 @@
             "description": "Return the numeric SAR status code.",
             "metadata": {
               "since_milestone": "1",
-              "returns": "i32",
+              "returns": "u16",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -3852,7 +3852,7 @@
           {
             "name": "validate_manifest_schema",
             "signature": "pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchemaResult",
-            "description": "Validates a ConformanceManifest against the schema constraints. Returns a ManifestSchemaResult.",
+            "description": "Validates a ConformanceManifest against the schema constraints. expected.status must be an assigned name in the standardized SarStatus registry; retired, unknown, and alias names are rejected. Recognizing a SAR_WARN_* name does not imply that the runner can verify a warning outcome. Returns a ManifestSchemaResult.",
             "use_for": "Checking manifest validity before running conformance checks.",
             "metadata": {
               "module": "conformance",
@@ -3861,6 +3861,20 @@
               "stability": "internal_public",
               "implemented": true,
               "since_milestone": "12a-audit-cp"
+            }
+          },
+          {
+            "name": "sar_error_matches_expected_status",
+            "signature": "pub fn sar_error_matches_expected_status(error: &sar_core::error::SarError, expected_status: &str) -> bool",
+            "description": "Returns true only when the normative status of the SarError (SarError::status().name()) is exactly the expected status name. No near-miss or alias matching is performed.",
+            "use_for": "Exact status comparison of archive parse errors against manifest expected.status.",
+            "metadata": {
+              "module": "conformance",
+              "path": "src/conformance.rs",
+              "visibility": "crate_public",
+              "stability": "internal_public",
+              "implemented": true,
+              "since_milestone": "13b"
             }
           },
           {

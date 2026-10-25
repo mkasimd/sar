@@ -149,17 +149,17 @@ Every vector has a `manifest.json` with schema version 1. Required fields:
 Optional: `file`, `profiles`, `features`, `entries`, `base_files`, `profile_expectations`,
 `limits`, `notes`, `deferred`, `requires_key_provider`, `generated_by`.
 
-Stable status identifiers:
-`SAR_OK`, `SAR_ERR_MALFORMED`, `SAR_ERR_TRUNCATED`, `SAR_ERR_UNSUPPORTED`,
-`SAR_ERR_RESERVED_VALUE`, `SAR_ERR_FLAG_CONFLICT`, `SAR_ERR_INVALID_MAGIC`,
-`SAR_ERR_AUTH_FAILED`, `SAR_ERR_PATCH_FAILED`, `SAR_ERR_BASE_MISSING`,
-`SAR_ERR_LIMIT_EXCEEDED`, `SAR_ERR_BOUNDS`, `SAR_ERR_OVERFLOW`,
-`SAR_ERR_EC_FAILED`, `SAR_ERR_FRAGMENT_GAP`, `SAR_ERR_INVALID_MAP`,
-`SAR_ERR_INVALID_ALIGNMENT`, `SAR_ERR_INVALID_LENGTH`, `SAR_ERR_STREAM_STATE`,
-`SAR_ERR_DECRYPT_FAILED`, `SAR_ERR_HASH_MISMATCH`, `SAR_ERR_CRC_MISMATCH`,
-`SAR_ERR_INVALID_VERSION`, `SAR_ERR_KEY_MISSING`, `SAR_ERR_METADATA_MISSING`,
-`SAR_ERR_METADATA_CONFLICT`, `SAR_ERR_RECOVERY_UNAVAILABLE`,
-`SAR_ERR_RECOVERY_CORRUPTED`, `SAR_ERR_IO`.
+Stable status identifiers: `expected.status` must be one of the 50 names assigned
+in specification Section 10.2 (`SAR_OK`, `SAR_WARN_*`, `SAR_ERR_*`), as
+implemented by `sar_core::error::SarStatus`. Retired names (for example
+`SAR_ERR_INVALID_ALIGNMENT` and `SAR_ERR_DECRYPT_FAILED`), unknown names, and
+aliases are rejected by `validate_manifest_schema()`.
+
+A recognized `SAR_WARN_*` name does not mean the runner can verify a warning
+outcome. The runner currently executes only `valid=true`/`SAR_OK` and
+`valid=false`/`SAR_ERR_*` cases; warning-outcome verification needs a runner
+result model and manifest schema extension owned by the responsible feature
+package.
 
 ### Implemented profile validator
 
@@ -167,7 +167,7 @@ Stable status identifiers:
 - `ConformanceManifest`: serde-deserializable manifest type matching the schema
 - `validate_manifest_schema()`: schema-level field validation
 - `run_conformance_check()`: end-to-end check for a manifest + binary file
-- `sar_error_matches_expected_status()`: maps `SarError` variants to stable status strings
+- `sar_error_matches_expected_status()`: exact comparison of `SarError::status().name()` with the expected status; near-miss statuses (for example `InvalidLength` for `SAR_ERR_MALFORMED`) do not match
 - `discover_manifests()`: recursive walker returning sorted manifest paths
 
 `sar_archive::profile::ComplianceProfile` provides 8 profile variants with
