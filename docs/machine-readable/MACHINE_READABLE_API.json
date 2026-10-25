@@ -1229,8 +1229,27 @@
             "signature": "pub const fn EntryMode::is_loss_tolerant(self) -> bool"
           },
           {
+            "name": "EntryMode::is_partition_manifest",
+            "description": "Return whether the PARTITION_MANIFEST bit (bit 12) is set.",
+            "metadata": {
+              "since_milestone": "13",
+              "returns": "bool",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "ready",
+                "notes": "Pure bitfield query."
+              },
+              "module": "flags",
+              "path": "src/flags.rs"
+            },
+            "signature": "pub const fn EntryMode::is_partition_manifest(self) -> bool"
+          },
+          {
             "name": "validate_entry_mode_against_global",
-            "description": "Validate entry-mode bits against archive-wide flags.",
+            "description": "Validate entry-mode bits against archive-wide flags. Stateless: reserved OP_CODE (filesystem 0x5-0xF, session 0x8-0xF) returns RESERVED_VALUE; capability violations, PARTITION_MANIFEST without PARTITIONED_ARCHIVE, prohibited PARTITION_MANIFEST and IS_FRAGMENT combinations return FLAG_CONFLICT. LOSS_TOLERANT does not require IS_FRAGMENT.",
             "metadata": {
               "since_milestone": "1",
               "returns": "Result<(), SarError>",
@@ -2021,7 +2040,7 @@
           },
           {
             "name": "parse_tlvs",
-            "description": "Parse a sequence of TLV blocks with alignment checks.",
+            "description": "Parse a sequence of TLV blocks with alignment checks. Type IDs are classified exhaustively per Section 9: reserved IDs return RESERVED_VALUE, assigned-but-unimplemented IDs return UNSUPPORTED.",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<Vec<Tlv>, SarError>",
@@ -2043,7 +2062,7 @@
           },
           {
             "name": "write_tlvs",
-            "description": "Encode TLV blocks with alignment padding.",
+            "description": "Encode TLV blocks with alignment padding. Uses the same exhaustive Section 9 classification as parse_tlvs; reserved IDs are never emitted.",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<Vec<u8>, SarError>",
@@ -3050,6 +3069,25 @@
               "path": "src/flags.rs"
             },
             "signature": "pub const EntryMode::LAST_FRAGMENT: u16 = 1 << 6"
+          },
+          {
+            "name": "EntryMode::PARTITION_MANIFEST",
+            "description": "Bit flag (bit 12) for the terminal Partition Manifest Entry.",
+            "metadata": {
+              "since_milestone": "13",
+              "returns": "u16",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "ready",
+                "notes": "Simple numeric bit mask."
+              },
+              "module": "flags",
+              "path": "src/flags.rs"
+            },
+            "signature": "pub const EntryMode::PARTITION_MANIFEST: u16 = 1 << 12"
           },
           {
             "name": "EntryMode::LOSS_TOLERANT",

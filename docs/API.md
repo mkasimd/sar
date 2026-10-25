@@ -171,6 +171,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `EntryMode::is_fragment` | `pub const fn EntryMode::is_fragment(self) -> bool` | Return whether an entry is marked fragment. |
 | `EntryMode::is_last_fragment` | `pub const fn EntryMode::is_last_fragment(self) -> bool` | Return whether an entry is marked last fragment. |
 | `EntryMode::is_loss_tolerant` | `pub const fn EntryMode::is_loss_tolerant(self) -> bool` | Return whether an entry permits degraded reconstruction. |
+| `EntryMode::is_partition_manifest` | `pub const fn EntryMode::is_partition_manifest(self) -> bool` | Return whether the PARTITION_MANIFEST bit (bit 12) is set. |
 | `GlobalFlags::from_wire` | `pub fn from_wire(bits: u32) -> Result<Self, SarError>` | Convert a 32-bit wire value to GlobalFlags, rejecting reserved bits with RESERVED_VALUE. |
 | `is_cdc_metadata_tlv_type` | `pub fn is_cdc_metadata_tlv_type(type_id: u8) -> bool` | Returns true for CDC metadata TLV IDs in range 0x40..=0x4F |
 | `lfh_to_bytes` | `pub fn lfh_to_bytes(lfh: &LocalFileHeader, flags: GlobalFlags) -> Result<Vec<u8>, SarError>` | Serialize an LFH into on-wire bytes. |
@@ -185,7 +186,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `parse_lfh` | `pub fn parse_lfh(input: &[u8], flags: &GlobalFlags, limits: &ResourceLimits) -> Result<(LocalFileHeader, usize), SarError>` | Parse an LFH from bytes. |
 | `parse_lfh_fec_value` | `pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8], limits: &ResourceLimits) -> Result<Option<FecSummary>, SarError>` | Parse and validate an LFH FEC value. |
 | `parse_sparse_map` | `pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<Vec<SparseExtent>, SarError>` | Parses a sparse map byte blob into a Vec&lt;SparseExtent&gt;. Enforces configured limits before allocating. |
-| `parse_tlvs` | `pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, SarError>` | Parse a sequence of TLV blocks with alignment checks. |
+| `parse_tlvs` | `pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, SarError>` | Parse a sequence of TLV blocks with alignment checks. Type IDs are classified exhaustively per Section 9: reserved IDs return RESERVED_VALUE, assigned-but-unimplemented IDs return UNSUPPORTED. |
 | `recipe_hashes` | `pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]>` | Extracts ordered 32-byte hashes from a validated recipe payload |
 | `require_unpartitioned_processing` | `pub fn require_unpartitioned_processing(flags: GlobalFlags) -> Result<(), SarError>` | Return Unsupported when PARTITIONED_ARCHIVE is set; gate for processing entry points until partition support exists. |
 | `ResourceLimits::allocation_len` | `pub fn ResourceLimits::allocation_len(&self, size: u64, label: &'static str) -> Result<usize, SarError>` | Checked u64-to-usize conversion with limit enforcement. All allocation size conversions go through this function. |
@@ -199,7 +200,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `Tlv::encoded_len` | `pub fn Tlv::encoded_len(&self) -> usize` | Return encoded TLV size including alignment padding. |
 | `validate_cdc_algo_id` | `pub fn validate_cdc_algo_id(id: u8) -> Result<(), SarError>` | Validates CDC algorithm ID and maps unsupported/reserved values to SarError |
 | `validate_cdc_metadata_tlv` | `pub fn validate_cdc_metadata_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<(), SarError>` | Validates CDC metadata TLVs structurally: CDC_MAP parsed, CDC_EXT_PROVIDER inert UTF-8, 0x42-0x4E reserved errors, CDC_CUSTOM parsed/preserved only |
-| `validate_entry_mode_against_global` | `pub fn validate_entry_mode_against_global(global_flags: GlobalFlags, entry_mode: EntryMode) -> Result<(), SarError>` | Validate entry-mode bits against archive-wide flags. |
+| `validate_entry_mode_against_global` | `pub fn validate_entry_mode_against_global(global_flags: GlobalFlags, entry_mode: EntryMode) -> Result<(), SarError>` | Validate entry-mode bits against archive-wide flags. Stateless: reserved OP_CODE (filesystem 0x5-0xF, session 0x8-0xF) returns RESERVED_VALUE; capability violations, PARTITION_MANIFEST without PARTITIONED_ARCHIVE, prohibited PARTITION_MANIFEST and IS_FRAGMENT combinations return FLAG_CONFLICT. LOSS_TOLERANT does not require IS_FRAGMENT. |
 | `validate_global_flags` | `pub fn validate_global_flags(flags: GlobalFlags) -> Result<(), SarError>` | Validate archive-wide flag combinations. |
 | `validate_global_header_prefix` | `pub fn validate_global_header_prefix(prefix: &[u8]) -> Result<(), SarError>` | Validate the fixed 8-byte Global Header prefix: magic, version (unassigned is RESERVED_VALUE), reserved byte, and Flags Size == 4 (INVALID_LENGTH). Shared by the reader and incremental stream parser. |
 | `validate_lfh_fec_algo_id` | `pub fn validate_lfh_fec_algo_id(algo_id: u8) -> Result<(), SarError>` | Validate an LFH FEC algorithm ID. |
@@ -210,7 +211,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `write_global_header` | `pub fn write_global_header(header: &GlobalHeader) -> Result<Vec<u8>, SarError>` | Serialize a global header with exactly four little-endian Global Flags bytes; rejects unassigned versions and reserved flag bits. |
 | `write_lfh` | `pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, SarError>` | Serialize an LFH. |
 | `write_sparse_map` | `pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>` | Serializes sparse extents to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates. |
-| `write_tlvs` | `pub fn write_tlvs(tlvs: &[Tlv]) -> Result<Vec<u8>, SarError>` | Encode TLV blocks with alignment padding. |
+| `write_tlvs` | `pub fn write_tlvs(tlvs: &[Tlv]) -> Result<Vec<u8>, SarError>` | Encode TLV blocks with alignment padding. Uses the same exhaustive Section 9 classification as parse_tlvs; reserved IDs are never emitted. |
 
 #### Public types
 
@@ -256,6 +257,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `EntryMode::FRAGMENT` | `pub const EntryMode::FRAGMENT: u16 = 1 << 5` | Bit flag for fragmented entries. |
 | `EntryMode::LAST_FRAGMENT` | `pub const EntryMode::LAST_FRAGMENT: u16 = 1 << 6` | Bit flag for the final fragment in a group. |
 | `EntryMode::LOSS_TOLERANT` | `pub const EntryMode::LOSS_TOLERANT: u16 = 1 << 7` | Bit flag for degraded loss-tolerant reconstruction. |
+| `EntryMode::PARTITION_MANIFEST` | `pub const EntryMode::PARTITION_MANIFEST: u16 = 1 << 12` | Bit flag (bit 12) for the terminal Partition Manifest Entry. |
 | `GLOBAL_FLAGS_SIZE` | `pub const GLOBAL_FLAGS_SIZE: u16 = 4;` | Exact Global Flags size in bytes required by Section 5.2. |
 | `GLOBAL_HEADER_FIXED_LEN` | `pub const GLOBAL_HEADER_FIXED_LEN: usize = 12;` | Length of the fixed Global Header prefix plus four Global Flags bytes. |
 | `SUPPORTED_CD_VERSION` | `pub const SUPPORTED_CD_VERSION: u8 = 0x01` | Central dictionary version supported by the current implementation. |
