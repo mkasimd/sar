@@ -169,11 +169,11 @@ Certain combinations of assigned flags are invalid and MUST be rejected as defin
 **Category A: Structural & Indexing**
 | Bit | Name | Description |
 | --- | --- | --- |
-| 0 | `64BIT_SIZE` | All size/offset fields are 8 bytes (otherwise 4). |
+| 0 | `64BIT_SIZE` | Data-scale size and offset values explicitly governed by this flag use 8-byte encoding instead of 4-byte encoding. Field-specific sections define which values are governed by `64BIT_SIZE`. |
 | 1 | `NO_INDEX` | Sequential-only mode. No CD or Footer exists. |
 | 2 | `OPT_PRESENT` | CD contains a variable-length Metadata Section (TLV). |
 | 3 | `PARTITIONED_ARCHIVE` | The archive spans multiple physical files. |
-| 4 | `FILE_FRAGMENTATION` | Individual files may be split into non-contiguous fragments. |
+| 4 | `FILE_FRAGMENTATION` | Logical Entries may be segmented across multiple LFH-based fragments. |
 | 5 | `CDC_SUPPORT` | Enables support for Content-Defined Chunking. |
 | 6 - 7 | `RESERVED` | MUST be zero. |
 
@@ -572,52 +572,56 @@ Each encrypted Partition independently establishes its own KMS Master Secret fro
 Each entry in the Data Area begins with an LFH. The sequence of fields is deterministic based on the Global Flags.
 
 ### 6.1 LFH Field Sequence
-The sequence of fields is strictly deterministic and the presence of LFH fields is governed by Global Flags. The Entry Mode bits solely determine whether the data in the affected fields is utilized or ignored such that those fields are treated as reserved / zero (see 4.2). Parsers MUST evaluate the Global Flags in the following order to calculate the current header's size.
 
-| Order | Field | Size | Condition |
-| --- | --- | --- | --- |
-| 1 | Header Size | 4B | Always |
-| 2 | Entry Mode | 2B | Always |
-| 3 | Stream ID | 2B | Always |
-| 4 | Sequence No | 2B | Always |
-| 5 | Uncompressed Size | 4/8B | Always |
-| 6 | Payload Size | 4/8B | Always |
-| 7 | Comp Algo ID | 1B | `COMPRESSED` (Bit 8) |
-| 8 | Patch Algo ID | 1B | `HAS_DELTA` (Bit 9) |
-| 9 | Encr Algo ID | 1B | `ENCRYPTED` (Bit 10) |
-| 10 | CDC Algo ID | 1B | `CDC_SUPPORT` (Bit 5) |
-| 11 | FEC Algo ID | 1B | `SELECTIVE_FEC` (Bit 20) |
-| 12 | Fragment ID | 4B | `FILE_FRAGMENTATION` (Bit 4) |
-| 13 | Fragment Index | 4B | `FILE_FRAGMENTATION` (Bit 4) |
-| 14 | Fragment Descriptor | 12B | `FILE_FRAGMENTATION` (Bit 4) |
-| 15 | IV / Nonce | 24B | `ENCRYPTED` (Bit 10) |
-| 16 | Delta Base Hash | 32B | `HAS_DELTA` (Bit 9) |
-| 17 | File CRC32 | 4B | `PER_FILE_CRC` (Bit 17) |
-| 18 | Content Hash | 32B | `DEDUPLICATION` (Bit 29) |
-| 19 | UID / GID | 4B | `EXT_UID_GID` (Bit 27) |
-| 20 | Timestamps | 24B | `EXT_TIME` (Bit 28) |
-| 21 | Permissions | 2B | `HAS_PERMS` (Bit 25) |
-| 22 | Name Length | 2B | Always |
-| 23 | Path Length | 2B | `HAS_PATH` (Bit 24) |
-| 24 | Sparse Map Size | 4B | `SPARSE_FILES` (Bit 30) |
-| 25 | FEC Size | 3B | `SELECTIVE_FEC` (Bit 20) |
-| 26 | Name String | Var | Always |
-| 27 | Path String | Var | `HAS_PATH` (Bit 24) |
-| 28 | Sparse Map | Var | `SPARSE_FILES` (Bit 30) |
-| 29 | FEC Value | Var | `SELECTIVE_FEC` (Bit 20) |
-| 30 | Payload Data | Var | Size = Payload Size |
+The sequence of fields is strictly deterministic and the presence of LFH fields is governed by Global Flags. Entry Mode bits determine whether the data in affected fields is semantically active or inert as defined by this specification. Parsers MUST evaluate the Global Flags and applicable Entry Mode conditions in the following order to calculate the current header's size.
 
-The physical layout and byte alignment of the LFH are strictly dependent on the evaluation of the Condition column. Fields whose conditions evaluate to false **MUST NOT** be present in the header byte sequence.
+| Order | Field             | Size | Condition                    |
+| ----- | ----------------- | ---- | ---------------------------- |
+| 1     | Header Size       | 4B   | Always                       |
+| 2     | Entry Mode        | 2B   | Always                       |
+| 3     | Stream ID         | 2B   | Always                       |
+| 4     | Sequence No       | 2B   | Always                       |
+| 5     | Uncompressed Size | 4/8B | Always                       |
+| 6     | Payload Size      | 4/8B | Always                       |
+| 7     | Comp Algo ID      | 1B   | `COMPRESSED` (Bit 8)         |
+| 8     | Patch Algo ID     | 1B   | `HAS_DELTA` (Bit 9)          |
+| 9     | Encr Algo ID      | 1B   | `ENCRYPTED` (Bit 10)         |
+| 10    | CDC Algo ID       | 1B   | `CDC_SUPPORT` (Bit 5)        |
+| 11    | FEC Algo ID       | 1B   | `SELECTIVE_FEC` (Bit 20)     |
+| 12    | Fragment ID       | 4B   | `FILE_FRAGMENTATION` (Bit 4) |
+| 13    | Fragment Index    | 4B   | `FILE_FRAGMENTATION` (Bit 4) |
+| 14    | IV / Nonce        | 24B  | `ENCRYPTED` (Bit 10)         |
+| 15    | Delta Base Hash   | 32B  | `HAS_DELTA` (Bit 9)          |
+| 16    | File CRC32        | 4B   | `PER_FILE_CRC` (Bit 17)      |
+| 17    | Content Hash      | 32B  | `DEDUPLICATION` (Bit 29)     |
+| 18    | UID / GID         | 4B   | `EXT_UID_GID` (Bit 27)       |
+| 19    | Timestamps        | 24B  | `EXT_TIME` (Bit 28)          |
+| 20    | Permissions       | 2B   | `HAS_PERMS` (Bit 25)         |
+| 21    | Name Length       | 2B   | Always                       |
+| 22    | Path Length       | 2B   | `HAS_PATH` (Bit 24)          |
+| 23    | Sparse Map Size   | 4B   | `SPARSE_FILES` (Bit 30)      |
+| 24    | FEC Size          | 3B   | `SELECTIVE_FEC` (Bit 20)     |
+| 25    | Name String       | Var  | Always                       |
+| 26    | Path String       | Var  | `HAS_PATH` (Bit 24)          |
+| 27    | Sparse Map        | Var  | `SPARSE_FILES` (Bit 30)      |
+| 28    | FEC Value         | Var  | `SELECTIVE_FEC` (Bit 20)     |
+| 29    | Payload Data      | Var  | Size = Payload Size          |
+
+`Uncompressed Size` and `Payload Size` use 4-byte unsigned integer encoding when `64BIT_SIZE` is unset and 8-byte unsigned integer encoding when `64BIT_SIZE` is set.
+
+`64BIT_SIZE` controls the width of these data-scale size fields. It does not alter the width of `Header Size`, Name Length, Path Length, Sparse Map Size, FEC Size, Fragment ID, Fragment Index, or other independently bounded structural or metadata fields.
+
+The physical layout and byte alignment of the LFH are strictly dependent on the evaluation of the Condition column. Fields whose conditions evaluate to false MUST NOT be present in the header byte sequence.
 
 The presence and value semantics of fields are governed by the following rules:
 
-* **Fixed-Sized Conditional Fields:** If a governing condition is met, all corresponding fixed-size fields **MUST** be present in the header. These fields **MAY** contain a value of zero, which **MAY** denote a feature-specific state rather than field absence.
-* **Variable-Sized Fields:** The presence of a variable-sized field is jointly governed by its condition and its corresponding size or length field.
-  * A variable-sized field **MUST** be present if and only if its structural condition is met **AND** its corresponding size field contains a non-zero value.
-  * If its corresponding size field evaluates to zero, the variable-sized field **MUST NOT** be present in the header, regardless of whether its governing Global Flag is set.
+* **Fixed-Size Conditional Fields:** If a governing condition is met, all corresponding fixed-size fields MUST be present in the header. These fields MAY contain a value of zero where this specification defines zero as a valid, neutral, inert, or feature-specific value.
+* **Variable-Size Fields:** The presence of a variable-size field is jointly governed by its structural condition and its corresponding size or length field.
 
-NOTE:
-For example, if `Name Length` is zero, `Name String` is omitted from the byte sequence; however, because the condition for `Name Length` is "Always", the length field itself is still present.
+  * A variable-size field MUST be present if and only if its structural condition is met and its corresponding size or length field is nonzero.
+  * If its corresponding size or length field is zero, the variable-size field MUST NOT be present, regardless of whether its governing Global Flag is set.
+
+For example, if `Name Length` is zero, `Name String` is omitted from the byte sequence. Because `Name Length` itself is unconditional, the length field remains physically present.
 
 #### 6.1.1 Header Size and Payload Position Semantics
 `Header Size` SHALL define the declared size, in bytes, of the LFH from the first byte of the `Header Size` field through the final byte before Payload Data.
@@ -644,65 +648,357 @@ If `Header Size` is smaller than the fixed LFH prefix size implied by the Global
 
 If `Header Size` causes the header or payload to exceed archive bounds, implementations MUST return `SAR_ERR_BOUNDS` or `SAR_ERR_TRUNCATED` as appropriate.
 
-#### 6.1.2 Size Semantics and Transform Finality
+#### 6.1.2 Size Semantics and Transform Boundaries
 
-The `Uncompressed Size` field MUST represent the size, in bytes, of the fully reconstructed logical file after all applicable transformations have been reversed during decoding.
+`Payload Size` is the exact encoded size in bytes of the current LFH `Payload Data` field.
 
-For encoding, transformations SHALL be applied in the following order where applicable:
+`Uncompressed Size` is the exact size in bytes of the current LFH payload representation after reversal of the compression transformation applicable to that LFH and after removal of encryption framing, but before any subsequent group-wide reconstruction operation.
 
-1. Patch application (`HAS_DELTA`)
-2. Compression (`IS_COMPRESSED`)
-3. Encryption (`IS_ENCRYPTED`)
+`Uncompressed Size` has the same semantic role regardless of whether the Entry is fragmented.
 
-For decoding, transformations SHALL be reversed in the following order:
+If `IS_COMPRESSED` is set, decompression of the current LFH payload representation MUST produce exactly `Uncompressed Size` bytes.
 
-1. Decryption (`IS_ENCRYPTED`)
-2. Decompression (`IS_COMPRESSED`)
-3. Patch application (`HAS_DELTA`)
+If `IS_COMPRESSED` is unset, the payload representation after any applicable authentication and decryption MUST contain exactly `Uncompressed Size` bytes.
 
-The `Uncompressed Size` field therefore represents the size of the logical file after completion of the canonical decode pipeline and not the size of any intermediate representation.
+For an LFH that is neither compressed nor encrypted, `Uncompressed Size` equals `Payload Size`.
 
-Implementations MUST validate that the reconstructed output length exactly matches `Uncompressed Size`.
+For an AEAD-encrypted LFH, `Payload Size` includes the encoded ciphertext and authentication tag, while `Uncompressed Size` excludes AEAD framing and describes the corresponding uncompressed plaintext representation.
 
-Any mismatch MUST result in the most specific applicable error code corresponding to the stage at which reconstruction failed.
+For a fragmented Entry, the byte sequence of exactly `Uncompressed Size` bytes produced by fragment-local decoding is the current fragment's contribution to the Fragment Reassembly Sequence defined in Section 6.1.3.
 
-#### 6.1.3 Fragment Descriptor Semantics
-When `FILE_FRAGMENTATION` is enabled, the **Fragment Descriptor** field SHALL be present in the LFH. All LFHs sharing the same Fragment ID belong to the same logical object.
+`Uncompressed Size` does not declare the final logical output size of a later group-wide reconstruction operation. In particular, it MUST NOT be interpreted as:
 
-Multiple LFHs belonging to one Fragment ID do not create separate Full Logical Entry Path occurrences.
+* the total size of a completed fragmented Entry;
+* the final target size produced by a delta patch;
+* the final logical size produced by CDC recipe resolution; or
+* the final apparent size of a sparse logical Entry.
 
-The descriptor is structured as:
+Those final-size semantics are defined by the corresponding group-wide reconstruction construction.
 
-| Subfield | Size | Description |
-| --- | --- | --- |
-| Absolute Offset | 8B   | Byte offset within logical reassembled stream |
-| Fragment Size   | 4B   | Size of this fragment in bytes             |
+A decoded LFH payload representation whose size differs from `Uncompressed Size` MUST return `SAR_ERR_INVALID_LENGTH` unless a more specific applicable transformation error has already occurred.
 
-**Rationale**
+All size calculations and accumulations MUST use checked arithmetic. Arithmetic overflow MUST return `SAR_ERR_OVERFLOW`.
 
-* Replaces ambiguous "offset-only" interpretation.
-* Enables **stream reassembly without external state assumptions**.
-* Eliminates dependency on LFH ordering for reconstruction correctness.
 
-**Constraints**
+#### 6.1.3 Fragmentation Semantics
 
-* Fragment Size is independent of Payload Size and refers to the logical fragment size after completion of the canonical decode pipeline.
-* Absolute Offset SHALL refer to the byte offset within the fully reconstructed logical object after completion of the canonical decode pipeline.
-* Fragment Size SHALL refer to the fragment length within the fully reconstructed logical object after completion of the canonical decode pipeline.
-* Overlapping descriptors MUST trigger `SAR_ERR_INVALID_MAP`.
+When `FILE_FRAGMENTATION` is enabled, the LFH contains `Fragment ID` and `Fragment Index`.
 
-Within one logical archive, or within one active Stateful Streaming stream context, all LFHs sharing one Fragment ID represent one Entry. Individual fragments MUST NOT be treated as separate Entries for Full Logical Entry Path ordering or final-state determination.
+SAR fragmentation is sequential segmentation of one intermediate Entry representation. It does not encode arbitrary fragment reassembly offsets or a separate fragment reassembly extent.
 
-Fragment Index 0 establishes the Name String, Path String, and canonical Entry-order position of the fragmented Entry.
+The size of a fragment's contribution to the Fragment Reassembly Sequence is the fragment LFH's `Uncompressed Size` as defined by Section 6.1.2.
 
-If a later fragment contains a Name String or Path String, the value MUST match the corresponding Fragment Index 0 value. A mismatch MUST return `SAR_ERR_METADATA_CONFLICT` or another more specific applicable error.
+##### Fragmented Entry and Fragment Group
 
-A fragmented Entry participates in final-state determination only after successful complete reconstruction or degraded reconstruction permitted by `LOSS_TOLERANT`.
+A fragment group represents exactly one logical Entry.
 
-An incomplete fragment set that cannot produce either result MUST NOT supersede an earlier complete Entry at the same Full Logical Entry Path.
-This rule does not permit an implementation to report successful complete processing when the incomplete fragment set requires an error or incomplete result under the fragmentation, recovery, or `LOSS_TOLERANT` requirements.
+All fragments belonging to one group share one Fragment ID within the applicable Fragment ID scope.
 
-These rules do not permit duplicate Fragment Index values, overlapping Fragment Descriptors, or any other invalid fragment map.
+The conceptual fragment-group identity is:
+
+```text
+(Fragment Scope, Fragment ID)
+```
+
+Fragment Index 0 establishes the fragmented Entry's logical identity, Full Logical Entry Path, and canonical logical Entry-order position.
+
+Later fragments do not create independent logical Entries, Full Logical Entry Path occurrences, duplicate-path occurrences, or independent state-application operations.
+
+A fragmented Entry participates in final-state determination only after successful complete reconstruction or degraded reconstruction explicitly permitted by `LOSS_TOLERANT`.
+
+##### Fragment ID Scope
+
+For an unpartitioned Archive, Fragment ID scope is the current Physical Archive Member.
+
+For a Partitioned Archive, Fragment ID scope is the complete Partition Set. A fragment group MAY begin in one Partition and continue in later Partitions.
+
+For Stateful Streaming, Fragment ID scope is the active SAR session and Stream ID.
+
+Fragment ID is not required to be globally unique outside its applicable scope.
+
+##### Fragment Index
+
+Fragment Index is a zero-based ordinal identifying the fragment's position in the Fragment Reassembly Sequence.
+
+A complete fragment group containing `N` fragments contains exactly the Fragment Index set:
+
+```text
+0, 1, 2, ..., N - 1
+```
+
+Fragment Index values MUST be unique within one fragment group.
+
+Exactly one fragment in a complete fragment group MUST set `LAST_FRAGMENT`.
+
+The fragment that sets `LAST_FRAGMENT` MUST have the highest Fragment Index in the group. No fragment with a greater Fragment Index is valid for that group.
+
+For archival representations, fragments of one group MUST occur in strictly increasing Fragment Index order under canonical physical Entry order. Physical adjacency is not required. LFHs belonging to unrelated Entries MAY occur between fragments of the same group.
+
+For a Partitioned Archive, canonical physical order for this rule is ascending Partition Index followed by physical LFH order within each Partition.
+
+For Stateful Streaming, transport arrival order does not define canonical logical Entry order. Within one SAR stream, a fragment with Fragment Index greater than zero MAY occur before Fragment Index 0 when the sender emits fragments out of Fragment Index order (Section 18.4.2).
+
+Such a fragment MAY be retained as incomplete fragment-group state, but it MUST NOT establish the logical Entry identity, a Full Logical Entry Path, or a duplicate-path occurrence, MUST NOT authorize logical state application, and MUST NOT redefine application or sequencing order. Fragment Index 0 establishes the logical Entry identity when it becomes available.
+
+Fragment Index defines fragment reassembly order only. Sequence No and any Stateful Streaming state-application ordering remain governed by Section 18 and are independent from Fragment Index.
+
+##### Fragment Reassembly Sequence
+
+The **Fragment Reassembly Sequence** is the byte sequence formed by concatenating fragment contributions in ascending Fragment Index order.
+
+For a complete group:
+
+```text
+Fragment_Reassembly_Sequence =
+    Contribution[0] ||
+    Contribution[1] ||
+    ... ||
+    Contribution[N - 1]
+```
+
+where `Contribution[i]` is the decoded contribution of Fragment Index `i` after all fragment-local processing required before reassembly.
+
+Fragment-local processing consists of, where applicable:
+
+1. FEC recovery over the encoded fragment representation;
+2. AEAD authentication and decryption;
+3. decompression.
+
+Group-wide reconstruction operations occur only after the required fragment contributions have been assembled into the Fragment Reassembly Sequence.
+
+Group-wide reconstruction includes, where applicable:
+
+* delta patch application;
+* CDC recipe interpretation and chunk resolution;
+* sparse reconstruction; and
+* other constructions explicitly defined to operate on the completed Entry representation.
+
+For every fragment, the length of `Contribution[i]` MUST equal that fragment LFH's `Uncompressed Size`. A mismatch MUST return `SAR_ERR_INVALID_LENGTH` unless a more specific applicable transformation error has already occurred.
+
+The length of a complete Fragment Reassembly Sequence is the checked sum of the `Uncompressed Size` values of Fragment Indices `0` through `N - 1`.
+
+SAR does not encode a byte offset or separate contribution-size field for fragment reassembly. Fragment Index determines contribution order, and `Uncompressed Size` determines the decoded length of each contribution.
+
+##### Transformation Scope
+
+Compression and encryption algorithm selection are group-wide construction properties, while their actual processing is fragment-local.
+
+Delta, CDC recipe interpretation, sparse reconstruction, final logical integrity verification, and logical state application are group-wide operations.
+
+FEC state is fragment-local unless an independently defined FEC construction explicitly states otherwise.
+
+Fragmentation MUST NOT be interpreted as defining fragment-specific variants of a patch, CDC recipe, sparse map, encryption construction, or other group-wide representation.
+
+##### Fragmented LFH Field Classification
+
+The following classes define cross-fragment LFH semantics:
+
+* **G - Group invariant:** The field describes the logical Entry or a group-wide construction. When semantically active and physically present on multiple fragments, its value MUST be identical across the group.
+* **I - Index-0 authoritative:** Fragment Index 0 establishes the logical value. Later fragments do not establish another logical value and follow the field-specific repetition or neutral rule below.
+* **C - Completion-authoritative:** The field describes completed logical Entry state. Non-terminal fragments carry the defined neutral value. The `LAST_FRAGMENT` LFH carries the authoritative value.
+* **L - Fragment-local:** The field describes the current physical fragment or its encoding and MAY legitimately differ between fragments.
+* **N - Inert:** The field is physically present because of Global Flags but is semantically inactive under the applicable Entry Mode or construction rules.
+
+The authoritative classification for fragmented LFHs is:
+
+| LFH Field / Semantic         | Class | Fragment Rule                                                                                                        |
+| ---------------------------- | ----- | -------------------------------------------------------------------------------------------------------------------- |
+| Header Size                  | L     | Describes the current physical LFH and MAY differ.                                                                   |
+| Payload Size                 | L     | Describes the current encoded Payload Data and MAY differ.                                                           |
+| Uncompressed Size            | L     | Describes the current LFH's decoded payload representation and fragment contribution length (Section 6.1.2).         |
+| `IS_FRAGMENT`                | G     | MUST be set on every fragment.                                                                                       |
+| `LAST_FRAGMENT`              | L     | MUST be set only on the terminal fragment.                                                                           |
+| `IS_COMPRESSED`              | G     | MUST be identical across the group.                                                                                  |
+| `IS_ENCRYPTED`               | G     | MUST be identical across the group.                                                                                  |
+| `HIDDEN_ATTR`                | G     | MUST be identical across the group.                                                                                  |
+| `LOSS_TOLERANT`              | G     | MUST be identical across the group.                                                                                  |
+| `OP_CODE`                    | G     | MUST be identical across the group.                                                                                  |
+| `ATOMIC_WRITE`               | G     | MUST be identical across the group.                                                                                  |
+| `FORCE_SYNC`                 | G     | MUST be identical across the group.                                                                                  |
+| Stream ID                    | G     | In Stateful Streaming, MUST be identical across the group.                                                           |
+| Sequence No                  | L     | Uses ordinary per-LFH Stateful Streaming sequencing and MAY differ.                                                  |
+| Comp Algo ID                 | G/N   | When `IS_COMPRESSED` is set, MUST be identical across the group. Otherwise ordinary inert-field rules apply.         |
+| Patch Algo ID                | G     | MUST be identical across the group when present.                                                                     |
+| Encr Algo ID                 | G/N   | When `IS_ENCRYPTED` is set, MUST be identical across the group. Otherwise ordinary inert-field rules apply.          |
+| CDC Algo ID                  | G     | MUST be identical across the group when present.                                                                     |
+| FEC Algo ID                  | L     | Describes the current fragment and MAY differ.                                                                       |
+| Fragment ID                  | G     | MUST be identical across the group.                                                                                  |
+| Fragment Index               | L     | MUST identify one unique ordinal within the group.                                                                   |
+| IV / Nonce                   | L/N   | Describes the current encrypted fragment. Ordinary inert-field rules apply when encryption is inactive.              |
+| Delta Base Hash              | G     | MUST be identical across the group when present.                                                                     |
+| File CRC32                   | C     | Neutral on non-terminal fragments; authoritative on `LAST_FRAGMENT`.                                                 |
+| Content Hash                 | C     | Neutral on non-terminal fragments; authoritative on `LAST_FRAGMENT`.                                                 |
+| UID / GID                    | G     | MUST be identical across the group when present.                                                                     |
+| Timestamps                   | G     | MUST be identical across the group when present.                                                                     |
+| Permissions                  | G     | MUST be identical across the group when present.                                                                     |
+| Name Length / Name String    | I     | Fragment Index 0 is authoritative. Later fragments MAY omit or exactly repeat the value as defined below.            |
+| Path Length / Path String    | I     | Fragment Index 0 is authoritative. Later fragments MAY omit or exactly repeat the value as defined below.            |
+| Sparse Map Size / Sparse Map | I     | Fragment Index 0 carries the complete Sparse Map. Later fragments MUST use zero Sparse Map Size and omit Sparse Map. |
+| FEC Size / FEC Value         | L     | Describes FEC state of the current fragment and MAY differ.                                                          |
+| Payload Data                 | L     | Contains the encoded payload of the current physical fragment.                                                       |
+
+A mismatch in an otherwise valid Class G field between fragments of the same group MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+##### Name and Path
+
+Fragment Index 0 establishes the authoritative Name String and Path String of the logical Entry.
+
+A later fragment MAY set `Name Length` to zero and omit Name String.
+
+If a later fragment contains a non-empty Name String, its exact value MUST match Fragment Index 0. A mismatch MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+Where `HAS_PATH` is set, a later fragment MAY set `Path Length` to zero and omit Path String.
+
+If a later fragment contains a non-empty Path String, its exact value MUST match Fragment Index 0. A mismatch MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+Later fragments never establish another Full Logical Entry Path.
+
+##### Completion-Authoritative Integrity Fields
+
+For a fragmented Entry, File CRC32 and Content Hash describe the final reconstructed logical Entry, not an individual physical fragment.
+
+When `PER_FILE_CRC` causes File CRC32 to be physically present:
+
+* every fragment for which `LAST_FRAGMENT` is unset MUST encode File CRC32 as zero;
+* the fragment for which `LAST_FRAGMENT` is set MUST encode the authoritative final logical Entry CRC32 value.
+
+When `DEDUPLICATION` causes Content Hash to be physically present:
+
+* every fragment for which `LAST_FRAGMENT` is unset MUST encode Content Hash as all zero bytes;
+* the fragment for which `LAST_FRAGMENT` is set MUST encode the authoritative final logical Entry Content Hash value.
+
+Neutral integrity values on non-terminal fragments MUST NOT be interpreted as integrity declarations.
+
+The authoritative integrity value is verified only after the complete logical byte sequence required by that integrity construction has been reconstructed.
+
+A genuine authoritative CRC32 or Content Hash value consisting of zero bytes remains valid on the terminal fragment because `LAST_FRAGMENT`, not the encoded numeric value, determines authority.
+
+##### Compression
+
+Compression is applied independently to each fragment.
+
+All fragments in one group MUST use the same `IS_COMPRESSED` value.
+
+When `IS_COMPRESSED` is set, all fragments MUST use the same Comp Algo ID.
+
+Each compressed fragment MUST be decompressed independently before its contribution is inserted into the Fragment Reassembly Sequence.
+
+The resulting decompressed contribution length MUST satisfy Section 6.1.2.
+
+Mixed active compression algorithms within one fragment group are invalid and MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+##### Encryption
+
+Encryption and authentication are applied independently to each fragment.
+
+All fragments in one group MUST use the same `IS_ENCRYPTED` value.
+
+When `IS_ENCRYPTED` is set, all fragments MUST use the same Encr Algo ID.
+
+Each encrypted fragment independently derives its Entry encryption key according to the applicable KMS rules, uses its own LFH IV / Nonce field, carries its own authentication tag where required, and MUST authenticate successfully before its plaintext contributes to the Fragment Reassembly Sequence.
+
+For a fragment group crossing Partition boundaries, each encrypted fragment uses the KMS Master Secret applicable to the Physical Archive Member containing that fragment.
+
+Fragmentation does not alter the KMS hierarchy, nonce-uniqueness rules, or AEAD AAD construction.
+
+Mixed active encryption algorithms within one fragment group are invalid and MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+##### Delta
+
+Patch Algo ID and Delta Base Hash are group-wide metadata.
+
+A fragmented delta Entry represents one complete patch representation divided into sequential fragment contributions.
+
+After fragment-local decoding, the Fragment Reassembly Sequence is interpreted as the complete patch representation and the selected patch algorithm is applied exactly once.
+
+Fragments MUST NOT be interpreted as independently applicable partial patches.
+
+For fragmented delta Entries, no individual fragment's `Uncompressed Size` declares the final patch target size. Final target-size semantics are those defined by the selected patch construction.
+
+##### CDC
+
+CDC Algo ID is group-wide metadata.
+
+When a CDC recipe representation is fragmented, fragment contributions are first joined into the complete Fragment Reassembly Sequence. The resulting complete recipe is then interpreted and resolved once according to the selected CDC construction.
+
+An individual fragment MUST NOT be interpreted as an independently complete CDC recipe merely because it contains a syntactically meaningful partial byte sequence.
+
+`CDC_MAP` remains a separate physical-location mechanism and does not define fragment-group identity or fragment placement.
+
+##### FEC
+
+FEC Algo ID, FEC Size, and FEC Value describe the current physical fragment and MAY differ between fragments.
+
+One fragment MAY use FEC while another fragment in the same group does not, where permitted by the general FEC rules.
+
+FEC does not establish fragment identity or Fragment Reassembly Sequence ordering.
+
+`LOSS_TOLERANT` remains group-wide even though FEC state is fragment-local.
+
+##### Sparse Metadata
+
+When a fragmented Entry uses sparse reconstruction, Fragment Index 0 carries the complete Sparse Map.
+
+Every later fragment MUST encode Sparse Map Size as zero and MUST omit Sparse Map. A later fragment with non-zero Sparse Map Size or a present Sparse Map is a fragment-group metadata violation and MUST return `SAR_ERR_METADATA_CONFLICT`. `SAR_ERR_INVALID_MAP` is reserved for a malformed Sparse Map encoding or content (Section 17.5). Sparse Maps distributed across multiple fragments are not permitted.
+
+The complete Sparse Map carried by Fragment Index 0 includes the authoritative `Sparse Logical Size` defined in Section 17.2. No fragment LFH `Uncompressed Size` value serves as the final apparent sparse logical size.
+
+Fragmentation coordinates do not describe final sparse-file offsets. Sparse placement is defined exclusively by the Sparse Map and occurs after the applicable Fragment Reassembly Sequence has been obtained.
+
+##### Filesystem and State-Application Metadata
+
+UID/GID, timestamps, permissions, hidden-attribute state, `OP_CODE`, `ATOMIC_WRITE`, and `FORCE_SYNC` describe the logical Entry and MUST be group-invariant where applicable.
+
+The logical operation represented by a fragmented Entry MUST be applied exactly once after the fragmented Entry has reached a valid complete or explicitly permitted degraded reconstruction state.
+
+An implementation MUST NOT execute the logical operation independently for each physical fragment.
+
+Receiving or processing `LAST_FRAGMENT` does not by itself authorize state application while required earlier Fragment Indices or required Stateful Streaming sequencing/state conditions remain unsatisfied.
+
+##### Structural Entry Restrictions
+
+A Partition Manifest Entry MUST NOT be fragmented.
+
+An Empty Area MUST NOT be fragmented.
+
+A `SESSION_CONTROL` Entry MUST NOT be fragmented.
+
+A directory Entry MUST NOT be fragmented.
+
+A symbolic-link Entry MUST NOT be fragmented.
+
+If `IS_FRAGMENT` is set together with `PARTITION_MANIFEST`, `SESSION_CONTROL`, `IS_DIRECTORY`, or `IS_SYMLINK`, the implementation MUST return `SAR_ERR_FLAG_CONFLICT`.
+
+Empty Area classification remains governed by its existing structural rules and MUST NOT be used for an LFH with `IS_FRAGMENT` set.
+
+##### Missing, Duplicate, and Conflicting Fragments
+
+A complete group MUST contain every Fragment Index from zero through the terminal Fragment Index.
+
+A missing required Fragment Index is a fragment gap and MUST return `SAR_ERR_FRAGMENT_GAP` unless existing `LOSS_TOLERANT` rules permit a degraded result.
+
+Two canonical fragment LFHs claiming the same Fragment ID scope and Fragment Index MUST NOT both participate as distinct fragments in one logical Entry.
+
+If multiple independently obtained physical candidates exist for the same expected fragment identity, each candidate MAY be validated independently.
+
+Candidates are equivalent replicas only when their complete canonical fragment encodings are identical.
+
+Two different independently valid encodings claiming the same fragment identity constitute a conflict and MUST return `SAR_ERR_METADATA_CONFLICT`.
+
+An independently invalid candidate does not by itself invalidate another independently valid candidate.
+
+A present fragment with conflicting Class G or Index-0-authoritative metadata is a metadata conflict. It MUST NOT be silently reclassified as a missing fragment in order to permit degraded reconstruction.
+
+##### `LOSS_TOLERANT` and Final Integrity
+
+`LOSS_TOLERANT` does not change the meaning of final logical integrity verification.
+
+A degraded result MUST NOT be reported as having successfully passed File CRC32 or Content Hash verification unless the complete byte sequence required by the corresponding integrity field was reconstructed and the authoritative terminal value actually verifies.
+
+Permitted degraded output MAY still return `SAR_WARN_INCOMPLETE` according to Section 6.2.3.
+
+An integrity mismatch, inability to perform complete final logical integrity verification, and successful integrity verification are distinct states. Permitting degraded reconstruction MUST NOT convert either of the first two states into successful integrity verification.
+
 
 #### 6.1.4 Forward Error Correction (FEC)
 
@@ -758,7 +1054,7 @@ SAR FEC recovery is erasure recovery unless an algorithm-specific section explic
 
 If missing or unusable symbol positions cannot be determined, the decoder MUST return `SAR_ERR_RECOVERY_UNAVAILABLE` or `SAR_ERR_EC_FAILED`, whichever is more specific to the failure stage.
 
-For LFH Selective FEC, missing or unusable positions SHALL be derived from the unavailable or corrupted encoded Payload Data byte ranges within the corresponding LFH. For fragmented entries, missing or unusable positions MAY additionally be derived from Fragment Index and Fragment Descriptor metadata when the FEC algorithm operates over fragment-aligned symbols or blocks.
+For LFH Selective FEC, missing or unusable positions SHALL be derived from the unavailable or corrupted encoded Payload Data byte ranges within the corresponding LFH. For fragmented Entries, an unavailable physical fragment is identified by its Fragment ID and Fragment Index. Fragmentation does not provide an independent byte-offset map for FEC recovery.
 
 #### 6.1.5 Name and Path Semantics
 
@@ -796,9 +1092,11 @@ For archives, canonical Entry order is physical LFH order in the Data Area. The 
 
 For a complete valid partitioned archive, partition Data Areas are ordered by ascending Partition Index. Missing, duplicate, inconsistent, or otherwise invalid partitions remain governed by Section 19.
 
-For Stateful Streaming Mode, canonical Entry order is the order in which valid Entry LFHs occur in the reliable byte stream within the active session context. Sequence No validation MUST NOT reorder LFHs or redefine that order.
+For Stateful Streaming Mode, canonical Entry order of complete, non-fragmented Entries is the order in which their valid LFHs occur in the reliable byte stream within the active session context. Sequence No validation MUST NOT reorder LFHs or redefine that order.
 
-A fragmented Entry occupies the canonical Entry-order position established by Fragment Index 0.
+A fragmented archival Entry occupies the canonical Entry-order position established by Fragment Index 0. Later fragments of the same group do not create additional Entry-order positions.
+
+Stateful Streaming does not derive the logical operation order of a fragmented Entry from arrival or completion order; it is anchored to the Sequence No of Fragment Index 0. Fragmented Stateful Streaming Entries follow the Fragment Index, Sequence No, session-state, and state-application rules defined by Section 6.1.3 and Section 18.
 
 The same final-state rules apply to indexed archives, `NO_INDEX` archives, partitioned archives, and Stateful Streaming Mode.
 
@@ -913,8 +1211,15 @@ The following rules are mandatory:
      * The effective encryption algorithm SHALL be treated as PLAINTEXT (0x00), regardless of the value present in the Encr Algo ID field.
     
 5. **Fragmentation Behavior**
+
    * `IS_FRAGMENT` MUST NOT be set unless `FILE_FRAGMENTATION` is set globally.
    * `LAST_FRAGMENT` MUST NOT be set unless `IS_FRAGMENT` is also set.
+   * `IS_FRAGMENT` MUST NOT be combined with `PARTITION_MANIFEST`, `SESSION_CONTROL`, `IS_DIRECTORY`, or `IS_SYMLINK`.
+   * When `IS_FRAGMENT` is set, Fragment ID and Fragment Index are interpreted according to Section 6.1.3. The decoded fragment contribution length is defined by the LFH `Uncompressed Size` field according to Sections 6.1.2 and 6.1.3.
+   * Cross-fragment LFH consistency, Fragment ID scope, fragment ordering, completion-authoritative metadata, reconstruction, and fragment-local transformation rules are defined exclusively by Section 6.1.3.
+
+   A violation of an invalid Entry Mode combination MUST return `SAR_ERR_FLAG_CONFLICT`.
+
       
     Violation MUST result in SAR_ERR_FLAG_CONFLICT.
 
@@ -923,7 +1228,7 @@ If LOSS_TOLERANT is set, implementations MAY continue reconstruction
 despite fragment loss, recovery failure, or unavailable recovery data,
 provided a meaningful degraded logical object can still be produced.
 
-Successful degraded reconstruction MUST return SAR_WARN_INCOMPLETE.
+Successful degraded reconstruction MUST return SAR_WARN_INCOMPLETE. For a fragmented Entry, degraded output is limited to the longest contiguous valid prefix of fragment contributions beginning at Fragment Index 0, as defined by Section 19.4.5.
 
 LOSS_TOLERANT MUST NOT override failures arising from decryption,
 authentication, signature verification, decompression, patch
@@ -1150,7 +1455,7 @@ Patching algorithms are used only when `HAS_DELTA` (Bit 9) is set. The algorithm
 
 | ID          | Name          | Description                                       |
 | ----------- | ------------- | ------------------------------------------------- |
-| `0x00`      | `STORE_PATCH` | Self-contained full-target patch payload.         |
+| `0x00`      | `STORE_PATCH` | Self-contained patch-output payload.              |
 | `0x01`      | `VCDIFF`      | RFC 3284 VCDIFF delta stream.                     |
 | `0x02`      | `BSDIFF`      | SAR BSDIFF v1 delta payload.                      |
 | `0x03`      | `ZSTD_PATCH`  | Zstandard dictionary-based patch profile.         |
@@ -1170,34 +1475,18 @@ Implementations encountering a reserved patch algorithm identifier MUST return `
 
 #### Patch Transformation Domain
 
-Patch algorithms operate on decoded patch payload bytes.
+Patch algorithms operate on the decoded patch representation: for an unfragmented Entry, the decoded LFH payload representation; for a fragmented Entry, the complete Fragment Reassembly Sequence.
 
-Patch application occurs after FEC repair, AEAD authentication/decryption, decompression, and fragment reassembly, and before sparse reconstruction.
+The position of the patch stage relative to FEC recovery, AEAD authentication/decryption, decompression, fragment reassembly, CDC resolution, and sparse reconstruction is defined exclusively by Sections 13.1.2 and 13.1.3. This section does not define a separate transformation order.
 
-The delta transformation order is:
+The patch-stage contract is:
 
-```text
-Decode:
-  FEC repair, if applicable
-  Fragment reassembly, if applicable
-  AEAD authentication and decryption, if applicable
-  Decompression, if applicable
-  Patch application
-  Sparse reconstruction, if applicable
-```
+* the patch algorithm is applied exactly once per Entry, to the complete decoded patch representation;
+* the patch algorithm MUST NOT be applied to an individual fragment as an independent patch;
+* the output of the patch stage is the **patch output representation**, which is supplied to the next applicable group-wide reconstruction stage (CDC resolution, sparse reconstruction, or final logical integrity verification); and
+* the patch output representation is not necessarily the final logical Entry. If no later reconstruction stage applies, it is the final logical byte sequence.
 
-Encoding uses the reverse order:
-
-```text
-Encode:
-  Target logical data
-  Patch payload generation
-  Compression, if applicable
-  Encryption, if applicable
-  Fragmentation/FEC, if applicable
-```
-
-Patch algorithms MUST operate on logical patch payload bytes after SAR decompression. Patch algorithms MUST NOT define or apply an additional hidden compression layer unless explicitly defined by the patch algorithm profile.
+Patch algorithms MUST operate on logical patch payload bytes after SAR decompression and, where applicable, fragment reassembly. Patch algorithms MUST NOT define or apply an additional hidden compression layer unless explicitly defined by the patch algorithm profile.
 
 For `STORE_PATCH`, `VCDIFF`, and `BSDIFF`, compression is handled exclusively by the SAR compression layer.
 
@@ -1231,11 +1520,18 @@ Implementations MUST NOT perform automatic filesystem lookup, network access, ex
 
 #### Patch Output Size
 
-For all patch algorithms, the reconstructed output size MUST equal the LFH `Uncompressed Size` field after patch application.
+The size of the patch output representation is governed by the selected patch construction and by the group-wide reconstruction stage, if any, that consumes it. It is not declared by any LFH `Uncompressed Size` field.
 
-If the reconstructed output size differs from LFH `Uncompressed Size`, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+LFH `Uncompressed Size` retains the transform-boundary meaning defined by Section 6.1.2:
 
-Implementations MUST enforce configured `ResourceLimits` before allocating the reconstructed target buffer.
+* for an unfragmented delta Entry, it is the size of the decoded patch representation before patch application;
+* for a fragmented delta Entry, each fragment's `Uncompressed Size` is the size of that fragment's decoded contribution to the reassembled patch representation.
+
+An implementation MUST NOT compare the patch output representation length against LFH `Uncompressed Size`.
+
+Each patch algorithm defines its own deterministic output length and output validation in its algorithm-specific subsection. A violation of those rules MUST return `SAR_ERR_PATCH_FAILED`.
+
+Implementations MUST enforce configured `ResourceLimits` before allocating the patch output representation.
 
 #### Patch Error Behavior
 
@@ -1245,7 +1541,7 @@ Missing required base objects, dictionaries, or reconstruction inputs MUST retur
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
 
-`LOSS_TOLERANT` MUST NOT suppress patch failures.
+`LOSS_TOLERANT` MUST NOT suppress patch failures, including failures caused by an incomplete or degraded Fragment Reassembly Sequence supplied to the patch stage. A patch MUST NOT be applied to a partial patch representation.
 
 Implementations MUST NOT release finalized reconstructed output after patch failure.
 
@@ -1265,22 +1561,23 @@ For custom patch algorithms, the following rules apply:
 * `CUSTOM` patch semantics MAY be used without explicit application-layer negotiation in controlled or closed environments where both encoder and decoder implementations are known to support the same custom algorithm. In interoperable or heterogeneous environments, explicit negotiation is RECOMMENDED.
 * Unknown or unnegotiated custom patch algorithms MUST fail with `SAR_ERR_UNSUPPORTED`.
 * Custom patch algorithms that require external reconstruction input MUST follow the base/reconstruction-input rules in Section 8.4.
+* Custom patch algorithms MUST define deterministic patch-output length semantics and resource bounds, and MUST NOT infer patch output size from LFH `Uncompressed Size`.
 
 #### 8.4.2 STORE_PATCH (`0x00`)
 
 `STORE_PATCH` is the baseline delta patch algorithm.
 
-For `STORE_PATCH`, the patch payload is the complete target logical byte sequence.
+For `STORE_PATCH`, the decoded patch payload is the complete patch output representation.
 
 No copy instructions, base reads, external dictionaries, or external base-object lookups are performed by the `STORE_PATCH` algorithm.
 
-When applying `STORE_PATCH`, the decoder SHALL treat the decoded patch payload as the reconstructed target logical data.
+When applying `STORE_PATCH`, the decoder SHALL treat the decoded patch payload as the patch output representation, without modification. If `STORE_PATCH` is the final applicable reconstruction stage, that representation is the final logical byte sequence. If CDC resolution or sparse reconstruction follows, it is the representation consumed by that stage.
 
 `STORE_PATCH` does not require base object bytes to be available for patch application.
 
 If `Delta Base Hash` is nonzero, implementations MAY expose it as metadata or use it for diagnostics, but `STORE_PATCH` application MUST NOT fail solely because the base object is unavailable.
 
-For `STORE_PATCH`, a malformed payload is one whose decoded payload length does not exactly equal LFH `Uncompressed Size`, or whose decoded payload cannot be obtained because FEC repair, decryption, decompression, or an earlier decoding stage failed.
+For `STORE_PATCH`, a malformed payload is one whose decoded payload (or, for a fragmented Entry, decoded fragment contribution) cannot be obtained because FEC repair, decryption, decompression, or an earlier decoding stage failed, or whose decoded length does not equal the LFH `Uncompressed Size` as required by Section 6.1.2. `Uncompressed Size` validates the decoded `STORE_PATCH` payload representation before patch application; it is not a separate patch-output size declaration.
 
 #### 8.4.3 VCDIFF (`0x01`)
 
@@ -1302,8 +1599,10 @@ The decoder MUST enforce configured `ResourceLimits` for:
 * VCDIFF window count;
 * VCDIFF instruction count;
 * decoded target window size;
-* reconstructed target size;
+* reconstructed patch output size;
 * total patch working set.
+
+The VCDIFF construction determines the bytes and length produced by the decoded target windows. That output is the patch output representation. Its length is not cross-checked against LFH `Uncompressed Size`.
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
 
@@ -1340,7 +1639,7 @@ The header is 32 bytes:
 | `Magic`                | 8 bytes | ASCII string `SARBSD01`.                                |
 | `Control_Block_Length` | 8 bytes | Length in bytes of the uncompressed control block.      |
 | `Diff_Block_Length`    | 8 bytes | Length in bytes of the uncompressed diff block.         |
-| `New_File_Size`        | 8 bytes | Size in bytes of the reconstructed target logical data. |
+| `New_File_Size`        | 8 bytes | Size in bytes of the BSDIFF patch output representation. |
 
 `Control_Block_Length`, `Diff_Block_Length`, and `New_File_Size` use the SAR BSDIFF signed 64-bit integer encoding.
 
@@ -1348,7 +1647,9 @@ For SAR BSDIFF v1, these values MUST be non-negative.
 
 Negative block lengths or target sizes MUST be rejected with `SAR_ERR_PATCH_FAILED`.
 
-`New_File_Size` MUST equal the LFH `Uncompressed Size` after patch application. If it does not match, the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+`New_File_Size` is authoritative for the number of bytes produced by BSDIFF patch application. The actual BSDIFF output length MUST equal `New_File_Size`; otherwise the decoder MUST return `SAR_ERR_PATCH_FAILED`.
+
+`New_File_Size` describes the patch output representation, which MAY still undergo CDC resolution or sparse reconstruction. It is not compared against LFH `Uncompressed Size`.
 
 ##### Blocks
 
@@ -1421,7 +1722,7 @@ Implementations MUST enforce configured `ResourceLimits` for:
 * Extra Block size;
 * control triple count;
 * base size;
-* reconstructed target size;
+* reconstructed patch output size;
 * total patch working set.
 
 Resource-limit violations MUST return `SAR_ERR_LIMIT_EXCEEDED`.
@@ -1431,6 +1732,8 @@ Missing base data MUST return `SAR_ERR_BASE_MISSING`.
 #### 8.4.5 ZSTD_PATCH (`0x03`)
 
 `ZSTD_PATCH` (`0x03`) is reserved for a SAR-defined Zstandard dictionary-based patch profile.
+
+Any supported `ZSTD_PATCH` profile, and any `CUSTOM` patch algorithm, MUST define deterministic patch-output length semantics and resource bounds. Patch output size MUST NOT be inferred from LFH `Uncompressed Size`.
 
 The exact dictionary identity, dictionary source, dictionary verification method, payload format, and reconstruction semantics are not defined in this version of the specification.
 
@@ -2767,7 +3070,7 @@ A Minimal Interoperable Streaming implementation MUST implement the following be
 15. Forward Error Correction encoding or decoding.
 16. Delta patch encoding or processing.
 17. `LOSS_TOLERANT` processing according to Section 19.4.5.
-18. Fragmentation according to Sections 19.2 and 19.5.
+18. Fragmentation according to Sections 6.1.3, 18.4.2, 19.2, 19.4, and 19.5.
 19. Sparse file reconstruction according to Sections 17 and 19.6.
 
 The following algorithms and KMS modes MUST be supported for the applicable role:
@@ -2786,7 +3089,7 @@ PBKDF2 remains mandatory because SAR-over-TCP without TLS is a valid baseline tr
 
 Minimal Interoperable Streaming implementations MUST support `LOSS_TOLERANT` Entry Mode semantics as defined in Sections 6.2.3 and 19.4.5.
 
-If `LOSS_TOLERANT` is set, missing or unrecoverable fragments MAY be discarded and streaming MAY continue, provided the affected payload type or transformation chain defines safe partial-output semantics.
+If `LOSS_TOLERANT` is set, an incomplete fragmented Entry MAY produce degraded output only as defined by Sections 6.2.3 and 19.4.5. Other missing or unrecoverable data MAY be discarded and streaming MAY continue only where the affected payload type or transformation chain defines safe partial-output semantics.
 
 If degraded reconstruction succeeds, the implementation MUST report `SAR_WARN_INCOMPLETE`.
 
@@ -2846,71 +3149,145 @@ Implementations are not required to provide this incomplete processing mode.
 SAR defines a strict and unambiguous transformation pipeline for all payload data. Implementations MUST adhere to this order to ensure interoperability.
 
 ### 13.1.1 Logical Model
-All transformations operate on the logical file data in the following conceptual order:
+Payload transformations are divided into **fragment-local stages**, which operate on one physical LFH and its Payload Data, and **group-wide stages**, which operate on the complete intermediate Entry representation.
 
-```
-Logical Data → Patch → Compress → Encrypt
+Fragment-local stages are:
+
+* Selective FEC protection and recovery (Section 6.1.4);
+* AEAD encryption and authentication (Sections 8.2 and 13.2); and
+* compression and decompression (Section 8.1).
+
+Group-wide stages are:
+
+* Fragment Reassembly Sequence formation and segmentation (Section 6.1.3);
+* patch generation and application (Sections 8.4 and 16);
+* CDC recipe generation and resolution (Sections 20 and 21);
+* sparse gathering and reconstruction (Section 17); and
+* final logical integrity verification (Sections 6.1.3 and 17.4.3).
+
+For an unfragmented Entry, the single LFH is the only fragment-local unit and the Fragment Reassembly Sequence stage is not applicable.
+
+The conceptual logical-to-stored model for one Entry is:
+
+```text
+Logical Entry
+  -> sparse gather, if applicable
+  -> CDC recipe construction, if applicable
+  -> patch generation, if applicable
+  -> intermediate Entry representation
+  -> fragment segmentation, if applicable
+  -> per-fragment: compress -> encrypt -> Selective FEC protection
+  -> physical LFH
 ```
 
-FEC in contrast is not a payload transformation that changes the logical payload. FEC protects the encoded SAR byte sequence selected by its scope. When FEC protects Payload Data, FEC encoding SHALL be applied after compression and encryption during encoding. During decoding, FEC repair SHALL be performed before decryption, decompression, and patch application.
+FEC is not a transformation of the logical payload. Selective FEC protects the encoded SAR byte sequence selected by its scope (Section 6.1.4). When it protects Payload Data, FEC encoding is applied after compression and encryption during encoding, and FEC recovery is applied before decryption and decompression during decoding.
+
+Only the stages enabled for the current Entry are performed. The algorithm-specific semantics of each stage are defined by the section cited above and are not redefined here.
 
 ### 13.1.2 Encoding Procedure (Writer Side)
-When creating an archive entry:
+When creating an Entry, the encoder applies the enabled stages in the following order. This order is the exact inverse of Section 13.1.3.
 
-1. **Patch Stage (Optional)**
-   If `HAS_DELTA` is set, the encoder MUST:
+**Group-wide encoding stages**
 
-   * Compute a binary delta between the base object and the target data.
-   * The result of this stage is the **patch payload**, representing the logical transformation.
+1. **Sparse Gather (Optional)**
+   If `SPARSE_FILES` is active for the Entry, the encoder produces the Sparse Map (including `Sparse Logical Size`) and the gathered-data representation according to Section 17.
 
-   If `HAS_DELTA` is not set, the input data proceeds unchanged.
+2. **CDC Recipe Construction (Optional)**
+   If a non-literal `CDC Algo ID` is active, the encoder produces the Hash Recipe representation according to Section 20.
 
-2. **Compression Stage (Optional)**
-   If `IS_COMPRESSED` is set:
+3. **Patch Stage (Optional)**
+   If `HAS_DELTA` is set, the encoder computes the patch payload according to Section 8.4. The result is the patch representation of the preceding stage's output.
 
-   * The encoder MUST compress the output of the previous stage using `Comp Algo ID`.
+   If `HAS_DELTA` is not set, the data proceeds unchanged.
 
-   If `IS_COMPRESSED` is not set:
+The output of the group-wide encoding stages is the **intermediate Entry representation**.
 
-   * The data MUST be treated as `STORE` (no compression), even if the `COMPRESSED` global flag is enabled.
+4. **Fragment Segmentation (Optional)**
+   If the Entry is fragmented, the encoder divides the intermediate Entry representation into sequential contributions, assigns Fragment Index values `0` through `N - 1` in segment order, and sets `LAST_FRAGMENT` on Fragment Index `N - 1` only (Section 6.1.3).
 
-3. **Encryption Stage (Optional)**
-   If `IS_ENCRYPTED` is set:
+   If the Entry is not fragmented, the intermediate Entry representation is the single contribution.
 
-   * The encoder MUST encrypt the output of the compression stage using the selected encryption algorithm.
+**Fragment-local encoding stages** (applied independently to each contribution)
+
+5. **Compression Stage (Optional)**
+   If `IS_COMPRESSED` is set, the encoder MUST compress the contribution using `Comp Algo ID`.
+
+   If `IS_COMPRESSED` is not set, the contribution MUST be treated as `STORE` (no compression), even if the `COMPRESSED` global flag is enabled.
+
+   The contribution length before compression is the LFH `Uncompressed Size` (Section 6.1.2).
+
+6. **Encryption Stage (Optional)**
+   If `IS_ENCRYPTED` is set, the encoder MUST encrypt the output of the compression stage using the selected encryption algorithm, according to Sections 8.2 and 13.2.
+
+7. **Selective FEC Protection (Optional)**
+   If Selective FEC is active for the LFH, the encoder protects the encoded sequence selected by its scope according to Section 6.1.4.
+
+The result of the fragment-local stages is the LFH `Payload Data` of the physical LFH.
+
+Final logical integrity values (`File CRC32`, `Content Hash`) are computed over the final logical Entry and encoded according to Section 6.1.3 for fragmented Entries.
 
 ### 13.1.3 Decoding Procedure (Reader Side)
-To reconstruct the original data, implementations MUST apply the inverse operations in strict reverse order:
+To reconstruct the Entry, implementations MUST apply the inverse operations in strict reverse order of Section 13.1.2:
 
-```
-Decrypt → Decompress → Apply Patch
+```text
+physical LFH
+  -> Selective FEC recovery, if active
+  -> AEAD authentication/decryption, if active
+  -> decompression, if active
+  -> fragment contribution
+  -> Fragment Reassembly Sequence, if fragmented
+  -> patch application, if applicable
+  -> CDC recipe resolution, if applicable
+  -> sparse reconstruction, if applicable
+  -> final logical integrity verification
 ```
 
-1. **Decryption**
+**Fragment-local decoding stages** (performed on each physical LFH, before reassembly)
+
+1. **Selective FEC Recovery**
+   If Selective FEC is active, recovery is performed over the encoded representation selected by its scope according to Section 6.1.4 before any later stage consumes that representation.
+
+2. **Decryption**
    If `IS_ENCRYPTED` is set:
 
    * The payload MUST be decrypted before any further processing.
-   * For AEAD modes, authentication MUST be verified before proceeding.
+   * For AEAD modes, authentication MUST be verified before proceeding, and plaintext MUST NOT contribute to any later stage unless authentication succeeds (Section 13.2).
 
-2. **Decompression**
-   If `IS_COMPRESSED` is set:
+3. **Decompression**
+   If `IS_COMPRESSED` is set, the payload MUST be decompressed using `Comp Algo ID`.
 
-   * The payload MUST be decompressed using `Comp Algo ID`.
+The result is the **fragment contribution**. Its length MUST equal the LFH `Uncompressed Size` (Section 6.1.2). For an unfragmented Entry, the contribution is the complete intermediate Entry representation.
 
-3. **Patch Application**
-   If `HAS_DELTA` is set:
+**Group-wide decoding stages** (performed after all required contributions are available)
 
-   * The patch MUST be applied to the resolved base object using `Patch Algo ID`.
-   * The result MUST match `Uncompressed Size`.
+4. **Fragment Reassembly**
+   For a fragmented Entry, contributions are concatenated in ascending Fragment Index order to form the Fragment Reassembly Sequence (Section 6.1.3). This stage MUST NOT occur before the fragment-local stages above have completed for each contribution.
 
-After completion of the final decoding stage, the reconstructed logical object MUST exactly match `Uncompressed Size` regardless of whether patching was performed.
-Also consider section 17.4.3 with regards to integrity verification and section 17.4.4 with regards to error correction.
+5. **Patch Application**
+   If `HAS_DELTA` is set, the patch algorithm selected by `Patch Algo ID` is applied exactly once to the complete reassembled patch representation and the resolved base object, according to Sections 8.4 and 16. The final size of the patch output is defined by the selected patch construction.
+
+6. **CDC Recipe Resolution**
+   If a non-literal `CDC Algo ID` is active, the complete representation produced by the preceding stage is interpreted as the Hash Recipe and resolved once according to Section 20.
+
+7. **Sparse Reconstruction**
+   If `SPARSE_FILES` is active for the Entry, the representation produced by the preceding stage is the gathered-data representation and is reconstructed according to Section 17. The final apparent size is defined by `Sparse Logical Size`.
+
+8. **Final Logical Integrity Verification**
+   `File CRC32` and `Content Hash`, where applicable, are verified against the final logical Entry according to Sections 6.1.3 and 17.4.3.
+
+Only stages enabled for the current Entry are performed. Logical state application occurs after this decoding procedure according to Section 6.1.3 and, for Stateful Streaming, Section 18.
+
+The final logical size of an Entry is defined by the final applicable decoding stage: the patch construction, CDC resolution, or `Sparse Logical Size`. Where an Entry is unfragmented and none of those stages applies, the final logical Entry is its single decoded contribution, whose length equals `Uncompressed Size` by Section 6.1.2. An LFH `Uncompressed Size` is never by itself the required size of a fragmented, patched, CDC-resolved, or sparse logical Entry.
+
+Section 17.4.4 governs the relationship between sparse reconstruction and error correction.
 
 ### 13.1.4 Invariants
-* Patch algorithms MUST operate on **uncompressed logical data**, never on compressed streams.
+* Patch algorithms MUST operate on the complete decoded patch representation (the Fragment Reassembly Sequence for a fragmented Entry), never on compressed streams, ciphertext, or an individual fragment.
 * Compression MUST NOT be applied to already encrypted data.
-* Decryption MUST occur before any decompression or patch processing.
-* The output of the final stage MUST represent the fully reconstructed logical file.
+* Selective FEC recovery, AEAD authentication/decryption, and decompression MUST each be completed for a fragment before its contribution participates in Fragment Reassembly.
+* Decryption MUST occur before any decompression, reassembly, or patch processing.
+* Group-wide stages MUST NOT be applied to individual fragments as if they were independent Entries.
+* The output of the final stage MUST represent the fully reconstructed logical Entry.
 
 ### 13.2 Authenticated Encryption (AEAD)
 
@@ -3086,20 +3463,35 @@ This section defines mandatory invariants that apply to all SAR archives. These 
 
 ### 13.7.4 Transformation Pipeline Invariant
 1. **Canonical Encoding Order**
-   Payload data MUST be transformed in the following order: `Stored Payload = Encrypt(Compress(Patch(Data)))`
+   The canonical encoding and decoding order, including the distinction between fragment-local and group-wide stages, is defined exclusively by Sections 13.1.2 and 13.1.3. In summary:
+
+   ```text
+   Stored LFH Payload =
+       FEC(Encrypt(Compress(Segment(Patch(CDC(SparseGather(Data)))))))
+   ```
+
+   where each of `Compress`, `Encrypt`, and `FEC` is applied per fragment, and each stage is applied only when enabled for the Entry.
 
 2. **Canonical Decoding Order**
-   Payload data MUST be reconstructed in the following order: `Data = ApplyPatch(Decompress(Decrypt(Payload)))`
+   ```text
+   Data =
+       SparseReconstruct(CDCResolve(ApplyPatch(Reassemble(
+           Decompress(Decrypt(FECRecover(LFH Payload)))))))
+   ```
+
+   `FECRecover`, `Decrypt`, and `Decompress` are performed per fragment. `Reassemble`, `ApplyPatch`, `CDCResolve`, and `SparseReconstruct` are group-wide.
 
 3. **Processing Requirements**
-* Decryption MUST occur before any other transformation.
-* Decompression MUST occur before patch application.
-* Patch algorithms MUST operate on fully decompressed logical data.
+* Fragment-local stages MUST complete for a fragment before its contribution participates in reassembly.
+* Group-wide stages MUST NOT begin until the complete Fragment Reassembly Sequence has been obtained. Under `LOSS_TOLERANT`, degraded output is limited to the contiguous prefix defined by Section 19.4.5 and MUST NOT be supplied to a group-wide construction requiring a complete representation (`SAR_ERR_FRAGMENT_GAP`).
+* Decryption MUST occur before decompression and before any group-wide stage.
+* Patch algorithms MUST operate on the complete decompressed, reassembled patch representation.
 * Compression MUST NOT be applied to encrypted data.
+* This section does not redefine the semantics of any individual stage; see the sections cited in Section 13.1.1.
 
 ### 13.7.5 Identity and Referential Integrity
 1. **Fragment Uniqueness**
-   The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within the archive. For a Partitioned Archive, this uniqueness scope is the complete Partition Set. Duplicate indices for the same Fragment ID MUST result in an error.
+   The tuple `(Fragment ID, Fragment Index)` MUST uniquely identify a fragment within its Fragment ID scope (Section 6.1.3): the current Physical Archive Member, the complete Partition Set for a Partitioned Archive, or the active SAR session and Stream ID for Stateful Streaming. Duplicate indices for the same Fragment ID within that scope MUST be handled according to Section 6.1.3.
 
 2. **Delta Base Resolution**
    The `Delta Base Hash` MUST uniquely identify a valid base object. If no matching base is found, or multiple matches exist, the operation MUST fail.
@@ -3125,7 +3517,7 @@ This section defines mandatory invariants that apply to all SAR archives. These 
    The Sparse Map SHALL describe the layout of the fully reconstructed file and MUST NOT apply to individual fragments.
 
 3. **Sparse Map Location Constraint**
-   The Sparse Map MUST appear only in the fragment with `Fragment Index = 0`. Presence in any other fragment MUST result in `SAR_ERR_INVALID_MAP`.
+   The Sparse Map MUST appear only in the fragment with `Fragment Index = 0`. Presence in any other fragment MUST result in `SAR_ERR_METADATA_CONFLICT`.
 
 4. **Dependency Enforcement**
    If both `SPARSE_FILES` and `FILE_FRAGMENTATION` are enabled, implementations MUST complete fragment reassembly before applying sparse reconstruction.
@@ -3283,68 +3675,194 @@ The Delta protocol enables efficient storage of multi-versioned files by storing
 ### 16.1 Process Logic
 By separating `Comp Algo ID` and `Patch Algo ID`, SAR version 1.0 supports **Compressed Binary Patches**.
 
-1. Identify that the `HAS_DELTA` flag is active.
-2. Retrieve the `Delta Base Hash` from the LFH.
-3. Locate the base file and verify its hash.
-4. If `IS_COMPRESSED` is set, decompress the payload using `Comp Algo ID`.
-5. Apply the patching algorithm specified in the `Patch Algo ID` field (Section 8.4) to the (decompressed) patch and the base file.
-6. The resulting uncompressed data size MUST match the `Uncompressed Size` field in the LFH.
+The position of patch application in the transformation pipeline is defined exclusively by Section 13.1. This section defines only the patch-stage inputs and handling.
+
+When the `HAS_DELTA` flag is active for an Entry:
+
+1. Retrieve the `Delta Base Hash` from the LFH. It MUST be identical across all fragments of a fragmented Entry (Section 6.1.3).
+2. Resolve the base object, dictionary, or other reconstruction input required by the selected `Patch Algo ID`, and verify it according to Section 8.4. `STORE_PATCH` requires none.
+3. Obtain the complete decoded patch representation according to Section 13.1.3:
+   * for an unfragmented Entry, the decoded LFH payload representation, after FEC recovery, AEAD authentication/decryption, and decompression, where applicable;
+   * for a fragmented Entry, the Fragment Reassembly Sequence formed from the per-fragment decoded contributions.
+4. Apply the algorithm specified in the `Patch Algo ID` field (Section 8.4) exactly once to the complete decoded patch representation and the resolved base input.
+5. Validate the patch output representation according to the algorithm-specific rules in Section 8.4. LFH `Uncompressed Size` is not a patch-output size and MUST NOT be used to validate patch output.
+6. Supply the patch output representation to the next applicable group-wide reconstruction stage (CDC resolution, sparse reconstruction, or final logical integrity verification), as defined by Section 13.1.3.
+
+`LOSS_TOLERANT` does not suppress patch failure (Section 8.4).
 
 ## 17. Sparse File Reconstruction Algorithm
-This section defines the mandatory procedure for reconstructing files when the `SPARSE_FILES` flag (Global Bit 30) and the corresponding `IS_DIRECTORY` (Entry Mode Bit 1) is NOT set.
+This section defines the mandatory sparse-reconstruction procedure when `SPARSE_FILES` (Global Bit 30) is set and the Entry is not a directory.
+
+Sparse reconstruction is a group-wide reconstruction stage. For a fragmented Entry, sparse reconstruction occurs only after the required Fragment Reassembly Sequence has been obtained according to Section 6.1.3 and after any other preceding group-wide reconstruction stage defined by the canonical transformation pipeline.
 
 ### 17.1 Theory of Operation
-Sparse file support allows SAR to archive large files containing "holes" (long sequences of null bytes) without physically storing those zeros. The reconstruction process uses a "Scatter-Gather" approach: the Payload Data (the "Gathered" data) is read sequentially and "Scattered" into a new file at specific offsets defined by the Sparse Map.
+Sparse file support allows SAR to represent logical files containing holes without physically storing the bytes corresponding to those holes.
+
+The sparse representation consists of:
+
+1. a `Sparse Logical Size`, declaring the exact apparent size of the final sparse logical Entry;
+2. zero or more ordered Sparse Extent descriptors identifying logical ranges containing stored data; and
+3. a gathered-data representation containing the bytes assigned to those extents in descriptor order.
+
+Sparse reconstruction consumes the gathered-data representation sequentially and places those bytes into the logical ranges identified by the Sparse Extents.
+
+Logical ranges not covered by a Sparse Extent are holes and reconstruct as zero bytes.
+
+The sparse representation therefore supports leading, intermediate, and trailing holes without relying on LFH `Uncompressed Size` to declare the final sparse logical size.
 
 ### 17.2 Sparse Map Interpretation
-The `Sparse Map` field in the LFH consists of a contiguous array of Fragment Descriptors. The number of descriptors is determined by dividing the `Sparse Map Size` field value by the descriptor size.
+The `Sparse Map` field in the LFH consists of one `Sparse Logical Size` value followed by zero or more Sparse Extent descriptors.
 
-**Descriptor Size**:
+The integer width of `Sparse Logical Size` and of each Sparse Extent `Offset` and `Length` value is controlled by Global Flag `64BIT_SIZE`.
 
-* If `64BIT_SIZE` (Bit 0) is **OFF**: 8 bytes (`uint32_t offset`, `uint32_t length`).
-* If `64BIT_SIZE` (Bit 0) is **ON**: 16 bytes (`uint64_t offset`, `uint64_t length`).
+| `64BIT_SIZE` | `Sparse Logical Size` | Sparse Extent `Offset` | Sparse Extent `Length` |
+| --- | ---: | ---: | ---: |
+| unset | 4B | 4B | 4B |
+| set | 8B | 8B | 8B |
 
-Each descriptor defines a range of valid data. Any gap between the end of one fragment and the start of the next (or between the start of the file and the first fragment) MUST be interpreted as a "hole" consisting of null bytes (0x00).
+The encoded Sparse Map is:
+
+```text
+Sparse Map =
+    Sparse Logical Size ||
+    Sparse Extent[0] ||
+    Sparse Extent[1] ||
+    ...
+```
+
+`Sparse Logical Size` is the exact apparent size in bytes of the final reconstructed sparse logical Entry.
+
+Each Sparse Extent consists of:
+
+```text
+Offset || Length
+```
+
+and identifies one contiguous logical range containing gathered data.
+
+The size of one Sparse Extent descriptor is:
+
+* 8 bytes when `64BIT_SIZE` is unset; and
+* 16 bytes when `64BIT_SIZE` is set.
+
+`Sparse Map Size` includes the encoded `Sparse Logical Size` and all Sparse Extent descriptors.
+
+`Sparse Map Size` MUST be at least the encoded width of `Sparse Logical Size`.
+
+After subtracting the encoded width of `Sparse Logical Size`, the remaining Sparse Map byte count MUST be an exact multiple of the Sparse Extent descriptor size. Otherwise the Sparse Map is malformed and the decoder MUST return `SAR_ERR_INVALID_MAP`.
+
+Sparse Extents MUST be ordered by strictly increasing logical range position and MUST NOT overlap.
+
+Each Sparse Extent `Length` MUST be greater than zero.
+
+For each Sparse Extent, the checked sum `Offset + Length` MUST be less than or equal to `Sparse Logical Size`. Arithmetic overflow MUST return `SAR_ERR_OVERFLOW`.
+
+Any logical range within `[0, Sparse Logical Size)` that is not covered by a Sparse Extent is a hole and reconstructs as zero bytes. This includes:
+
+* a leading hole before the first Sparse Extent;
+* holes between Sparse Extents; and
+* a trailing hole between the end of the final Sparse Extent and `Sparse Logical Size`.
+
+A Sparse Map containing no Sparse Extent descriptors represents an all-hole logical Entry of exactly `Sparse Logical Size` bytes.
+
+For a fragmented sparse Entry, Fragment Index 0 carries the complete Sparse Map according to Section 6.1.3. Fragments with Fragment Index greater than zero MUST encode `Sparse Map Size` as zero and MUST omit the Sparse Map; a violation MUST return `SAR_ERR_METADATA_CONFLICT` (Section 6.1.3). A Sparse Map MUST NOT be distributed or partitioned across multiple fragments.
 
 ### 17.3 Reconstruction Procedure
-Implementations MUST follow these steps to ensure filesystem integrity:
+Sparse reconstruction operates on the complete gathered-data representation produced by all preceding applicable transformation and reconstruction stages.
 
-1. **File Creation**: Create a new file handle. The file's initial size SHOULD be set to the `Uncompressed Size` field to pre-allocate space or define the "Apparent Size."
-2. **Payload Preparation**: If `IS_COMPRESSED` (Entry Mode Bit 3) is set, decompress the Payload Data into a temporary buffer or a streaming pipe.
-3. **Iteration**: For each descriptor in the Sparse Map:
-* **Seek**: Move the file pointer of the target file to the descriptor's `offset`.
-* **Write**: Read `length` bytes from the (decompressed) payload and write them to the target file.
-4. **Truncation**: After the final fragment is written, the implementation MUST ensure the file is exactly `Uncompressed Size` bytes long (e.g., using `ftruncate` or equivalent). This is critical if the file ends with a "hole."
+Implementations MUST reconstruct a sparse Entry as follows:
+
+1. Parse and validate `Sparse Logical Size` and all Sparse Extent descriptors according to Section 17.2.
+2. Obtain the complete gathered-data representation from the preceding stage of the canonical decoding pipeline.
+3. Initialize the final logical output with an apparent size of exactly `Sparse Logical Size`.
+4. Process Sparse Extents in encoded order.
+5. For each Sparse Extent, consume exactly `Length` bytes from the gathered-data representation and place those bytes beginning at logical byte offset `Offset`.
+6. Treat every logical range not covered by a Sparse Extent as zero bytes.
+7. Verify that no gathered-data bytes remain unconsumed after the final Sparse Extent.
+8. Verify that the final logical Entry has exactly `Sparse Logical Size` bytes.
+
+The sum of all Sparse Extent `Length` values MUST use checked arithmetic. For complete reconstruction, the gathered-data length MUST equal that sum exactly. If the gathered-data representation is shorter or longer than the checked sum of all Sparse Extent lengths, the decoder MUST return `SAR_ERR_INVALID_LENGTH`.
+
+`Sparse Logical Size` is authoritative for the final apparent size of a sparse logical Entry. LFH `Uncompressed Size` MUST NOT be interpreted as a second declaration of the final sparse logical size.
+
+For a fragmented sparse Entry, each fragment's `Uncompressed Size` retains the fragment-local transform semantics defined by Section 6.1.2. For an unfragmented sparse Entry, `Uncompressed Size` likewise retains the ordinary transformation-size semantics defined by Section 6.1.2; sparse final-size semantics are defined exclusively by `Sparse Logical Size`.
 
 ### 17.4 Implementation Considerations
 #### 17.4.1 Native Sparse Support
-On systems supporting sparse files (e.g., Linux with `lseek(SEEK_HOLE)`, Windows with `FSCTL_SET_SPARSE`), implementations SHOULD utilize system calls to mark the file as sparse. This prevents the OS from physically writing zeros to the disk for the "holes", preserving the storage efficiency of the archive.
+On systems supporting native sparse files, implementations SHOULD use the available sparse-file facilities to avoid physically materializing hole bytes.
+
+The implementation MAY establish the declared `Sparse Logical Size` using a seek, truncate, extent-allocation operation, or equivalent host mechanism.
+
+Host filesystem behavior does not alter the SAR wire semantics defined by this section.
 
 #### 17.4.2 Non-Sparse Fallback
-If the host filesystem does not support sparse files, the implementation MUST manually fill the holes with null bytes or rely on standard file-seeking behavior which typically pads skipped ranges with zeros on most modern Operating Systems.
+If the host environment cannot represent sparse extents natively, the implementation MUST produce an equivalent logical byte sequence by materializing hole ranges as zero bytes. The final logical result MUST be identical regardless of whether native sparse-file facilities are used.
 
 #### 17.4.3 Integrity Verification
-The `File CRC32` and `Content Hash` fields MUST be calculated against the **fully reconstructed file** (including holes). Implementations MUST NOT calculate hashes based only on the stored payload fragments, as this would fail to detect corruption in the sparse structure itself.
+`File CRC32` and `Content Hash`, when applicable, are calculated and verified against the final reconstructed logical Entry, including bytes represented by sparse holes.
+
+For fragmented Entries, the completion-authoritative integrity rules of Section 6.1.3 apply.
+
+Implementations MUST NOT calculate final logical integrity values solely over the gathered-data representation, because doing so would omit the logical hole ranges defined by the Sparse Map.
+
+Permitted degraded reconstruction under `LOSS_TOLERANT` does not convert unavailable or failed final logical integrity verification into successful verification.
 
 #### 17.4.4 Error Correction
-The `SELECTIVE_FEC` and `HAS_GLOBAL_EC` MUST be calculated against the **fully reconstructed file** (including holes). Any error correction operation SHOULD be applied only if an integrity verification operation (section 17.4.3) fails.
+Sparse reconstruction does not redefine the protection domain or processing order of any FEC or global error-correction construction.
+
+Selective FEC is LFH-local and operates according to Section 6.1.4 before the protected fragment contribution is used by later decoding or reconstruction stages.
+
+`HAS_GLOBAL_EC` remains governed by the Central Dictionary and recovery semantics defined for that feature.
+
+Neither `SELECTIVE_FEC` nor `HAS_GLOBAL_EC` is recalculated over the reconstructed sparse logical file merely because `SPARSE_FILES` is active.
 
 ### 17.5 Error Conditions
-* **SAR_ERR_INVALID_MAP**: Triggered if any descriptor `offset + length` exceeds the `Uncompressed Size`.
-* **SAR_ERR_NO_SPACE**: Triggered if the host filesystem has insufficient space to expand the sparse file to its apparent size.
+The following sparse-specific error conditions apply:
+
+* `SAR_ERR_INVALID_MAP`: The Sparse Map is structurally invalid, including an invalid `Sparse Map Size`, malformed descriptor alignment, a zero-length Sparse Extent, unordered or overlapping Sparse Extents, or a Sparse Extent whose checked end exceeds `Sparse Logical Size`.
+* `SAR_ERR_INVALID_LENGTH`: The complete gathered-data representation length does not exactly equal the checked sum of all Sparse Extent lengths.
+* `SAR_ERR_OVERFLOW`: Arithmetic required to parse, validate, accumulate, or reconstruct sparse ranges exceeds the applicable integer representation.
+* `SAR_ERR_NO_SPACE`: The target environment cannot represent or materialize the declared `Sparse Logical Size`.
+
+General errors from preceding decoding stages remain governed by their respective sections.
 
 ### 17.6 Transformation Ordering and Sparse Applicability
-When `SPARSE_FILES`, `COMPRESSED`, and/or `HAS_DELTA` are simultaneously enabled, implementations MUST apply transformations in the following canonical order before sparse reconstruction:
+Sparse reconstruction is a group-wide reconstruction stage. For a fragmented Entry, fragment-local processing MUST occur before fragment reassembly.
 
-1. Fragment Reassembly (`FILE_FRAGMENTATION`, if enabled)
-2. Decryption (`ENCRYPTED`, if enabled)
-3. Decompression (`COMPRESSED`, if enabled)
-4. Patch Application (`HAS_DELTA`, if enabled)
-5. Sparse Reconstruction (`SPARSE_FILES`, if enabled)
+The applicable canonical decoding relationship is:
 
-Sparse reconstruction MUST operate exclusively on the fully materialized logical file after all prior transformations have completed.
+```text
+Fragment-local FEC recovery, if applicable
+    ->
+Fragment-local AEAD authentication/decryption, if applicable
+    ->
+Fragment-local decompression, if applicable
+    ->
+Fragment Reassembly Sequence, if applicable
+    ->
+Patch application, if applicable
+    ->
+CDC or other applicable group-wide reconstruction
+    ->
+Sparse reconstruction, if applicable
+    ->
+Final logical integrity verification
+```
 
-Sparse maps MUST NOT reference compressed, encrypted, or delta-encoded representations.
+Only stages enabled for the current Entry are performed.
+
+Sparse reconstruction consumes the gathered-data representation supplied by the immediately preceding applicable reconstruction stage.
+
+Sparse Extent offsets address the final sparse logical address space. They MUST NOT address:
+
+* encoded Payload Data;
+* ciphertext;
+* compressed fragment data;
+* individual physical fragments;
+* Fragment Reassembly Sequence positions; or
+* delta-patch instruction positions.
+
+Fragmentation does not define sparse placement. Sparse placement is defined exclusively by `Sparse Logical Size` and the Sparse Extent descriptors.
 
 ## 18. Stream Persistence and Session Recovery
 This section governs the behavior of SAR when utilized as a real-time, state-aware replication journal over persistent connections.
@@ -3364,7 +3882,7 @@ Each SAR stream:
 * MUST be identified by a non-zero Stream ID.
 * MUST begin with a SAR Global Header.
 * MUST establish a session by means of a valid `SESSION_INIT` message.
-* MUST maintain independent Global Flags, KMS state, Session UUID, Sequence Number state, and LFH parsing context.
+* MUST maintain independent Global Flags, KMS state, Session UUID, Sequence Number state, fragment-group reassembly state (Section 18.4.2), and LFH parsing context.
 
 A Stream ID MUST NOT be reused while an active session remains bound to that Stream ID on the same transport connection.
 
@@ -3507,6 +4025,11 @@ The Sequence No:
 * MUST NOT be used as a substitute for transport reliability mechanisms
 * MUST NOT influence byte-stream reconstruction order at the transport layer
 
+##### Sequence No and Fragmented Entries
+Each fragment of a fragmented Entry is a complete LFH and carries its own `Sequence No` under the rules above. Fragmentation does not alter Sequence No semantics.
+
+`Sequence No` and `Fragment Index` are independent. `Sequence No` is the LFH continuity token of the session; `Fragment Index` is the ordinal of a fragment within one fragment group (Section 6.1.3). Neither replaces the other, and neither MUST be used to infer the other. Fragmented Entry handling is defined in Section 18.4.2.
+
 ##### Failure Detection Role
 The Sequence No MAY be used by receivers for detection of:
 
@@ -3572,6 +4095,8 @@ ACK_FLAGS MAY contain multiple bits.
 
 Reserved ACK_FLAGS bits MUST be set to 0. Receivers encountering non-zero reserved bits MUST return `SAR_ERR_RESERVED_VALUE`.
 
+When `REF_SEQUENCE` references a fragment LFH, `ACK` and `OK` describe only that LFH. `ACK` and `OK` remain per physical fragment LFH. `SUCCESS` is valid only after the complete fragmented logical operation has been reconstructed, validated, and applied successfully according to Section 18.4.2. For a fragmented Entry, an acknowledgement with `SUCCESS` MUST reference, through `REF_SEQUENCE`, the `Sequence No` of the `LAST_FRAGMENT` LFH. `SUCCESS` MUST NOT be set in an acknowledgement referencing any other fragment LFH.
+
 ### 18.3.6 End of Session
 
 To terminate an active session, a sender SHALL transmit a `SESSION_CLOSE` message containing a zero-length payload.
@@ -3583,6 +4108,8 @@ Upon receiving `SESSION_CLOSE`, implementations MUST:
 * unbind the Stream ID and Session UUID associated with the terminated session;
 * release any session-specific state maintained for that stream;
 * cease accepting additional data associated with the terminated Stream ID.
+
+Incomplete fragment groups bound to the terminated session MUST be discarded and MUST NOT be applied to final state.
 
 If bidirectional control is active and `SESSION_ACK` is supported, the receiver SHOULD transmit a `SESSION_ACK` message referencing the received `SESSION_CLOSE`.
 
@@ -3598,6 +4125,8 @@ When session resumption is attempted, the sender SHALL transmit a `SESSION_RESUM
 If the supplied Session UUID matches the UUID bound to the Stream ID, the receiver MUST resume the session or return `SAR_ERR_UNSUPPORTED` if resumption is not supported.
 
 If the supplied Session UUID does not match the UUID bound to the Stream ID, the receiver MUST return `SAR_ERR_STREAM_STATE`.
+
+Incomplete fragment groups do not survive interruption or resumption. Upon resumption, the receiver MUST discard all incomplete fragment-group state and MUST NOT apply it. Fragments received before resumption and fragments received after resumption MUST NOT be combined into one logical Entry. A sender retransmitting a fragmented Entry after resumption MUST transmit a new complete, valid fragment group, beginning with Fragment Index 0 under the ordering rules of Section 18.4.2.
 
 If reverse control is not available and the receiver encounters an error state, implementations MUST terminate the connection.
 
@@ -3701,6 +4230,65 @@ If CRC verification fails:
 * The shadow data MUST be discarded
 * No mutation to the final namespace MUST occur
 * The operation MUST be treated as failed at the state layer, even if transport delivery succeeded
+
+For a fragmented Entry, the shadow location holds the reconstructed logical Entry, and the integrity verification above is the final logical integrity verification defined by Section 6.1.3. Fragmented Entry handling is defined in Section 18.4.2.
+
+#### 18.4.2 Fragmented Entries in Stateful Streaming
+This subsection integrates the fragmentation semantics of Sections 6.1.3 and 6.1.5 with Stateful Streaming. It does not define a second ordering mechanism.
+
+##### Distinct Concepts
+The following concepts MUST NOT be conflated:
+
+* **Fragment Index:** the ordinal of a fragment within one fragment group.
+* **Sequence No:** the session's LFH continuity token (Section 18.3.2).
+* **LFH occurrence order:** the order in which LFHs occur in the ordered byte stream of one SAR stream. Within one SAR stream it is identical to `Sequence No` order. Network or transport-level arrival timing is not a SAR ordering concept.
+
+Fragment Index does not replace Sequence No. Sequence No does not replace Fragment Index. Neither defines the other.
+
+##### Fragment Groups
+A fragmented Entry is composed of complete LFHs. Each fragment LFH carries its own `Sequence No` according to Section 18.3.2.
+
+All fragments of one fragment group MUST use the same `Stream ID`. A fragment group is identified within the active SAR session by:
+
+```text
+(active SAR session, Stream ID, Fragment ID)
+```
+
+and each fragment within that group by its Fragment Index. A fragment group never spans SAR sessions or Stream IDs.
+
+A `SESSION_CONTROL` Entry MUST NOT be fragmented (Section 6.1.3). Session-control messages MAY occur between fragments of a fragment group and do not affect fragment-group state.
+
+##### Fragment Availability
+All fragments of one group share one Stream ID, and each SAR stream is an ordered byte stream (Section 18.3.1). Out-of-index behavior therefore means that the sender's emission order, and hence the LFH occurrence order, differs from Fragment Index order. It does not mean transport reordering within a SAR stream. In particular, a fragment with Fragment Index greater than zero MAY occur before Fragment Index 0.
+
+Such a fragment MAY be buffered as incomplete fragment-group state. Before Fragment Index 0 has occurred, a fragment with a greater Fragment Index MUST NOT:
+
+* establish logical Entry identity;
+* establish a Full Logical Entry Path;
+* create duplicate-path semantics;
+* authorize state application; or
+* redefine sequencing or operation order.
+
+Fragment Index 0 establishes the logical Entry identity when it occurs.
+
+`LAST_FRAGMENT` identifies the terminal Fragment Index of the group. It is not a transport or session flush marker. Receipt of `LAST_FRAGMENT` alone MUST NOT cause state application while earlier required fragments or Stateful Streaming sequencing requirements remain unresolved.
+
+##### Ordering
+Sequence No ordering is exactly as defined by Section 18.3.2. Fragmentation does not introduce an additional global ordering rule.
+
+The canonical operation position of a fragmented logical Entry is established by the `Sequence No` of its Fragment Index 0 LFH. Later fragments do not create new operation positions. Completion of reconstruction does not move that position. Implementations MAY execute later Entries internally before the fragmented Entry completes only when the observable results remain equivalent to canonical sequential application (Section 6.1.5).
+
+Logical Entry order MUST NOT be derived from wall-clock time, completion time, or network arrival order, including across concurrent transport streams. Concurrent transport streams carry distinct SAR sessions; no canonical Entry order is defined between them by this specification.
+
+##### State Application
+The logical operation of a fragmented Entry MUST be applied exactly once, and only after all of the following hold:
+
+* all required Fragment Indices are available, or existing `LOSS_TOLERANT` rules permit a valid degraded reconstruction;
+* fragment-local processing and all required group-wide reconstruction (Section 13.1.3) have completed;
+* the applicable Sequence No and session-state requirements are satisfied; and
+* the required integrity and authentication conditions are satisfied.
+
+An implementation MUST NOT execute the logical operation independently for each fragment.
 
 ### 18.5 SAR Transport Binding Profiles
 
@@ -4313,7 +4901,19 @@ A Partition Set is complete only when exactly one valid final Partition establis
 
 If complete processing is requested and one or more required members are unavailable, the implementation MUST return `SAR_ERR_PARTITION_MISSING`.
 
-Implementations MAY provide explicitly application-controlled incomplete or degraded processing consistent with Section 12.4, but MUST NOT report complete Partition Set reconstruction while a required Partition is unavailable.
+Implementations MAY provide explicitly application-controlled incomplete or degraded Partition Set processing consistent with Section 12.4, but MUST NOT report complete Partition Set reconstruction while a required Partition is unavailable. Fragmented Entries affected by unavailable Partition members are additionally subject to Sections 6.1.3 and 19.4.5.
+
+Incomplete or degraded Partition Set processing MUST NOT infer completion of a fragmented Entry from the exhaustion of available Partition members alone. A fragmented Entry whose Fragment ID scope is the Partition Set MAY be concluded as incomplete only when the exact Partition Set boundary is known from valid Partition Set metadata. If the final Partition, or other information required to establish the exact boundary, is unavailable, an incomplete fragmented Entry MUST remain unresolved and MUST NOT be applied as degraded logical output.
+
+If the exact boundary is known but one or more Partition members are unavailable, a fragmented Entry affected by those members MAY produce degraded output only when all requirements of `LOSS_TOLERANT`, Section 6.1.3, and Section 19.4.5 are satisfied. In particular:
+
+* Fragment Index 0 MUST be available to establish logical Entry identity;
+* degraded output MUST consist only of the longest contiguous valid fragment prefix beginning at Fragment Index 0;
+* fragments after the first missing or unusable Fragment Index MUST NOT contribute to degraded logical output;
+* an incomplete Fragment Reassembly Sequence MUST NOT be supplied to a group-wide reconstruction stage that requires the complete representation; and
+* degraded output MUST NOT be reported as integrity-verified unless the complete integrity domain was reconstructed and verified.
+
+A missing Partition member has unknown contents. It MUST NOT be treated as proving that any particular Fragment Index was absent from the encoded Partition Set.
 
 #### 19.1.9 Duplicate Partition Candidates
 
@@ -4398,16 +4998,21 @@ A missing required Manifest MUST return `SAR_ERR_METADATA_MISSING`. More than on
 When `FILE_FRAGMENTATION` (Global Bit 4) is set, a single file (e.g., `video.mp4`) can be broken into $N$ fragments. This is critical for real-time streaming where large assets must be interleaved with control commands or other data.
 
 #### 19.2.1 Fragment Identification
-Each fragment of the same file MUST share the same **Fragment ID** LFH field value.
-* **Fragment Index**: A 0-based monotonic counter. The receiver uses this to reassemble the bytes in the correct order.
-* **Name/Path Persistence**: Only the first fragment (Index 0) is REQUIRED to carry the `Name String` and `Path String`. Subsequent fragments SHOULD set `Name Length` to 0 to save bandwidth, as the `Fragment ID` serves as the primary lookup.
+The fragment wire model, fragment-group scope, metadata classes, and Name/Path rules are defined by Section 6.1.3 and are not restated here. Each fragment is a complete LFH carrying `Fragment ID` and `Fragment Index`.
+
+* **Fragment Group Scope**: `Fragment ID` is meaningful only within its applicable fragment scope (Section 6.1.3): the archive, or the complete Partition Set for a Partitioned Archive (Section 19.1.6), or the active SAR session and Stream ID for Stateful Streaming (Section 18.4.2). A bare `Fragment ID` value MUST NOT be used as a lookup key outside that scope.
+* **Fragment Index**: The ordinal of a fragment within its group. The Fragment Reassembly Sequence is the concatenation of decoded fragment contributions in ascending Fragment Index order.
+* **Name/Path**: Name and Path presence and consistency for fragments with Fragment Index greater than zero are governed by Section 6.1.3. The Full Logical Entry Path is established only by Fragment Index 0.
 
 #### 19.2.2 Reassembly Logic
 A receiver encountering `IS_FRAGMENT` (Entry Mode Bit 5) MUST:
-1. Check its local reassembly buffer for the `Fragment ID`.
-2. Append the `Payload Data` to the buffer at the position dictated by `Fragment Index`.
-3. If `LAST_FRAGMENT` (Bit 6) is encountered, the file is considered complete.
-4. Perform `File CRC32` or `Content Hash` verification only **after** the final fragment is joined. If `LOSS_TOLERANT` is active, the `SAR_WARN_INCOMPLETE` status SHOULD be used to signal that the file was committed despite a hash mismatch.
+1. Locate or create the fragment-group state for the applicable fragment scope and `Fragment ID`.
+2. Validate the fragment LFH, including Class G consistency with the group (Section 6.1.3), and process it through the fragment-local stages of Section 13.1.3 (Selective FEC recovery, AEAD authentication/decryption, decompression). The resulting fragment contribution MUST have length equal to the fragment's `Uncompressed Size`.
+3. Record the contribution under its `Fragment Index`. Raw `Payload Data` MUST NOT be appended directly to the group buffer; only the decoded contribution is retained.
+4. Treat `LAST_FRAGMENT` (Bit 6) as identifying the terminal Fragment Index. It does not by itself complete the group, authorize application, or constitute a failure.
+5. When every Fragment Index from zero through the terminal Fragment Index is present (or `LOSS_TOLERANT` permits degraded reconstruction), form the Fragment Reassembly Sequence in ascending Fragment Index order and perform the required group-wide reconstruction stages of Section 13.1.3.
+6. Perform `File CRC32` or `Content Hash` verification over the final logical Entry only after group-wide reconstruction, using the completion-authoritative values of Section 6.1.3. A failed verification MUST NOT result in the Entry being committed or reported as verified. `LOSS_TOLERANT` does not alter this (Section 19.4.5).
+7. In Stateful Streaming, apply the logical operation exactly once according to Section 18.4.2.
 
 ### 19.3 Streaming Considerations
 In e.g. a real-time dia-show application, the sender might stream `image_01.jpg`, then start streaming `background_audio.mp3` in fragments while `image_02.jpg` is being prepared. This allows the application to begin playing the audio before the entire file has arrived, while still allowing other small files to "jump the queue" in the stream.
@@ -4416,18 +5021,21 @@ In e.g. a real-time dia-show application, the sender might stream `image_01.jpg`
 Managing non-contiguous data requires the Receiver to act as a stateful buffer manager. This section defines the mandatory error recovery logic.
 
 ### 19.4.1 Reassembly Timeouts (The "Dead-Drop" Rule)
-In `FILE_FRAGMENTATION` mode (Global Bit 4), the Receiver MUST implement a **Fragment TTL (Time To Live)**.
+In live or incremental contexts, namely Stateful Streaming (Section 18), the Receiver MUST implement a **Fragment TTL (Time To Live)**. Ordinary archive decoding has no fragment wall-clock timeout.
 * **Problem**: A Sender starts a 4GB transfer in fragments but crashes after fragment 10. Without a timeout, the Receiver's memory remains "poisoned" with an incomplete reassembly buffer.
-* **Requirement**: If no new fragment for a specific `Fragment ID` arrives within a set window (default 60s), the Receiver SHALL discard the buffer and return `SAR_ERR_FRAGMENT_TIMEOUT` (17).
+* **Requirement**: Timeout state is keyed by `(active SAR session, Stream ID, Fragment ID)`. If no new fragment for that group occurs within a set window (default 60s), the Receiver SHALL discard the group's buffered state and return `SAR_ERR_FRAGMENT_TIMEOUT` (17).
+* **Archival Conclusion**: In archival processing a fragment group is concluded by structure, not time: an unpartitioned group is concluded at the end of its Physical Archive Member, and a partitioned group only at the end of its Partition Set (Section 19.1.6), which requires the exact Partition Set boundary to be known (Section 19.1.8). Exhaustion of the available members alone does not conclude a group. Required Fragment Indices still missing at conclusion produce `SAR_ERR_FRAGMENT_GAP`, subject to `LOSS_TOLERANT` (Section 19.4.5).
+* **Non-Application**: A discarded incomplete group MUST NOT be applied to final state.
 
 ### 19.4.2 Out-of-Order Handling
-While the **Sequence No** field ensures transport-layer sanity, the **Fragment Index** field allows the logical file to be reassembled even if fragments are interleaved with other files.
-* **Requirement**: If a fragment arrives with a `Fragment Index` that creates a gap, the Receiver SHOULD buffer subsequent indices and wait for the missing parts.
-* **Critical Failure**: If `LAST_FRAGMENT` (Bit 6) arrives while gaps exist in the index sequence, the Receiver MUST return `SAR_ERR_FRAGMENT_GAP` (14) **UNLESS Bit 7 (`LOSS_TOLERANT`) is set**.
+`Fragment Index`, `Sequence No`, and LFH occurrence order are distinct (Section 18.4.2). The **Fragment Index** field allows the logical file to be reassembled even if fragments are interleaved with other Entries or occur out of Fragment Index order.
+* **Requirement**: If a fragment occurs with a `Fragment Index` that creates a gap, the Receiver MAY buffer it as incomplete fragment-group state and wait for the missing fragments, subject to Sections 19.4.1 and 19.4.3.
+* **Missing Fragments**: `LAST_FRAGMENT` (Bit 6) identifies the terminal Fragment Index. Its occurrence while gaps exist does not by itself fail the group, because missing lower indices MAY still become available. A group that is concluded (at the end of its Physical Archive Member or Partition Set in archival mode, by the TTL of Section 19.4.1 or by session termination or resumption in Stateful Streaming) while any Fragment Index from zero through the terminal Fragment Index is missing is a fragment gap and MUST return `SAR_ERR_FRAGMENT_GAP` (14) unless existing `LOSS_TOLERANT` (Bit 7) rules permit a degraded result (Section 19.4.5).
+* **Duplicates and Conflicts**: Duplicate, replica, and conflicting fragments are governed by Section 6.1.3.
 
 ### 19.4.3 Resource Exhaustion & DoS Protection
 Fragmentation is a potential vector for a **"Memory Exhaustion Attack"** (where a malicious sender starts thousands of fragmented transfers but never sends the `LAST_FRAGMENT`).
-* **The "Concurrency Cap"**: Implementations SHOULD limit the number of concurrent "Active Fragments" they will track. If a new `Fragment ID` arrives that exceeds this limit, the Receiver SHALL return `SAR_ERR_REASSEMBLY_BUFFER_FULL` (15).
+* **The "Concurrency Cap"**: Implementations SHOULD limit the number of concurrent "Active Fragments" they will track. If a new fragment group (distinct applicable fragment scope and `Fragment ID`) occurs that exceeds this limit, the Receiver SHALL return `SAR_ERR_REASSEMBLY_BUFFER_FULL` (15).
 
 ### 19.4.4 Partition Discovery, Verification, and Recovery
 
@@ -4438,24 +5046,26 @@ Filenames, archive names, storage enumeration order, and storage-backend metadat
 
 ### 19.4.5 Lossy Reassembly and Best-Effort Streaming
 When the `LOSS_TOLERANT` flag (Bit 7) is active, SAR transitions to a "continuity-first" delivery model suitable for temporal data (audio, video, telemetry).
-1. **Gap-Filling**: Upon receipt of the `LAST_FRAGMENT`, any missing indices SHALL be filled with **Null Bytes (0x00)** or maintained as unwritten regions in a sparse file.
-2. **Integrity Bypass**: If gaps are present, a hash mismatch is expected. If Bit 7 is set, a failed `File CRC32` or `Content Hash` SHOULD NOT be treated as a fatal error. The Receiver SHALL commit the data and return `SAR_WARN_INCOMPLETE` (18).
-3. **Out-of-Order Discard**: In time-sensitive streaming, if a "belated" fragment arrives after the file has already been committed or played, the Receiver MAY discard it without error.
-4. **Authentication Preservation**: `LOSS_TOLERANT` applies only to missing, late, truncated, or otherwise unavailable data. It MUST NOT permit processing of payload data that fails cryptographic authentication. If AEAD authentication fails for an encrypted fragment or entry, the affected data MUST be discarded. Implementations MAY continue processing subsequent fragments, entries, or stream data when `LOSS_TOLERANT` is set, but MUST NOT expose, reconstruct, decode, decompress, patch, execute, or otherwise process unauthenticated payload contents.
+1. **No Synthetic or Shifted Content**: Fragments carry no offsets and a missing contribution's length is unknown. Implementations MUST NOT synthesize bytes (including null bytes) for a missing Fragment Index, and MUST NOT concatenate contributions that follow a missing Fragment Index, because that would shift later bytes to invented positions. Degraded logical output is only the longest contiguous valid prefix of contributions beginning at Fragment Index 0, in ascending Fragment Index order. If Fragment Index 0 is missing, no degraded logical Entry may be applied. Fragments after the first gap MAY be retained diagnostically but MUST NOT contribute to logical output.
+2. **Degradation Limits**: An incomplete Fragment Reassembly Sequence MUST NOT be passed to patch application, CDC resolution, sparse reconstruction, or any other group-wide construction requiring a complete representation. If such a stage is required and any Fragment Index is missing, the Receiver MUST return `SAR_ERR_FRAGMENT_GAP`, regardless of `LOSS_TOLERANT`.
+3. **Integrity Is Not Bypassed**: Permitted degraded output MUST return `SAR_WARN_INCOMPLETE` (18) according to Section 6.2.3, and MUST NOT be described as integrity-verified unless the complete integrity domain was actually reconstructed and verified (Section 6.1.3). A failed integrity verification MUST NOT be treated as a successful commit. In Stateful Streaming, the application conditions of Section 18.4.2 remain in force.
+4. **Late Fragments**: In time-sensitive streaming, if a belated fragment occurs after its group has already been concluded, delivered, or discarded, the Receiver MAY discard it without error. It MUST NOT be combined with a previously concluded group, and in Stateful Streaming MUST NOT be combined across session resumption (Section 18.3.7).
+5. **Authentication Preservation**: `LOSS_TOLERANT` applies only to missing, late, truncated, or otherwise unavailable data. It MUST NOT permit processing of payload data that fails cryptographic authentication. If AEAD authentication fails for an encrypted fragment or entry, the affected data MUST be discarded. Implementations MAY continue processing subsequent fragments, entries, or stream data when `LOSS_TOLERANT` is set, but MUST NOT expose, reconstruct, decode, decompress, patch, execute, or otherwise process unauthenticated payload contents.
 
 ## 19.5 Fragmentation Strategies
 For large fragmented files, Receivers SHOULD NOT reassemble entirely in RAM.
-* **Strategy**: When a `Fragment ID` is first encountered, the Receiver creates a **Sparse Shadow File** on disk.
-* **Action**: Each incoming fragment is `seek()`ed to its correct offset based on `Fragment Index * Fragment_Size` and written directly.
-* **Result**: This allows for reassembling 100GB files without consuming 100GB of RAM, leveraging the **Sparse File Logic (Section 17)** we already established.
+* **Strategy**: Receivers MAY spool decoded fragment contributions to temporary storage, keyed by fragment group and `Fragment Index`, and stream them in ascending Fragment Index order when forming the Fragment Reassembly Sequence.
+* **No Positional Assumption**: Fragment contributions have variable lengths defined by each fragment's `Uncompressed Size`. A contribution's position is determined only by the lengths of all lower-index contributions, so it MUST NOT be computed from `Fragment Index` and a fixed fragment size, and a contribution MUST NOT be written to its final position before all lower-index contributions are known.
+* **Sparse Files Are Unrelated**: Native sparse-file facilities MAY be used only for final sparse reconstruction under Section 17, not as a mechanism for placing ordinary fragments.
+* **Result**: Large files can be reassembled without holding the complete Entry in RAM, with no change to the wire semantics, resource limits, or verification order defined by Sections 6.1.3 and 13.1.3.
 
 ### 19.6 Sparse File Interaction
 When both `SPARSE_FILES` (Bit 30) and `FILE_FRAGMENTATION` (Bit 4) are active, the following rules apply:
 
-1. **Global Scope**: The Sparse Map describes the layout of the fully reconstructed file, not individual fragments.
-2. **Fragment Constraints**: Individual fragments MUST NOT contain independent Sparse Maps. The Sparse Map MUST be present only in the first fragment (Fragment Index 0).
-3. **Reassembly Requirement**: The Receiver MUST first reassemble all fragments into a logical contiguous payload before applying Sparse Map reconstruction.
-4. **Streaming Optimization (Optional)**: Implementations MAY apply sparse reconstruction incrementally during fragment arrival, provided correctness is maintained.
+1. **Global Scope**: The Sparse Map, including `Sparse Logical Size`, describes the layout of the fully reconstructed logical Entry, not individual fragments (Section 17.2).
+2. **Fragment Constraints**: Individual fragments MUST NOT contain independent Sparse Maps. The Sparse Map MUST be present only in the first fragment (Fragment Index 0); fragments with Fragment Index greater than zero MUST encode `Sparse Map Size` as zero and omit the Sparse Map, otherwise the Receiver MUST return `SAR_ERR_METADATA_CONFLICT` (Section 6.1.3).
+3. **Reassembly Requirement**: The Receiver MUST first form the complete Fragment Reassembly Sequence, and complete any intervening group-wide stage, before applying sparse reconstruction (Sections 13.1.3 and 17.3). The Fragment Reassembly Sequence is the gathered-data representation consumed by sparse reconstruction, not the sparse logical file.
+4. **Streaming Optimization (Optional)**: Implementations MAY apply sparse reconstruction incrementally only when the observable result is identical to complete reconstruction, and only once every lower-index contribution needed to determine the gathered-data position is known.
 5. **Integrity Verification**: All integrity checks (CRC32, Content Hash) MUST be performed on the fully reconstructed sparse file.
 
 ## 20. Content-Defined Chunking (CDC) Protocol
@@ -4468,20 +5078,21 @@ If `CDC_SUPPORT` (Bit 5) is active globally, every LFH MUST be evaluated based o
 2. **Recipe Mode (`> 0x00`)**: The payload is interpreted as a **Hash Recipe**. Each hash in the payload refers to a unique chunk stored in a **Catalog**.
 
 ### 20.2 The Hash Recipe Structure
-In Recipe Mode, the `Payload Data` (after decryption and decompression) MUST be parsed as a contiguous array of binary hashes.
+In Recipe Mode, the representation supplied to CDC resolution MUST be parsed as a contiguous array of binary hashes. That representation is the decoded `Payload Data` of an unfragmented Entry, or the Fragment Reassembly Sequence of a fragmented Entry, after any preceding group-wide stage (for example patch application) per Section 13.1.3.
 
 * **Hash Algorithm**: The length and type of hashes in the recipe are determined by the `DEDUPLICATION` (Bit 29) setting.
-* **Logical Continuity**: The order of hashes in the payload defines the exact byte-sequence of the reconstructed file.
+* **Logical Continuity**: The order of hashes in the recipe defines the exact byte-sequence of the reconstructed file.
+* **Completeness**: A Recipe MUST be complete. A fragmented Recipe Entry with a missing Fragment Index MUST return `SAR_ERR_FRAGMENT_GAP` even when `LOSS_TOLERANT` is set (Section 19.4.5), and a Recipe MUST NOT be parsed from a partial Fragment Reassembly Sequence.
 
 ### 20.3 Recipe Resolution and Transformation
-The `CDC Algo ID` is the final stage of the decoding pipeline.
+CDC resolution is a group-wide stage whose position in the decoding pipeline is defined exclusively by Section 13.1.3.
 
-1. **Pipeline Resolution**: Apply Decrypt, Decompress, and Patch to the payload as defined in Section 13.7.4.
-2. **Recipe Interpretation**: The resulting byte-block is the Recipe.
+1. **Pipeline Resolution**: Obtain the Recipe through the applicable preceding stages of Section 13.1.3: for each fragment (if fragmented), Selective FEC recovery, AEAD authentication/decryption, and decompression; then Fragment Reassembly; then patch application, if applicable.
+2. **Recipe Interpretation**: The resulting representation is the Recipe.
 3. **Chunk Fetching**: The implementation SHALL iterate through the hashes in the Recipe, retrieving the corresponding bytes from either:
     * A local SAR **CDC_MAP** (Central Dictionary TLV).
     * An external Content-Addressable Storage (CAS) database.
-4. **Final Reassembly**: Chunks are appended to the logical file.
+4. **Final Reassembly**: Chunks are appended to the logical byte sequence, which is then supplied to sparse reconstruction, if applicable, and final logical integrity verification (Section 13.1.3).
 
 ## 21. CDC Cataloging and Metadata
 
@@ -4596,10 +5207,10 @@ Implementations SHOULD utilize Selective Deduplication to optimize streaming thr
 * **Packed Structs**: Because SAR headers are "packed" without alignment padding, C/C++ developers SHOULD use `#pragma pack(push, 1)` or `__attribute__((packed))` to ensure the binary structure matches the specification.
 
 ### 22.2 Sparse File Handling
-see section 17.4
+see sections 17 and 19.6
 
 ### 22.3 Fragmentation Strategies
-see sections 19.4 and 19.5
+see sections 19.2, 19.4 and 19.5
 
 ### 22.4 Path Security
 
@@ -4689,64 +5300,62 @@ The `MetaSize` field in the Central Dictionary enables jumping to the offset arr
 In streaming mode over untrusted networks, requiring the `ENCRYPTED` flag (Bit 10) to be enabled with an AEAD-capable algorithm is strongly recommended. This ensures that the `SESSION_INIT` and `SESSION_RESUME` payloads (UUIDs) are authenticated. Without AEAD, the protocol relies entirely on transport-layer security or network isolation to prevent session hijacking.
 
 ## Appendix A. Byte-Level LFH Example: Encrypted Fragment
-The following represents a single LFH entry for **Fragment Index 1** of a larger logical file. Note that because this is not the first fragment, the `Name` and `Path` strings are omitted (Length = 0), leveraging the `Fragment ID` for reassembly.
+The following represents a single LFH entry for **Fragment Index 1** of a larger logical file. Note that because this is not the first fragment, the `Name` and `Path` strings are omitted (Length = 0); the Full Logical Entry Path is established only by Fragment Index 0 (Section 6.1.3).
 
-This example assumes the following global flags are active: `ENCRYPTED` (Bit 10), `FILE_FRAGMENTATION` (Bit 4), and `HAS_PATH` (Bit 24). The `64BIT_SIZE` flag is NOT set, so standard size/offset LFH fields are 4 bytes.
+This example assumes the following global flags are active: `ENCRYPTED` (Bit 10), `FILE_FRAGMENTATION` (Bit 4), and `HAS_PATH` (Bit 24). The `64BIT_SIZE` flag is NOT set, so the data-scale size fields (`Uncompressed Size`, `Payload Size`) are 4 bytes. `COMPRESSED` is not set.
 
 ### A.1. Hexadecimal Representation
 ```text
 Offset       Byte Values (Hex)                        Description
 -------------------------------------------------------------------------------------------------------
-00000000     43 00 00 00                              Header Size: 67 bytes (4B)
+00000000     37 00 00 00                              Header Size: 55 bytes (4B)
 00000004     24 00                                    Entry Mode: IS_ENCRYPTED | IS_FRAGMENT (2B)
 00000006     05 00                                    Stream ID: 0x0005 (2B)
 00000008     2A 00                                    Sequence No: 42 (0x002A) (2B)
-0000000A     00 28 00 00                              Uncompressed Size: 10240 bytes (4B)
+0000000A     F0 03 00 00                              Uncompressed Size: 1008 bytes (4B)
 0000000E     00 04 00 00                              Payload Size: 1024 Bytes (4B)
 00000012     04                                       Encr Algo ID: XCHACHA20_POLY (0x04) (1B)
 00000013     DE AD C0 DE                              Fragment ID: 0xDEADC0DE (4B)
 00000017     01 00 00 00                              Fragment Index: 1 (4B)
-0000001B     00 08 00 00 00 00 00 00                  Frag Desc: Absolute Offset (2048) (8B)
-00000023     00 04 00 00                              Frag Desc: Fragment Size (1024) (4B)
-00000027     FF EE DD CC BB AA 99 88                  IV / Nonce (Bytes 1-8)
-0000002F     77 66 55 44 33 22 11 00                  IV / Nonce (Bytes 9-16)
-00000037     A1 B2 C3 D4 E5 F6 A7 B8                  IV / Nonce (Bytes 17-24) [Total: 24B]
-0000003F     00 00                                    Name Length: 0 (Deferred) (2B)
-00000041     00 00                                    Path Length: 0 (Deferred) (2B)
-00000043     [... 1024 Bytes of Payload ...]          Encrypted & Fragmented Data
+0000001B     FF EE DD CC BB AA 99 88                  IV / Nonce (Bytes 1-8)
+00000023     77 66 55 44 33 22 11 00                  IV / Nonce (Bytes 9-16)
+0000002B     A1 B2 C3 D4 E5 F6 A7 B8                  IV / Nonce (Bytes 17-24) [Total: 24B]
+00000033     00 00                                    Name Length: 0 (2B)
+00000035     00 00                                    Path Length: 0 (2B)
+00000037     [... 1024 Bytes of Payload ...]          Ciphertext (1008 B) || Authentication Tag (16 B)
 ```
 
 
 ### A.2. Field Breakdown and Logic
 | Field | Value | Logic / Invariant |
 | --- | --- | --- |
-| **Header Size** | `0x43` (67) | Byte count from start of LFH to the byte immediately before `Payload Data`. Derived from active global flags. |
-| **Entry Mode** | `0x0024` | Bits 2 and 5 set. Signals AEAD verification is required and this is a partial file piece. |
+| **Header Size** | `0x37` (55) | Byte count from start of LFH to the byte immediately before `Payload Data`. Derived from active global flags. |
+| **Entry Mode** | `0x0024` | Bits 2 and 5 set. Signals AEAD verification is required and this is a fragment of a larger logical Entry. |
 | **Stream ID** | `0x0005` | Matches the active session handle established via `SESSION_INIT`. |
-| **Sequence No** | `0x002A` | Monotonic heartbeat; must be exactly `Previous_Seq + 1`. |
-| **Uncompressed Size** | `10240` | Total reconstructed size of the complete logical file (not this fragment alone). |
-| **Payload Size** | `1024` | Defines the actual byte-count to read from the stream after the header. |
+| **Sequence No** | `0x002A` | Stateful Streaming LFH sequencing token; must be exactly `Previous_Seq + 1`. It is independent of `Fragment Index` (Section 18.4.2). |
+| **Uncompressed Size** | `1008` | Length of this fragment's decoded contribution (no compression is active, so equal to the ciphertext length). It does not declare the size of the complete logical file (Section 6.1.2). |
+| **Payload Size** | `1024` | Encoded ciphertext (1008 B) plus the 16-byte authentication tag; defines the byte count to read after the header. |
 | **Encr Algo ID** | `0x04` | XChaCha20-Poly1305. The parser must use the IV below for the AEAD tag verification. |
-| **Fragment ID** | `0xDEADC0DE` | Unique identifier linking this payload to the reassembly buffer for this file. |
-| **Fragment Index** | `1` | Informs the Scatter-Gather logic that this is the second block of the file. |
-| **Fragment Descriptor** | `Offset: 2048, Size: 1024` | **Crucial:** Directs the receiver to write the decrypted payload starting at byte 2048 of the logical file. |
-| **Name Length** | `0` | Since `Fragment Index > 0`, the name is already known by the receiver's state machine. |
-| **Path Length** | `0` | Evaluated conditionally based on the `HAS_PATH` global bitmask. |
+| **Fragment ID** | `0xDEADC0DE` | Identifies the fragment group, within its applicable fragment scope (here: the active SAR session and Stream ID), that this fragment belongs to. |
+| **Fragment Index** | `1` | The ordinal of this fragment in the group. Its contribution follows the contribution of Fragment Index 0 in the Fragment Reassembly Sequence. |
+| **Name Length** | `0` | Since `Fragment Index > 0`, the Name is established by Fragment Index 0. |
+| **Path Length** | `0` | Evaluated conditionally based on the `HAS_PATH` global bitmask; zero here for the same reason. |
 ### A.3. Transformation Pipeline Execution
-To process the payload in the example above, the implementation must follow the **Canonical Decoding Order** (Section 13.7.4):
+To process this fragment, the implementation follows the fragment-local portion of the **Canonical Decoding Order** (Section 13.1.3):
 
 1. **Read Payload**: Consume 1024 bytes following the header.
-2. **Decrypt**: Apply XChaCha20-Poly1305 with the provided IV and the Master Key (from KMS). Verify the Poly1305 tag.
-3. **Decompress**: If the logical file is compressed (check `Fragment Index 0` state), decompress the decrypted block.
-4. **Position**: Move the file pointer of the target resource (File ID `0xDEADC0DE`) to logical offset `2048`.
-5. **Commit**: Write the transformed data to the target resource.
+2. **Decrypt**: Apply XChaCha20-Poly1305 with the provided IV and the Entry key derived from the KMS Master Secret. Verify the Poly1305 tag before releasing plaintext.
+3. **Decompress**: Not applicable here (no `COMPRESSED`). If compression were active, this fragment's decrypted contribution would be decompressed independently.
+4. **Contribution**: The resulting 1008-byte value is the decoded fragment contribution and MUST equal `Uncompressed Size`.
+5. **Retain**: Record the contribution under (`Stream ID` 5, `Fragment ID` `0xDEADC0DE`, `Fragment Index` 1). The fragment is **not** applied to any target resource at this point.
+6. **Complete the Group**: When Fragment Indices 0 through the `LAST_FRAGMENT` index are all available, concatenate the contributions in ascending Fragment Index order to form the Fragment Reassembly Sequence, perform any applicable group-wide stages (patch, CDC, sparse reconstruction), verify final logical integrity, and apply the logical operation exactly once (Section 18.4.2).
 
 
-### A.4. Implementation Note: Native 64-bit Addressing for Fragment Descriptors
-Note that the `Fragment Descriptor` strictly utilizes a full 8-byte (64-bit) Absolute Offset and a 4-byte (32-bit) Fragment Size, regardless of whether the global `64BIT_SIZE` flag is toggled for standard file metrics.
+### A.4. Implementation Note: No Positional Fields
+The fragment wire model contains only `Fragment ID` and `Fragment Index`. There is no absolute offset, fragment size, or reassembled-size field.
 
-This is an intentional protocol design decision that guarantees:
+This is an intentional design decision:
 
-* **Exabyte-Scale Future Proofing:** The protocol natively supports reassembling individual logical files up to 16 Exabytes ($2^{64}$ bytes) without requiring architecture-breaking revision changes.
-* **CPU-Native Alignment:** 64-bit runtime environments (x86_64, ARM64) can parse, cast, and map the absolute offsets directly into registers using single-cycle CPU instructions.
-* **Reduced Metadata Bloat:** A fragment size of 4 bytes allows individual data fragments to scale up to 4 GB. This drastically decreases the absolute number of required fragments for large datasets, minimizing LFH wrapper overhead across the archive.
+* **Position Is Derived:** A contribution's position in the Fragment Reassembly Sequence is the sum of the `Uncompressed Size` values of all lower-index fragments. It is never read from a field and never computed from a fixed fragment size.
+* **Variable Contribution Lengths:** Fragments of one group MAY have different contribution lengths, so writing a contribution to its final position requires all lower-index contributions to be known.
+* **Reduced Metadata:** Omitting positional fields minimizes LFH wrapper overhead and removes an entire class of inconsistency between positional metadata and the actual payload.
