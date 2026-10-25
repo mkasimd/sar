@@ -61,6 +61,60 @@ fn default_archive_reader_rejects_session_control_with_nonzero_opcode() {
     assert_eq!(err.status(), SarStatus::ErrUnsupported);
 }
 
+fn archive_with_patched_entry_mode(bits: u16) -> Vec<u8> {
+    let mut bytes = make_no_index_archive_with_single_entry(EntryMode::from_bits(0), 1, b"x");
+    let header_len = write_global_header(&GlobalHeader {
+        version: 1,
+        flags: GlobalFlags::NO_INDEX,
+        kms: None,
+    })
+    .expect("global header")
+    .len();
+    // Entry Mode follows the 4-byte Header Size.
+    bytes[header_len + 4..header_len + 6].copy_from_slice(&bits.to_le_bytes());
+    bytes
+}
+
+#[test]
+fn reserved_opcodes_return_reserved_value_in_reader_and_audit() {
+    for bits in [
+        0x5u16 << 8,
+        0xFu16 << 8,
+        (0x8u16 << 8) | EntryMode::SESSION_CONTROL,
+        (0xFu16 << 8) | EntryMode::SESSION_CONTROL,
+    ] {
+        let bytes = archive_with_patched_entry_mode(bits);
+        let err = parse_first_entry(&bytes).expect_err("reserved opcode");
+        assert_eq!(err.status(), SarStatus::ErrReservedValue, "{bits:#06x}");
+
+        for policy in [
+            sar_archive::ControlEntryPolicy::Reject,
+            sar_archive::ControlEntryPolicy::PreserveInert,
+        ] {
+            let mut reader = ArchiveReader::new(Cursor::new(&bytes)).expect("reader");
+            let err = reader
+                .audit(sar_archive::ArchiveAuditOptions {
+                    control_entry_policy: policy,
+                    ..Default::default()
+                })
+                .expect_err("audit must reject reserved opcode");
+            assert_eq!(err.status(), SarStatus::ErrReservedValue, "{bits:#06x}");
+        }
+    }
+}
+
+#[test]
+fn assigned_session_opcode_remains_inert_under_preserve_policy() {
+    let bytes = archive_with_patched_entry_mode((0x5 << 8) | EntryMode::SESSION_CONTROL);
+    let mut reader = ArchiveReader::new(Cursor::new(&bytes)).expect("reader");
+    reader
+        .audit(sar_archive::ArchiveAuditOptions {
+            control_entry_policy: sar_archive::ControlEntryPolicy::PreserveInert,
+            ..Default::default()
+        })
+        .expect("assigned opcode is inert, not reserved");
+}
+
 #[test]
 fn classic_no_index_archive_without_session_opcode_content_parses() {
     let mode = EntryMode::from_bits(0);

@@ -84,13 +84,6 @@ fn entry_mode_validation_requires_matching_global_flags() {
     )
     .expect_err("LAST_FRAGMENT requires FRAGMENT");
     assert!(matches!(last_fragment_err, SarError::FlagConflict(_)));
-
-    let loss_tolerant_err = validate_entry_mode_against_global(
-        GlobalFlags::FILE_FRAGMENTATION,
-        EntryMode::from_bits(EntryMode::LOSS_TOLERANT),
-    )
-    .expect_err("LOSS_TOLERANT requires FRAGMENT");
-    assert!(matches!(loss_tolerant_err, SarError::FlagConflict(_)));
 }
 
 #[test]
@@ -111,10 +104,153 @@ fn entry_mode_validation_accepts_consistent_bits() {
         .expect("entry mode should be valid");
 }
 
+const NO_INDEX: GlobalFlags = GlobalFlags::NO_INDEX;
+
+fn mode(bits: u16) -> EntryMode {
+    EntryMode::from_bits(bits)
+}
+
+fn is_conflict(r: Result<(), SarError>) -> bool {
+    matches!(r, Err(SarError::FlagConflict(_)))
+}
+
+fn partitioned() -> GlobalFlags {
+    GlobalFlags::NO_INDEX | GlobalFlags::PARTITIONED_ARCHIVE | GlobalFlags::FILE_FRAGMENTATION
+}
+
 #[test]
-fn entry_mode_reserved_bit_fails_closed() {
-    let err =
-        validate_entry_mode_against_global(GlobalFlags::NO_INDEX, EntryMode::from_bits(1 << 12))
-            .expect_err("reserved bit 12 must fail");
-    assert!(matches!(err, SarError::ReservedValue(_)));
+fn partition_manifest_bit_is_assigned_not_reserved() {
+    let m = mode(EntryMode::PARTITION_MANIFEST);
+    assert_eq!(EntryMode::PARTITION_MANIFEST, 1 << 12);
+    assert!(m.is_partition_manifest());
+    assert!(!mode(0).is_partition_manifest());
+    validate_entry_mode_against_global(partitioned(), m).expect("valid manifest mode");
+    // Preserves non-prohibited bits such as HIDDEN_ATTR and IS_ENCRYPTED.
+    let with_optional = mode(EntryMode::PARTITION_MANIFEST | EntryMode::HIDDEN_ATTR);
+    assert_eq!(with_optional.bits(), (1 << 12) | (1 << 4));
+    validate_entry_mode_against_global(partitioned(), with_optional).expect("hidden allowed");
+}
+
+#[test]
+fn partition_manifest_requires_partitioned_archive() {
+    let m = mode(EntryMode::PARTITION_MANIFEST);
+    assert!(is_conflict(validate_entry_mode_against_global(NO_INDEX, m)));
+}
+
+#[test]
+fn partition_manifest_prohibited_bits_conflict() {
+    let global = partitioned()
+        | GlobalFlags::HAS_SYMLINKS
+        | GlobalFlags::COMPRESSED
+        | GlobalFlags::FILE_FRAGMENTATION;
+    for bit in [
+        EntryMode::IS_SYMLINK,
+        EntryMode::IS_DIRECTORY,
+        EntryMode::COMPRESSED,
+        EntryMode::FRAGMENT,
+        EntryMode::LAST_FRAGMENT,
+        EntryMode::LOSS_TOLERANT,
+        EntryMode::SESSION_CONTROL,
+        EntryMode::ATOMIC_WRITE,
+        EntryMode::FORCE_SYNC,
+    ] {
+        let r =
+            validate_entry_mode_against_global(global, mode(EntryMode::PARTITION_MANIFEST | bit));
+        assert!(is_conflict(r), "bit {bit:#06x} must conflict");
+    }
+    for op in 1u16..=0x4 {
+        let r = validate_entry_mode_against_global(
+            global,
+            mode(EntryMode::PARTITION_MANIFEST | (op << 8)),
+        );
+        assert!(is_conflict(r), "opcode {op:#x} must conflict");
+    }
+}
+
+#[test]
+fn fragment_prohibited_combinations_conflict() {
+    let global = GlobalFlags::NO_INDEX
+        | GlobalFlags::FILE_FRAGMENTATION
+        | GlobalFlags::HAS_SYMLINKS
+        | GlobalFlags::PARTITIONED_ARCHIVE;
+    for bit in [
+        EntryMode::IS_DIRECTORY,
+        EntryMode::IS_SYMLINK,
+        EntryMode::SESSION_CONTROL,
+        EntryMode::PARTITION_MANIFEST,
+    ] {
+        let r = validate_entry_mode_against_global(global, mode(EntryMode::FRAGMENT | bit));
+        assert!(is_conflict(r), "FRAGMENT with {bit:#06x} must conflict");
+    }
+    validate_entry_mode_against_global(global, mode(EntryMode::FRAGMENT)).expect("plain fragment");
+}
+
+#[test]
+fn loss_tolerant_without_fragment_is_valid() {
+    validate_entry_mode_against_global(NO_INDEX, mode(EntryMode::LOSS_TOLERANT))
+        .expect("LOSS_TOLERANT does not require IS_FRAGMENT");
+}
+
+#[test]
+fn loss_tolerant_with_encryption_is_structurally_valid() {
+    let global = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
+    validate_entry_mode_against_global(
+        global,
+        mode(EntryMode::LOSS_TOLERANT | EntryMode::ENCRYPTED),
+    )
+    .expect("structurally permissible");
+}
+
+#[test]
+fn reserved_filesystem_opcodes_fail_closed() {
+    for op in 0x5u16..=0xF {
+        let r = validate_entry_mode_against_global(NO_INDEX, mode(op << 8));
+        assert!(
+            matches!(r, Err(SarError::ReservedValue(_))),
+            "filesystem opcode {op:#x}"
+        );
+    }
+    for op in 0x0u16..=0x4 {
+        validate_entry_mode_against_global(NO_INDEX, mode(op << 8)).expect("assigned fs opcode");
+    }
+}
+
+#[test]
+fn reserved_session_opcodes_fail_closed() {
+    for op in 0x8u16..=0xF {
+        let r = validate_entry_mode_against_global(
+            NO_INDEX,
+            mode((op << 8) | EntryMode::SESSION_CONTROL),
+        );
+        assert!(
+            matches!(r, Err(SarError::ReservedValue(_))),
+            "session opcode {op:#x}"
+        );
+    }
+    for op in 0x0u16..=0x7 {
+        validate_entry_mode_against_global(NO_INDEX, mode((op << 8) | EntryMode::SESSION_CONTROL))
+            .expect("assigned session opcode");
+    }
+}
+
+#[test]
+fn opcode_namespace_depends_on_session_control() {
+    // 0x5 is assigned in session context but reserved in filesystem context.
+    validate_entry_mode_against_global(NO_INDEX, mode((5 << 8) | EntryMode::SESSION_CONTROL))
+        .expect("session ACK");
+    assert!(validate_entry_mode_against_global(NO_INDEX, mode(5 << 8)).is_err());
+}
+
+#[test]
+fn writer_rejects_structurally_invalid_entry_modes() {
+    use sar_core::{LocalFileHeader, format::write_lfh};
+    for bits in [
+        5u16 << 8,
+        EntryMode::PARTITION_MANIFEST,
+        EntryMode::FRAGMENT | EntryMode::IS_DIRECTORY,
+    ] {
+        let mut lfh = LocalFileHeader::minimal_store(b"x".to_vec(), 0);
+        lfh.entry_mode = mode(bits);
+        assert!(write_lfh(&NO_INDEX, &lfh).is_err(), "bits {bits:#06x}");
+    }
 }

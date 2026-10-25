@@ -1173,7 +1173,8 @@
         "owner_milestone": "M13b.1"
       },
       "notes": [
-        "Reference (WP-2a, M13b): not addressed by WP-2a; TLV 0x05-0x0F reserved assignments remain owned by WP-2b."
+        "Reference (WP-2a, M13b): not addressed by WP-2a; TLV 0x05-0x0F reserved assignments remain owned by WP-2b.",
+        "Progress (WP-2b, M13b): classify_type() is now exhaustive over all 256 type IDs. 0x05-0x0F, 0x20, 0x2A-0x2F and 0x33-0x3F return SAR_ERR_RESERVED_VALUE on both parse_tlvs and write_tlvs; 0x21-0x29 return SAR_ERR_UNSUPPORTED; RECOVERY and CDC classification and duplicate-TLV handling are unchanged. crates/sar-core/tests/tlv_registry_tests.rs covers every identifier. Status is unchanged pending final diff review and controller closure."
       ]
     },
     {

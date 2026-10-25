@@ -91,14 +91,14 @@ impl EntryMode {
     pub const LAST_FRAGMENT: u16 = 1 << 6;
     /// Entry supports degraded loss-tolerant reconstruction.
     pub const LOSS_TOLERANT: u16 = 1 << 7;
+    /// Terminal Partition Manifest Entry (bit 12).
+    pub const PARTITION_MANIFEST: u16 = 1 << 12;
     /// Session-control opcode context toggle.
     pub const SESSION_CONTROL: u16 = 1 << 13;
     /// Request atomic visibility for the final filesystem state.
     pub const ATOMIC_WRITE: u16 = 1 << 14;
     /// Request conflict-resolution bypass / forced synchronization.
     pub const FORCE_SYNC: u16 = 1 << 15;
-
-    const RESERVED: u16 = 1 << 12;
 
     /// Creates an entry mode from raw wire bits.
     #[must_use]
@@ -160,6 +160,12 @@ impl EntryMode {
         self.bits & Self::SESSION_CONTROL != 0
     }
 
+    /// Returns true when the `PARTITION_MANIFEST` bit is set.
+    #[must_use]
+    pub const fn is_partition_manifest(self) -> bool {
+        self.bits & Self::PARTITION_MANIFEST != 0
+    }
+
     /// Returns true when hidden-attribute bit is set.
     #[must_use]
     pub const fn is_hidden_attr(self) -> bool {
@@ -216,14 +222,27 @@ pub fn validate_global_flags(flags: GlobalFlags) -> Result<(), SarError> {
 }
 
 /// Validates entry-mode flags against global flags.
+///
+/// Stateless structural validation only: no Partition Manifest payload,
+/// placement, or Partition Set rules and no opcode execution semantics.
+///
+/// # Errors
+///
+/// * [`SarError::ReservedValue`] for a reserved `OP_CODE` in the namespace
+///   selected by `SESSION_CONTROL` (filesystem `0x5..=0xF`, session `0x8..=0xF`).
+/// * [`SarError::FlagConflict`] for capability violations and prohibited
+///   Entry Mode combinations.
 pub fn validate_entry_mode_against_global(
     global_flags: GlobalFlags,
     entry_mode: EntryMode,
 ) -> Result<(), SarError> {
-    if entry_mode.bits() & EntryMode::RESERVED != 0 {
-        return Err(SarError::ReservedValue(
-            "entry mode reserved bit 12 must be zero",
-        ));
+    let op_code = entry_mode.op_code();
+    if entry_mode.is_session_control() {
+        if op_code > 0x7 {
+            return Err(SarError::ReservedValue("reserved session OP_CODE"));
+        }
+    } else if op_code > 0x4 {
+        return Err(SarError::ReservedValue("reserved filesystem OP_CODE"));
     }
 
     if entry_mode.is_symlink() && !global_flags.contains(GlobalFlags::HAS_SYMLINKS) {
@@ -254,8 +273,37 @@ pub fn validate_entry_mode_against_global(
         return Err(SarError::FlagConflict("LAST_FRAGMENT requires IS_FRAGMENT"));
     }
 
-    if entry_mode.is_loss_tolerant() && !entry_mode.is_fragment() {
-        return Err(SarError::FlagConflict("LOSS_TOLERANT requires IS_FRAGMENT"));
+    if entry_mode.is_fragment()
+        && (entry_mode.is_directory()
+            || entry_mode.is_symlink()
+            || entry_mode.is_session_control()
+            || entry_mode.is_partition_manifest())
+    {
+        return Err(SarError::FlagConflict(
+            "IS_FRAGMENT conflicts with IS_DIRECTORY, IS_SYMLINK, SESSION_CONTROL, and PARTITION_MANIFEST",
+        ));
+    }
+
+    if entry_mode.is_partition_manifest() {
+        if !global_flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
+            return Err(SarError::FlagConflict(
+                "PARTITION_MANIFEST requires global PARTITIONED_ARCHIVE",
+            ));
+        }
+        const PROHIBITED: u16 = EntryMode::IS_SYMLINK
+            | EntryMode::IS_DIRECTORY
+            | EntryMode::COMPRESSED
+            | EntryMode::FRAGMENT
+            | EntryMode::LAST_FRAGMENT
+            | EntryMode::LOSS_TOLERANT
+            | EntryMode::SESSION_CONTROL
+            | EntryMode::ATOMIC_WRITE
+            | EntryMode::FORCE_SYNC;
+        if entry_mode.bits() & PROHIBITED != 0 || op_code != 0 {
+            return Err(SarError::FlagConflict(
+                "PARTITION_MANIFEST prohibits IS_SYMLINK, IS_DIRECTORY, IS_COMPRESSED, IS_FRAGMENT, LAST_FRAGMENT, LOSS_TOLERANT, SESSION_CONTROL, ATOMIC_WRITE, FORCE_SYNC, and nonzero OP_CODE",
+            ));
+        }
     }
 
     Ok(())

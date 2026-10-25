@@ -25,20 +25,21 @@ impl Tlv {
     }
 }
 
+/// Classifies a TLV type ID per the Section 9 registry. Exhaustive and fail-closed.
 fn classify_type(type_id: u8) -> Result<(), SarError> {
     match type_id {
         0x00 => Err(SarError::ReservedValue("TLV type 0x00 is reserved")),
         0x01..=0x04 => Ok(()),
-        // RECOVERY TLV range 0x10..=0x1F: dispatched to fec module.
+        0x05..=0x0F => Err(SarError::ReservedValue("reserved TLV type")),
+        // RECOVERY TLV range: dispatched to the FEC registry.
         0x10..=0x1F => crate::fec::classify_recovery_tlv_id(type_id),
-        0x20..=0x2F => Err(SarError::Unsupported(
-            "SIGNATURE TLV not implemented in M1-M3",
-        )),
-        0x30..=0x3F => Ok(()),
+        0x20 | 0x2A..=0x2F => Err(SarError::ReservedValue("reserved SIGNATURE TLV type")),
+        0x21..=0x29 => Err(SarError::Unsupported("SIGNATURE TLV not implemented")),
+        0x30..=0x32 => Ok(()),
+        0x33..=0x3F => Err(SarError::ReservedValue("reserved DATA_HASH TLV type")),
         0x40 | 0x41 | 0x4F => Ok(()),
         0x42..=0x4E => Err(SarError::ReservedValue("reserved CDC metadata TLV type")),
         0x50..=0xFF => Err(SarError::ReservedValue("reserved TLV type")),
-        _ => Ok(()),
     }
 }
 

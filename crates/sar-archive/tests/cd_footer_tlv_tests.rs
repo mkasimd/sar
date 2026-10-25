@@ -167,7 +167,7 @@ fn tlv_reserved_and_unsupported_types() {
     let err = parse_tlvs(&reserved, &unlimited_limits()).expect_err("reserved type");
     assert!(matches!(err, SarError::ReservedValue(_)));
 
-    let mut unsupported = vec![0x20];
+    let mut unsupported = vec![0x24];
     unsupported.extend_from_slice(&0u32.to_le_bytes());
     unsupported.extend_from_slice(&[0, 0, 0]);
     let err = parse_tlvs(&unsupported, &unlimited_limits()).expect_err("unsupported type");

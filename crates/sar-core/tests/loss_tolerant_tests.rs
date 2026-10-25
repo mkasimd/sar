@@ -117,19 +117,13 @@ fn aead_auth_failure_is_not_lossy() {
 }
 
 #[test]
-fn loss_tolerant_without_fragment_flag_is_invalid() {
-    // LOSS_TOLERANT without IS_FRAGMENT must be flagged as a conflict.
+fn loss_tolerant_without_fragment_flag_is_structurally_valid() {
     use sar_core::{
         GlobalFlags,
         flags::{EntryMode, validate_entry_mode_against_global},
     };
 
-    let global = GlobalFlags::NO_INDEX;
-    // mode: LOSS_TOLERANT (bit 7) set but IS_FRAGMENT (bit 5) NOT set
     let mode = EntryMode::from_bits(1u16 << 7);
-    let err = validate_entry_mode_against_global(global, mode).expect_err("should fail");
-    assert!(
-        matches!(err, SarError::FlagConflict(_)),
-        "expected FlagConflict, got {err:?}"
-    );
+    validate_entry_mode_against_global(GlobalFlags::NO_INDEX, mode)
+        .expect("LOSS_TOLERANT does not require IS_FRAGMENT");
 }
