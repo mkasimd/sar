@@ -2875,7 +2875,7 @@ Assigned values are permanent. A retired value (Section 10.3) MUST NOT be reassi
 | Value | Constant | Meaning |
 |---------|----------|---------|
 | 400 | `SAR_ERR_FRAGMENT_GAP` | One or more required Fragment Indices are missing. Under `LOSS_TOLERANT`, only the degraded prefix output permitted by Section 19.4.5 may be produced, and it is reported with `SAR_WARN_INCOMPLETE`. Incomplete input to a mandatory group-wide stage always returns this error. |
-| 401 | `SAR_ERR_FRAGMENT_TIMEOUT` | The fragment-group timeout of Section 19.4.3 expired for a live or incremental context. |
+| 401 | `SAR_ERR_FRAGMENT_TIMEOUT` | The fragment-group timeout of Section 19.4.1 expired for a live or incremental context. |
 | 402 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
 | 403 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
 | 404 | `SAR_ERR_RECOVERY_UNAVAILABLE` | Recovery data is required but unavailable. |
@@ -2997,7 +2997,7 @@ When a single condition below applies, the mapped status is normative. This sect
 | Condition | Status |
 |-----------|--------|
 | A required Fragment Index is missing | `SAR_ERR_FRAGMENT_GAP` |
-| Fragment-group timeout expiry (Section 19.4.3) | `SAR_ERR_FRAGMENT_TIMEOUT` |
+| Fragment-group timeout expiry (Section 19.4.1) | `SAR_ERR_FRAGMENT_TIMEOUT` |
 | Conflicting fragment metadata | `SAR_ERR_METADATA_CONFLICT` |
 | Permitted degraded fragment reconstruction | `SAR_WARN_INCOMPLETE` |
 | Session inactivity watchdog expiry (Section 18.3.3) | `SAR_ERR_SESSION_TIMEOUT` |
@@ -3562,7 +3562,7 @@ The SAR signature (when `SIGNED` is set) covers the Central Dictionary, which in
 Implementations and deployers MUST account for this boundary when assessing the security posture of a SAR-based system. Where end-to-end integrity of the complete archive structure (including Global Header) is required, deployments SHOULD combine `SIGNED` (Bit 18) with an AEAD-capable encryption algorithm.
 
 ### 13.4 Flag Dependency and Conflict Rules
-Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (8).
+Failure to meet these SHALL result in `SAR_ERR_FLAG_CONFLICT` (108).
 
 1. **Signature Anchor**: If `SIGNED` (Bit 18) is set, `OPT_PRESENT` (Bit 2) MUST be set **AND** `DATA_HASH` (ID 0x30 - 0x3F) MUST be present in the CD.
 2. **Encryption Anchor**: If `ENCRYPTED` (Bit 10) is set, the `KMS_DATA` Global Extension MUST be present (Also see section 5.3.1).
@@ -5203,7 +5203,7 @@ In live or incremental contexts, namely Stateful Streaming (Section 18), the Rec
 ### 19.4.2 Out-of-Order Handling
 `Fragment Index`, `Sequence No`, and LFH occurrence order are distinct (Section 18.4.2). The **Fragment Index** field allows the logical file to be reassembled even if fragments are interleaved with other Entries or occur out of Fragment Index order.
 * **Requirement**: If a fragment occurs with a `Fragment Index` that creates a gap, the Receiver MAY buffer it as incomplete fragment-group state and wait for the missing fragments, subject to Sections 19.4.1 and 19.4.3.
-* **Missing Fragments**: `LAST_FRAGMENT` (Bit 6) identifies the terminal Fragment Index. Its occurrence while gaps exist does not by itself fail the group, because missing lower indices MAY still become available. A group that is concluded (at the end of its Physical Archive Member or Partition Set in archival mode, by the TTL of Section 19.4.1 or by session termination or resumption in Stateful Streaming) while any Fragment Index from zero through the terminal Fragment Index is missing is a fragment gap and MUST return `SAR_ERR_FRAGMENT_GAP` (14) unless existing `LOSS_TOLERANT` (Bit 7) rules permit a degraded result (Section 19.4.5).
+* **Missing Fragments**: `LAST_FRAGMENT` (Bit 6) identifies the terminal Fragment Index. Its occurrence while gaps exist does not by itself fail the group, because missing lower indices MAY still become available. A group that is concluded (at the end of its Physical Archive Member or Partition Set in archival mode, by the TTL of Section 19.4.1 or by session termination or resumption in Stateful Streaming) while any Fragment Index from zero through the terminal Fragment Index is missing is a fragment gap and MUST return `SAR_ERR_FRAGMENT_GAP` (400) unless existing `LOSS_TOLERANT` (Bit 7) rules permit a degraded result (Section 19.4.5).
 * **Duplicates and Conflicts**: Duplicate, replica, and conflicting fragments are governed by Section 6.1.3.
 
 ### 19.4.3 Resource Exhaustion & DoS Protection
