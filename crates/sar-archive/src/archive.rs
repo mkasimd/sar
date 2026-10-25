@@ -849,6 +849,23 @@ pub struct ArchiveReader<R> {
     key_provider: Option<Box<dyn KeyProvider>>,
 }
 
+/// Fills a required structural buffer, mapping a short read to `Truncated`.
+///
+/// Only `UnexpectedEof` is a truncation; every other I/O failure stays `Io`.
+fn read_required<R: Read>(
+    reader: &mut R,
+    buf: &mut [u8],
+    what: &'static str,
+) -> Result<(), SarError> {
+    reader.read_exact(buf).map_err(|err| {
+        if err.kind() == std::io::ErrorKind::UnexpectedEof {
+            SarError::Truncated(what)
+        } else {
+            SarError::Io(err)
+        }
+    })
+}
+
 impl<R: Read + Seek> ArchiveReader<R> {
     /// Creates a new archive reader.
     pub fn new(reader: R) -> Result<Self, SarError> {
@@ -886,7 +903,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         self.reader.seek(SeekFrom::Start(0))?;
 
         let mut fixed = [0u8; 8];
-        self.reader.read_exact(&mut fixed)?;
+        read_required(&mut self.reader, &mut fixed, "global header prefix")?;
         let flags_size = usize::from(u16::from_le_bytes([fixed[6], fixed[7]]));
         if flags_size < 4 {
             return Err(SarError::InvalidLength("global flags size must be >= 4"));
@@ -896,7 +913,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let mut header_bytes = Vec::with_capacity(8 + flags_size + 96 + 5);
         header_bytes.extend_from_slice(&fixed);
         let mut flags_buf = vec![0u8; flags_size];
-        self.reader.read_exact(&mut flags_buf)?;
+        read_required(&mut self.reader, &mut flags_buf, "global flags section")?;
         header_bytes.extend_from_slice(&flags_buf);
 
         let mut low = [0u8; 4];
@@ -906,13 +923,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
             let mut descriptor = [0u8; 96];
-            self.reader.read_exact(&mut descriptor)?;
+            read_required(&mut self.reader, &mut descriptor, "partition descriptor")?;
             header_bytes.extend_from_slice(&descriptor);
         }
 
         if flags.contains(GlobalFlags::ENCRYPTED) {
             let mut kms_prefix = [0u8; 5];
-            self.reader.read_exact(&mut kms_prefix)?;
+            read_required(&mut self.reader, &mut kms_prefix, "KMS prefix")?;
             header_bytes.extend_from_slice(&kms_prefix);
             let payload_len = usize::try_from(u32::from_le_bytes([
                 kms_prefix[1],
@@ -923,7 +940,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             .map_err(|_| SarError::Overflow("KMS payload length"))?;
             self.options.limits.check_kms_payload_bytes(payload_len)?;
             let mut payload = vec![0u8; payload_len];
-            self.reader.read_exact(&mut payload)?;
+            read_required(&mut self.reader, &mut payload, "KMS payload")?;
             header_bytes.extend_from_slice(&payload);
         }
 
@@ -946,7 +963,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             }
             self.reader.seek(SeekFrom::Start(self.file_len - 8))?;
             let mut footer_bytes = [0u8; 8];
-            self.reader.read_exact(&mut footer_bytes)?;
+            read_required(&mut self.reader, &mut footer_bytes, "footer")?;
             let Footer { cd_offset } = parse_footer(&footer_bytes)?;
 
             let indexed_end = self
@@ -974,7 +991,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
             self.reader.seek(SeekFrom::Start(cd_offset))?;
             let mut cd_bytes = vec![0u8; cd_len_usize];
-            self.reader.read_exact(&mut cd_bytes)?;
+            read_required(&mut self.reader, &mut cd_bytes, "central dictionary")?;
             let (cd, consumed_cd) =
                 parse_central_dictionary(&cd_bytes, header.flags, &self.options.limits)?;
             if consumed_cd > cd_bytes.len() {
@@ -1031,7 +1048,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         self.reader.seek(SeekFrom::Start(self.next_offset))?;
         let mut header_size_bytes = [0u8; 4];
-        self.reader.read_exact(&mut header_size_bytes)?;
+        read_required(&mut self.reader, &mut header_size_bytes, "LFH header size")?;
         let header_size = usize::try_from(u32::from_le_bytes(header_size_bytes))
             .map_err(|_| SarError::Overflow("LFH header size"))?;
         self.options.limits.check_lfh_header_bytes(header_size)?;
@@ -1044,7 +1061,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let mut lfh_bytes = vec![0u8; header_size];
         lfh_bytes[..4].copy_from_slice(&header_size_bytes);
         if header_size > 4 {
-            self.reader.read_exact(&mut lfh_bytes[4..])?;
+            read_required(&mut self.reader, &mut lfh_bytes[4..], "LFH")?;
         }
 
         let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
@@ -1070,7 +1087,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             .limits
             .allocation_len(lfh.payload_size, "payload length usize")?;
         let mut encoded_payload = vec![0u8; payload_len];
-        self.reader.read_exact(&mut encoded_payload)?;
+        read_required(&mut self.reader, &mut encoded_payload, "entry payload")?;
         let decoded = self.decode_ordinary_archive_entry_from_parts(
             &header,
             self.next_offset,
@@ -1206,7 +1223,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             self.reader.seek(SeekFrom::Start(lfh_offset))?;
 
             let mut header_size_bytes = [0u8; 4];
-            self.reader.read_exact(&mut header_size_bytes)?;
+            read_required(&mut self.reader, &mut header_size_bytes, "LFH header size")?;
             let header_size = usize::try_from(u32::from_le_bytes(header_size_bytes))
                 .map_err(|_| SarError::Overflow("LFH header size"))?;
             self.options.limits.check_lfh_header_bytes(header_size)?;
@@ -1219,7 +1236,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let mut lfh_bytes = vec![0u8; header_size];
             lfh_bytes[..4].copy_from_slice(&header_size_bytes);
             if header_size > 4 {
-                self.reader.read_exact(&mut lfh_bytes[4..])?;
+                read_required(&mut self.reader, &mut lfh_bytes[4..], "LFH")?;
             }
             let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
 
@@ -1270,7 +1287,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                             .limits
                             .allocation_len(lfh.payload_size, "payload length usize")?;
                         let mut encoded_payload = vec![0u8; payload_len];
-                        self.reader.read_exact(&mut encoded_payload)?;
+                        read_required(&mut self.reader, &mut encoded_payload, "entry payload")?;
 
                         match self.decode_ordinary_archive_entry_from_parts(
                             &header,
@@ -1320,7 +1337,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                             .limits
                             .allocation_len(lfh.payload_size, "payload length usize")?;
                         let mut raw_payload = vec![0u8; payload_len];
-                        self.reader.read_exact(&mut raw_payload)?;
+                        read_required(&mut self.reader, &mut raw_payload, "entry payload")?;
                         inert_payload_bytes = Some(raw_payload);
                     }
                 }

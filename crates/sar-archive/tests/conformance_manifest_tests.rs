@@ -1596,3 +1596,90 @@ fn minimum_required_invalid_stream_transcript_vectors_present() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Exact status matching and registry-backed status validation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_matcher_is_exact_and_rejects_near_misses() {
+    use sar_archive::conformance::sar_error_matches_expected_status as matches_status;
+    use sar_core::SarError;
+
+    assert!(matches_status(
+        &SarError::Malformed("x"),
+        "SAR_ERR_MALFORMED"
+    ));
+    assert!(matches_status(
+        &SarError::Truncated("x"),
+        "SAR_ERR_TRUNCATED"
+    ));
+    assert!(matches_status(
+        &SarError::AuthFailed("x"),
+        "SAR_ERR_AUTH_FAILED"
+    ));
+
+    let near_misses = [
+        (SarError::InvalidLength("x"), "SAR_ERR_MALFORMED"),
+        (SarError::ReservedValue("x"), "SAR_ERR_MALFORMED"),
+        (SarError::Malformed("x"), "SAR_ERR_RESERVED_VALUE"),
+        (SarError::Malformed("x"), "SAR_ERR_INVALID_LENGTH"),
+        (SarError::HashMismatch("x"), "SAR_ERR_AUTH_FAILED"),
+        (
+            SarError::Io(std::io::Error::other("x")),
+            "SAR_ERR_TRUNCATED",
+        ),
+        (SarError::Malformed("x"), "SAR_WARN_INCOMPLETE"),
+        (SarError::Malformed("x"), "SAR_OK"),
+        (SarError::Malformed("x"), "MALFORMED"),
+    ];
+    for (error, expected) in &near_misses {
+        assert!(!matches_status(error, expected), "{error:?} vs {expected}");
+    }
+}
+
+fn manifest_with_status(
+    status: &str,
+    valid: bool,
+) -> sar_archive::conformance::ConformanceManifest {
+    let json = format!(
+        r#"{{"schema_version":1,"id":"t","title":"t","description":"d","kind":"invalid","expected":{{"valid":{valid},"status":"{status}"}}}}"#
+    );
+    serde_json::from_str(&json).expect("manifest")
+}
+
+fn status_errors(status: &str, valid: bool) -> Vec<String> {
+    validate_manifest_schema(&manifest_with_status(status, valid)).errors
+}
+
+#[test]
+fn manifest_validation_uses_registry_for_status_names() {
+    let mut assigned = 0;
+    for code in 0..=u16::MAX {
+        if let Ok(status) = sar_core::SarStatus::try_from(code) {
+            assigned += 1;
+            let valid = status == sar_core::SarStatus::Ok;
+            let errors = status_errors(status.name(), valid);
+            assert!(
+                !errors.iter().any(|e| e.contains("assigned SAR status")),
+                "{} rejected: {errors:?}",
+                status.name()
+            );
+        }
+    }
+    assert_eq!(assigned, 50);
+
+    for name in [
+        "SAR_ERR_INVALID_ALIGNMENT",
+        "SAR_ERR_DECRYPT_FAILED",
+        "SAR_ERR_UNKNOWN",
+        "MALFORMED",
+        "sar_err_malformed",
+    ] {
+        let errors = status_errors(name, false);
+        assert!(
+            errors.iter().any(|e| e.contains("assigned SAR status")),
+            "{name} accepted"
+        );
+    }
+}

@@ -340,27 +340,13 @@ validators must not require exact `expected.error` string matching.
 Invalid vectors may omit `entries` - there is no valid logical archive to describe.
 Non-deferred invalid vectors should reference real generated `.sar` fixtures; deferred invalid vectors may set `file` to `null`.
 
-Stable SAR status identifiers (from `SarStatus` in `sar-core`):
-
-| Status identifier       | Meaning                                      |
-|-------------------------|----------------------------------------------|
-| `SAR_OK`                | Success                                      |
-| `SAR_ERR_MALFORMED`     | Malformed structure                          |
-| `SAR_ERR_TRUNCATED`     | Truncated structure                          |
-| `SAR_ERR_UNSUPPORTED`   | Valid but unsupported feature/algorithm      |
-| `SAR_ERR_RESERVED_VALUE`| Encountered reserved value                  |
-| `SAR_ERR_FLAG_CONFLICT` | Invalid flag combination                    |
-| `SAR_ERR_INVALID_MAGIC` | Header magic mismatch                        |
-| `SAR_ERR_AUTH_FAILED`   | Authentication failure                       |
-| `SAR_ERR_LIMIT_EXCEEDED`| Implementation resource limit exceeded       |
-| `SAR_ERR_PATCH_FAILED`  | Delta patch application failed               |
-| `SAR_ERR_BASE_MISSING`  | Required delta base identity/data missing    |
-| `SAR_ERR_EC_FAILED`     | Error-correction decode failed               |
-| `SAR_ERR_BOUNDS`        | Bounds violation                             |
-| `SAR_ERR_OVERFLOW`      | Arithmetic overflow                          |
-| `SAR_ERR_FRAGMENT_GAP`  | Fragment gap without LOSS_TOLERANT           |
-| `SAR_ERR_INVALID_MAP`   | Invalid sparse/CDC map                      |
-| `SAR_ERR_INVALID_LENGTH`| Invalid declared length                      |
+`expected.status` must be one of the 50 names assigned in specification
+Section 10.2 (`SAR_OK`, `SAR_WARN_*`, `SAR_ERR_*`), as implemented by `SarStatus`
+in `sar-core`. Retired names (for example `SAR_ERR_INVALID_ALIGNMENT`,
+`SAR_ERR_DECRYPT_FAILED`) and unknown names are rejected. For `SAR_ERR_*` vectors
+the runner requires an exact match with `SarError::status().name()`; near-miss
+statuses are not accepted. A recognized `SAR_WARN_*` name is not verified by the
+current runner.
 
 Do **not** over-specify exact human-readable error message strings - only stable
 `expected.status` identifiers are durable across implementation revisions.
@@ -468,7 +454,7 @@ Keep vector files **small and reviewable** (< 4 KiB for most vectors).
 
 ## Stable expected-status policy
 
-- Use stable `SAR_STATUS_*` identifiers for `expected.status`.
+- Use assigned `SAR_OK`, `SAR_WARN_*`, or `SAR_ERR_*` identifiers for `expected.status`.
 - Do not hard-code exact human-readable error message strings.
 - Do not over-specify which sub-error variant of a status class is returned.
 - Where the exact error class is ambiguous, prefer the most general stable parent

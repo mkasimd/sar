@@ -103,3 +103,77 @@ fn writer_reader_store_no_index_roundtrip() {
     assert_eq!(entry.metadata.name, "a.txt");
     assert_eq!(entry.payload, b"abc");
 }
+
+fn read_vector(rel: &str) -> Vec<u8> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../test-vectors")
+        .join(rel);
+    std::fs::read(path).expect("read vector")
+}
+
+#[test]
+fn truncated_global_header_vector_is_truncated() {
+    let bytes = read_vector("invalid/structure/truncated-gh/truncated_global_header.sar");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let err = reader.read_global_header().expect_err("truncated");
+    assert!(matches!(err, SarError::Truncated(_)), "{err:?}");
+}
+
+#[test]
+fn truncated_lfh_vector_is_truncated() {
+    let bytes = read_vector("invalid/structure/truncated-lfh/truncated_lfh.sar");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let err = reader
+        .read_global_header()
+        .and_then(|_| reader.next_entry().map(|_| ()))
+        .expect_err("truncated");
+    assert!(matches!(err, SarError::Truncated(_)), "{err:?}");
+}
+
+#[test]
+fn clean_end_of_data_area_is_not_truncation() {
+    let flags = GlobalFlags::NO_INDEX;
+    let bytes = write_global_header(&GlobalHeader {
+        version: 1,
+        flags_bytes: flags.bits().to_le_bytes().to_vec(),
+        flags,
+        partition_descriptor: None,
+        kms: None,
+    })
+    .expect("header");
+    let mut reader = ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    reader.read_global_header().expect("header");
+    assert!(reader.next_entry().expect("clean eof").is_none());
+}
+
+struct FailingReader {
+    inner: Cursor<Vec<u8>>,
+    fail_after: u64,
+}
+
+impl std::io::Read for FailingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.inner.position() >= self.fail_after {
+            return Err(std::io::Error::other("injected failure"));
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl std::io::Seek for FailingReader {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(pos)
+    }
+}
+
+#[test]
+fn non_eof_io_failure_stays_io() {
+    let bytes = read_vector("invalid/structure/truncated-gh/truncated_global_header.sar");
+    let mut reader = ArchiveReader::new(FailingReader {
+        inner: Cursor::new(bytes),
+        fail_after: 0,
+    })
+    .expect("reader");
+    let err = reader.read_global_header().expect_err("io");
+    assert!(matches!(err, SarError::Io(_)), "{err:?}");
+}

@@ -77,7 +77,13 @@ pub fn validate_stream_transcript_with_options(
             } else {
                 open.create_new(true);
             }
-            let mut file = open.open(path)?;
+            let mut file = open.open(path).map_err(|err| {
+                if err.kind() == std::io::ErrorKind::AlreadyExists {
+                    SarError::AlreadyExists("transcript recording destination already exists")
+                } else {
+                    SarError::Io(err)
+                }
+            })?;
             file.write_all(bytes)?;
         }
     }

@@ -385,44 +385,9 @@ pub fn validate_manifest_schema(manifest: &ConformanceManifest) -> ManifestSchem
         errors.push("expected.status must not be empty".to_string());
     } else {
         let status = &manifest.expected.status;
-        let known_statuses = [
-            "SAR_OK",
-            "SAR_ERR_GENERIC",
-            "SAR_ERR_NOT_FOUND",
-            "SAR_ERR_MALFORMED",
-            "SAR_ERR_TRUNCATED",
-            "SAR_ERR_UNSUPPORTED",
-            "SAR_ERR_RESERVED_VALUE",
-            "SAR_ERR_FLAG_CONFLICT",
-            "SAR_ERR_INVALID_MAGIC",
-            "SAR_ERR_AUTH_FAILED",
-            "SAR_ERR_PATCH_FAILED",
-            "SAR_ERR_BASE_MISSING",
-            "SAR_ERR_LIMIT_EXCEEDED",
-            "SAR_ERR_BOUNDS",
-            "SAR_ERR_OVERFLOW",
-            "SAR_ERR_EC_FAILED",
-            "SAR_ERR_FRAGMENT_GAP",
-            "SAR_ERR_INVALID_MAP",
-            "SAR_ERR_INVALID_ALIGNMENT",
-            "SAR_ERR_INVALID_LENGTH",
-            "SAR_ERR_STREAM_STATE",
-            "SAR_ERR_DECRYPT_FAILED",
-            "SAR_ERR_HASH_MISMATCH",
-            "SAR_ERR_CRC_MISMATCH",
-            "SAR_ERR_INVALID_VERSION",
-            "SAR_ERR_KEY_MISSING",
-            "SAR_ERR_METADATA_MISSING",
-            "SAR_ERR_METADATA_CONFLICT",
-            "SAR_ERR_RECOVERY_UNAVAILABLE",
-            "SAR_ERR_RECOVERY_CORRUPTED",
-            "SAR_ERR_IO",
-        ];
-        if !known_statuses.contains(&status.as_str()) {
+        if !is_registered_status_name(status) {
             errors.push(format!(
-                "expected.status '{}' is not a known stable SAR status identifier; \
-                 add it to the known list or use the nearest matching status",
-                status
+                "expected.status '{status}' is not an assigned SAR status name in the standardized registry"
             ));
         }
     }
@@ -657,56 +622,28 @@ pub struct ConformanceCheckResult {
     pub skipped: bool,
 }
 
-/// Checks whether a SAR parse error matches the expected status identifier.
+/// Returns `true` if `name` is exactly an assigned name in the standardized
+/// [`SarStatus`](sar_core::error::SarStatus) registry.
 ///
-/// This maps `SarError` variants to the stable `SAR_ERR_*` status identifiers
-/// used in manifests.
+/// Recognition of a name does not imply that the corresponding outcome (for
+/// example a `SAR_WARN_*` warning) can be verified by this runner.
+fn is_registered_status_name(name: &str) -> bool {
+    (0..=u16::MAX).any(|code| {
+        sar_core::error::SarStatus::try_from(code).is_ok_and(|status| status.name() == name)
+    })
+}
+
+/// Checks whether a SAR error exactly matches the expected status identifier.
+///
+/// The comparison uses the normative status of the error
+/// ([`SarError::status`](sar_core::error::SarError::status)); no near-miss or
+/// alias matching is performed.
 #[must_use]
 pub fn sar_error_matches_expected_status(
     error: &sar_core::error::SarError,
     expected_status: &str,
 ) -> bool {
-    use sar_core::error::SarError;
-    match expected_status {
-        "SAR_ERR_MALFORMED" => matches!(
-            error,
-            SarError::Malformed(_) | SarError::InvalidLength(_) | SarError::ReservedValue(_)
-        ),
-        "SAR_ERR_NOT_FOUND" => matches!(error, SarError::NotFound(_)),
-        "SAR_ERR_TRUNCATED" => matches!(error, SarError::Truncated(_) | SarError::Io(_)),
-        "SAR_ERR_UNSUPPORTED" => matches!(error, SarError::Unsupported(_)),
-        "SAR_ERR_RESERVED_VALUE" => {
-            matches!(error, SarError::ReservedValue(_) | SarError::Malformed(_))
-        }
-        "SAR_ERR_FLAG_CONFLICT" => matches!(error, SarError::FlagConflict(_)),
-        "SAR_ERR_INVALID_MAGIC" => matches!(error, SarError::InvalidMagic),
-        "SAR_ERR_AUTH_FAILED" => {
-            matches!(error, SarError::AuthFailed(_) | SarError::HashMismatch(_))
-        }
-        "SAR_ERR_PATCH_FAILED" => matches!(error, SarError::PatchFailed(_)),
-        "SAR_ERR_BASE_MISSING" => matches!(error, SarError::BaseMissing(_)),
-        "SAR_ERR_LIMIT_EXCEEDED" => matches!(error, SarError::LimitExceeded(_)),
-        "SAR_ERR_BOUNDS" => matches!(error, SarError::Bounds(_)),
-        "SAR_ERR_OVERFLOW" => matches!(error, SarError::Overflow(_)),
-        "SAR_ERR_EC_FAILED" => matches!(error, SarError::EcFailed(_)),
-        "SAR_ERR_FRAGMENT_GAP" => matches!(error, SarError::FragmentGap(_)),
-        "SAR_ERR_INVALID_MAP" => matches!(error, SarError::InvalidMap(_)),
-        "SAR_ERR_INVALID_LENGTH" => {
-            matches!(error, SarError::InvalidLength(_) | SarError::Malformed(_))
-        }
-        "SAR_ERR_STREAM_STATE" => matches!(error, SarError::StreamState(_)),
-        "SAR_ERR_HASH_MISMATCH" => matches!(error, SarError::HashMismatch(_)),
-        "SAR_ERR_CRC_MISMATCH" => matches!(error, SarError::CrcMismatch(_)),
-        "SAR_ERR_INVALID_VERSION" => matches!(error, SarError::InvalidVersion(_)),
-        "SAR_ERR_KEY_MISSING" => matches!(error, SarError::KeyMissing(_)),
-        "SAR_ERR_METADATA_MISSING" => matches!(error, SarError::MetadataMissing(_)),
-        "SAR_ERR_METADATA_CONFLICT" => matches!(error, SarError::MetadataConflict(_)),
-        "SAR_ERR_RECOVERY_UNAVAILABLE" => matches!(error, SarError::RecoveryUnavailable(_)),
-        "SAR_ERR_RECOVERY_CORRUPTED" => matches!(error, SarError::RecoveryCorrupted(_)),
-        "SAR_ERR_IO" => matches!(error, SarError::Io(_)),
-        "SAR_ERR_GENERIC" => matches!(error, SarError::Generic),
-        _ => false,
-    }
+    error.status().name() == expected_status
 }
 
 /// Runs a conformance check against a manifest and its binary vector file.

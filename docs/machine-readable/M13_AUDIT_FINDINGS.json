@@ -3364,6 +3364,9 @@
         ]
       },
       "compatibility_impact": "clarification_only",
+      "notes": [
+        "Progress (WP-1a/WP-1b): the canonical SarStatus-based mapping is implemented as SarError::status() with u16 SarStatus::code(). No FFI ABI exists; I/O error reduction and message-buffer ownership remain unspecified and unimplemented."
+      ],
       "verification": {
         "test_requirement": "not_required"
       }
@@ -4043,9 +4046,6 @@
       ],
       "compatibility_impact": "wire_incompatible",
       "resolution_owner": "M13a.7",
-      "verification": {
-        "test_requirement": "not_required"
-      },
       "notes": [
         "Numeric identity of finalized status values is normative; once a value is finalized it must not be renumbered.",
         "Category organization must not create implicit range-based semantics unless explicit guaranteed numeric ranges are defined in the specification.",
@@ -4053,8 +4053,12 @@
         "The review must cover statuses required by parser, extraction, KMS, unsupported-skip, fragmentation, and partition normative decisions.",
         "Internal validation order remains implementation-defined unless normative resolution determines that a specific order affects interoperability.",
         "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-FFI-004, M13-TRANSPORT-004.",
-        "Provisional values were renumbered before any independent implementation existed; finalized Section 10 values must not be renumbered or reused."
+        "Provisional values were renumbered before any independent implementation existed; finalized Section 10 values must not be renumbered or reused.",
+        "Implementation progress: WP-1a (PR #78, merge commit 7dbe521211731d565bc5d423d8878716c07942f7) and WP-1b (M13b) completed the status registry migration and conformance reconciliation described in M13-FFI-004; implementation remediation remains pending for the findings listed in the earlier note. The M13a.7 normative resolution above is unchanged."
       ],
+      "verification": {
+        "test_requirement": "not_required"
+      },
       "relationships": {
         "related_findings": [
           "M13-EXTRACT-005",
@@ -4504,6 +4508,10 @@
           "Update the conformance status list, the machine-readable API inventory, and docs/API.md after implementation, using python tools/generate_api_md.py."
         ]
       },
+      "notes": [
+        "Progress (WP-1b, M13b): retired status names were removed from the conformance status validator, docs/CONFORMANCE.md, and test-vectors/README.md; SarStatus::code metadata in the API inventory now returns u16; docs/API.md regenerated from the inventory.",
+        "Remaining (not closed): fuzz targets and seeds, other test vectors and fixtures, and vector regeneration after runtime remediation have not been reviewed by WP-1b."
+      ],
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [
@@ -4629,6 +4637,10 @@
           "Return SAR_ERR_SESSION_TIMEOUT for the inactivity watchdog."
         ]
       },
+      "notes": [
+        "Progress (WP-1a): the inactivity watchdog error maps to SAR_ERR_SESSION_TIMEOUT (SessionTimeout) instead of the generic timeout (PR #78, merge commit 7dbe521211731d565bc5d423d8878716c07942f7). Only this status-name aspect is complete.",
+        "Remaining (not closed): a per-session inactivity watchdog is not implemented; EOF mid-structure still yields StreamClosed rather than SAR_ERR_TRUNCATED; per-LFH ACK/OK, group-completion SUCCESS, fragment-group TTL, and the concurrency cap are unimplemented. WP-1b made no Stateful Streaming changes."
+      ],
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [
@@ -4696,6 +4708,11 @@
           "Update the conformance status list, registry tests, fuzz targets, the machine-readable API inventory, and the generated API document after implementation."
         ]
       },
+      "notes": [
+        "Progress (WP-1a): WP-1a (PR #78, merge commit 7dbe521211731d565bc5d423d8878716c07942f7) completed: SarStatus migrated to the finalized u16 registry (50 assigned names, canonical code(), TryFrom<u16>, 0xFFFF generic, retired variants removed, no aliases), SESSION_STATUS.STATUS_CODE u16 encoding, inactivity watchdog Timeout -> SessionTimeout, InvalidAlignment -> Malformed, and compression-error status mappings. The current_behavior text above is the historical pre-WP-1a audit observation.",
+        "Progress (WP-1b, M13b): conformance error matching is now exact (SarError::status().name()); manifest expected.status validation uses the SarStatus registry (retired and unknown names rejected); required structural short reads in the archive reader map UnexpectedEof to SAR_ERR_TRUNCATED while other I/O failures remain SAR_ERR_IO; transcript recording to an existing destination without overwrite returns SAR_ERR_ALREADY_EXISTS; docs/CONFORMANCE.md, test-vectors/README.md, and the machine-readable API inventory (SarStatus::code returns u16) were corrected.",
+        "Remaining: Section 10.4 mappings for Stateful Streaming, extraction (SAR_ERR_PATH_ESCAPE, SAR_ERR_PATH_COLLISION), parser reserved Global Flags, fragmentation, and warning-outcome verification are owned by their respective packages; fuzz targets and seeds are not yet reviewed. This finding stays open. No FFI ABI exists, so no FFI implementation is claimed."
+      ],
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [
@@ -4726,7 +4743,8 @@
       "M13a.3 transform and recovery resource-accounting findings are included.",
       "M13a.5 crate-boundary, profile-boundary, transport, and FFI-readiness audit findings are included.",
       "M13a.6 cold-storage and tape-resilience audit findings are included.",
-      "M13a.7 normative decisions leave the implementation temporarily inconsistent with specification.md; implementation, test, fuzz, test-vector, and API-inventory remediation is assigned to M13b through implementation_spec_mismatch findings."
+      "M13a.7 normative decisions leave the implementation temporarily inconsistent with specification.md; implementation, test, fuzz, test-vector, and API-inventory remediation is assigned to M13b through implementation_spec_mismatch findings.",
+      "WP-1a and WP-1b status-registry implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }
