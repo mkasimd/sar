@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "invalid-frag-overlap",
-  "title": "Invalid: overlapping fragment descriptors",
+  "title": "Invalid: overlapping fragment descriptors (obsolete)",
   "description": "SAR archive where two fragment descriptors have overlapping byte ranges. Must fail with an invalid map error regardless of LOSS_TOLERANT.",
   "kind": "invalid",
   "file": null,
@@ -18,7 +18,8 @@
   },
   "limits": {},
   "notes": [
-    "DEFERRED: LOSS_TOLERANT must not suppress overlap errors."
+    "DEFERRED: LOSS_TOLERANT must not suppress overlap errors.",
+    "OBSOLETE (M13b WP-3): canonical LFH has no absolute-offset descriptor, so fragment overlap is unrepresentable. Retained as a deferred placeholder; the canonical duplicate-Fragment-Index case is covered by duplicate-index. Reassigned to WP-4 for removal or replacement."
   ],
   "deferred": true,
   "compression": false,

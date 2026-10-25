@@ -25,15 +25,11 @@ use sar_compression::{COMP_ALGO_DEFLATE, COMP_ALGO_ZSTD, CompressionOptions};
 use sar_core::{
     GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
-    format::{
-        GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
-    },
+    format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
     sparse::{SparseExtent, write_sparse_map},
 };
 use sar_delta::{PATCH_ALGO_BSDIFF, PATCH_ALGO_VCDIFF};
-use sar_fragmentation::{
-    FragmentDescriptor, FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments,
-};
+use sar_fragmentation::{FragmentEntry, FragmentError, FragmentLimits, reconstruct_fragments};
 use sar_sparse::{SparseError, SparseLimits, apply_sparse_reconstruction, validate_sparse_extents};
 
 // ---------------------------------------------------------------------------
@@ -364,24 +360,9 @@ fn excessive_sparse_map_size_fails_at_parse_stage() {
 // §5  Fragmentation tests
 // ---------------------------------------------------------------------------
 
-/// Fragment descriptor end overflow is caught.
-#[test]
-fn fragment_descriptor_end_overflow_fails() {
-    use sar_fragmentation::validate_fragment_group;
-    let fragments = vec![FragmentEntry {
-        fragment_index: 0,
-        is_last_fragment: true,
-        is_loss_tolerant: false,
-        descriptor: FragmentDescriptor {
-            absolute_offset: u64::MAX,
-            fragment_size: 1,
-        },
-        payload: vec![1],
-    }];
-    let err = validate_fragment_group(&fragments, u64::MAX, &f(&unlimited()))
-        .expect_err("must fail with overflow");
-    assert!(matches!(err, FragmentError::Overflow(_)), "{err:?}");
-}
+// `fragment_descriptor_end_overflow_fails` is retired: there is no
+// descriptor offset to overflow.  Checked length accumulation is covered by
+// the `sar-fragmentation` unit test `size_sum_overflow_is_checked`.
 
 /// Huge fragment group span fails before allocation.
 #[test]
@@ -395,59 +376,19 @@ fn huge_fragment_group_span_fails_before_allocation() {
             fragment_index: 0,
             is_last_fragment: false,
             is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 1,
-            },
-            payload: vec![1],
+            uncompressed_size: 600,
+            payload: vec![1; 600],
         },
         FragmentEntry {
             fragment_index: 1,
             is_last_fragment: true,
             is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 2048,
-                fragment_size: 1,
-            },
-            payload: vec![2],
+            uncompressed_size: 600,
+            payload: vec![2; 600],
         },
     ];
-    // assembled_size = 2049 > max_fragment_group_span = 1024
-    let err = reconstruct_fragments(fragments, 2049, &f(&limits)).expect_err("must fail");
-    assert!(matches!(err, FragmentError::LimitExceeded(_)), "{err:?}");
-}
-
-/// Loss-tolerant huge gap fails due to resource limit.
-/// (Existing test in resource_limit_tests.rs; verified here at the unit level.)
-#[test]
-fn loss_tolerant_huge_gap_fails_resource_limit() {
-    let limits = ResourceLimits {
-        max_loss_tolerant_gap: 8,
-        ..unlimited()
-    };
-    let fragments = vec![
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: true,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 1,
-            },
-            payload: vec![0xAA],
-        },
-        FragmentEntry {
-            fragment_index: 2,
-            is_last_fragment: true,
-            is_loss_tolerant: true,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 100,
-                fragment_size: 1,
-            },
-            payload: vec![0xBB],
-        },
-    ];
-    let err = reconstruct_fragments(fragments, 101, &f(&limits)).expect_err("must fail");
+    // summed contribution length 1200 > max_fragment_group_span = 1024
+    let err = reconstruct_fragments(fragments, &f(&limits)).expect_err("must fail");
     assert!(matches!(err, FragmentError::LimitExceeded(_)), "{err:?}");
 }
 
@@ -477,10 +418,6 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
     lfh0.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
     lfh0.fragment_id = Some(77);
     lfh0.fragment_index = Some(0);
-    lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 1,
-    });
     lfh0.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh0).expect("lfh0"));
     archive.extend_from_slice(&[0x42u8]);
@@ -518,14 +455,11 @@ fn excessive_fragment_count_fails_deterministically() {
             fragment_index: i,
             is_last_fragment: i == 2,
             is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: u64::from(i),
-                fragment_size: 1,
-            },
+            uncompressed_size: 1,
             payload: vec![i as u8],
         })
         .collect();
-    let err = reconstruct_fragments(fragments, 3, &f(&limits)).expect_err("must fail");
+    let err = reconstruct_fragments(fragments, &f(&limits)).expect_err("must fail");
     assert!(matches!(err, FragmentError::LimitExceeded(_)), "{err:?}");
 }
 

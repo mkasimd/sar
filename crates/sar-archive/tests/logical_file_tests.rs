@@ -12,9 +12,7 @@ use sar_archive::{ArchiveReader, ArchiveWriter, ArchiveWriterOptions, EntryInput
 use sar_core::{
     GlobalFlags, SarError,
     flags::EntryMode,
-    format::{
-        GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
-    },
+    format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
 
 // ---------------------------------------------------------------------------
@@ -65,10 +63,6 @@ fn build_two_fragment_archive() -> Vec<u8> {
     lfh0.entry_mode = EntryMode::from_bits(1u16 << 5); // IS_FRAGMENT
     lfh0.fragment_id = Some(42);
     lfh0.fragment_index = Some(0);
-    lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 8,
-    });
     let lfh0_bytes = write_lfh(&fragment_flags, &lfh0).expect("write lfh0");
     archive.extend_from_slice(&lfh0_bytes);
     archive.extend_from_slice(b"AAAAAAAA");
@@ -79,10 +73,6 @@ fn build_two_fragment_archive() -> Vec<u8> {
     lfh1.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
     lfh1.fragment_id = Some(42);
     lfh1.fragment_index = Some(1);
-    lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 8,
-        fragment_size: 8,
-    });
     let lfh1_bytes = write_lfh(&fragment_flags, &lfh1).expect("write lfh1");
     archive.extend_from_slice(&lfh1_bytes);
     archive.extend_from_slice(b"BBBBBBBB");
@@ -183,10 +173,6 @@ fn missing_fragment_fails_without_allow_lossy() {
     lfh.entry_mode = EntryMode::from_bits(1u16 << 5); // IS_FRAGMENT only
     lfh.fragment_id = Some(1);
     lfh.fragment_index = Some(0);
-    lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 4,
-    });
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
@@ -216,10 +202,6 @@ fn missing_fragment_succeeds_with_allow_lossy_and_loss_tolerant() {
     lfh.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 7));
     lfh.fragment_id = Some(5);
     lfh.fragment_index = Some(0);
-    lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 4,
-    });
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABCD");
 
@@ -240,8 +222,11 @@ fn missing_fragment_succeeds_with_allow_lossy_and_loss_tolerant() {
     assert_eq!(&files[0].data[..4], b"ABCD");
 }
 
+// Replaces the retired `overlapping_fragment_descriptors_fail`: the canonical
+// wire format carries no absolute offsets, so overlap is unrepresentable.
+// The nearest canonical failure is a duplicate Fragment Index.
 #[test]
-fn overlapping_fragment_descriptors_fail() {
+fn duplicate_fragment_index_fails() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
@@ -250,8 +235,7 @@ fn overlapping_fragment_descriptors_fail() {
     })
     .expect("header");
 
-    // Fragment 0 covers [0,8) and fragment 1 covers [4,12) — they overlap.
-    for (idx, abs_off, is_last) in [(0u32, 0u64, false), (1u32, 4u64, true)] {
+    for is_last in [false, true] {
         let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 8);
         let mut mode_bits: u16 = 1 << 5; // IS_FRAGMENT
         if is_last {
@@ -259,11 +243,7 @@ fn overlapping_fragment_descriptors_fail() {
         }
         lfh.entry_mode = EntryMode::from_bits(mode_bits);
         lfh.fragment_id = Some(7);
-        lfh.fragment_index = Some(idx);
-        lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-            absolute_offset: abs_off,
-            fragment_size: 8,
-        });
+        lfh.fragment_index = Some(0);
         archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
         archive.extend_from_slice(&[0u8; 8]);
     }
@@ -273,8 +253,8 @@ fn overlapping_fragment_descriptors_fail() {
         .read_all_logical_files(false)
         .expect_err("should fail");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
-        "expected InvalidMap for overlapping fragments, got {err:?}"
+        matches!(err, SarError::MetadataConflict(_)),
+        "expected MetadataConflict for duplicate fragment index, got {err:?}"
     );
 }
 
@@ -473,4 +453,19 @@ fn read_all_logical_files_resets_cursor() {
     let files = reader.read_all_logical_files(false).expect("read");
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].data, b"payload");
+}
+
+// Canonical fragmentation fuzz seeds (tools/generate_fragment_fuzz_seeds.py).
+#[test]
+fn canonical_fragment_fuzz_seeds_have_expected_status() {
+    let gap =
+        include_bytes!("../../../fuzz/seeds/fec_fragmentation/fragment_gap_missing_index.bin");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(gap.to_vec())).expect("reader");
+    let err = reader.read_all_logical_files(false).expect_err("gap");
+    assert!(matches!(err, SarError::FragmentGap(_)), "{err:?}");
+
+    let dup = include_bytes!("../../../fuzz/seeds/fec_fragmentation/fragment_duplicate_index.bin");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(dup.to_vec())).expect("reader");
+    let err = reader.read_all_logical_files(false).expect_err("dup");
+    assert!(matches!(err, SarError::MetadataConflict(_)), "{err:?}");
 }

@@ -148,33 +148,18 @@ pub(crate) fn extract_archive(
             "fragment group ID vanished during reconstruction",
         ))?;
 
-        let mut assembled_size = 0u64;
-        for entry in &group_entries {
-            if let Some(desc) = &entry.metadata.fragment_descriptor {
-                let end = desc
-                    .absolute_offset
-                    .checked_add(u64::from(desc.fragment_size))
-                    .ok_or(SarError::Overflow("fragment descriptor end overflow"))?;
-                assembled_size = assembled_size.max(end);
-            }
-        }
-
         let frag_entries: Vec<FragmentEntry> = group_entries
             .into_iter()
-            .filter_map(|entry| {
-                let desc = entry.metadata.fragment_descriptor?;
-                Some(FragmentEntry {
-                    fragment_index: entry.metadata.fragment_index.unwrap_or(0),
-                    is_last_fragment: entry.metadata.is_last_fragment,
-                    is_loss_tolerant: entry.metadata.is_loss_tolerant,
-                    descriptor: desc,
-                    payload: entry.payload,
-                })
+            .map(|entry| FragmentEntry {
+                fragment_index: entry.metadata.fragment_index.unwrap_or(0),
+                is_last_fragment: entry.metadata.is_last_fragment,
+                is_loss_tolerant: entry.metadata.is_loss_tolerant,
+                uncompressed_size: entry.metadata.uncompressed_size,
+                payload: entry.payload,
             })
             .collect();
 
-        let (raw, is_degraded) =
-            reconstruct_fragments(frag_entries, assembled_size, &limits.fragment_limits())?;
+        let (raw, is_degraded) = reconstruct_fragments(frag_entries, &limits.fragment_limits())?;
         if is_degraded && !allow_lossy {
             return Err(SarError::FragmentGap(
                 "fragment group has gaps; use allow_lossy to permit degraded output",

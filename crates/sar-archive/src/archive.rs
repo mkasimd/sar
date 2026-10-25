@@ -22,7 +22,6 @@ use sar_delta::{
     vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
-use sar_fragmentation::FragmentDescriptor;
 use sar_sparse::{SparseExtent, apply_sparse_reconstruction, validate_sparse_extents};
 use serde::Serialize;
 
@@ -92,9 +91,6 @@ pub struct EntryMetadata {
     /// Zero-based fragment sequence index.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fragment_index: Option<u32>,
-    /// Typed fragment descriptor (absolute offset + declared size).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fragment_descriptor: Option<FragmentDescriptor>,
     /// True when the `IS_FRAGMENT` entry mode bit is set.
     pub is_fragment: bool,
     /// True when the `LAST_FRAGMENT` entry mode bit is set.
@@ -1689,14 +1685,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 sar_core::metadata::FieldPresence::Absent
             };
 
-        let fragment_descriptor = lfh
-            .fragment_descriptor
-            .as_ref()
-            .map(|fd| FragmentDescriptor {
-                absolute_offset: fd.absolute_offset,
-                fragment_size: fd.fragment_size,
-            });
-
         let fragment_presence: sar_core::metadata::FieldPresence<
             sar_core::metadata::EntryFragmentMetadata,
         > = if header.flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
@@ -1705,7 +1693,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let metadata = sar_core::metadata::EntryFragmentMetadata {
                 fragment_id,
                 fragment_index,
-                descriptor: fragment_descriptor.clone(),
                 is_last: lfh.entry_mode.is_last_fragment(),
                 is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
             };
@@ -1760,7 +1747,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
             fec,
             fragment_id: lfh.fragment_id,
             fragment_index: lfh.fragment_index,
-            fragment_descriptor,
             is_fragment: lfh.entry_mode.is_fragment(),
             is_last_fragment: lfh.entry_mode.is_last_fragment(),
             is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
@@ -1878,12 +1864,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
     ///
     /// # Sparse logical-size derivation
     ///
-    /// The logical size for sparse reconstruction is taken from the LFH
-    /// `Uncompressed Size` field, which the spec defines as the full logical
-    /// file size including trailing holes.  Any gap after the final sparse
-    /// extent up to `Uncompressed Size` is reconstructed as `0x00` bytes.
-    /// Trailing sparse holes are not a spec gap when `Uncompressed Size` is
-    /// available.
+    /// For non-fragmented entries the logical size is the LFH `Uncompressed Size`
+    /// and any gap after the final sparse extent is reconstructed as `0x00`.
+    /// For fragmented entries, LFH `Uncompressed Size` is only the
+    /// fragment-local contribution length; the final logical size must come from
+    /// the Sparse Map's Sparse Logical Size (spec 17.2), which is not yet
+    /// implemented (WP-5/M13b.2). Fragmented sparse groups therefore fail closed
+    /// with `SAR_ERR_UNSUPPORTED` (incomplete ones with `SAR_ERR_FRAGMENT_GAP`).
     ///
     /// Sparse logical sizes are capped to
     /// [`ResourceLimits::max_decoded_entry_size`].
@@ -1965,9 +1952,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
             /// Sparse extents from fragment index 0.  `None` when this group
             /// has no sparse map.
             sparse_extents: Option<Vec<SparseExtent>>,
-            /// LFH `Uncompressed Size` from fragment index 0 for sparse
-            /// reconstruction.  Meaningful only when `sparse_extents.is_some()`.
-            sparse_uncompressed_size: u64,
             /// File CRC32 from fragment index 0 for post-assembly verification.
             /// `None` when the entry has no CRC32 field.
             file_crc32: Option<u32>,
@@ -2006,7 +1990,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         name: entry.metadata.name.clone(),
                         entries: Vec::new(),
                         sparse_extents: None,
-                        sparse_uncompressed_size: 0,
                         file_crc32: None,
                     }
                 });
@@ -2022,7 +2005,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 if entry.metadata.fragment_index == Some(0) {
                     if has_sparse {
                         group.sparse_extents = entry.metadata.sparse_extents.clone();
-                        group.sparse_uncompressed_size = entry.metadata.uncompressed_size;
                     }
                     group.file_crc32 = entry.metadata.file_crc32;
                 }
@@ -2066,50 +2048,26 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 name,
                 entries: group_entries,
                 sparse_extents: group_sparse_extents,
-                sparse_uncompressed_size: group_sparse_uncompressed_size,
                 file_crc32: group_file_crc32,
             } = frag_groups.remove(&fid).ok_or(SarError::Malformed(
                 "fragment group ID vanished during reconstruction",
             ))?;
 
-            // Compute assembled-payload logical size from FragmentDescriptors:
-            // max(descriptor.absolute_offset + descriptor.fragment_size).
-            // For sparse+fragment archives this is the intermediate gathered-
-            // payload size, not the final logical file size; sparse
-            // reconstruction expands it to `group_sparse_uncompressed_size`.
-            let mut assembled_size: u64 = 0;
-            for e in &group_entries {
-                if let Some(desc) = &e.metadata.fragment_descriptor {
-                    let end = desc
-                        .absolute_offset
-                        .checked_add(u64::from(desc.fragment_size))
-                        .ok_or(SarError::Overflow("fragment descriptor end overflow"))?;
-                    if end > assembled_size {
-                        assembled_size = end;
-                    }
-                }
-            }
-
-            // Build FragmentEntry list from decoded payloads.
+            // Build FragmentEntry list from decoded payloads.  The declared
+            // contribution length is the LFH Uncompressed Size.
             let frag_entries: Vec<FragmentEntry> = group_entries
                 .into_iter()
-                .filter_map(|e| {
-                    let desc = e.metadata.fragment_descriptor?;
-                    Some(FragmentEntry {
-                        fragment_index: e.metadata.fragment_index.unwrap_or(0),
-                        is_last_fragment: e.metadata.is_last_fragment,
-                        is_loss_tolerant: e.metadata.is_loss_tolerant,
-                        descriptor: desc,
-                        payload: e.payload,
-                    })
+                .map(|e| FragmentEntry {
+                    fragment_index: e.metadata.fragment_index.unwrap_or(0),
+                    is_last_fragment: e.metadata.is_last_fragment,
+                    is_loss_tolerant: e.metadata.is_loss_tolerant,
+                    uncompressed_size: e.metadata.uncompressed_size,
+                    payload: e.payload,
                 })
                 .collect();
 
-            let (raw, is_degraded) = reconstruct_fragments(
-                frag_entries,
-                assembled_size,
-                &self.options.limits.fragment_limits(),
-            )?;
+            let (raw, is_degraded) =
+                reconstruct_fragments(frag_entries, &self.options.limits.fragment_limits())?;
 
             // When the caller does not allow lossy and degraded output was
             // produced by a LOSS_TOLERANT group, surface it as an error.
@@ -2119,33 +2077,34 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 ));
             }
 
-            // Spec §13.7.6 / §19.6: apply sparse reconstruction over the fully
-            // assembled fragment payload.  The sparse map and logical size come
-            // from fragment index 0.
-            let data = if let Some(ref extents) = group_sparse_extents {
-                if group_sparse_uncompressed_size > self.options.max_decoded_entry_size() {
-                    return Err(SarError::LimitExceeded(
-                        "sparse logical file size exceeds configured limit",
-                    ));
-                }
-                validate_sparse_extents(
-                    extents,
-                    group_sparse_uncompressed_size,
-                    &self.options.limits.sparse_limits(),
-                )?;
-                apply_sparse_reconstruction(
-                    &raw,
-                    extents,
-                    group_sparse_uncompressed_size,
-                    &self.options.limits.sparse_limits(),
-                )?
+            // Sparse reconstruction over an incomplete fragment prefix is not
+            // permitted (spec §19.4.5); degraded output is returned as-is only
+            // for non-sparse groups.
+            if is_degraded && group_sparse_extents.is_some() {
+                return Err(SarError::FragmentGap(
+                    "sparse reconstruction requires a complete fragment group",
+                ));
+            }
+
+            // Spec §13.7.6 / §17.2 / §19.6 define sparse reconstruction over the
+            // assembled group using the Sparse Logical Size carried in the Sparse
+            // Map.  That field is not implemented yet (WP-5/M13b.2), and LFH
+            // `Uncompressed Size` is only the fragment-local contribution length,
+            // so reconstructing here would yield a wrongly sized file.  Fail closed
+            // (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001).
+            let data = if group_sparse_extents.is_some() {
+                return Err(SarError::Unsupported(
+                    "fragmented sparse reconstruction requires Sparse Logical Size (not yet implemented)",
+                ));
             } else {
                 raw
             };
 
             // CRC32 verification over the fully reconstructed logical file
             // (after fragment reassembly and sparse reconstruction).
-            if global.flags.contains(GlobalFlags::PER_FILE_CRC)
+            // Degraded output is a partial prefix and is never CRC-verified.
+            if !is_degraded
+                && global.flags.contains(GlobalFlags::PER_FILE_CRC)
                 && let Some(expected_crc) = group_file_crc32
             {
                 let computed = crc32fast::hash(&data);

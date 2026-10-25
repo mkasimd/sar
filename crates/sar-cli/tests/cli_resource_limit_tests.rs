@@ -13,8 +13,8 @@ use sar_core::{
     GlobalFlags,
     flags::EntryMode,
     format::{
-        CentralDictionary, GlobalHeader, LfhFragmentDescriptor, LocalFileHeader,
-        write_central_dictionary, write_global_header, write_lfh,
+        CentralDictionary, GlobalHeader, LocalFileHeader, write_central_dictionary,
+        write_global_header, write_lfh,
     },
     sparse::{SparseExtent, write_sparse_map},
     tlv::Tlv,
@@ -82,10 +82,6 @@ fn write_two_fragment_sparse_archive(
     lfh0.entry_mode = EntryMode::from_bits(1u16 << 5);
     lfh0.fragment_id = Some(42);
     lfh0.fragment_index = Some(0);
-    lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 2,
-    });
     lfh0.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh0).expect("lfh0"));
     archive.extend_from_slice(b"AB");
@@ -95,10 +91,6 @@ fn write_two_fragment_sparse_archive(
     lfh1.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6));
     lfh1.fragment_id = Some(42);
     lfh1.fragment_index = Some(1);
-    lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 2,
-        fragment_size: 2,
-    });
     archive.extend_from_slice(&write_lfh(&flags, &lfh1).expect("lfh1"));
     archive.extend_from_slice(b"CD");
 

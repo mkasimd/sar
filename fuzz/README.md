@@ -72,7 +72,7 @@ Seed-backed corpus categories are documented in [`CORPUS.md`](CORPUS.md):
 - `decompression_bomb` — decompression expansion beyond resource limits
 - `allocator_churn` — repeated bounded allocation/cleanup cycles
 - `stream_session` — frame ordering, session ID collisions, lifecycle sequence errors
-- `fec_fragmentation` — FEC parity mismatches, fragment gaps, illegal offsets
+- `fec_fragmentation` — FEC parity mismatches, fragment gaps, duplicate fragment indices
 - `cdc_delta` — CDC boundary overflows, missing delta bases, out-of-bounds patch offsets
 - `metadata_edge_cases` — maximum-length paths, reserved flags, CD/LFH disagreements
 - `filesystem_metadata_malformed` — path traversal, overflow timestamps, hostile symlinks

@@ -282,27 +282,28 @@ fn fragment_error_limit_converts_to_sar_limit() {
     assert!(matches!(sar, SarError::LimitExceeded(_)));
 }
 
-/// FragmentError::PayloadSizeMismatch converts to SarError::Malformed (ErrMalformed).
-/// This is always a fatal structural error — cannot be suppressed by LOSS_TOLERANT.
+/// FragmentError::PayloadSizeMismatch converts to SarError::InvalidLength
+/// (contribution length vs. LFH Uncompressed Size, spec §6.1.3 / §10).
+/// Always fatal — cannot be suppressed by LOSS_TOLERANT.
 #[test]
-fn fragment_error_payload_mismatch_converts_to_sar_malformed() {
+fn fragment_error_payload_mismatch_converts_to_sar_invalid_length() {
     let fe = sar_fragmentation::FragmentError::PayloadSizeMismatch("test");
     let sar: SarError = fe.into();
     assert!(
-        matches!(sar, SarError::Malformed(_)),
-        "PayloadSizeMismatch must map to Malformed (fatal structural error)"
+        matches!(sar, SarError::InvalidLength(_)),
+        "PayloadSizeMismatch must map to InvalidLength"
     );
 }
 
-/// FragmentError::DuplicateIndex converts to SarError::InvalidMap (ErrInvalidMap).
-/// Duplicate indices represent a malformed fragment group.
+/// FragmentError::DuplicateIndex converts to SarError::MetadataConflict
+/// (conflicting fragment group metadata; `INVALID_MAP` is reserved for sparse maps).
 #[test]
-fn fragment_error_duplicate_index_converts_to_sar_invalid_map() {
+fn fragment_error_duplicate_index_converts_to_sar_metadata_conflict() {
     let fe = sar_fragmentation::FragmentError::DuplicateIndex("test");
     let sar: SarError = fe.into();
     assert!(
-        matches!(sar, SarError::InvalidMap(_)),
-        "DuplicateIndex must map to InvalidMap (structural/malformed error)"
+        matches!(sar, SarError::MetadataConflict(_)),
+        "DuplicateIndex must map to MetadataConflict"
     );
 }
 

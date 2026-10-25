@@ -668,14 +668,6 @@ impl StreamArchiveParser {
             sar_core::metadata::FieldPresence::Absent
         };
 
-        let frag_desc_new =
-            lfh.fragment_descriptor
-                .as_ref()
-                .map(|fd| sar_fragmentation::FragmentDescriptor {
-                    absolute_offset: fd.absolute_offset,
-                    fragment_size: fd.fragment_size,
-                });
-
         let fragment_presence = if archive
             .header
             .flags
@@ -686,7 +678,6 @@ impl StreamArchiveParser {
             let fm = sar_core::metadata::EntryFragmentMetadata {
                 fragment_id: frag_id,
                 fragment_index: frag_idx,
-                descriptor: frag_desc_new.clone(),
                 is_last: lfh.entry_mode.is_last_fragment(),
                 is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
             };
@@ -751,7 +742,6 @@ impl StreamArchiveParser {
             fec,
             fragment_id: lfh.fragment_id,
             fragment_index: lfh.fragment_index,
-            fragment_descriptor: frag_desc_new,
             is_fragment: lfh.entry_mode.is_fragment(),
             is_last_fragment: lfh.entry_mode.is_last_fragment(),
             is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),

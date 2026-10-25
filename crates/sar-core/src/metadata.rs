@@ -25,7 +25,6 @@
 use serde::Serialize;
 
 use crate::fec::FecSummary;
-use sar_fragmentation::FragmentDescriptor;
 use sar_sparse::SparseExtent;
 
 // ---------------------------------------------------------------------------
@@ -257,8 +256,6 @@ pub struct EntryFragmentMetadata {
     pub fragment_id: u32,
     /// Zero-based fragment sequence index.
     pub fragment_index: u32,
-    /// Fragment descriptor (absolute offset + declared size).
-    pub descriptor: Option<FragmentDescriptor>,
     /// `true` when the `LAST_FRAGMENT` entry mode bit is set.
     pub is_last: bool,
     /// `true` when the `LOSS_TOLERANT` entry mode bit is set.

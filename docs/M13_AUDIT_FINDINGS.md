@@ -189,8 +189,8 @@ Registry status: `in_progress`
 | `M13-SPEC-007` | `specification_gap` | `resolved` | `not_applicable` | `medium` | `M13a.7` | Error and status registry lacks a coherent taxonomy and allocation model |
 | `M13-PARSER-016` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.1` | Fragment LFH layout still encodes Absolute Offset and Fragment Size |
 | `M13-PARSER-017` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.1` | Global Flags still accepts variable extension bytes instead of a fixed four-byte field |
-| `M13-TRANSFORM-009` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.3` | Fragment reassembly uses absolute-offset scattering and zero-fill instead of dense Fragment Index concatenation |
-| `M13-TRANSFORM-010` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.3` | Sparse reconstruction ignores Sparse Logical Size and maps a later-fragment Sparse Map to InvalidMap |
+| `M13-TRANSFORM-009` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | Fragment reassembly uses absolute-offset scattering and zero-fill instead of dense Fragment Index concatenation |
+| `M13-TRANSFORM-010` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | Sparse reconstruction ignores Sparse Logical Size and maps a later-fragment Sparse Map to InvalidMap |
 | `M13-BOUNDARY-003` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.3` | Partition Set support is a stub and does not implement the terminal Partition Manifest architecture |
 | `M13-BOUNDARY-004` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.2` | Compliance Profile implementation and naming do not reflect the finalized profile model |
 | `M13-BOUNDARY-005` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.1` | Test vectors, fuzz seeds, conformance lists, and API inventory encode the superseded contract |
@@ -2166,7 +2166,7 @@ Requirement: `required`
 | Status | confirmed |
 | Severity | high |
 | Priority | high |
-| Owner | M13b.3 |
+| Owner | M13b.2 |
 | Compatibility | behavioral_change |
 
 #### Summary
@@ -2219,7 +2219,7 @@ Requirement: `required`
 | Status | confirmed |
 | Severity | high |
 | Priority | high |
-| Owner | M13b.3 |
+| Owner | M13b.2 |
 | Compatibility | wire_incompatible |
 
 #### Summary
@@ -2240,7 +2240,8 @@ Sparse files reconstruct to the wrong size and the wire format of the Sparse Map
 
 #### Evidence
 
-* `crates/sar-archive/src/archive.rs` (fragment-group sparse handling in `read_all_logical_files`): Uses fragment-0 LFH Uncompressed Size as final sparse size and returns InvalidMap for a later-fragment Sparse Map.
+* `crates/sar-archive/src/archive.rs` (fragment-group sparse handling in `read_all_logical_files`): Historical defect evidence (pre-WP-3): used fragment-0 LFH Uncompressed Size as final sparse size and returned InvalidMap for a later-fragment Sparse Map. Superseded by the WP-3 fail-closed guard (complete fragmented sparse groups return SAR_ERR_UNSUPPORTED); the Sparse Logical Size and later-fragment Sparse Map defects remain open under M13b.2.
+* `crates/sar-archive/tests/sparse_fragment_tests.rs` (canonical_fragmented_sparse_group_fails_closed_without_sparse_logical_size): Active fail-closed regression for canonical fragmented sparse groups (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001); asserts SAR_ERR_UNSUPPORTED.
 
 #### Normative Basis
 

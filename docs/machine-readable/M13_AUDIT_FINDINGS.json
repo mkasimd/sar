@@ -4146,7 +4146,11 @@
           "M13-TRANSFORM-009",
           "M13-BOUNDARY-005"
         ]
-      }
+      },
+      "notes": [
+        "Progress (WP-3, M13b.1, SAR-M13b-WP3-CANONICAL-FRAGMENT-LFH-IMPLEMENTATION-001): the 12-byte inline Fragment Descriptor was removed from LocalFileHeader, parse_lfh, write_lfh, compute_lfh_size and fec_size_field_offset; the LFH carries exactly Fragment ID (u32 LE) and Fragment Index (u32 LE) when FILE_FRAGMENTATION is set, also under 64BIT_SIZE. The Appendix A fragment LFH (Header Size 55, payload at 0x37) is covered by an executable regression test. parse_lfh now returns SAR_ERR_INVALID_LENGTH when the declared Header Size is below the minimum implied by Global Flags (controller-approved Section 6.1.1 requirement). Descriptor-derived public Rust APIs were removed (sar_core::LfhFragmentDescriptor, LocalFileHeader.fragment_descriptor, EntryFragmentMetadata.descriptor, EntryMetadata.fragment_descriptor, sar_fragmentation::FragmentDescriptor); this is a Rust source-breaking change.",
+        "Remaining (not closed pending review): no committed full fragmented .sar conformance fixture exists (deferred manifests remain WP-4); sparse+fragment behavior is owned by M13b.2."
+      ]
     },
     {
       "id": "M13-PARSER-017",
@@ -4249,9 +4253,9 @@
         }
       ],
       "compatibility_impact": "behavioral_change",
-      "resolution_owner": "M13b.3",
+      "resolution_owner": "M13b.2",
       "remediation": {
-        "owner": "M13b.3",
+        "owner": "M13b.2",
         "requirements": [
           "Reassemble by dense Fragment Index concatenation of exactly Uncompressed Size bytes per fragment.",
           "Implement prefix-only degraded output returning SAR_WARN_INCOMPLETE and SAR_ERR_FRAGMENT_GAP for incomplete input to a mandatory group-wide stage.",
@@ -4264,7 +4268,7 @@
           "Gap, duplicate, conflicting-metadata, and LAST_FRAGMENT-count cases return the Section 10 statuses.",
           "No zero fill is produced for missing fragments."
         ],
-        "owner_milestone": "M13b.3"
+        "owner_milestone": "M13b.2"
       },
       "relationships": {
         "related_findings": [
@@ -4272,7 +4276,13 @@
           "M13-PARSER-016",
           "M13-TRANSFORM-005"
         ]
-      }
+      },
+      "notes": [
+        "Planning correction (controller, SAR-M13b-WP3-CANONICAL-FRAGMENT-LFH-IMPLEMENTATION-001): the forward implementation owner is M13b.2. The previous owner (resolution_owner, remediation.owner and verification.owner_milestone) was M13b.3; that assignment is retained here as historical evidence.",
+        "Progress (WP-3, M13b.1): a minimal canonical reassembly adapter replaced absolute-offset scatter/gather, as an inseparable dependency of the LFH wire correction: contributions are concatenated in ascending Fragment Index order with contribution length taken from LFH Uncompressed Size; duplicate indices, inconsistent LAST_FRAGMENT or LOSS_TOLERANT metadata and length mismatches fail closed; incomplete groups return SAR_ERR_FRAGMENT_GAP unless LOSS_TOLERANT permits degraded output, which is limited to the longest contiguous prefix from Fragment Index 0 with no synthetic fill. FragmentError statuses were aligned to Section 10 (length mismatch: INVALID_LENGTH; duplicate or conflicting metadata: METADATA_CONFLICT).",
+        "Remaining (not closed): the fragment-local versus group-wide pipeline split of Section 13.1, full WP-4 group completion and cross-fragment metadata consistency, and the disposition of the now-unused max_loss_tolerant_gap limit.",
+        "Related record (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001): the max_loss_tolerant_gap limit is retained but unenforced; M13b.2 owns its eventual semantics or API disposition. Fragmented sparse reconstruction fails closed pending WP-5/M13b.2; see M13-TRANSFORM-010."
+      ]
     },
     {
       "id": "M13-TRANSFORM-010",
@@ -4303,7 +4313,13 @@
           "kind": "source_code",
           "artifact": "crates/sar-archive/src/archive.rs",
           "locator": "fragment-group sparse handling in `read_all_logical_files`",
-          "description": "Uses fragment-0 LFH Uncompressed Size as final sparse size and returns InvalidMap for a later-fragment Sparse Map."
+          "description": "Historical defect evidence (pre-WP-3): used fragment-0 LFH Uncompressed Size as final sparse size and returned InvalidMap for a later-fragment Sparse Map. Superseded by the WP-3 fail-closed guard (complete fragmented sparse groups return SAR_ERR_UNSUPPORTED); the Sparse Logical Size and later-fragment Sparse Map defects remain open under M13b.2."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-archive/tests/sparse_fragment_tests.rs",
+          "locator": "canonical_fragmented_sparse_group_fails_closed_without_sparse_logical_size",
+          "description": "Active fail-closed regression for canonical fragmented sparse groups (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001); asserts SAR_ERR_UNSUPPORTED."
         }
       ],
       "normative_basis": [
@@ -4314,9 +4330,9 @@
         }
       ],
       "compatibility_impact": "wire_incompatible",
-      "resolution_owner": "M13b.3",
+      "resolution_owner": "M13b.2",
       "remediation": {
-        "owner": "M13b.3",
+        "owner": "M13b.2",
         "requirements": [
           "Encode and decode Sparse Logical Size inside the Sparse Map and validate extents against it.",
           "Reconstruct to Sparse Logical Size, including all-hole files.",
@@ -4329,7 +4345,7 @@
           "Trailing-hole and all-hole sparse vectors reconstruct to Sparse Logical Size.",
           "A later-fragment Sparse Map yields SAR_ERR_METADATA_CONFLICT."
         ],
-        "owner_milestone": "M13b.3"
+        "owner_milestone": "M13b.2"
       },
       "relationships": {
         "related_findings": [
@@ -4337,7 +4353,12 @@
           "M13-TRANSFORM-004",
           "M13-TRANSFORM-009"
         ]
-      }
+      },
+      "notes": [
+        "Planning correction (controller, SAR-M13b-WP3-CANONICAL-FRAGMENT-LFH-IMPLEMENTATION-001): the forward implementation owner is M13b.2. The previous owner (resolution_owner, remediation.owner and verification.owner_milestone) was M13b.3; that assignment is retained here as historical evidence.",
+        "Dependency observed by WP-3 (not remediated): the pre-WP-3 sparse model took the fragmented sparse logical size from Fragment Index 0 LFH Uncompressed Size, which conflicts with the canonical contribution-length meaning of Uncompressed Size. Superseded by the WP-3 fail-closed guard: read_all_logical_files now returns SAR_ERR_UNSUPPORTED for complete canonical fragmented sparse groups; incomplete fragment groups continue to return SAR_ERR_FRAGMENT_GAP (subject to ordinary preceding validation); an incorrect fragment-local decoded length independently returns SAR_ERR_INVALID_LENGTH. The seven legacy sparse+fragment tests that assert the old convention are #[ignore]d with an explicit WP-5/M13b.2 reason. Sparse Logical Size and the Fragment Index > 0 Sparse Map status remain M13b.2 work.",
+        "Implementation-impact record (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001): (1) Normative support: fragmented sparse Entries are valid (specification.md Sections 6.1.3, 17.2, 19.4.5, 19.6); the Sparse Map on Fragment Index 0 applies to the reassembled group and its Sparse Logical Size defines the final size. (2) Temporary incomplete runtime support: Sparse Logical Size is not implemented and LFH Uncompressed Size is only the fragment-local contribution length, so read_all_logical_files fails closed for any complete fragmented sparse group with SAR_ERR_UNSUPPORTED (an incomplete group returns SAR_ERR_FRAGMENT_GAP; a non-canonical contribution length returns SAR_ERR_INVALID_LENGTH). No truncated, over-extended or zero-filled output is produced. A minimal guard in archive.rs was required because an active test showed a canonical group with an empty final fragment otherwise reconstructed successfully with a size derived from fragment 0. (3) Exactly seven regression tests are #[ignore]d (six in crates/sar-archive/tests/sparse_fragment_tests.rs, one in sparse_conformance_tests.rs); active replacement coverage is sparse_fragment_tests::canonical_fragmented_sparse_group_fails_closed_without_sparse_logical_size. (4) WP-5/M13b.2 owns restoring successful fragmented sparse reconstruction and re-enabling or redefining the seven tests. (5) ResourceLimits/FragmentLimits::max_loss_tolerant_gap is retained but currently unenforced. (6) M13b.2 owns the eventual semantics or API disposition of max_loss_tolerant_gap."
+      ]
     },
     {
       "id": "M13-BOUNDARY-003",
@@ -4521,7 +4542,9 @@
       },
       "notes": [
         "Progress (WP-1b, M13b): retired status names were removed from the conformance status validator, docs/CONFORMANCE.md, and test-vectors/README.md; SarStatus::code metadata in the API inventory now returns u16; docs/API.md regenerated from the inventory.",
-        "Remaining (not closed): fuzz targets and seeds, other test vectors and fixtures, and vector regeneration after runtime remediation have not been reviewed by WP-1b."
+        "Remaining (not closed): fuzz targets and seeds, other test vectors and fixtures, and vector regeneration after runtime remediation have not been reviewed by WP-1b.",
+        "Progress (WP-3, M13b.1): the obsolete-descriptor fuzz seed fuzz/seeds/fec_fragmentation/fragment_overlap_offsets.bin was removed (its meaning depended on absent wire offsets) and fragment_gap_missing_index.bin was regenerated in the canonical layout; fragment_duplicate_index.bin was added. Seeds are produced by tools/generate_fragment_fuzz_seeds.py. The MACHINE_READABLE_API.json fragmentation entries were updated and docs/API.md regenerated. Deferred fragmentation manifests whose text stated offset semantics were annotated as obsolete and reassigned to WP-4.",
+        "Remaining (not closed): other fixtures, vector regeneration after later runtime remediation, and actual fuzz execution have not been performed by WP-3."
       ],
       "verification": {
         "test_requirement": "required",
@@ -4756,7 +4779,9 @@
       "M13a.6 cold-storage and tape-resilience audit findings are included.",
       "M13a.7 normative decisions leave the implementation temporarily inconsistent with specification.md; implementation, test, fuzz, test-vector, and API-inventory remediation is assigned to M13b through implementation_spec_mismatch findings.",
       "WP-1a and WP-1b status-registry implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed.",
-      "WP-2a Global Header and Global Flags implementation progress is recorded in finding notes; no finding status was changed."
+      "WP-2a Global Header and Global Flags implementation progress is recorded in finding notes; no finding status was changed.",
+      "WP-3 canonical fragment LFH implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed. M13-TRANSFORM-009 and M13-TRANSFORM-010 forward ownership was corrected from M13b.3 to M13b.2 by controller planning correction; partition-related ownership is unchanged.",
+      "SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001: fragmented sparse Entries are normatively supported; runtime support is temporarily incomplete and fails closed with SAR_ERR_UNSUPPORTED. Seven ignored tests and one active replacement test are recorded under M13-TRANSFORM-010; WP-5/M13b.2 owns restoration and the max_loss_tolerant_gap disposition."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }

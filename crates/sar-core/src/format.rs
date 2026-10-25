@@ -40,18 +40,6 @@ pub struct GlobalHeader {
     pub kms: Option<KmsData>,
 }
 
-/// Fragment descriptor stored inline in a Local File Header.
-///
-/// Records the absolute byte offset and declared byte size of this fragment's
-/// contribution within the fully reconstructed logical file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LfhFragmentDescriptor {
-    /// Absolute byte offset of this fragment within the logical file.
-    pub absolute_offset: u64,
-    /// Byte length of this fragment's contribution to the logical file.
-    pub fragment_size: u32,
-}
-
 /// Local file header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalFileHeader {
@@ -81,8 +69,6 @@ pub struct LocalFileHeader {
     pub fragment_id: Option<u32>,
     /// Fragment index (when global FILE_FRAGMENTATION).
     pub fragment_index: Option<u32>,
-    /// Fragment descriptor absolute offset and size (when global FILE_FRAGMENTATION).
-    pub fragment_descriptor: Option<LfhFragmentDescriptor>,
     /// IV/nonce (when global ENCRYPTED).
     pub iv_nonce: Option<[u8; 24]>,
     /// Delta base hash (when global HAS_DELTA).
@@ -125,7 +111,6 @@ impl LocalFileHeader {
             fec_algo_id: None,
             fragment_id: None,
             fragment_index: None,
-            fragment_descriptor: None,
             iv_nonce: None,
             delta_base_hash: None,
             file_crc32: None,
@@ -363,7 +348,7 @@ pub fn compute_lfh_size(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<u6
         add(1)?;
     }
     if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
-        add(4 + 4 + 12)?;
+        add(4 + 4)?;
     }
     if flags.contains(GlobalFlags::ENCRYPTED) {
         add(24)?;
@@ -423,6 +408,12 @@ pub fn parse_lfh(
     let header_size =
         usize::try_from(header_size_u32).map_err(|_| SarError::Overflow("header size"))?;
     limits.check_lfh_header_bytes(header_size)?;
+    let min_header_size = compute_lfh_size(flags, &LocalFileHeader::minimal_store(Vec::new(), 0))?;
+    if u64::from(header_size_u32) < min_header_size {
+        return Err(SarError::InvalidLength(
+            "LFH Header Size is smaller than the minimum implied by Global Flags",
+        ));
+    }
     if header_size > input.len() {
         return Err(SarError::Truncated("LFH header exceeds available input"));
     }
@@ -474,16 +465,6 @@ pub fn parse_lfh(
     };
     let fragment_index = if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
         Some(hdr_cursor.read_u32_le()?)
-    } else {
-        None
-    };
-    let fragment_descriptor = if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
-        let absolute_offset = hdr_cursor.read_u64_le()?;
-        let fragment_size = hdr_cursor.read_u32_le()?;
-        Some(LfhFragmentDescriptor {
-            absolute_offset,
-            fragment_size,
-        })
     } else {
         None
     };
@@ -619,7 +600,6 @@ pub fn parse_lfh(
         fec_algo_id,
         fragment_id,
         fragment_index,
-        fragment_descriptor,
         iv_nonce,
         delta_base_hash,
         file_crc32,
@@ -682,12 +662,6 @@ pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, 
     if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
         writer.write_u32_le(lfh.fragment_id.unwrap_or(0));
         writer.write_u32_le(lfh.fragment_index.unwrap_or(0));
-        let (abs, sz) = lfh
-            .fragment_descriptor
-            .as_ref()
-            .map_or((0u64, 0u32), |fd| (fd.absolute_offset, fd.fragment_size));
-        writer.write_u64_le(abs);
-        writer.write_u32_le(sz);
     }
     if flags.contains(GlobalFlags::ENCRYPTED) {
         writer.write_bytes(&lfh.iv_nonce.unwrap_or([0u8; 24]));
@@ -905,7 +879,7 @@ pub fn fec_size_field_offset(flags: GlobalFlags) -> usize {
         off += 1; // FEC Algo ID (field 11) — included in AAD; only FEC Size/Value are excluded
     }
     if flags.contains(GlobalFlags::FILE_FRAGMENTATION) {
-        off += 4 + 4 + 12; // Fragment ID + Index + Descriptor
+        off += 4 + 4; // Fragment ID + Fragment Index
     }
     if flags.contains(GlobalFlags::ENCRYPTED) {
         off += 24; // IV/Nonce

@@ -18,7 +18,8 @@
   },
   "limits": {},
   "notes": [
-    "DEFERRED: duplicate index must always fail closed."
+    "DEFERRED: duplicate index must always fail closed.",
+    "Canonical status (spec Section 10 / 6.1.3): duplicate Fragment Index is SAR_ERR_METADATA_CONFLICT; this deferred manifest still states SAR_ERR_MALFORMED and is reassigned to WP-4 for correction."
   ],
   "deferred": true,
   "compression": false,
