@@ -2711,6 +2711,8 @@ Parity Data Length == ceil(Parity Data Bit Length / 8)
 
 Any mismatch MUST return `SAR_ERR_INVALID_LENGTH`.
 
+**External Recovery Metadata.** SAR v1.0 defines no interoperable external recovery-sidecar format and no normative mechanism for binding external recovery metadata to an archive. Implementations MAY use storage-layer, application-specific, or implementation-private external recovery metadata, but such metadata is outside SAR v1.0 interoperability. Conforming SAR processing MUST NOT require such external information unless a future, separately standardized SAR mechanism explicitly defines it. The discovery, format, integrity, lifecycle, and binding of such information are outside SAR v1.0. A future SAR specification or separately standardized extension MAY define such a mechanism.
+
 
 ### 9.3 Signature (ID 0x20 - 0x2F)
 The `SIGNATURE` block MUST fulfil the requirements as outlined in section 13.3.
