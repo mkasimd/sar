@@ -242,7 +242,9 @@ pub fn validate_recipe_payload(payload: &[u8], limits: &ResourceLimits) -> Resul
 /// slice.
 pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]> {
     payload
-        .chunks_exact(CDC_RECIPE_HASH_LEN)
+        .as_chunks::<CDC_RECIPE_HASH_LEN>()
+        .0
+        .iter()
         .map(|chunk| {
             let mut h = [0u8; 32];
             h.copy_from_slice(chunk);
