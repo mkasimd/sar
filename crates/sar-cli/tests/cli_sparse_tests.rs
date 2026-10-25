@@ -39,9 +39,7 @@ fn write_sparse_archive(
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -161,9 +159,7 @@ fn extract_malformed_sparse_map_causes_failure() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

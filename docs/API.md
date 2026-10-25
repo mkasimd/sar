@@ -45,7 +45,7 @@ For conformance status, see `docs/CONFORMANCE.md`.
 | `sar-fec` | `implemented` | Forward Error Correction codecs and metadata parsing for XOR and Reed-Solomon SAR FEC. |
 | `sar-fragmentation` | `implemented` | Fragment semantic validation and reassembly logic (moved from sar-core in M11c). |
 | `sar-loss-tolerant` | `implemented` | Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). No dependency on sar-core. |
-| `sar-partition` | `deferred` | Partition/multi-volume archive support. Deliberately deferred in M11c. PartitionDescriptor and PARTITIONED_ARCHIVE remain in sar-core. |
+| `sar-partition` | `deferred` | Partition/multi-volume archive support. Deliberately deferred in M11c. GlobalFlags::PARTITIONED_ARCHIVE remains in sar-core; processing entry points return Unsupported until partition support is implemented. |
 | `sar-sparse` | `implemented` | Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core. |
 | `sar-stream` | `implemented` | Stateful Streaming Mode session layer, stream transcript semantic validation, and optional exact-byte transcript recording. |
 | `sar-transport` | `implemented` | Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, SAR-over-TCP binding (M10d), and SAR-over-QUIC binding (M10e, quic feature). |
@@ -163,6 +163,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | --- | --- | --- |
 | `classify_recovery_tlv_id` | `pub fn classify_recovery_tlv_id(type_id: u8) -> Result<(), SarError>` | Validate a recovery-TLV algorithm ID. |
 | `compute_lfh_size` | `pub fn compute_lfh_size(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<u64, SarError>` | Compute LFH size based on active flags and field presence. |
+| `decode_global_flags` | `pub fn decode_global_flags(bytes: [u8; 4]) -> Result<GlobalFlags, SarError>` | Decode four wire bytes into Global Flags: rejects reserved bits (RESERVED_VALUE) before assigned-flag conflicts (FLAG_CONFLICT). |
 | `EntryMode::bits` | `pub const fn EntryMode::bits(self) -> u16` | Return the raw entry-mode wire bits. |
 | `EntryMode::from_bits` | `pub const fn EntryMode::from_bits(bits: u16) -> Self` | Construct an entry mode from raw wire bits. |
 | `EntryMode::is_compressed` | `pub const fn EntryMode::is_compressed(self) -> bool` | Return whether an entry is marked compressed. |
@@ -170,21 +171,23 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `EntryMode::is_fragment` | `pub const fn EntryMode::is_fragment(self) -> bool` | Return whether an entry is marked fragment. |
 | `EntryMode::is_last_fragment` | `pub const fn EntryMode::is_last_fragment(self) -> bool` | Return whether an entry is marked last fragment. |
 | `EntryMode::is_loss_tolerant` | `pub const fn EntryMode::is_loss_tolerant(self) -> bool` | Return whether an entry permits degraded reconstruction. |
+| `GlobalFlags::from_wire` | `pub fn from_wire(bits: u32) -> Result<Self, SarError>` | Convert a 32-bit wire value to GlobalFlags, rejecting reserved bits with RESERVED_VALUE. |
 | `is_cdc_metadata_tlv_type` | `pub fn is_cdc_metadata_tlv_type(type_id: u8) -> bool` | Returns true for CDC metadata TLV IDs in range 0x40..=0x4F |
 | `lfh_to_bytes` | `pub fn lfh_to_bytes(lfh: &LocalFileHeader, flags: GlobalFlags) -> Result<Vec<u8>, SarError>` | Serialize an LFH into on-wire bytes. |
 | `LocalFileHeader::minimal_store` | `pub fn LocalFileHeader::minimal_store(name: Vec<u8>, payload_size: u64) -> Self` | Construct a minimal STORE LFH template. |
 | `make_cdc_ext_provider_tlv` | `pub fn make_cdc_ext_provider_tlv(uri: &str, limits: &ResourceLimits) -> Result<Tlv, SarError>` | Builds inert CDC_EXT_PROVIDER metadata TLV from UTF-8 URI bytes |
 | `make_cdc_map_tlv` | `pub fn make_cdc_map_tlv(map: &CdcMap, limits: &ResourceLimits) -> Result<Tlv, SarError>` | Serializes CdcMap into CDC_MAP TLV payload with metadata-size limits |
 | `parse_cdc_ext_provider_tlv` | `pub fn parse_cdc_ext_provider_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<CdcExtProviderMetadata, SarError>` | Parses CDC_EXT_PROVIDER as inert UTF-8 metadata only; no provider resolution/network access |
-| `parse_central_dictionary` | `pub fn parse_central_dictionary(input: &[u8], flags: GlobalFlags, limits: &ResourceLimits) -> Result<(CentralDictionary, usize), SarError>` | Parse a central dictionary from bytes. |
+| `parse_central_dictionary` | `pub fn parse_central_dictionary(input: &[u8], flags: GlobalFlags, limits: &ResourceLimits) -> Result<(CentralDictionary, usize), SarError>` | Parse a central dictionary from bytes. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred). |
 | `parse_entry_cdc_map` | `pub fn parse_entry_cdc_map(tlvs: &[Tlv], limits: &ResourceLimits) -> Result<Option<CdcMap>, SarError>` | Extracts/parses first stored CDC_MAP TLV from metadata; does not regenerate FASTCDC boundaries |
 | `parse_footer` | `pub fn parse_footer(input: &[u8]) -> Result<Footer, SarError>` | Parse a footer from bytes. |
-| `parse_global_header` | `pub fn parse_global_header(input: &[u8], limits: &ResourceLimits) -> Result<(GlobalHeader, usize), SarError>` | Parse a global header from bytes. |
+| `parse_global_header` | `pub fn parse_global_header(input: &[u8], limits: &ResourceLimits) -> Result<(GlobalHeader, usize), SarError>` | Parse a global header from bytes: exact Flags Size of 4, strict reserved-bit rejection, no partition descriptor, optional KMS extension. |
 | `parse_lfh` | `pub fn parse_lfh(input: &[u8], flags: &GlobalFlags, limits: &ResourceLimits) -> Result<(LocalFileHeader, usize), SarError>` | Parse an LFH from bytes. |
 | `parse_lfh_fec_value` | `pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8], limits: &ResourceLimits) -> Result<Option<FecSummary>, SarError>` | Parse and validate an LFH FEC value. |
 | `parse_sparse_map` | `pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<Vec<SparseExtent>, SarError>` | Parses a sparse map byte blob into a Vec&lt;SparseExtent&gt;. Enforces configured limits before allocating. |
 | `parse_tlvs` | `pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, SarError>` | Parse a sequence of TLV blocks with alignment checks. |
 | `recipe_hashes` | `pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]>` | Extracts ordered 32-byte hashes from a validated recipe payload |
+| `require_unpartitioned_processing` | `pub fn require_unpartitioned_processing(flags: GlobalFlags) -> Result<(), SarError>` | Return Unsupported when PARTITIONED_ARCHIVE is set; gate for processing entry points until partition support exists. |
 | `ResourceLimits::allocation_len` | `pub fn ResourceLimits::allocation_len(&self, size: u64, label: &'static str) -> Result<usize, SarError>` | Checked u64-to-usize conversion with limit enforcement. All allocation size conversions go through this function. |
 | `ResourceLimits::check_cdc_chunk_count` | `pub fn ResourceLimits::check_cdc_chunk_count(&self, count: usize) -> Result<(), SarError>` | Ensures CDC chunk/record count does not exceed max_cdc_chunk_count |
 | `ResourceLimits::check_cdc_metadata_bytes` | `pub fn ResourceLimits::check_cdc_metadata_bytes(&self, bytes: usize) -> Result<(), SarError>` | Ensures CDC metadata byte size does not exceed max_cdc_metadata_bytes |
@@ -198,12 +201,13 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `validate_cdc_metadata_tlv` | `pub fn validate_cdc_metadata_tlv(tlv: &Tlv, limits: &ResourceLimits) -> Result<(), SarError>` | Validates CDC metadata TLVs structurally: CDC_MAP parsed, CDC_EXT_PROVIDER inert UTF-8, 0x42-0x4E reserved errors, CDC_CUSTOM parsed/preserved only |
 | `validate_entry_mode_against_global` | `pub fn validate_entry_mode_against_global(global_flags: GlobalFlags, entry_mode: EntryMode) -> Result<(), SarError>` | Validate entry-mode bits against archive-wide flags. |
 | `validate_global_flags` | `pub fn validate_global_flags(flags: GlobalFlags) -> Result<(), SarError>` | Validate archive-wide flag combinations. |
+| `validate_global_header_prefix` | `pub fn validate_global_header_prefix(prefix: &[u8]) -> Result<(), SarError>` | Validate the fixed 8-byte Global Header prefix: magic, version (unassigned is RESERVED_VALUE), reserved byte, and Flags Size == 4 (INVALID_LENGTH). Shared by the reader and incremental stream parser. |
 | `validate_lfh_fec_algo_id` | `pub fn validate_lfh_fec_algo_id(algo_id: u8) -> Result<(), SarError>` | Validate an LFH FEC algorithm ID. |
 | `validate_recipe_payload` | `pub fn validate_recipe_payload(payload: &[u8], limits: &ResourceLimits) -> Result<usize, SarError>` | Structural recipe validation only (32-byte alignment + limits); not recipe-content verification |
 | `validate_recovery_tlv` | `pub fn validate_recovery_tlv(type_id: u8, value: &[u8], limits: &ResourceLimits) -> Result<FecSummary, SarError>` | Validate a recovery TLV and summarize its metadata. |
-| `write_central_dictionary` | `pub fn write_central_dictionary(cd: &CentralDictionary, flags: GlobalFlags) -> Result<Vec<u8>, SarError>` | Serialize a central dictionary. |
+| `write_central_dictionary` | `pub fn write_central_dictionary(cd: &CentralDictionary, flags: GlobalFlags) -> Result<Vec<u8>, SarError>` | Serialize a central dictionary. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred). |
 | `write_footer` | `pub fn write_footer(footer: Footer) -> [u8; 8]` | Serialize a footer. |
-| `write_global_header` | `pub fn write_global_header(header: &GlobalHeader) -> Result<Vec<u8>, SarError>` | Serialize a global header. |
+| `write_global_header` | `pub fn write_global_header(header: &GlobalHeader) -> Result<Vec<u8>, SarError>` | Serialize a global header with exactly four little-endian Global Flags bytes; rejects unassigned versions and reserved flag bits. |
 | `write_lfh` | `pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, SarError>` | Serialize an LFH. |
 | `write_sparse_map` | `pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>` | Serializes sparse extents to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates. |
 | `write_tlvs` | `pub fn write_tlvs(tlvs: &[Tlv]) -> Result<Vec<u8>, SarError>` | Encode TLV blocks with alignment padding. |
@@ -214,7 +218,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | --- | --- | --- | --- |
 | `CdcAlgoId` | `struct` | `pub struct CdcAlgoId(pub u8)` | Typed wrapper for LFH CDC Algo ID with literal/recipe mode helpers |
 | `CdcExtProviderMetadata` | `struct` | `pub struct CdcExtProviderMetadata { pub uri: String }` | Inert parsed CDC_EXT_PROVIDER metadata; URI only, no provider resolution/network access |
-| `CentralDictionary` | `struct` | `pub struct CentralDictionary { pub version: u8, pub file_count: u64, pub partition_info: Option<(u16, u16)>, pub global_crc32: Option<u32>, pub metadata: Vec<Tlv>, pub offsets: Vec<u64> }` | Central dictionary structure. |
+| `CentralDictionary` | `struct` | `pub struct CentralDictionary { pub version: u8, pub file_count: u64, pub global_crc32: Option<u32>, pub metadata: Vec<Tlv>, pub offsets: Vec<u64> }` | Central dictionary structure. |
 | `EntryCdcMetadata` | `struct` | `pub struct EntryCdcMetadata { pub algo_id: u8 }` | CDC algorithm ID from LFH CDC_SUPPORT field. |
 | `EntryCompressionMetadata` | `struct` | `pub struct EntryCompressionMetadata { pub algo_id: u8 }` | Compression algorithm ID from LFH COMPRESSED field. |
 | `EntryDeltaMetadata` | `struct` | `pub struct EntryDeltaMetadata { pub algo_id: u8, pub base_hash: [u8; 32] }` | Delta patch algorithm ID and base-file hash from LFH HAS_DELTA fields. |
@@ -232,11 +236,10 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `FieldPresence` | `enum` | `pub enum FieldPresence<T> { Absent, PresentInactive(T), PresentActive(T) }` | Three-state presence model for LFH metadata fields. Absent: global flag not set, field physically missing from wire. PresentInactive: global flag set but entry mode bit unset. PresentActive: global flag set and semantically active. |
 | `Footer` | `struct` | `pub struct Footer { pub cd_offset: u64 }` | Indexed-archive footer structure. |
 | `GlobalFlags` | `struct` | `pub struct GlobalFlags: u32 { ... }` | Archive-wide flag bitset. |
-| `GlobalHeader` | `struct` | `pub struct GlobalHeader { pub version: u8, pub flags_bytes: Vec<u8>, pub flags: GlobalFlags, pub partition_descriptor: Option<PartitionDescriptor>, pub kms: Option<KmsData> }` | Parsed SAR global header. |
+| `GlobalHeader` | `struct` | `pub struct GlobalHeader { pub version: u8, pub flags: GlobalFlags, pub kms: Option<KmsData> }` | Parsed SAR global header. Global Flags are always exactly four bytes on the wire; the typed `flags` field is authoritative. |
 | `KmsData` | `struct` | `pub struct KmsData { pub mode_id: u8, pub payload: Vec<u8> }` | Raw KMS extension bytes from the global header. |
 | `LfhFragmentDescriptor` | `struct` | `pub struct LfhFragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }` | Fragment descriptor stored inline in a Local File Header. Records the absolute byte offset and declared byte size of this fragment's contribution within the fully reconstructed logical file. Replaces the former Option&lt;(u64, u32)&gt; tuple in LocalFileHeader.fragment_descriptor. |
 | `LocalFileHeader` | `struct` | `pub struct LocalFileHeader { ... }` | Parsed SAR local file header. |
-| `PartitionDescriptor` | `struct` | `pub struct PartitionDescriptor { ... }` | Optional 96-byte partition descriptor. |
 | `ResourceLimits` | `struct` | `pub struct ResourceLimits { pub max_archive_size: u64, pub max_entry_count: u64, pub max_lfh_bytes: u64, pub max_path_bytes: u64, pub max_tlv_bytes: u64, pub max_tlv_count: u64, pub max_cd_bytes: u64, pub max_sparse_map_bytes: u64, pub max_sparse_descriptors: u64, pub max_fragment_count: u64, pub max_fragment_group_span: u64, pub max_loss_tolerant_gap: u64, pub max_fec_value_bytes: u64, pub max_recovery_protected_range: u64, pub max_repair_working_set: u64, pub max_decoded_entry_size: u64, pub max_in_memory_buffer: u64, pub max_total_pipeline_memory: u64, pub max_cdc_chunk_count: usize, pub max_cdc_metadata_bytes: usize, ... }` | Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. |
 | `SarError` | `enum` | `pub enum SarError { ... }` | Top-level SAR error type used across sar-core. |
 | `SarStatus` | `enum` | `pub enum SarStatus { ... }` | SAR status and error registry values (`#[repr(u16)]`). |
@@ -253,6 +256,8 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `EntryMode::FRAGMENT` | `pub const EntryMode::FRAGMENT: u16 = 1 << 5` | Bit flag for fragmented entries. |
 | `EntryMode::LAST_FRAGMENT` | `pub const EntryMode::LAST_FRAGMENT: u16 = 1 << 6` | Bit flag for the final fragment in a group. |
 | `EntryMode::LOSS_TOLERANT` | `pub const EntryMode::LOSS_TOLERANT: u16 = 1 << 7` | Bit flag for degraded loss-tolerant reconstruction. |
+| `GLOBAL_FLAGS_SIZE` | `pub const GLOBAL_FLAGS_SIZE: u16 = 4;` | Exact Global Flags size in bytes required by Section 5.2. |
+| `GLOBAL_HEADER_FIXED_LEN` | `pub const GLOBAL_HEADER_FIXED_LEN: usize = 12;` | Length of the fixed Global Header prefix plus four Global Flags bytes. |
 | `SUPPORTED_CD_VERSION` | `pub const SUPPORTED_CD_VERSION: u8 = 0x01` | Central dictionary version supported by the current implementation. |
 | `TLV_CDC_CUSTOM` | `pub const TLV_CDC_CUSTOM: u8 = 0x4F;` | Implementation-defined CDC_CUSTOM metadata TLV ID |
 | `TLV_CDC_EXT_PROVIDER` | `pub const TLV_CDC_EXT_PROVIDER: u8 = 0x41;` | CDC_EXT_PROVIDER metadata TLV ID (parsed inertly) |
@@ -374,7 +379,7 @@ Hashing, AEAD, KMS parsing, key-provider abstraction, zeroizing secret helpers, 
 | `build_aead_aad` | `pub fn build_aead_aad(global_flags_section: &[u8], lfh_bytes: &[u8]) -> Vec<u8>` | Build AAD bytes from the global-flag section and LFH bytes. |
 | `ct_eq` | `pub fn ct_eq(a: &[u8], b: &[u8]) -> bool` | Constant-time equality check for two byte slices of equal length. |
 | `generate_nonce` | `pub fn generate_nonce(algo_id: u8, field: &mut [u8; 24]) -> Result<(), SarCryptoError>` | Fill the 24-byte on-wire nonce field for the selected algorithm. |
-| `global_header_aad_bytes` | `pub fn global_header_aad_bytes(magic: &[u8; 4], version: u8, flags_bytes: &[u8]) -> Vec<u8>` | Build AAD bytes for a SAR global header. |
+| `global_header_aad_bytes` | `pub fn global_header_aad_bytes(magic: &[u8; 4], version: u8, flags_bytes: &[u8; 4]) -> Vec<u8>` | Build the 12-byte AAD prefix for a SAR global header from a fixed four-byte flags array. |
 | `hash_data` | `pub fn hash_data(algo_id: u8, data: &[u8]) -> Result<Vec<u8>, SarCryptoError>` | Compute a one-shot hash for a selected algorithm. |
 | `new_hasher` | `pub fn new_hasher(algo_id: u8) -> Result<Box<dyn Hasher>, SarCryptoError>` | Construct a streaming hasher for a selected algorithm. |
 | `parse_kms_payload` | `pub fn parse_kms_payload(mode_id: u8, payload: &[u8]) -> Result<KmsParams, SarCryptoError>` | Parse raw KMS payload bytes for a given mode. |
@@ -566,7 +571,7 @@ Path: `crates/sar-partition`
 
 Status: `deferred`
 
-Partition/multi-volume archive support. Deliberately deferred in M11c. PartitionDescriptor and PARTITIONED_ARCHIVE remain in sar-core.
+Partition/multi-volume archive support. Deliberately deferred in M11c. GlobalFlags::PARTITIONED_ARCHIVE remains in sar-core; processing entry points return Unsupported until partition support is implemented.
 
 No public-facing API items are listed for this crate.
 

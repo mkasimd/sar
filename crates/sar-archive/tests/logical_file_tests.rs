@@ -54,9 +54,7 @@ fn build_two_fragment_archive() -> Vec<u8> {
 
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: fragment_flags.bits().to_le_bytes().to_vec(),
         flags: fragment_flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -175,9 +173,7 @@ fn missing_fragment_fails_without_allow_lossy() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -209,9 +205,7 @@ fn missing_fragment_succeeds_with_allow_lossy_and_loss_tolerant() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -251,9 +245,7 @@ fn overlapping_fragment_descriptors_fail() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -297,9 +289,7 @@ fn sparse_extents_reconstruct_with_zero_holes() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -347,9 +337,7 @@ fn overlapping_sparse_extents_fail() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -391,9 +379,7 @@ fn large_sparse_hole_capped_by_max_size() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -438,9 +424,7 @@ fn large_sparse_hole_capped_by_max_size() {
     let flags2 = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive2 = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags2.bits().to_le_bytes().to_vec(),
         flags: flags2,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

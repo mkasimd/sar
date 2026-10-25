@@ -174,7 +174,7 @@ pub(crate) fn inspect_archive(archive: PathBuf, as_json: bool) -> Result<(), Sar
         let output = json!({
             "global_version": header.version,
             "flags": header.flags.bits(),
-            "flags_size": header.flags_bytes.len(),
+            "flags_size": sar_core::GLOBAL_FLAGS_SIZE,
             "indexed": !header.flags.contains(GlobalFlags::NO_INDEX),
             "selective_fec": header.flags.contains(GlobalFlags::SELECTIVE_FEC),
             "global_ec": has_global_ec,

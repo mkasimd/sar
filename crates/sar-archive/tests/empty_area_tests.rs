@@ -25,9 +25,7 @@ fn build_archive_with_empty_area() -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -96,9 +94,7 @@ fn empty_area_not_included_when_sparse_flag_active() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -131,9 +127,7 @@ fn empty_area_does_not_participate_in_fragment_grouping() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -183,9 +177,7 @@ fn multiple_empty_areas_all_filtered() {
     let flags = GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -211,9 +203,7 @@ fn archive_with_only_empty_areas_produces_no_logical_files() {
     let flags = GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -237,9 +227,7 @@ fn empty_area_with_is_fragment_set_is_treated_as_fragment_not_silently_dropped()
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

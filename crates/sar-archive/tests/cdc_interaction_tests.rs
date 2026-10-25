@@ -23,9 +23,7 @@ fn build_cdc_archive(cdc_algo_id: u8, payload: &[u8]) -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -127,9 +125,7 @@ fn entry_without_cdc_support_flag_has_no_cdc_algo_id() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -163,9 +159,7 @@ fn verification_report_no_cdc_when_flag_absent() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -296,9 +290,7 @@ fn cdc_with_compressed_entry_decompresses_correctly() {
 
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -339,9 +331,7 @@ fn cdc_support_with_sparse_entry_works() {
 
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

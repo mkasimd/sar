@@ -10,12 +10,10 @@
 //!
 //! This crate is intentionally kept as a minimal stub.  Partition and
 //! multi-volume behavior has not been fully specified for SAR v1.  The
-//! following items remain in `sar-core` until the spec section defining
-//! partition descriptor layout and semantics is finalized:
+//! following items remain in `sar-core` until partition support is implemented:
 //!
-//! * `PartitionDescriptor` struct and binary layout;
-//! * `PARTITIONED_ARCHIVE` global flag;
-//! * partition descriptor parse/write;
+//! * `PARTITIONED_ARCHIVE` global flag (the Global Header carries no inline
+//!   partition descriptor; processing entry points return `Unsupported`);
 //! * archive reader/writer integration for partitioned archives.
 //!
 //! This crate will be populated when partition support becomes an active

@@ -383,9 +383,7 @@ impl<S: Read + Write> TcpSarConnection<S> {
             let flags = GlobalFlags::NO_INDEX;
             let header = GlobalHeader {
                 version: 1,
-                flags_bytes: flags.bits().to_le_bytes().to_vec(),
                 flags,
-                partition_descriptor: None,
                 kms: None,
             };
             let hdr_bytes = write_global_header(&header)

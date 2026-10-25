@@ -56,9 +56,7 @@ fn f(limits: &ResourceLimits) -> FragmentLimits {
 fn header_bytes(flags: GlobalFlags) -> Vec<u8> {
     write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header")
@@ -957,9 +955,7 @@ fn build_archive_with_global_ec(flags: GlobalFlags) -> Vec<u8> {
     let ec_flags = flags | GlobalFlags::OPT_PRESENT;
     let header = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: ec_flags.bits().to_le_bytes().to_vec(),
         flags: ec_flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -971,7 +967,6 @@ fn build_archive_with_global_ec(flags: GlobalFlags) -> Vec<u8> {
     let cd = CentralDictionary {
         version: 1,
         file_count: 0,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![recovery_tlv],
         offsets: Vec::new(),

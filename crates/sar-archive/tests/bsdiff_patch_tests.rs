@@ -79,9 +79,7 @@ fn build_bsdiff_archive(
 
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("write global header");
@@ -246,9 +244,7 @@ fn bsdiff_loss_tolerant_does_not_suppress_patch_failed() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA | GlobalFlags::FILE_FRAGMENTATION;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

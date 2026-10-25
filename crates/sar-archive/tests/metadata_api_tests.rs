@@ -189,9 +189,7 @@ fn reader_exposes_encryption_metadata_present_inactive_without_is_encrypted() {
     let flags = GlobalFlags::ENCRYPTED | GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: Some(sar_core::format::KmsData {
             mode_id: 0x01,
             payload: {
@@ -495,9 +493,7 @@ fn field_presence_absent_present_inactive_present_active_distinguishable() {
     let flags = GlobalFlags::COMPRESSED | GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header bytes");
@@ -818,9 +814,7 @@ fn empty_area_entry_kind_derived_correctly() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header bytes");

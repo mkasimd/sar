@@ -12,8 +12,9 @@ use sar_core::{
     error::SarError,
     flags::GlobalFlags,
     format::{
-        GlobalHeader, LocalFileHeader, global_header_flags_bytes, lfh_bytes_for_aad,
-        parse_global_header, parse_lfh,
+        GLOBAL_HEADER_FIXED_LEN, GlobalHeader, LocalFileHeader, decode_global_flags,
+        global_header_flags_bytes, lfh_bytes_for_aad, parse_global_header, parse_lfh,
+        require_unpartitioned_processing, validate_global_header_prefix,
     },
 };
 use sar_crypto::{KeyProvider, aad::build_aead_aad, provider::resolve_cek, validate_encr_algo_id};
@@ -204,10 +205,11 @@ impl StreamArchiveParser {
                     if header.flags.contains(GlobalFlags::ENCRYPTED) {
                         let _ = build_kms_context(&header)?;
                     }
+                    require_unpartitioned_processing(header.flags)?;
 
                     self.consume(consumed)?;
                     self.archive = Some(ActiveArchive {
-                        global_flags_section: global_header_flags_bytes(&header),
+                        global_flags_section: global_header_flags_bytes(&header)?,
                         header: header.clone(),
                         entry_count: 0,
                     });
@@ -850,62 +852,39 @@ impl StreamArchiveParser {
     }
 
     fn required_global_header_bytes(&self) -> Result<Option<usize>, SarError> {
-        let Some(fixed) = self.peek(8) else {
+        let Some(prefix) = self.peek(8) else {
             return Ok(None);
         };
-        if fixed[..4] != SAR_MAGIC {
-            return Err(SarError::InvalidMagic);
-        }
-        let flags_size = usize::from(u16::from_le_bytes([fixed[6], fixed[7]]));
-        if flags_size < 4 {
-            return Err(SarError::InvalidLength("global flags size must be >= 4"));
-        }
-        self.options.limits.check_global_flags_bytes(flags_size)?;
-        let mut needed = 8usize
-            .checked_add(flags_size)
-            .ok_or(SarError::Overflow("global header size"))?;
+        validate_global_header_prefix(prefix)?;
 
-        if self.available() >= needed {
-            let flags = self
-                .peek(needed)
-                .ok_or(SarError::Truncated("global flags missing"))?;
-            let bits_offset = 8usize;
-            let mut low = [0u8; 4];
-            low.copy_from_slice(&flags[bits_offset..bits_offset + 4]);
-            let global_flags = GlobalFlags::from_bits_truncate(u32::from_le_bytes(low));
-            if global_flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-                needed = needed
-                    .checked_add(96)
-                    .ok_or(SarError::Overflow("partition descriptor size"))?;
-            }
-
-            if global_flags.contains(GlobalFlags::ENCRYPTED) {
-                let kms_prefix_start = if global_flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-                    8 + flags_size + 96
-                } else {
-                    8 + flags_size
-                };
-                if self.available() >= kms_prefix_start + 5 {
-                    let prefix = self
-                        .peek(kms_prefix_start + 5)
-                        .ok_or(SarError::Truncated("KMS prefix missing"))?;
-                    let payload_len = usize::try_from(u32::from_le_bytes([
-                        prefix[kms_prefix_start + 1],
-                        prefix[kms_prefix_start + 2],
-                        prefix[kms_prefix_start + 3],
-                        prefix[kms_prefix_start + 4],
-                    ]))
-                    .map_err(|_| SarError::Overflow("KMS payload length"))?;
-                    self.options.limits.check_kms_payload_bytes(payload_len)?;
-                    needed = needed
-                        .checked_add(5)
-                        .and_then(|v| v.checked_add(payload_len))
-                        .ok_or(SarError::Overflow("KMS extension size"))?;
-                }
-            }
+        let Some(fixed) = self.peek(GLOBAL_HEADER_FIXED_LEN) else {
+            return Ok(Some(GLOBAL_HEADER_FIXED_LEN));
+        };
+        let mut flags_bytes = [0u8; 4];
+        flags_bytes.copy_from_slice(&fixed[8..GLOBAL_HEADER_FIXED_LEN]);
+        let flags = decode_global_flags(flags_bytes)?;
+        if !flags.contains(GlobalFlags::ENCRYPTED) {
+            return Ok(Some(GLOBAL_HEADER_FIXED_LEN));
         }
 
-        Ok(Some(needed))
+        let kms_prefix_end = GLOBAL_HEADER_FIXED_LEN
+            .checked_add(5)
+            .ok_or(SarError::Overflow("KMS prefix offset"))?;
+        let Some(prefix) = self.peek(kms_prefix_end) else {
+            return Ok(Some(kms_prefix_end));
+        };
+        let payload_len = usize::try_from(u32::from_le_bytes([
+            prefix[GLOBAL_HEADER_FIXED_LEN + 1],
+            prefix[GLOBAL_HEADER_FIXED_LEN + 2],
+            prefix[GLOBAL_HEADER_FIXED_LEN + 3],
+            prefix[GLOBAL_HEADER_FIXED_LEN + 4],
+        ]))
+        .map_err(|_| SarError::Overflow("KMS payload length"))?;
+        self.options.limits.check_kms_payload_bytes(payload_len)?;
+        kms_prefix_end
+            .checked_add(payload_len)
+            .map(Some)
+            .ok_or(SarError::Overflow("KMS extension size"))
     }
 
     fn peek(&self, len: usize) -> Option<&[u8]> {

@@ -15,7 +15,7 @@ bitflags! {
         const NO_INDEX = 1 << 1;
         /// CD metadata TLV section present.
         const OPT_PRESENT = 1 << 2;
-        /// Partition descriptor present.
+        /// Archive is one Partition of a Partition Set.
         const PARTITIONED_ARCHIVE = 1 << 3;
         /// File fragmentation fields present in LFH.
         const FILE_FRAGMENTATION = 1 << 4;
@@ -51,6 +51,20 @@ bitflags! {
         const DEDUPLICATION = 1 << 29;
         /// Sparse map fields present.
         const SPARSE_FILES = 1 << 30;
+    }
+}
+
+impl GlobalFlags {
+    /// Decodes a 32-bit little-endian Global Flags value from the wire.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SarError::ReservedValue`] when any unassigned (reserved) bit is set.
+    /// Unrecognized bits are never truncated.
+    pub fn from_wire(bits: u32) -> Result<Self, SarError> {
+        Self::from_bits(bits).ok_or(SarError::ReservedValue(
+            "reserved Global Flags bit must be zero",
+        ))
     }
 }
 

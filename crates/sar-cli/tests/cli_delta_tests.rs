@@ -31,9 +31,7 @@ fn build_delta_archive(
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("write global header");
@@ -56,9 +54,7 @@ fn build_no_delta_archive(dir: &std::path::Path) -> std::path::PathBuf {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("write global header");

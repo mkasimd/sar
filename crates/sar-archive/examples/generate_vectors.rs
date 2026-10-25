@@ -271,15 +271,12 @@ fn write_archive_recovery_archive(recovery: ArchiveRecoverySettings, payload: &[
 
 fn mutate_global_flags(archive: &[u8], mutate: impl FnOnce(GlobalFlags) -> GlobalFlags) -> Vec<u8> {
     let mut out = archive.to_vec();
-    let flags_size = usize::from(u16::from_le_bytes([out[6], out[7]]));
     let flags_start = 8usize;
-    let flags_end = flags_start + flags_size;
     let mut low = [0u8; 4];
     low.copy_from_slice(&out[flags_start..flags_start + 4]);
-    let flags = GlobalFlags::from_bits_truncate(u32::from_le_bytes(low));
+    let flags = GlobalFlags::from_wire(u32::from_le_bytes(low)).expect("valid Global Flags");
     let updated = mutate(flags).bits().to_le_bytes();
     out[flags_start..flags_start + 4].copy_from_slice(&updated);
-    debug_assert!(flags_end <= out.len());
     out
 }
 
@@ -331,7 +328,6 @@ fn mutate_indexed_recovery_tlvs(
         &CentralDictionary {
             version: cd.version,
             file_count: cd.file_count,
-            partition_info: cd.partition_info,
             global_crc32: cd.global_crc32,
             metadata: cd.metadata,
             offsets: cd.offsets,
@@ -372,9 +368,6 @@ fn mutate_first_recovery_tlv_type_raw(archive: &[u8], new_type_id: u8) -> Result
     } else {
         4
     };
-    if gh.flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-        cursor += 4;
-    }
     if gh.flags.contains(GlobalFlags::HAS_GLOBAL_CRC32) {
         cursor += 4;
     }
@@ -483,9 +476,7 @@ fn write_manual_delta_archive(
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
     let gh = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive = write_global_header(&gh).expect("write global header");
@@ -556,9 +547,7 @@ fn make_stream_global_header() -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX;
     let header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     write_global_header(&header).unwrap()
@@ -951,9 +940,7 @@ fn generate_stream_transcript_vectors() {
         let flags = GlobalFlags::empty();
         let mut bytes = write_global_header(&GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         })
         .expect("header");
@@ -1266,9 +1253,7 @@ fn main() {
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT;
         let gh = GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         };
         let mut archive = write_global_header(&gh).unwrap();
@@ -1303,9 +1288,7 @@ fn main() {
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
         let gh = GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         };
         let mut archive = write_global_header(&gh).unwrap();
@@ -1568,9 +1551,7 @@ fn main() {
         let flags = GlobalFlags::NO_INDEX;
         let gh = GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         };
         let mut truncated_lfh = write_global_header(&gh).unwrap();
@@ -1605,15 +1586,11 @@ fn main() {
     // -----------------------------------------------------------------------
 
     {
-        // Set the upper 16 bits of the flags to all-ones (reserved).
+        // Exactly one reserved Global Flags bit (bit 6) on an otherwise valid NO_INDEX
+        // archive, so no assigned-flag conflict can mask the expected status.
         let mut bad_flags = write_store_archive(true, &[("x.txt", b"x")]);
-        // Flags are at offset: magic(4) + version(1) + padding(1) + flags_size(2) = offset 8.
-        // flags_size is typically 4 bytes; flags are at bytes 8..12.
-        // Set bytes 10 and 11 (upper 16 bits of 32-bit flags) to 0xFF.
-        if bad_flags.len() > 12 {
-            bad_flags[10] = 0xFF;
-            bad_flags[11] = 0xFF;
-        }
+        // Global Flags occupy bytes 8..12 (little-endian); bit 6 is in byte 8.
+        bad_flags[8] |= 0x40;
         write_fixture(
             "invalid/flags/unknown-global-flag/unknown_global_flag.sar",
             &bad_flags,
@@ -1632,9 +1609,7 @@ fn main() {
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
         let gh = GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         };
         let mut archive = write_global_header(&gh).unwrap();
@@ -1669,9 +1644,7 @@ fn main() {
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
         let gh = GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: Some(sar_core::format::KmsData {
                 mode_id: 0x01, // PBKDF2
                 payload: {

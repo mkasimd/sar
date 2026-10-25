@@ -36,9 +36,7 @@ fn write_sparse_archive(
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -62,9 +60,7 @@ fn write_two_fragment_sparse_archive(
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -130,9 +126,7 @@ fn write_global_ec_archive(dir: &tempfile::TempDir) -> std::path::PathBuf {
     let flags = GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
     let header = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -144,7 +138,6 @@ fn write_global_ec_archive(dir: &tempfile::TempDir) -> std::path::PathBuf {
     let cd = CentralDictionary {
         version: 1,
         file_count: 0,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![recovery_tlv],
         offsets: Vec::new(),

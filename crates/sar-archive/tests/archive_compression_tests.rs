@@ -85,9 +85,7 @@ fn global_compressed_with_inert_entry_mode_is_effective_store() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -119,9 +117,7 @@ fn assigned_unsupported_compression_returns_unsupported() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -141,9 +137,7 @@ fn reserved_compression_returns_reserved_value() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -167,9 +161,7 @@ fn corrupted_deflate_data_returns_sar_error() {
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
         let mut bytes = write_global_header(&GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         })
         .expect("header");
@@ -195,9 +187,7 @@ fn corrupted_zstd_data_returns_sar_error() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -218,9 +208,7 @@ fn decompressed_length_mismatch_returns_invalid_length() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

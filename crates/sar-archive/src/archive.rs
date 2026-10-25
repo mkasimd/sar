@@ -30,10 +30,11 @@ use sar_core::{
     error::SarError,
     flags::{EntryMode, GlobalFlags, validate_global_flags},
     format::{
-        CentralDictionary, Footer, GLOBAL_HEADER_FLAGS_OFFSET, GlobalHeader, KmsData,
-        LocalFileHeader, SUPPORTED_CD_VERSION, global_header_flags_bytes, lfh_bytes_for_aad,
-        lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
-        write_central_dictionary, write_footer, write_global_header,
+        CentralDictionary, Footer, GLOBAL_HEADER_FIXED_LEN, GLOBAL_HEADER_FLAGS_OFFSET,
+        GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION, decode_global_flags,
+        global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary,
+        parse_footer, parse_global_header, parse_lfh, require_unpartitioned_processing,
+        validate_global_header_prefix, write_central_dictionary, write_footer, write_global_header,
     },
     limits::ResourceLimits,
     tlv::Tlv,
@@ -902,30 +903,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
     pub fn read_global_header(&mut self) -> Result<GlobalHeader, SarError> {
         self.reader.seek(SeekFrom::Start(0))?;
 
-        let mut fixed = [0u8; 8];
-        read_required(&mut self.reader, &mut fixed, "global header prefix")?;
-        let flags_size = usize::from(u16::from_le_bytes([fixed[6], fixed[7]]));
-        if flags_size < 4 {
-            return Err(SarError::InvalidLength("global flags size must be >= 4"));
-        }
-        self.options.limits.check_global_flags_bytes(flags_size)?;
+        let mut fixed = [0u8; GLOBAL_HEADER_FIXED_LEN];
+        read_required(&mut self.reader, &mut fixed[..8], "global header prefix")?;
+        validate_global_header_prefix(&fixed[..8])?;
+        read_required(&mut self.reader, &mut fixed[8..], "global flags")?;
+        let mut flags_bytes = [0u8; 4];
+        flags_bytes.copy_from_slice(&fixed[8..]);
+        let flags = decode_global_flags(flags_bytes)?;
 
-        let mut header_bytes = Vec::with_capacity(8 + flags_size + 96 + 5);
+        let mut header_bytes = Vec::with_capacity(GLOBAL_HEADER_FIXED_LEN + 5);
         header_bytes.extend_from_slice(&fixed);
-        let mut flags_buf = vec![0u8; flags_size];
-        read_required(&mut self.reader, &mut flags_buf, "global flags section")?;
-        header_bytes.extend_from_slice(&flags_buf);
-
-        let mut low = [0u8; 4];
-        low.copy_from_slice(&flags_buf[..4]);
-        let flags = GlobalFlags::from_bits_truncate(u32::from_le_bytes(low));
-        validate_global_flags(flags)?;
-
-        if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-            let mut descriptor = [0u8; 96];
-            read_required(&mut self.reader, &mut descriptor, "partition descriptor")?;
-            header_bytes.extend_from_slice(&descriptor);
-        }
 
         if flags.contains(GlobalFlags::ENCRYPTED) {
             let mut kms_prefix = [0u8; 5];
@@ -953,6 +940,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
             }
         }
+        require_unpartitioned_processing(header.flags)?;
         let header_len = u64::try_from(consumed).map_err(|_| SarError::Overflow("header len"))?;
 
         let (data_end, cd) = if header.flags.contains(GlobalFlags::NO_INDEX) {
@@ -1024,7 +1012,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             (cd_offset, Some(cd))
         };
 
-        self.global_flags_section = global_header_flags_bytes(&header);
+        self.global_flags_section = global_header_flags_bytes(&header)?;
         self.global_header = Some(header.clone());
         self.header_len = header_len;
         self.data_end = data_end;
@@ -2594,14 +2582,13 @@ impl<W: Write> ArchiveWriter<W> {
             return Ok(());
         }
         validate_global_flags(self.flags)?;
+        require_unpartitioned_processing(self.flags)?;
         let header = GlobalHeader {
             version: 0x01,
-            flags_bytes: self.flags.bits().to_le_bytes().to_vec(),
             flags: self.flags,
-            partition_descriptor: None,
             kms: self.header_kms.clone(),
         };
-        self.global_flags_section = global_header_flags_bytes(&header);
+        self.global_flags_section = global_header_flags_bytes(&header)?;
         let bytes = write_global_header(&header)?;
         if let Some(recovery) = &self.archive_recovery {
             let recovery_start = usize::try_from(recovery.global_flags_start_offset)
@@ -3308,7 +3295,6 @@ impl<W: Write> ArchiveWriter<W> {
             let cd = CentralDictionary {
                 version: SUPPORTED_CD_VERSION,
                 file_count,
-                partition_info: None,
                 global_crc32: None,
                 metadata: self.cd_metadata.clone(),
                 offsets: self.offsets.clone(),

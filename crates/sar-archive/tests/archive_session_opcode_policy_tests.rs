@@ -17,9 +17,7 @@ fn make_no_index_archive_with_single_entry(
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");

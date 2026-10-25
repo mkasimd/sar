@@ -51,9 +51,7 @@ fn build_store_patch_archive(
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("write global header");
@@ -192,9 +190,7 @@ fn store_patch_with_compression_decodes_correctly() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED | GlobalFlags::HAS_DELTA;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -307,9 +303,7 @@ fn store_patch_with_sparse_applies_patch_before_sparse_reconstruction() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA | GlobalFlags::SPARSE_FILES;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -360,9 +354,7 @@ fn store_patch_with_fragmentation_applies_after_fragment_reassembly() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA | GlobalFlags::FILE_FRAGMENTATION;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -453,9 +445,7 @@ fn loss_tolerant_does_not_suppress_patch_failed() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA | GlobalFlags::FILE_FRAGMENTATION;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -496,9 +486,7 @@ fn build_archive_with_algo(patch_algo_id: u8) -> Vec<u8> {
     let payload = b"irrelevant payload";
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

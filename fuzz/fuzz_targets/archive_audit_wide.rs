@@ -25,7 +25,6 @@ fn fuzz_limits() -> ResourceLimits {
         max_entry_count: 64,
         max_lfh_header_bytes: 64 * 1024,
         max_path_bytes: 4096,
-        max_global_flags_bytes: 4096,
         max_kms_payload_bytes: 16 * 1024,
         max_tlv_bytes: 64 * 1024,
         max_tlv_count: 256,

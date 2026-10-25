@@ -174,9 +174,7 @@ fn verify_rejects_cdc_metadata_without_cdc_support_flag() {
     let flags = GlobalFlags::OPT_PRESENT;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -191,7 +189,6 @@ fn verify_rejects_cdc_metadata_without_cdc_support_flag() {
     let cd = CentralDictionary {
         version: 1,
         file_count: 1,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![
             make_cdc_ext_provider_tlv("sarp+https://chunks.example/v1", &unlimited_limits())

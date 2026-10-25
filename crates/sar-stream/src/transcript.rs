@@ -104,6 +104,7 @@ fn validate_stream_transcript_internal(
 ) -> Result<StreamTranscriptValidationReport, SarError> {
     let limits = ResourceLimits::default();
     let (header, header_len) = parse_global_header(bytes, &limits)?;
+    sar_core::format::require_unpartitioned_processing(header.flags)?;
     if !header.flags.contains(GlobalFlags::NO_INDEX) {
         return Err(SarError::FlagConflict(
             "strict stream transcript validation requires NO_INDEX",

@@ -149,6 +149,7 @@ fn parse_archive_layout(
     )?;
     let (global_header, _header_len) = parse_global_header(archive_bytes, limits)?;
     let flags = global_header.flags;
+    sar_core::format::require_unpartitioned_processing(flags)?;
 
     if flags.contains(GlobalFlags::NO_INDEX) {
         return Ok(ArchiveLayout {

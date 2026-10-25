@@ -73,9 +73,7 @@ fn build_archive_with_global_ec() -> Vec<u8> {
     let flags = GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
     let header = GlobalHeader {
         version: 0x01,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let header_bytes = write_global_header(&header).expect("header");
@@ -95,7 +93,6 @@ fn build_archive_with_global_ec() -> Vec<u8> {
     let cd = CentralDictionary {
         version: 0x01,
         file_count: 0,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![recovery_tlv],
         offsets: Vec::new(),
@@ -114,9 +111,7 @@ fn build_archive_with_malformed_recovery_tlv() -> Vec<u8> {
     let flags = GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
     let header = GlobalHeader {
         version: 0x01,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let header_bytes = write_global_header(&header).expect("header");
@@ -130,7 +125,6 @@ fn build_archive_with_malformed_recovery_tlv() -> Vec<u8> {
     let cd = CentralDictionary {
         version: 0x01,
         file_count: 0,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![malformed_recovery_tlv],
         offsets: Vec::new(),

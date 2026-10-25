@@ -58,9 +58,7 @@ pub fn no_index_global_header_bytes() -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX;
     let header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     write_global_header(&header).expect("global header encoding")
@@ -83,9 +81,7 @@ pub fn tls_exporter_global_header_bytes() -> Vec<u8> {
     });
     let header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: Some(KmsData {
             mode_id: KMS_TLS_EXPORTER,
             payload: kms_payload,
@@ -168,12 +164,11 @@ pub fn tls_exporter_encrypted_control_entry_bytes(
     // active session header (KMS excluded from the flags section).
     let gfs_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
-    let global_flags_section = sar_core::global_header_flags_bytes(&gfs_header);
+    let global_flags_section =
+        sar_core::global_header_flags_bytes(&gfs_header).expect("global header AAD");
 
     // Valid AES-256-GCM nonce: first 12 bytes are the IV, bytes 12-23 must
     // be zero (SAR convention for AES-GCM in the 24-byte nonce field).
@@ -222,12 +217,10 @@ pub fn tls_exporter_encrypted_control_entry_wrong_lfh_aad(
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
     let gfs_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
-    let global_flags_section = global_header_flags_bytes(&gfs_header);
+    let global_flags_section = global_header_flags_bytes(&gfs_header).expect("global header AAD");
 
     let mut nonce = [0u8; 24];
     nonce[..12].copy_from_slice(&[0xACu8; 12]);
@@ -281,12 +274,11 @@ pub fn tls_exporter_encrypted_control_entry_wrong_gh_aad(
     // Wrong global-flags section used only for encryption.
     let wrong_gfs_header = GlobalHeader {
         version: 1,
-        flags_bytes: wrong_flags.bits().to_le_bytes().to_vec(),
         flags: wrong_flags,
-        partition_descriptor: None,
         kms: None,
     };
-    let wrong_global_flags_section = global_header_flags_bytes(&wrong_gfs_header);
+    let wrong_global_flags_section =
+        global_header_flags_bytes(&wrong_gfs_header).expect("global header AAD");
 
     let mut nonce = [0u8; 24];
     nonce[..12].copy_from_slice(&[0xADu8; 12]);
@@ -415,12 +407,10 @@ pub fn tls_exporter_aead_primary_stream_entry_bytes(
     // as the first half of the AAD.  KMS payload is NOT included.
     let gfs_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
-    let global_flags_section = global_header_flags_bytes(&gfs_header);
+    let global_flags_section = global_header_flags_bytes(&gfs_header).expect("global header AAD");
 
     // Valid AES-256-GCM nonce: first 12 bytes are the nonce, bytes 12-23
     // must be zero (SAR convention for AES-GCM in the 24-byte nonce field).
