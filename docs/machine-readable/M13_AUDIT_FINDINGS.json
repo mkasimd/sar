@@ -874,7 +874,7 @@
     {
       "milestone": "M13a.7",
       "title": "Specification Gap Triage and Normative Resolution",
-      "status": "in_progress",
+      "status": "complete",
       "started_date": "2026-08-05",
       "included_artifacts": [
         "specification.md",
@@ -894,13 +894,14 @@
         "M13a.7 records triage decisions, normative question formulations, and design directions only; no remediation is implemented in this scope.",
         "Open specification gaps do not prevent marking individual objectives complete while the overall M13a.7 scope remains in_progress.",
         "All new findings (M13-SPEC-003 through M13-SPEC-007) are assigned to M13a.7 for normative resolution.",
-        "M13-TRANSFORM-001 has been reclassified: the original demand for per-repository-preset normative algorithm tables was misclassified; implementation, API, and documentation remediation remains open."
+        "M13-TRANSFORM-001 has been reclassified: the original demand for per-repository-preset normative algorithm tables was misclassified; implementation, API, and documentation remediation remains open.",
+        "Normative resolution is recorded as resolved for M13-PARSER-004, M13-EXTRACT-005, M13-TRANSFORM-001, and M13-SPEC-002 through M13-SPEC-007. Implementation remediation for the resolved decisions is open and assigned to M13b through implementation_spec_mismatch findings."
       ],
       "objectives": [
         {
           "id": "M13a.7-OBJ-01",
           "title": "Triage and classify specification gaps",
-          "status": "in_progress",
+          "status": "complete",
           "outcome": "findings_recorded",
           "summary": "Review all M13 findings classified as specification_gap or pending_normative_resolution. Confirm that each gap represents missing, ambiguous, or internally inconsistent normative behavior. Record triage decisions and classification in the findings registry.",
           "related_findings": [
@@ -918,60 +919,87 @@
         {
           "id": "M13a.7-OBJ-02",
           "title": "Resolve parser and extraction semantics",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Determine the intended normative behavior for M13-PARSER-004 (GlobalFlags undefined bits and extension bytes) and M13-EXTRACT-005 (symlink target conformance and extraction-safety). Record normative decisions, compatibility impact, and verification expectations.",
-          "related_findings": []
+          "related_findings": [
+            "M13-PARSER-004",
+            "M13-EXTRACT-005"
+          ]
         },
         {
           "id": "M13a.7-OBJ-03",
           "title": "Resolve profile taxonomy and terminology",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Determine whether Compliance Profile should be introduced as the normative umbrella term for the three existing specification-defined implementation capability profiles. Record the normative decision for M13-SPEC-006.",
-          "related_findings": []
+          "related_findings": [
+            "M13-SPEC-006"
+          ]
         },
         {
           "id": "M13a.7-OBJ-04",
           "title": "Complete compliance and KMS interoperability baseline",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Determine mandatory role-qualified conformance, Guaranteed Interoperability Baseline, KMS mode requirements, parameter ranges, and encoder-decoder self-compatibility rules for same-profile interoperability. Record the normative decision for M13-SPEC-003.",
-          "related_findings": []
+          "related_findings": [
+            "M13-SPEC-003",
+            "M13-TRANSFORM-001"
+          ]
         },
         {
           "id": "M13a.7-OBJ-05",
           "title": "Resolve partition wire architecture",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Determine the normative wire structures, field layouts, ordering rules, integrity scopes, KMS consistency rules, and validation behavior that define a complete interoperable Partition Set. Record the normative decision for M13-SPEC-004.",
-          "related_findings": []
+          "related_findings": [
+            "M13-SPEC-004"
+          ]
         },
         {
           "id": "M13a.7-OBJ-06",
           "title": "Classify fragmented LFH field semantics",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Classify every LFH field by its required presence, absence, inheritance, equality, variability, and error semantics across Fragment Index values. Record the normative decision for M13-SPEC-005.",
-          "related_findings": []
+          "related_findings": [
+            "M13-SPEC-005"
+          ]
         },
         {
           "id": "M13a.7-OBJ-07",
           "title": "Reorganize error and status registry",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Define a category taxonomy, numeric allocation ranges, semantic scopes, warning model, reservation policy, and compatibility strategy for the SAR error and status registry. Record the normative decision for M13-SPEC-007.",
-          "related_findings": []
+          "related_findings": [
+            "M13-SPEC-007"
+          ]
         },
         {
           "id": "M13a.7-OBJ-08",
           "title": "Perform final normative consistency and implementation-impact review",
-          "status": "planned",
-          "outcome": "not_assessed",
+          "status": "complete",
+          "outcome": "findings_recorded",
           "summary": "Review all normative decisions from M13a.7-OBJ-02 through M13a.7-OBJ-07 for mutual consistency and implementation impact. Assign resulting implementation and test work to the applicable M13b milestone.",
-          "related_findings": []
+          "related_findings": [
+            "M13-PARSER-016",
+            "M13-PARSER-017",
+            "M13-TRANSFORM-009",
+            "M13-TRANSFORM-010",
+            "M13-BOUNDARY-003",
+            "M13-BOUNDARY-004",
+            "M13-BOUNDARY-005",
+            "M13-CRYPTO-007",
+            "M13-TRANSPORT-004",
+            "M13-FFI-004"
+          ]
         }
-      ]
+      ],
+      "completed_date": "2026-10-25",
+      "reviewed_commit": "7e0edf9553f0169931214cf8e61e757aac44a1ce"
     }
   ],
   "findings": [
@@ -1154,7 +1182,7 @@
         "wire_format",
         "interoperability"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "medium",
       "confidence": "confirmed",
@@ -1193,10 +1221,29 @@
         }
       ],
       "resolution_owner": "M13a.7",
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "behavioral_change",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
-      }
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Global Flags is a fixed four-byte field in SAR 1.0; all unassigned bits are reserved and MUST be zero; a nonzero reserved bit is rejected with SAR_ERR_RESERVED_VALUE.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) cc65562). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-PARSER-017",
+          "M13-SPEC-007"
+        ]
+      },
+      "notes": [
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-PARSER-017."
+      ]
     },
     {
       "id": "M13-PARSER-005",
@@ -2200,7 +2247,7 @@
         "interoperability",
         "conformance"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "medium",
       "confidence": "confirmed",
@@ -2239,10 +2286,30 @@
         }
       ],
       "resolution_owner": "M13a.7",
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "behavioral_change",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
-      }
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Symlink metadata validity is separated from materialization safety; canonical LFH name/path syntax, duplicate-Entry final-state behavior, SAR_ERR_PATH_COLLISION/SAR_ERR_PATH_ESCAPE, and incomplete-extraction behavior are defined.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) a864247). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-BOUNDARY-005",
+          "M13-SPEC-005",
+          "M13-SPEC-007"
+        ]
+      },
+      "notes": [
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-BOUNDARY-005."
+      ]
     },
     {
       "id": "M13-EXTRACT-006",
@@ -2380,7 +2447,7 @@
         "conformance",
         "documentation"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "medium",
       "confidence": "confirmed",
@@ -2405,23 +2472,35 @@
           "description": "`validate_archive_profile` documentation explicitly notes: 'Algorithm ID checks are not yet implemented (requires entry iteration).' The function validates only NO_INDEX and ENCRYPTED global flags per profile."
         }
       ],
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "behavioral_change",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
+        "test_requirement": "not_required"
       },
       "notes": [
         "Reclassification (M13a.7): The original demand for per-repository-preset normative algorithm tables was misclassified. Repository-defined presets are not normative SAR Compliance Profiles and do not require per-preset normative algorithm tables in the specification.",
-        "Implementation, API, documentation, and source-code comment validation remediation remains open under this finding.",
-        "Wider normative specification work arising from this reclassification is tracked separately: compliance and KMS interoperability baseline in M13-SPEC-003, partition wire architecture in M13-SPEC-004, fragment LFH field semantics in M13-SPEC-005, and Compliance Profile umbrella terminology in M13-SPEC-006."
+        "Implementation, API, documentation, and source-code comment validation remediation is tracked by M13-BOUNDARY-004 and M13-CRYPTO-007 after normative resolution.",
+        "Wider normative specification work arising from this reclassification is tracked separately: compliance and KMS interoperability baseline in M13-SPEC-003, partition wire architecture in M13-SPEC-004, fragment LFH field semantics in M13-SPEC-005, and Compliance Profile umbrella terminology in M13-SPEC-006.",
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-BOUNDARY-004."
       ],
       "relationships": {
         "related_findings": [
+          "M13-BOUNDARY-004",
           "M13-SPEC-003",
           "M13-SPEC-004",
           "M13-SPEC-005",
           "M13-SPEC-006"
         ]
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Compliance Profiles are implementation capability baselines (role-qualified conformance, Guaranteed Interoperability Baseline); repository presets are not Compliance Profiles; the Standard profile is named Standard Interoperable Profile.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) a9961f4). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
       }
     },
     {
@@ -3573,7 +3652,7 @@
         "conformance",
         "documentation"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "low",
       "confidence": "confirmed",
@@ -3604,11 +3683,24 @@
           "description": "`inspect_recovery_metadata()` returns repair_unavailable_reason when the CD is absent (NO_INDEX) or when no RECOVERY TLV is found in the CD. There is no code path in the reviewed implementation for locating RECOVERY parity from an external sidecar file."
         }
       ],
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "clarification_only",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
-      }
+        "test_requirement": "not_required"
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "SAR v1.0 deliberately defines no interoperable external recovery-sidecar format and no normative archive-binding mechanism for external recovery metadata. Such metadata is outside SAR v1.0 interoperability and conforming processing must not require it; a future specification or separately standardized extension may define one.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative statement added to Section 9.2 (External Recovery Metadata) in commit 7e0edf9. No Compliance Profile feature is implied. No current SAR v1.0 clause defines or requires an external sidecar. Implementation remediation: none required."
+      },
+      "notes": [
+        "Normative resolution: resolved. Implementation remediation: none required."
+      ]
     },
     {
       "id": "M13-SPEC-003",
@@ -3622,7 +3714,7 @@
         "conformance",
         "error_handling"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "high",
       "confidence": "confirmed",
@@ -3664,25 +3756,38 @@
           "description": "ASYMMETRIC_WRAP is listed in the KMS mode registry with a payload structure but its required constructions, key types, and wrapping algorithms are not completely normatively defined."
         }
       ],
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "wire_incompatible",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
+        "test_requirement": "not_required"
       },
       "notes": [
         "Encoder-only, decoder-only, and encoder-decoder role-qualified conformance are intended to be introduced as part of normative resolution.",
         "The umbrella term `Compliance Profile` is separately tracked by M13-SPEC-006 and must not be inferred from the disposition of M13-TRANSFORM-001.",
         "The Minimal Interoperable Archive Profile and Minimal Interoperable Streaming Profile are expected to require PBKDF2/HMAC-SHA256 for interoperable encrypted output.",
-        "The Standard Compliance Profile is expected to require both PBKDF2 and Argon2id.",
-        "Exact normative text for KMS parameter ranges and role requirements remains pending normative resolution.",
-        "No new encoded compliance-profile identifier is intended; existing profile identifiers are not changed."
+        "The Standard Interoperable Profile is expected to require both PBKDF2 and Argon2id.",
+        "No new encoded compliance-profile identifier is intended; existing profile identifiers are not changed.",
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-CRYPTO-007, M13-BOUNDARY-004."
       ],
       "relationships": {
         "related_findings": [
-          "M13-TRANSFORM-001",
+          "M13-BOUNDARY-004",
+          "M13-CRYPTO-007",
+          "M13-SPEC-004",
           "M13-SPEC-006",
-          "M13-SPEC-007"
+          "M13-SPEC-007",
+          "M13-TRANSFORM-001"
         ]
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "The 32-byte KMS Master Secret, HKDF-SHA256 Entry key derivation, PBKDF2/Argon2id baselines, complete asymmetric wrapping constructions, standard AEAD key/nonce/tag/nonce-scope rules, full Global Header AAD, directional TLS_EXPORTER scopes, and role-qualified conformance are defined.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) 05fb383, a9961f4). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
       }
     },
     {
@@ -3698,7 +3803,7 @@
         "cryptography",
         "compatibility"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "high",
       "confidence": "confirmed",
@@ -3731,7 +3836,7 @@
       "compatibility_impact": "wire_incompatible",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
+        "test_requirement": "not_required"
       },
       "notes": [
         "Drafted direction (not adopted): terminal LFH-based Partition Manifest Entry to replace or supplement the pre-Data-Area Partition Descriptor.",
@@ -3747,16 +3852,28 @@
         "Drafted direction (not adopted): partition-local signature scope definition.",
         "Drafted direction (not adopted): cross-partition KMS consistency rules.",
         "Drafted direction (not adopted): duplicate partition candidate resolution rules.",
-        "Dedicated binary-layout, compatibility, versioning, parser, encoder, and test vector review is required before any partition wire model change is adopted."
+        "Dedicated binary-layout, compatibility, versioning, parser, encoder, and test vector review is required before any partition wire model change is adopted.",
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-BOUNDARY-003."
       ],
       "relationships": {
         "related_findings": [
+          "M13-BOUNDARY-003",
           "M13-COLD-001",
           "M13-SPEC-002",
           "M13-SPEC-003",
           "M13-SPEC-005",
           "M13-SPEC-007"
         ]
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Partition Sets are defined by a terminal PARTITION_MANIFEST Entry carrying identity, ordering, finality, count, hash linkage, and content commitment; partition-local Central Dictionary and Footer with member-relative offsets; Data Area CRC32; scoped signature/KMS/duplicate/completion rules; incomplete Partition Set handling (Sections 19.1.8, 19.4).",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) 18fad56, 83e089b). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
       }
     },
     {
@@ -3772,7 +3889,7 @@
         "fec",
         "recovery"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "medium",
       "confidence": "confirmed",
@@ -3802,18 +3919,34 @@
           "description": "SAR_ERR_METADATA_CONFLICT is defined for conflicting or mutually exclusive metadata, but the conditions under which it applies to fragment LFH field conflicts are not fully enumerated."
         }
       ],
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "wire_incompatible",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
+        "test_requirement": "not_required"
       },
       "relationships": {
         "related_findings": [
           "M13-EXTRACT-005",
+          "M13-PARSER-016",
           "M13-SPEC-004",
-          "M13-SPEC-007"
+          "M13-SPEC-007",
+          "M13-TRANSFORM-009",
+          "M13-TRANSFORM-010"
         ]
-      }
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Fragment LFH metadata is reduced to Fragment ID and Fragment Index; Uncompressed Size is the decoded fragment contribution length; Fragment Reassembly Sequence, canonical pipeline (Section 13.1), Sparse Logical Size, scoped timeout/degraded-prefix rules, and Stateful Streaming sequencing are defined; later-fragment Name/Path/Sparse Map conflicts map to SAR_ERR_METADATA_CONFLICT.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) 83e089b). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
+      },
+      "notes": [
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-PARSER-016, M13-TRANSFORM-009, M13-TRANSFORM-010."
+      ]
     },
     {
       "id": "M13-SPEC-006",
@@ -3825,7 +3958,7 @@
         "documentation",
         "profile_boundary"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "low",
       "confidence": "confirmed",
@@ -3846,19 +3979,31 @@
       "compatibility_impact": "clarification_only",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
+        "test_requirement": "not_required"
       },
       "notes": [
         "Introducing 'Compliance Profile' as a normative umbrella term is intended to clarify that repository presets, product modes, installation profiles, transport profiles, and algorithm-specific profiles are not Compliance Profiles.",
-        "No renaming of the existing three profiles is intended; 'Standard Compliance Profile', 'Minimal Interoperable Archive Profile', and 'Minimal Interoperable Streaming Profile' remain the canonical names.",
+        "The Standard profile is renamed 'Standard Interoperable Profile' (Section 12.1); 'Minimal Interoperable Archive Profile' and 'Minimal Interoperable Streaming Profile' keep their names.",
         "No new encoded compliance-profile identifier in the SAR wire format is intended.",
-        "This finding must be resolved independently of M13-TRANSFORM-001 and must not be marked resolved simply because M13-TRANSFORM-001 is resolved."
+        "This finding must be resolved independently of M13-TRANSFORM-001 and must not be marked resolved simply because M13-TRANSFORM-001 is resolved.",
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-BOUNDARY-004."
       ],
       "relationships": {
         "related_findings": [
-          "M13-TRANSFORM-001",
-          "M13-SPEC-003"
+          "M13-BOUNDARY-004",
+          "M13-SPEC-003",
+          "M13-TRANSFORM-001"
         ]
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Compliance Profile is adopted as the normative umbrella term for the specification-defined implementation capability profiles without a new encoded identifier; repository presets, product modes, installation profiles, and transport profiles are not Compliance Profiles.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) a9961f4). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
       }
     },
     {
@@ -3872,7 +4017,7 @@
         "public_api",
         "compatibility"
       ],
-      "status": "pending_normative_resolution",
+      "status": "resolved",
       "severity": "not_applicable",
       "priority": "medium",
       "confidence": "confirmed",
@@ -3896,40 +4041,692 @@
           "description": "Section 10 provides additional semantic scope paragraphs for SAR_ERR_UNSUPPORTED and SAR_ERR_MALFORMED to guide correct usage, but these are the only two values with explicit scope guidance. Semantic boundaries for other values (especially SAR_WARN_INCOMPLETE at 18) are not defined."
         }
       ],
-      "compatibility_impact": "unknown_pending_resolution",
+      "compatibility_impact": "wire_incompatible",
       "resolution_owner": "M13a.7",
       "verification": {
-        "test_requirement": "pending_normative_resolution"
+        "test_requirement": "not_required"
       },
       "notes": [
         "Numeric identity of finalized status values is normative; once a value is finalized it must not be renumbered.",
         "Category organization must not create implicit range-based semantics unless explicit guaranteed numeric ranges are defined in the specification.",
         "The review may renumber provisional values because no independent SAR implementation exists yet; this window closes once an independent implementation ships.",
         "The review must cover statuses required by parser, extraction, KMS, unsupported-skip, fragmentation, and partition normative decisions.",
-        "Internal validation order remains implementation-defined unless normative resolution determines that a specific order affects interoperability."
+        "Internal validation order remains implementation-defined unless normative resolution determines that a specific order affects interoperability.",
+        "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-FFI-004, M13-TRANSPORT-004.",
+        "Provisional values were renumbered before any independent implementation existed; finalized Section 10 values must not be renumbered or reused."
       ],
       "relationships": {
         "related_findings": [
-          "M13-PARSER-004",
           "M13-EXTRACT-005",
+          "M13-FFI-004",
+          "M13-PARSER-004",
           "M13-SPEC-003",
           "M13-SPEC-004",
-          "M13-SPEC-005"
+          "M13-SPEC-005",
+          "M13-TRANSPORT-004"
+        ]
+      },
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13a.7",
+        "summary": "Section 10 defines an unsigned 16-bit categorical allocation (0 OK; 1-99 warnings; 100-899 error classes; 900-32767 reserved; 32768-65534 implementation-private; 0xFFFF SAR_ERR_GENERIC), SAR_WARN_INCOMPLETE/SAR_WARN_SKIPPED semantics, permanently retired provisional codes, deterministic condition-to-status mappings, and the SESSION_STATUS.STATUS_CODE wire representation. Numeric blocks are allocation organization only and carry no inferable semantics.",
+        "references": [
+          "specification.md"
+        ],
+        "resolved_date": "2026-10-25",
+        "rationale": "Normative decision incorporated into specification.md (commit(s) 937ca94). Normative resolution is distinct from implementation remediation, which is tracked by the linked M13b implementation_spec_mismatch findings and is not complete."
+      }
+    },
+    {
+      "id": "M13-PARSER-016",
+      "title": "Fragment LFH layout still encodes Absolute Offset and Fragment Size",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "wire_format",
+        "parser",
+        "interoperability"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "The implemented fragment LFH carries a Fragment Descriptor (Absolute Offset and Fragment Size) in addition to Fragment ID and Fragment Index.",
+      "current_behavior": "The LFH parser, writer, and size computation read and write an additional offset and size field group when FILE_FRAGMENTATION is set, producing a Header Size that differs from the finalized layout (for example, the Appendix A example with ENCRYPTED, FILE_FRAGMENTATION, and HAS_PATH has Header Size 55).",
+      "expected_behavior": "The fragment LFH metadata is exactly Fragment ID (4 bytes) and Fragment Index (4 bytes). The fragment contribution length is the LFH Uncompressed Size.",
+      "impact": "Archives written by the implementation are not valid SAR 1.0 for fragmented Entries, and conforming fragmented archives are misparsed.",
+      "affected_artifacts": [
+        "crates/sar-core/src/format.rs",
+        "crates/sar-fragmentation/src/lib.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/format.rs",
+          "locator": "struct `LfhFragmentDescriptor` and the LFH parse/write/size paths",
+          "description": "Fragment descriptor with absolute offset and fragment size is parsed, written, and size-validated."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 6.1.1 and 6.1.3 (fragment LFH metadata) and Appendix A",
+          "requirement": "When FILE_FRAGMENTATION is enabled the LFH contains Fragment ID and Fragment Index only."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13b.1",
+      "remediation": {
+        "owner": "M13b.1",
+        "requirements": [
+          "Remove the Fragment Descriptor from the LFH model, parser, writer, and size computation; encode only Fragment ID and Fragment Index.",
+          "Update the Appendix A example vectors, fixtures, and fuzz seeds to the finalized layout."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "A fragmented LFH round-trips with exactly Fragment ID and Fragment Index.",
+          "The Appendix A example parses with Header Size 55 and payload at offset 0x37."
+        ],
+        "owner_milestone": "M13b.1"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-005",
+          "M13-TRANSFORM-009",
+          "M13-BOUNDARY-005"
+        ]
+      }
+    },
+    {
+      "id": "M13-PARSER-017",
+      "title": "Global Flags still accepts variable extension bytes instead of a fixed four-byte field",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "wire_format",
+        "parser",
+        "compatibility"
+      ],
+      "status": "confirmed",
+      "severity": "medium",
+      "priority": "medium",
+      "confidence": "high",
+      "summary": "The implementation models Global Flags as a variable-length byte field, while SAR 1.0 defines a fixed four-byte field with all unassigned bits reserved.",
+      "current_behavior": "The Global Header parser/writer carries a variable-length flags byte buffer governed by a configurable maximum size; reserved-bit handling follows the previous contract.",
+      "expected_behavior": "Global Flags is a four-byte field; a nonzero reserved bit MUST be rejected with SAR_ERR_RESERVED_VALUE and writers MUST emit zero reserved bits.",
+      "impact": "Extension bytes would be accepted or emitted that SAR 1.0 does not define, and reserved bits may map to a different status.",
+      "affected_artifacts": [
+        "crates/sar-core/src/format.rs",
+        "crates/sar-core/src/flags.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/format.rs",
+          "locator": "Global Header `flags_bytes` handling and `global_header_flags_bytes()`",
+          "description": "Flags are carried as a variable-length byte buffer."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 5.2 (Global Flags Registry)",
+          "requirement": "All unassigned bits in the 32-bit Global Flags field are reserved; a nonzero reserved bit MUST be rejected with SAR_ERR_RESERVED_VALUE."
+        }
+      ],
+      "compatibility_impact": "behavioral_change",
+      "resolution_owner": "M13b.1",
+      "remediation": {
+        "owner": "M13b.1",
+        "requirements": [
+          "Model Global Flags as a fixed four-byte field and reject invalid sizes and nonzero reserved bits with the status defined by Section 10."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "A nonzero reserved Global Flags bit yields SAR_ERR_RESERVED_VALUE.",
+          "Writers emit zero reserved bits."
+        ],
+        "owner_milestone": "M13b.1"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-PARSER-004",
+          "M13-PARSER-001"
+        ]
+      }
+    },
+    {
+      "id": "M13-TRANSFORM-009",
+      "title": "Fragment reassembly uses absolute-offset scattering and zero-fill instead of dense Fragment Index concatenation",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "transform",
+        "recovery",
+        "wire_format"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "Reassembly, degraded output, and LOSS_TOLERANT handling follow the old offset-based model.",
+      "current_behavior": "Output size is computed from absolute offset plus fragment size, payloads are scattered at descriptor offsets, overlaps are rejected, and gaps are handled by descriptor ranges with possible zero fill.",
+      "expected_behavior": "The Fragment Reassembly Sequence is the concatenation of fragment contributions in ascending Fragment Index order; indices are dense with exactly one LAST_FRAGMENT; degraded LOSS_TOLERANT output is only the longest contiguous valid prefix from Fragment Index 0 with no synthetic fill and no partial group-wide stage; incomplete groups never reach delta, CDC, or sparse stages.",
+      "impact": "Reconstructed bytes, degraded output, and error statuses differ from the specification.",
+      "affected_artifacts": [
+        "crates/sar-fragmentation/src/lib.rs",
+        "crates/sar-archive/src/archive.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-fragmentation/src/lib.rs",
+          "locator": "reassembly and gap handling over fragment descriptors",
+          "description": "Output sized from absolute offsets with scatter placement."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Sections 6.1.3, 6.2.3, 13.1, 19.4.5",
+          "requirement": "Fragment contributions are concatenated in ascending Fragment Index order; degraded output is the longest contiguous valid prefix from Fragment Index 0."
+        }
+      ],
+      "compatibility_impact": "behavioral_change",
+      "resolution_owner": "M13b.3",
+      "remediation": {
+        "owner": "M13b.3",
+        "requirements": [
+          "Reassemble by dense Fragment Index concatenation of exactly Uncompressed Size bytes per fragment.",
+          "Implement prefix-only degraded output returning SAR_WARN_INCOMPLETE and SAR_ERR_FRAGMENT_GAP for incomplete input to a mandatory group-wide stage.",
+          "Implement the fragment-local versus group-wide pipeline split of Section 13.1."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "Gap, duplicate, conflicting-metadata, and LAST_FRAGMENT-count cases return the Section 10 statuses.",
+          "No zero fill is produced for missing fragments."
+        ],
+        "owner_milestone": "M13b.3"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-005",
+          "M13-PARSER-016",
+          "M13-TRANSFORM-005"
+        ]
+      }
+    },
+    {
+      "id": "M13-TRANSFORM-010",
+      "title": "Sparse reconstruction ignores Sparse Logical Size and maps a later-fragment Sparse Map to InvalidMap",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "sparse",
+        "transform",
+        "wire_format",
+        "error_handling"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "Sparse Map parsing and reconstruction do not use the Sparse Logical Size prefix, and a Sparse Map on Fragment Index > 0 returns the wrong status.",
+      "current_behavior": "The Sparse Map is parsed as extents only; the final apparent size is taken from Fragment Index 0 LFH Uncompressed Size; a Sparse Map on a non-zero Fragment Index returns InvalidMap (SAR_ERR_INVALID_MAP).",
+      "expected_behavior": "The Sparse Map begins with the authoritative Sparse Logical Size (included in Sparse Map Size, width per 64BIT_SIZE where specified), which defines the final apparent size; fragment LFH Uncompressed Size remains LFH-local; a Sparse Map on Fragment Index > 0 returns SAR_ERR_METADATA_CONFLICT.",
+      "impact": "Sparse files reconstruct to the wrong size and the wire format of the Sparse Map differs.",
+      "affected_artifacts": [
+        "crates/sar-core/src/sparse.rs",
+        "crates/sar-sparse/src/lib.rs",
+        "crates/sar-archive/src/archive.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-archive/src/archive.rs",
+          "locator": "fragment-group sparse handling in `read_all_logical_files`",
+          "description": "Uses fragment-0 LFH Uncompressed Size as final sparse size and returns InvalidMap for a later-fragment Sparse Map."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Sections 6.1.2, 6.1.3, 17.2, 19.6",
+          "requirement": "The Sparse Map includes the authoritative Sparse Logical Size; a later-fragment Sparse Map returns SAR_ERR_METADATA_CONFLICT."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13b.3",
+      "remediation": {
+        "owner": "M13b.3",
+        "requirements": [
+          "Encode and decode Sparse Logical Size inside the Sparse Map and validate extents against it.",
+          "Reconstruct to Sparse Logical Size, including all-hole files.",
+          "Return SAR_ERR_METADATA_CONFLICT for a Sparse Map on Fragment Index > 0."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "Trailing-hole and all-hole sparse vectors reconstruct to Sparse Logical Size.",
+          "A later-fragment Sparse Map yields SAR_ERR_METADATA_CONFLICT."
+        ],
+        "owner_milestone": "M13b.3"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-005",
+          "M13-TRANSFORM-004",
+          "M13-TRANSFORM-009"
+        ]
+      }
+    },
+    {
+      "id": "M13-BOUNDARY-003",
+      "title": "Partition Set support is a stub and does not implement the terminal Partition Manifest architecture",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "wire_format",
+        "recovery",
+        "crate_boundary",
+        "interoperability"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "The sar-partition crate is an explicit stub and archive integration does not implement Partition Manifests, partition-local Central Dictionaries and Footers, or Partition Set validation.",
+      "current_behavior": "No Partition Manifest parsing, member-relative CD/Footer offsets, Current/Previous Partition Hash validation, incomplete-set handling, or cross-Partition fragment scope exists; the old descriptor-based model is referenced.",
+      "expected_behavior": "Implement Partition Set semantics of Section 19: terminal PARTITION_MANIFEST, partition-local CD/Footer, Data Area CRC32, hash linkage (mismatches map to SAR_ERR_HASH_MISMATCH), finality and known-boundary handling, incomplete Partition Set rules (19.1.8), and fragment groups spanning Partitions.",
+      "impact": "Partitioned archives cannot be produced or consumed interoperably.",
+      "affected_artifacts": [
+        "crates/sar-partition/src/lib.rs",
+        "crates/sar-archive/src/archive.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-partition/src/lib.rs",
+          "locator": "crate documentation and `NotImplemented`",
+          "description": "The crate documents a descriptor-based layout and exposes no implemented behavior."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 19.1 and 19.4",
+          "requirement": "Every Partition terminates its Data Area with a Partition Manifest Entry; fragment groups may span Partitions."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13b.3",
+      "remediation": {
+        "owner": "M13b.3",
+        "requirements": [
+          "Implement the Section 19 Partition Set model, including manifest validation, local offsets, and incomplete-set behavior.",
+          "Map Partition, Previous Partition, and Anchor hash mismatches to SAR_ERR_HASH_MISMATCH."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "A multi-Partition vector with a cross-Partition fragmented Entry round-trips.",
+          "Missing-member and unknown-boundary cases follow Section 19.1.8."
+        ],
+        "owner_milestone": "M13b.3"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-004",
+          "M13-TRANSFORM-009"
+        ]
+      }
+    },
+    {
+      "id": "M13-BOUNDARY-004",
+      "title": "Compliance Profile implementation and naming do not reflect the finalized profile model",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "profile_boundary",
+        "conformance",
+        "documentation",
+        "public_api"
+      ],
+      "status": "confirmed",
+      "severity": "medium",
+      "priority": "medium",
+      "confidence": "high",
+      "summary": "The implemented ComplianceProfile enumeration and validators predate role-qualified conformance, the Guaranteed Interoperability Baseline, and the Standard Interoperable Profile naming.",
+      "current_behavior": "The Standard profile validator is a placeholder, repository presets are exposed alongside specification profiles, and role-qualified conformance and baseline semantics are not represented.",
+      "expected_behavior": "Profile identifiers, validators, documentation, and API metadata follow Section 12 (Compliance Profile umbrella term, role-qualified conformance, Guaranteed Interoperability Baseline, Standard Interoperable Profile, Transparent Skip and incomplete processing under 12.4 returning SAR_WARN_SKIPPED).",
+      "impact": "Conformance claims by the implementation can disagree with the specification.",
+      "affected_artifacts": [
+        "crates/sar-archive/src/profile.rs",
+        "docs/CONFORMANCE.md",
+        "docs/machine-readable/MACHINE_READABLE_API.json"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-archive/src/profile.rs",
+          "locator": "`ComplianceProfile` enumeration and validators",
+          "description": "Standard profile validation is a documented placeholder."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 12 and Section 12.4",
+          "requirement": "Compliance Profiles are implementation capability baselines; explicitly enabled incomplete processing reports SAR_WARN_SKIPPED."
+        }
+      ],
+      "compatibility_impact": "behavioral_change",
+      "resolution_owner": "M13b.2",
+      "remediation": {
+        "owner": "M13b.2",
+        "requirements": [
+          "Align profile naming, role-qualified conformance, and validators with Section 12.",
+          "Update CONFORMANCE.md, source-code comments, and the API inventory after implementation."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "Profile validators implement the baseline of each specification-defined Compliance Profile.",
+          "Documentation distinguishes Compliance Profiles from repository presets."
+        ],
+        "owner_milestone": "M13b.2"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-TRANSFORM-001",
+          "M13-SPEC-003",
+          "M13-SPEC-006",
+          "M13-CRYPTO-007"
+        ]
+      }
+    },
+    {
+      "id": "M13-BOUNDARY-005",
+      "title": "Test vectors, fuzz seeds, conformance lists, and API inventory encode the superseded contract",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "testing",
+        "fuzzing",
+        "documentation",
+        "conformance",
+        "public_api"
+      ],
+      "status": "confirmed",
+      "severity": "medium",
+      "priority": "medium",
+      "confidence": "high",
+      "summary": "Fixtures and documentation describe old fragment LFH and Sparse Map layouts, the old status numbering and symbolic names, and the previous path/symlink handling.",
+      "current_behavior": "Test vectors, fuzz corpora and seeds, the conformance status identifier list, docs/API.md, and the machine-readable API inventory reference retired statuses and old layouts.",
+      "expected_behavior": "All generated vectors, seeds, conformance identifiers, and API inventory entries reflect the finalized specification once the corresponding runtime remediation lands; no retired symbolic status name remains.",
+      "impact": "Conformance claims and regression coverage are inconsistent with the specification until regenerated.",
+      "affected_artifacts": [
+        "docs/CONFORMANCE.md",
+        "docs/API.md",
+        "docs/machine-readable/MACHINE_READABLE_API.json",
+        "test-vectors/README.md"
+      ],
+      "evidence": [
+        {
+          "kind": "documentation",
+          "artifact": "docs/CONFORMANCE.md",
+          "locator": "stable status identifier list",
+          "description": "Lists retired identifiers such as SAR_ERR_INVALID_ALIGNMENT and SAR_ERR_DECRYPT_FAILED."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 10.3 and Section 22",
+          "requirement": "Retired values remain unassigned and MUST NOT be reused; conformance status requirements follow the registry."
+        }
+      ],
+      "compatibility_impact": "documentation_only",
+      "resolution_owner": "M13b.1",
+      "remediation": {
+        "owner": "M13b.1",
+        "requirements": [
+          "Regenerate vectors, seeds, and fuzz targets after each runtime remediation item.",
+          "Update the conformance status list, the machine-readable API inventory, and docs/API.md after implementation, using python tools/generate_api_md.py."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "No retired status name appears in vectors, fixtures, or conformance lists.",
+          "python tools/check_api_schema.py and python tools/generate_api_md.py --check pass."
+        ],
+        "owner_milestone": "M13b.1"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-FFI-004",
+          "M13-PARSER-016",
+          "M13-TRANSFORM-010"
+        ]
+      }
+    },
+    {
+      "id": "M13-CRYPTO-007",
+      "title": "KMS Master Secret hierarchy, standard Entry key derivation, and full Global Header AAD are not implemented",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "cryptography",
+        "authentication",
+        "interoperability"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "The cryptographic implementation does not contain the finalized KMS hierarchy.",
+      "current_behavior": "No KMS Master Secret abstraction or HKDF-SHA256 Entry key derivation exists in the implementation; key and AAD handling follow the previous contract.",
+      "expected_behavior": "Implement the 32-byte KMS Master Secret, HKDF-SHA256 per-Entry (and per-fragment) key derivation, PBKDF2 and Argon2id baselines, the specified asymmetric wrapping constructions, nonce-scope rules, full encoded Global Header as Entry AAD, and directional TLS_EXPORTER scopes; AEAD failures map to SAR_ERR_AUTH_FAILED.",
+      "impact": "Encrypted archives are not interoperable with the specification.",
+      "affected_artifacts": [
+        "crates/sar-crypto/src/kms/mod.rs",
+        "crates/sar-crypto/src/aead.rs",
+        "crates/sar-archive/src/archive.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-crypto/src/kms/mod.rs",
+          "locator": "KMS module",
+          "description": "No HKDF-based Master Secret hierarchy is present in the workspace sources."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Sections 5.3, 13.2, and 18.6 (KMS, AEAD, TLS_EXPORTER)",
+          "requirement": "Entry keys are derived from the KMS Master Secret with HKDF-SHA256; the complete encoded Global Header is authenticated as AAD."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13b.2",
+      "remediation": {
+        "owner": "M13b.2",
+        "requirements": [
+          "Implement the key hierarchy of Sections 5.3, 13.2, and 18.6, nonce scope, AAD construction, and cross-Partition behavior.",
+          "Provide known-answer vectors for derivation and AAD."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "Known-answer vectors for HKDF derivation, AAD construction, and nonce scope pass.",
+          "Cross-implementation decrypt of the Guaranteed Interoperability Baseline succeeds."
+        ],
+        "owner_milestone": "M13b.2"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-003",
+          "M13-BOUNDARY-004",
+          "M13-CRYPTO-001"
+        ]
+      }
+    },
+    {
+      "id": "M13-TRANSPORT-004",
+      "title": "Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "session",
+        "transport",
+        "error_handling"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "Session processing emits acknowledgements without per-LFH ACK/OK semantics for fragments, without group-completion SUCCESS rules, and with a generic timeout.",
+      "current_behavior": "ACK/OK/SUCCESS are emitted after processing an Entry with no fragment-group completion gating; the inactivity watchdog returns the generic timeout; no fragment-group TTL or concurrency cap path is identified.",
+      "expected_behavior": "ACK and OK are per LFH; fragmented SUCCESS requires complete reconstruction, validation, and application and references the LAST_FRAGMENT Sequence No; Fragment Index ordering and Sequence No ordering are separate; watchdog expiry returns SAR_ERR_SESSION_TIMEOUT; fragment-group TTL expiry returns SAR_ERR_FRAGMENT_TIMEOUT; cap exhaustion returns SAR_ERR_REASSEMBLY_BUFFER_FULL; TRUNCATED versus STREAM_CLOSED per Section 18.3.6.",
+      "impact": "Streaming peers may acknowledge or apply fragmented operations prematurely and report non-interoperable statuses.",
+      "affected_artifacts": [
+        "crates/sar-stream/src/session.rs",
+        "crates/sar-transport/src/lib.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-stream/src/session.rs",
+          "locator": "automatic ACK/OK/SUCCESS emission after Entry processing",
+          "description": "No fragment-group completion gating is present."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Sections 18.3.3, 18.3.6, 18.4.1, 18.4.2, 19.4.3",
+          "requirement": "Fragmented SUCCESS requires complete reconstruction, validation, and application; LAST_FRAGMENT alone does not authorize application."
+        }
+      ],
+      "compatibility_impact": "behavioral_change",
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Implement per-LFH ACK/OK, group-completion SUCCESS, scoped fragment TTL, and the concurrency cap.",
+          "Return SAR_ERR_SESSION_TIMEOUT for the inactivity watchdog."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "A fragmented operation emits SUCCESS only after the group is applied, referencing the LAST_FRAGMENT Sequence No.",
+          "TTL expiry, cap exhaustion, and watchdog expiry return their Section 10 statuses."
+        ],
+        "owner_milestone": "M13b.4"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-007",
+          "M13-SPEC-005",
+          "M13-TRANSPORT-001",
+          "M13-FFI-004"
+        ]
+      }
+    },
+    {
+      "id": "M13-FFI-004",
+      "title": "SarStatus registry does not implement the finalized Section 10 status model",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "error_handling",
+        "public_api",
+        "ffi_readiness",
+        "interoperability"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "The runtime status type, numbering, mappings, and conformance identifiers follow the superseded registry.",
+      "current_behavior": "SarStatus is a signed 32-bit enumeration with sequential legacy values and a negative generic status; retired symbolic statuses remain; SAR_WARN_SKIPPED, SAR_ERR_SESSION_TIMEOUT, SAR_ERR_PATH_COLLISION, SAR_ERR_PATH_ESCAPE, and SAR_ERR_INVALID_INPUT are absent; condition-to-status mappings follow the previous contract.",
+      "expected_behavior": "Migrate to the Section 10 registry: unsigned 16-bit representation with TryFrom<u16>, SAR_ERR_GENERIC = 0xFFFF, finalized numeric assignments, retired values rejected and never reused, new warnings and errors, and the deterministic mappings (CRC_MISMATCH, HASH_MISMATCH, AUTH_FAILED, SIGNATURE_FAILED, INVALID_VERSION/UNSUPPORTED/RESERVED_VALUE, BASE_MISSING, MALFORMED for non-zero required-zero padding, METADATA_CONFLICT). Implementation-private values are not enumeration members.",
+      "impact": "The public API, SESSION_STATUS encoding, conformance manifests, and FFI status values are not interoperable with the specification.",
+      "affected_artifacts": [
+        "crates/sar-core/src/error.rs",
+        "crates/sar-stream/src/protocol.rs",
+        "crates/sar-archive/src/conformance.rs",
+        "docs/machine-readable/MACHINE_READABLE_API.json"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/error.rs",
+          "locator": "`SarStatus` and `SarError::status`",
+          "description": "Signed 32-bit legacy numbering with retired variants."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Section 10 and Section 18.3.4",
+          "requirement": "SESSION_STATUS.STATUS_CODE is an unsigned 16-bit value; 0xFFFF is SAR_ERR_GENERIC; retired values are never reused."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13b.4",
+      "remediation": {
+        "owner": "M13b.4",
+        "requirements": [
+          "Migrate SarStatus to the finalized registry (u16, canonical code(), TryFrom<u16>, no deprecated aliases).",
+          "Implement SAR_WARN_SKIPPED, SAR_ERR_SESSION_TIMEOUT, and the deterministic runtime condition-to-status mappings.",
+          "Update the conformance status list, registry tests, fuzz targets, the machine-readable API inventory, and the generated API document after implementation."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "Every Section 10 value round-trips; retired, reserved, and private values are rejected by TryFrom<u16>.",
+          "Section 10.4 condition mappings are covered by tests.",
+          "API inventory checks pass."
+        ],
+        "owner_milestone": "M13b.4"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-SPEC-007",
+          "M13-BOUNDARY-005",
+          "M13-TRANSPORT-004",
+          "M13-FFI-002"
         ]
       }
     }
   ],
   "metadata": {
-    "last_updated": "2026-08-02",
+    "last_updated": "2026-10-25",
     "branch": "copilot/m13a1-audit-milestone",
     "notes": [
       "M13a.1 findings were structurally migrated from schema v1 and then reviewed under schema v2.",
       "JSON is the authoritative structured representation; Markdown synchronization is handled separately.",
       "Open implementation, resource, fuzzing, and test findings are remediation inputs for the applicable M13b milestone.",
-      "Specification gaps remain pending normative resolution in M13a.7.",
+      "Specification gaps resolved by M13a.7 normative decisions are recorded with status resolved.",
       "M13a.3 transform and recovery resource-accounting findings are included.",
       "M13a.5 crate-boundary, profile-boundary, transport, and FFI-readiness audit findings are included.",
-      "M13a.6 cold-storage and tape-resilience audit findings are included."
+      "M13a.6 cold-storage and tape-resilience audit findings are included.",
+      "M13a.7 normative decisions leave the implementation temporarily inconsistent with specification.md; implementation, test, fuzz, test-vector, and API-inventory remediation is assigned to M13b through implementation_spec_mismatch findings."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }
