@@ -681,10 +681,7 @@ pub fn sar_error_matches_expected_status(
         "SAR_ERR_FLAG_CONFLICT" => matches!(error, SarError::FlagConflict(_)),
         "SAR_ERR_INVALID_MAGIC" => matches!(error, SarError::InvalidMagic),
         "SAR_ERR_AUTH_FAILED" => {
-            matches!(
-                error,
-                SarError::AuthFailed(_) | SarError::DecryptFailed(_) | SarError::HashMismatch(_)
-            )
+            matches!(error, SarError::AuthFailed(_) | SarError::HashMismatch(_))
         }
         "SAR_ERR_PATCH_FAILED" => matches!(error, SarError::PatchFailed(_)),
         "SAR_ERR_BASE_MISSING" => matches!(error, SarError::BaseMissing(_)),
@@ -694,14 +691,10 @@ pub fn sar_error_matches_expected_status(
         "SAR_ERR_EC_FAILED" => matches!(error, SarError::EcFailed(_)),
         "SAR_ERR_FRAGMENT_GAP" => matches!(error, SarError::FragmentGap(_)),
         "SAR_ERR_INVALID_MAP" => matches!(error, SarError::InvalidMap(_)),
-        "SAR_ERR_INVALID_ALIGNMENT" => matches!(error, SarError::InvalidAlignment(_)),
         "SAR_ERR_INVALID_LENGTH" => {
             matches!(error, SarError::InvalidLength(_) | SarError::Malformed(_))
         }
         "SAR_ERR_STREAM_STATE" => matches!(error, SarError::StreamState(_)),
-        "SAR_ERR_DECRYPT_FAILED" => {
-            matches!(error, SarError::DecryptFailed(_) | SarError::AuthFailed(_))
-        }
         "SAR_ERR_HASH_MISMATCH" => matches!(error, SarError::HashMismatch(_)),
         "SAR_ERR_CRC_MISMATCH" => matches!(error, SarError::CrcMismatch(_)),
         "SAR_ERR_INVALID_VERSION" => matches!(error, SarError::InvalidVersion(_)),

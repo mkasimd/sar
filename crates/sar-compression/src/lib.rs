@@ -6,6 +6,7 @@
 
 //! SAR compression registry and streaming encode/decode helpers.
 
+use std::cell::Cell;
 use std::io::{self, Read, Write};
 
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
@@ -88,10 +89,10 @@ pub enum CompressionError {
     /// Reserved or unassigned registry value.
     #[error("reserved compression algorithm id: 0x{0:02X}")]
     ReservedValue(u8),
-    /// Encoding operation failed.
+    /// Encoder initialization failed; source and sink I/O failures are reported as `Io`.
     #[error("compression failed: {0}")]
     CompressionFailed(String),
-    /// Decoding operation failed.
+    /// Compressed input is invalid; source and sink I/O failures are reported as `Io`.
     #[error("decompression failed: {0}")]
     DecompressionFailed(String),
     /// Decoded output exceeded configured bound.
@@ -114,22 +115,17 @@ pub fn encode_stream(
         CompressionAlgorithm::Deflate => {
             let level = Compression::new(u32::from(options.level.unwrap_or(6).min(9)));
             let mut encoder = DeflateEncoder::new(output, level);
-            io::copy(input, &mut encoder)
-                .map_err(|e| CompressionError::CompressionFailed(e.to_string()))?;
-            encoder
-                .try_finish()
-                .map_err(|e| CompressionError::CompressionFailed(e.to_string()))
+            io::copy(input, &mut encoder)?;
+            encoder.try_finish()?;
+            Ok(())
         }
         CompressionAlgorithm::Zstd => {
             let level = i32::from(options.level.unwrap_or(3).min(9));
             let mut encoder = zstd::stream::Encoder::new(output, level)
                 .map_err(|e| CompressionError::CompressionFailed(e.to_string()))?;
-            io::copy(input, &mut encoder)
-                .map_err(|e| CompressionError::CompressionFailed(e.to_string()))?;
-            encoder
-                .finish()
-                .map(|_| ())
-                .map_err(|e| CompressionError::CompressionFailed(e.to_string()))
+            io::copy(input, &mut encoder)?;
+            encoder.finish()?;
+            Ok(())
         }
     }
 }
@@ -142,26 +138,53 @@ pub fn decode_stream(
     options: DecompressionOptions,
 ) -> Result<(), CompressionError> {
     match CompressionAlgorithm::from_id(algo_id)? {
-        CompressionAlgorithm::Store => copy_bounded(input, output, options.max_output_size),
+        CompressionAlgorithm::Store => {
+            copy_bounded(input, output, options.max_output_size, CompressionError::Io)
+        }
         CompressionAlgorithm::Deflate => {
-            let mut decoder = DeflateDecoder::new(input);
-            copy_bounded(&mut decoder, output, options.max_output_size).map_err(|e| match e {
-                CompressionError::Io(inner) => {
-                    CompressionError::DecompressionFailed(inner.to_string())
-                }
-                other => other,
+            let source_failed = Cell::new(false);
+            let mut source = SourceTracker::new(input, &source_failed);
+            let mut decoder = DeflateDecoder::new(&mut source);
+            copy_bounded(&mut decoder, output, options.max_output_size, |e| {
+                decoder_read_error(&source_failed, e)
             })
         }
         CompressionAlgorithm::Zstd => {
-            let mut decoder = zstd::stream::Decoder::new(input)
+            let source_failed = Cell::new(false);
+            let mut source = SourceTracker::new(input, &source_failed);
+            let mut decoder = zstd::stream::Decoder::new(&mut source)
                 .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
-            copy_bounded(&mut decoder, output, options.max_output_size).map_err(|e| match e {
-                CompressionError::Io(inner) => {
-                    CompressionError::DecompressionFailed(inner.to_string())
-                }
-                other => other,
+            copy_bounded(&mut decoder, output, options.max_output_size, |e| {
+                decoder_read_error(&source_failed, e)
             })
         }
+    }
+}
+
+/// Records whether the underlying source itself failed, so decoder errors caused by
+/// source I/O are not confused with malformed compressed data.
+struct SourceTracker<'a> {
+    inner: &'a mut dyn Read,
+    failed: &'a Cell<bool>,
+}
+
+impl<'a> SourceTracker<'a> {
+    fn new(inner: &'a mut dyn Read, failed: &'a Cell<bool>) -> Self {
+        Self { inner, failed }
+    }
+}
+
+impl Read for SourceTracker<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf).inspect_err(|_| self.failed.set(true))
+    }
+}
+
+fn decoder_read_error(source_failed: &Cell<bool>, error: io::Error) -> CompressionError {
+    if source_failed.get() {
+        CompressionError::Io(error)
+    } else {
+        CompressionError::DecompressionFailed(error.to_string())
     }
 }
 
@@ -169,11 +192,12 @@ fn copy_bounded(
     input: &mut dyn Read,
     output: &mut dyn Write,
     max_output_size: u64,
+    map_read_error: impl Fn(io::Error) -> CompressionError,
 ) -> Result<(), CompressionError> {
     let mut buf = [0u8; 8192];
     let mut written = 0u64;
     loop {
-        let n = input.read(&mut buf)?;
+        let n = input.read(&mut buf).map_err(&map_read_error)?;
         if n == 0 {
             break;
         }

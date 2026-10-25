@@ -7,186 +7,156 @@ use std::{fmt, io};
 
 use thiserror::Error;
 
-/// SAR status and error registry values from specification section 10.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
-pub enum SarStatus {
+macro_rules! status_registry {
+    ($($(#[$doc:meta])* $variant:ident = $value:literal => $name:literal,)+) => {
+        /// SAR status registry values from specification section 10.2.
+        ///
+        /// The enumeration is closed: it contains exactly the standardized
+        /// assignments. Retired, reserved, unassigned, and implementation-private
+        /// numeric values are not members and are rejected by [`TryFrom<u16>`].
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u16)]
+        pub enum SarStatus {
+            $($(#[$doc])* $variant = $value,)+
+        }
+
+        impl SarStatus {
+            /// Registry constant name.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+
+        impl TryFrom<u16> for SarStatus {
+            type Error = SarStatusParseError;
+
+            fn try_from(value: u16) -> Result<Self, Self::Error> {
+                match value {
+                    $($value => Ok(Self::$variant),)+
+                    _ => Err(SarStatusParseError(value)),
+                }
+            }
+        }
+    };
+}
+
+status_registry! {
     /// Success.
-    Ok = 0,
+    Ok = 0 => "SAR_OK",
+    /// Permitted degraded or incomplete result; never implies full verification.
+    WarnIncomplete = 1 => "SAR_WARN_INCOMPLETE",
+    /// Repeated Full Logical Entry Path diagnostic.
+    WarnDuplicate = 2 => "SAR_WARN_DUPLICATE",
+    /// Aggregate result of explicitly enabled skipping of unsupported Entries.
+    WarnSkipped = 3 => "SAR_WARN_SKIPPED",
+    /// Structurally invalid archive, metadata, or protocol structure.
+    ErrMalformed = 100 => "SAR_ERR_MALFORMED",
+    /// Global Header magic mismatch.
+    ErrInvalidMagic = 101 => "SAR_ERR_INVALID_MAGIC",
+    /// Structurally or normatively invalid version value.
+    ErrInvalidVersion = 102 => "SAR_ERR_INVALID_VERSION",
+    /// Physical input ended before the declared bytes were available.
+    ErrTruncated = 103 => "SAR_ERR_TRUNCATED",
+    /// Exact length relationship violated.
+    ErrInvalidLength = 104 => "SAR_ERR_INVALID_LENGTH",
+    /// Offset, range, count, or position outside its allowed domain.
+    ErrBounds = 105 => "SAR_ERR_BOUNDS",
+    /// Invalid Sparse Map structure or extent relationships.
+    ErrInvalidMap = 106 => "SAR_ERR_INVALID_MAP",
+    /// Invalid flag combination or missing flag dependency.
+    ErrFlagConflict = 108 => "SAR_ERR_FLAG_CONFLICT",
+    /// Assigned but unimplemented feature, flag, profile, algorithm, or version.
+    ErrUnsupported = 200 => "SAR_ERR_UNSUPPORTED",
+    /// Reserved, prohibited, or unassigned registry value.
+    ErrReservedValue = 201 => "SAR_ERR_RESERVED_VALUE",
+    /// AEAD authentication failed.
+    ErrAuthFailed = 300 => "SAR_ERR_AUTH_FAILED",
+    /// CRC32 verification failed.
+    ErrCrcMismatch = 301 => "SAR_ERR_CRC_MISMATCH",
+    /// Cryptographic hash verification failed.
+    ErrHashMismatch = 302 => "SAR_ERR_HASH_MISMATCH",
+    /// Digital signature verification failed.
+    ErrSignatureFailed = 303 => "SAR_ERR_SIGNATURE_FAILED",
+    /// Required key or keying material unavailable.
+    ErrKeyMissing = 304 => "SAR_ERR_KEY_MISSING",
+    /// Provided key material rejected.
+    ErrKeyRejected = 305 => "SAR_ERR_KEY_REJECTED",
+    /// Encoder detected AEAD nonce reuse.
+    ErrNonceReuse = 306 => "SAR_ERR_NONCE_REUSE",
+    /// Required Fragment Index missing.
+    ErrFragmentGap = 400 => "SAR_ERR_FRAGMENT_GAP",
+    /// Fragment-group timeout expired.
+    ErrFragmentTimeout = 401 => "SAR_ERR_FRAGMENT_TIMEOUT",
+    /// CDC recipe hash could not be resolved.
+    ErrRecipeUnresolvable = 402 => "SAR_ERR_RECIPE_UNRESOLVABLE",
+    /// Error-correction decoding failed.
+    ErrEcFailed = 403 => "SAR_ERR_EC_FAILED",
+    /// Required recovery data unavailable.
+    ErrRecoveryUnavailable = 404 => "SAR_ERR_RECOVERY_UNAVAILABLE",
+    /// Recovery metadata or parity data corrupted or unusable.
+    ErrRecoveryCorrupted = 405 => "SAR_ERR_RECOVERY_CORRUPTED",
+    /// Patch payload malformed or patch application failed.
+    ErrPatchFailed = 406 => "SAR_ERR_PATCH_FAILED",
+    /// Required delta base cannot be resolved.
+    ErrBaseMissing = 407 => "SAR_ERR_BASE_MISSING",
+    /// Checked arithmetic cannot represent the required result.
+    ErrOverflow = 500 => "SAR_ERR_OVERFLOW",
+    /// Configured or implementation-defined resource cap exceeded.
+    ErrLimitExceeded = 501 => "SAR_ERR_LIMIT_EXCEEDED",
+    /// Fragment-reassembly buffer or group-tracking cap exceeded.
+    ErrReassemblyBufferFull = 502 => "SAR_ERR_REASSEMBLY_BUFFER_FULL",
+    /// Insufficient storage space.
+    ErrNoSpace = 503 => "SAR_ERR_NO_SPACE",
+    /// Invalid stream state, lifecycle, sequencing, or Stream ID conflict.
+    ErrStreamState = 600 => "SAR_ERR_STREAM_STATE",
+    /// Concurrent or active stream limit exceeded.
+    ErrTooManyStreams = 601 => "SAR_ERR_TOO_MANY_STREAMS",
+    /// Ordered stream terminated while the session remained active.
+    ErrStreamClosed = 602 => "SAR_ERR_STREAM_CLOSED",
+    /// Required Partition or physical volume missing.
+    ErrPartitionMissing = 603 => "SAR_ERR_PARTITION_MISSING",
+    /// Partition identity does not match the expected Partition Set.
+    ErrPartitionMismatch = 604 => "SAR_ERR_PARTITION_MISMATCH",
+    /// Session inactivity watchdog expired.
+    ErrSessionTimeout = 605 => "SAR_ERR_SESSION_TIMEOUT",
+    /// Conflicting logical-path identity at materialization.
+    ErrPathCollision = 700 => "SAR_ERR_PATH_COLLISION",
+    /// Materialization destination or symlink target escapes its scope.
+    ErrPathEscape = 701 => "SAR_ERR_PATH_ESCAPE",
+    /// Required SAR interpretation or application metadata absent.
+    ErrMetadataMissing = 702 => "SAR_ERR_METADATA_MISSING",
+    /// Conflicting or mutually exclusive metadata.
+    ErrMetadataConflict = 703 => "SAR_ERR_METADATA_CONFLICT",
+    /// Destination object already exists and overwriting is not permitted.
+    ErrAlreadyExists = 704 => "SAR_ERR_ALREADY_EXISTS",
+    /// Generic referenced object lookup failure.
+    ErrNotFound = 705 => "SAR_ERR_NOT_FOUND",
+    /// Hardware, network, storage, filesystem, or transport I/O error.
+    ErrIo = 800 => "SAR_ERR_IO",
+    /// Write-protected archive, partition, stream, or destination.
+    ErrWriteProtected = 801 => "SAR_ERR_WRITE_PROTECTED",
+    /// Internal implementation error or invariant violation.
+    ErrInternal = 802 => "SAR_ERR_INTERNAL",
+    /// Nonconforming caller-supplied input.
+    ErrInvalidInput = 803 => "SAR_ERR_INVALID_INPUT",
     /// Unspecified failure.
-    ErrGeneric = -1,
-    /// Resource not found.
-    ErrNotFound = 1,
-    /// Header magic mismatch.
-    ErrInvalidMagic = 2,
-    /// I/O failure.
-    ErrIo = 3,
-    /// CRC mismatch.
-    ErrCrcMismatch = 4,
-    /// Authentication failed.
-    ErrAuthFailed = 5,
-    /// Allocation failure.
-    ErrMalloc = 6,
-    /// Valid but unsupported feature.
-    ErrUnsupported = 7,
-    /// Invalid flag combination.
-    ErrFlagConflict = 8,
-    /// Patch application failed.
-    ErrPatchFailed = 9,
-    /// Required base object missing.
-    ErrBaseMissing = 10,
-    /// Invalid mapping.
-    ErrInvalidMap = 11,
-    /// No storage space.
-    ErrNoSpace = 12,
-    /// Partition missing.
-    ErrPartitionMissing = 13,
-    /// Fragment gap.
-    ErrFragmentGap = 14,
-    /// Reassembly buffer full.
-    ErrReassemblyBufferFull = 15,
-    /// Partition mismatch.
-    ErrPartitionMismatch = 16,
-    /// Fragment timeout.
-    ErrFragmentTimeout = 17,
-    /// Non-fatal incomplete warning.
-    WarnIncomplete = 18,
-    /// CDC recipe unresolved.
-    ErrRecipeUnresolvable = 19,
-    /// CDC mismatch.
-    ErrCdcMismatch = 20,
-    /// Error correction decode failure.
-    ErrEcFailed = 21,
-    /// Truncated structure.
-    ErrTruncated = 22,
-    /// Malformed structure.
-    ErrMalformed = 23,
-    /// Bounds violation.
-    ErrBounds = 24,
-    /// Reserved/prohibited value.
-    ErrReservedValue = 25,
-    /// Arithmetic overflow.
-    ErrOverflow = 26,
-    /// Limit exceeded.
-    ErrLimitExceeded = 27,
-    /// Invalid alignment.
-    ErrInvalidAlignment = 28,
-    /// Invalid length.
-    ErrInvalidLength = 29,
-    /// Non-crypto checksum mismatch.
-    ErrChecksumMismatch = 30,
-    /// Crypto hash mismatch.
-    ErrHashMismatch = 31,
-    /// Decryption failed.
-    ErrDecryptFailed = 32,
-    /// Signature validation failed.
-    ErrSignatureFailed = 33,
-    /// Anchor hash failed.
-    ErrAnchorHashFailed = 34,
-    /// Invalid/unsupported version.
-    ErrInvalidVersion = 35,
-    /// Required key missing.
-    ErrKeyMissing = 36,
-    /// Key rejected.
-    ErrKeyRejected = 37,
-    /// Stream closed unexpectedly.
-    ErrStreamClosed = 38,
-    /// Stream lifecycle/state error.
-    ErrStreamState = 39,
-    /// Required metadata missing.
-    ErrMetadataMissing = 40,
-    /// Metadata conflict.
-    ErrMetadataConflict = 41,
-    /// Recovery data unavailable.
-    ErrRecoveryUnavailable = 42,
-    /// Recovery data corrupted.
-    ErrRecoveryCorrupted = 43,
-    /// Compression operation failed.
-    ErrCompressionFailed = 44,
-    /// Decompression operation failed.
-    ErrDecompressionFailed = 45,
-    /// Write protected destination.
-    ErrWriteProtected = 46,
-    /// Object already exists.
-    ErrAlreadyExists = 47,
-    /// Cancelled operation.
-    ErrCancelled = 48,
-    /// Timeout.
-    ErrTimeout = 49,
-    /// Internal invariant violation.
-    ErrInternal = 50,
-    /// Nonce reuse detected.
-    ErrNonceReuse = 51,
-    /// Too many concurrent streams.
-    ErrTooManyStreams = 52,
+    ErrGeneric = 0xFFFF => "SAR_ERR_GENERIC",
 }
 
 impl SarStatus {
-    /// Numeric registry code.
+    /// Canonical unsigned 16-bit registry value.
     #[must_use]
-    pub const fn code(self) -> i32 {
-        self as i32
+    pub const fn code(self) -> u16 {
+        self as u16
     }
+}
 
-    /// Registry constant name.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Ok => "SAR_OK",
-            Self::ErrGeneric => "SAR_ERR_GENERIC",
-            Self::ErrNotFound => "SAR_ERR_NOT_FOUND",
-            Self::ErrInvalidMagic => "SAR_ERR_INVALID_MAGIC",
-            Self::ErrIo => "SAR_ERR_IO",
-            Self::ErrCrcMismatch => "SAR_ERR_CRC_MISMATCH",
-            Self::ErrAuthFailed => "SAR_ERR_AUTH_FAILED",
-            Self::ErrMalloc => "SAR_ERR_MALLOC",
-            Self::ErrUnsupported => "SAR_ERR_UNSUPPORTED",
-            Self::ErrFlagConflict => "SAR_ERR_FLAG_CONFLICT",
-            Self::ErrPatchFailed => "SAR_ERR_PATCH_FAILED",
-            Self::ErrBaseMissing => "SAR_ERR_BASE_MISSING",
-            Self::ErrInvalidMap => "SAR_ERR_INVALID_MAP",
-            Self::ErrNoSpace => "SAR_ERR_NO_SPACE",
-            Self::ErrPartitionMissing => "SAR_ERR_PARTITION_MISSING",
-            Self::ErrFragmentGap => "SAR_ERR_FRAGMENT_GAP",
-            Self::ErrReassemblyBufferFull => "SAR_ERR_REASSEMBLY_BUFFER_FULL",
-            Self::ErrPartitionMismatch => "SAR_ERR_PARTITION_MISMATCH",
-            Self::ErrFragmentTimeout => "SAR_ERR_FRAGMENT_TIMEOUT",
-            Self::WarnIncomplete => "SAR_WARN_INCOMPLETE",
-            Self::ErrRecipeUnresolvable => "SAR_ERR_RECIPE_UNRESOLVABLE",
-            Self::ErrCdcMismatch => "SAR_ERR_CDC_MISMATCH",
-            Self::ErrEcFailed => "SAR_ERR_EC_FAILED",
-            Self::ErrTruncated => "SAR_ERR_TRUNCATED",
-            Self::ErrMalformed => "SAR_ERR_MALFORMED",
-            Self::ErrBounds => "SAR_ERR_BOUNDS",
-            Self::ErrReservedValue => "SAR_ERR_RESERVED_VALUE",
-            Self::ErrOverflow => "SAR_ERR_OVERFLOW",
-            Self::ErrLimitExceeded => "SAR_ERR_LIMIT_EXCEEDED",
-            Self::ErrInvalidAlignment => "SAR_ERR_INVALID_ALIGNMENT",
-            Self::ErrInvalidLength => "SAR_ERR_INVALID_LENGTH",
-            Self::ErrChecksumMismatch => "SAR_ERR_CHECKSUM_MISMATCH",
-            Self::ErrHashMismatch => "SAR_ERR_HASH_MISMATCH",
-            Self::ErrDecryptFailed => "SAR_ERR_DECRYPT_FAILED",
-            Self::ErrSignatureFailed => "SAR_ERR_SIGNATURE_FAILED",
-            Self::ErrAnchorHashFailed => "SAR_ERR_ANCHOR_HASH_FAILED",
-            Self::ErrInvalidVersion => "SAR_ERR_INVALID_VERSION",
-            Self::ErrKeyMissing => "SAR_ERR_KEY_MISSING",
-            Self::ErrKeyRejected => "SAR_ERR_KEY_REJECTED",
-            Self::ErrStreamClosed => "SAR_ERR_STREAM_CLOSED",
-            Self::ErrStreamState => "SAR_ERR_STREAM_STATE",
-            Self::ErrMetadataMissing => "SAR_ERR_METADATA_MISSING",
-            Self::ErrMetadataConflict => "SAR_ERR_METADATA_CONFLICT",
-            Self::ErrRecoveryUnavailable => "SAR_ERR_RECOVERY_UNAVAILABLE",
-            Self::ErrRecoveryCorrupted => "SAR_ERR_RECOVERY_CORRUPTED",
-            Self::ErrCompressionFailed => "SAR_ERR_COMPRESSION_FAILED",
-            Self::ErrDecompressionFailed => "SAR_ERR_DECOMPRESSION_FAILED",
-            Self::ErrWriteProtected => "SAR_ERR_WRITE_PROTECTED",
-            Self::ErrAlreadyExists => "SAR_ERR_ALREADY_EXISTS",
-            Self::ErrCancelled => "SAR_ERR_CANCELLED",
-            Self::ErrTimeout => "SAR_ERR_TIMEOUT",
-            Self::ErrInternal => "SAR_ERR_INTERNAL",
-            Self::ErrNonceReuse => "SAR_ERR_NONCE_REUSE",
-            Self::ErrTooManyStreams => "SAR_ERR_TOO_MANY_STREAMS",
-        }
+impl From<SarStatus> for u16 {
+    fn from(status: SarStatus) -> Self {
+        status.code()
     }
 }
 
@@ -196,75 +166,13 @@ impl fmt::Display for SarStatus {
     }
 }
 
-/// Unknown status-code conversion error.
+/// Error returned when a `u16` is not a standardized status value.
+///
+/// Retired, reserved, unassigned, and implementation-private values are all
+/// rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
-#[error("unknown SAR status code: {0}")]
-pub struct SarStatusParseError(pub i32);
-
-impl TryFrom<i32> for SarStatus {
-    type Error = SarStatusParseError;
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        let status = match value {
-            -1 => Self::ErrGeneric,
-            0 => Self::Ok,
-            1 => Self::ErrNotFound,
-            2 => Self::ErrInvalidMagic,
-            3 => Self::ErrIo,
-            4 => Self::ErrCrcMismatch,
-            5 => Self::ErrAuthFailed,
-            6 => Self::ErrMalloc,
-            7 => Self::ErrUnsupported,
-            8 => Self::ErrFlagConflict,
-            9 => Self::ErrPatchFailed,
-            10 => Self::ErrBaseMissing,
-            11 => Self::ErrInvalidMap,
-            12 => Self::ErrNoSpace,
-            13 => Self::ErrPartitionMissing,
-            14 => Self::ErrFragmentGap,
-            15 => Self::ErrReassemblyBufferFull,
-            16 => Self::ErrPartitionMismatch,
-            17 => Self::ErrFragmentTimeout,
-            18 => Self::WarnIncomplete,
-            19 => Self::ErrRecipeUnresolvable,
-            20 => Self::ErrCdcMismatch,
-            21 => Self::ErrEcFailed,
-            22 => Self::ErrTruncated,
-            23 => Self::ErrMalformed,
-            24 => Self::ErrBounds,
-            25 => Self::ErrReservedValue,
-            26 => Self::ErrOverflow,
-            27 => Self::ErrLimitExceeded,
-            28 => Self::ErrInvalidAlignment,
-            29 => Self::ErrInvalidLength,
-            30 => Self::ErrChecksumMismatch,
-            31 => Self::ErrHashMismatch,
-            32 => Self::ErrDecryptFailed,
-            33 => Self::ErrSignatureFailed,
-            34 => Self::ErrAnchorHashFailed,
-            35 => Self::ErrInvalidVersion,
-            36 => Self::ErrKeyMissing,
-            37 => Self::ErrKeyRejected,
-            38 => Self::ErrStreamClosed,
-            39 => Self::ErrStreamState,
-            40 => Self::ErrMetadataMissing,
-            41 => Self::ErrMetadataConflict,
-            42 => Self::ErrRecoveryUnavailable,
-            43 => Self::ErrRecoveryCorrupted,
-            44 => Self::ErrCompressionFailed,
-            45 => Self::ErrDecompressionFailed,
-            46 => Self::ErrWriteProtected,
-            47 => Self::ErrAlreadyExists,
-            48 => Self::ErrCancelled,
-            49 => Self::ErrTimeout,
-            50 => Self::ErrInternal,
-            51 => Self::ErrNonceReuse,
-            52 => Self::ErrTooManyStreams,
-            _ => return Err(SarStatusParseError(value)),
-        };
-        Ok(status)
-    }
-}
+#[error("unrecognized SAR status code: {0}")]
+pub struct SarStatusParseError(pub u16);
 
 /// SAR protocol error type.
 #[derive(Debug, Error)]
@@ -287,9 +195,6 @@ pub enum SarError {
     /// Authentication failure.
     #[error("authentication failed: {0}")]
     AuthFailed(&'static str),
-    /// Allocation failure.
-    #[error("memory allocation failure: {0}")]
-    Malloc(&'static str),
     /// Unsupported feature/algorithm.
     #[error("unsupported feature: {0}")]
     Unsupported(&'static str),
@@ -326,9 +231,6 @@ pub enum SarError {
     /// CDC recipe unresolved.
     #[error("CDC recipe unresolvable: {0}")]
     RecipeUnresolvable(&'static str),
-    /// CDC mismatch.
-    #[error("CDC mismatch: {0}")]
-    CdcMismatch(&'static str),
     /// Error correction failure.
     #[error("error correction failed: {0}")]
     EcFailed(&'static str),
@@ -350,27 +252,15 @@ pub enum SarError {
     /// Implementation-defined limit exceeded.
     #[error("limit exceeded: {0}")]
     LimitExceeded(&'static str),
-    /// Invalid alignment/padding.
-    #[error("invalid alignment: {0}")]
-    InvalidAlignment(&'static str),
     /// Invalid declared length.
     #[error("invalid length: {0}")]
     InvalidLength(&'static str),
-    /// Non-cryptographic checksum mismatch.
-    #[error("checksum mismatch: {0}")]
-    ChecksumMismatch(&'static str),
     /// Cryptographic hash mismatch.
     #[error("hash mismatch: {0}")]
     HashMismatch(&'static str),
-    /// Decryption failure.
-    #[error("decryption failed: {0}")]
-    DecryptFailed(&'static str),
     /// Signature validation failure.
     #[error("signature validation failed: {0}")]
     SignatureFailed(&'static str),
-    /// Anchor hash validation failure.
-    #[error("anchor hash validation failed: {0}")]
-    AnchorHashFailed(&'static str),
     /// Invalid version.
     #[error("invalid version: {0}")]
     InvalidVersion(&'static str),
@@ -386,6 +276,15 @@ pub enum SarError {
     /// Invalid stream lifecycle/state.
     #[error("stream state error: {0}")]
     StreamState(&'static str),
+    /// Session inactivity watchdog expired.
+    #[error("session timeout: {0}")]
+    SessionTimeout(&'static str),
+    /// Conflicting logical-path identity at materialization.
+    #[error("path collision: {0}")]
+    PathCollision(&'static str),
+    /// Materialization destination or symlink target escapes its scope.
+    #[error("path escape: {0}")]
+    PathEscape(&'static str),
     /// Missing required metadata.
     #[error("metadata missing: {0}")]
     MetadataMissing(&'static str),
@@ -398,27 +297,18 @@ pub enum SarError {
     /// Recovery data unusable.
     #[error("recovery corrupted: {0}")]
     RecoveryCorrupted(&'static str),
-    /// Compression failure.
-    #[error("compression failed: {0}")]
-    CompressionFailed(&'static str),
-    /// Decompression failure.
-    #[error("decompression failed: {0}")]
-    DecompressionFailed(&'static str),
     /// Write-protected destination.
     #[error("write protected: {0}")]
     WriteProtected(&'static str),
     /// Object already exists.
     #[error("already exists: {0}")]
     AlreadyExists(&'static str),
-    /// Operation cancelled.
-    #[error("operation cancelled: {0}")]
-    Cancelled(&'static str),
-    /// Timeout.
-    #[error("timeout: {0}")]
-    Timeout(&'static str),
     /// Internal invariant violation.
     #[error("internal error: {0}")]
     Internal(&'static str),
+    /// Nonconforming caller-supplied input.
+    #[error("invalid input: {0}")]
+    InvalidInput(&'static str),
     /// Nonce reuse.
     #[error("nonce reuse detected: {0}")]
     NonceReuse(&'static str),
@@ -438,7 +328,6 @@ impl SarError {
             Self::Io(_) => SarStatus::ErrIo,
             Self::CrcMismatch(_) => SarStatus::ErrCrcMismatch,
             Self::AuthFailed(_) => SarStatus::ErrAuthFailed,
-            Self::Malloc(_) => SarStatus::ErrMalloc,
             Self::Unsupported(_) => SarStatus::ErrUnsupported,
             Self::FlagConflict(_) => SarStatus::ErrFlagConflict,
             Self::PatchFailed(_) => SarStatus::ErrPatchFailed,
@@ -451,7 +340,6 @@ impl SarError {
             Self::PartitionMismatch(_) => SarStatus::ErrPartitionMismatch,
             Self::FragmentTimeout(_) => SarStatus::ErrFragmentTimeout,
             Self::RecipeUnresolvable(_) => SarStatus::ErrRecipeUnresolvable,
-            Self::CdcMismatch(_) => SarStatus::ErrCdcMismatch,
             Self::EcFailed(_) => SarStatus::ErrEcFailed,
             Self::Truncated(_) => SarStatus::ErrTruncated,
             Self::Malformed(_) => SarStatus::ErrMalformed,
@@ -459,29 +347,25 @@ impl SarError {
             Self::ReservedValue(_) => SarStatus::ErrReservedValue,
             Self::Overflow(_) => SarStatus::ErrOverflow,
             Self::LimitExceeded(_) => SarStatus::ErrLimitExceeded,
-            Self::InvalidAlignment(_) => SarStatus::ErrInvalidAlignment,
             Self::InvalidLength(_) => SarStatus::ErrInvalidLength,
-            Self::ChecksumMismatch(_) => SarStatus::ErrChecksumMismatch,
             Self::HashMismatch(_) => SarStatus::ErrHashMismatch,
-            Self::DecryptFailed(_) => SarStatus::ErrDecryptFailed,
             Self::SignatureFailed(_) => SarStatus::ErrSignatureFailed,
-            Self::AnchorHashFailed(_) => SarStatus::ErrAnchorHashFailed,
             Self::InvalidVersion(_) => SarStatus::ErrInvalidVersion,
             Self::KeyMissing(_) => SarStatus::ErrKeyMissing,
             Self::KeyRejected(_) => SarStatus::ErrKeyRejected,
             Self::StreamClosed(_) => SarStatus::ErrStreamClosed,
             Self::StreamState(_) => SarStatus::ErrStreamState,
+            Self::SessionTimeout(_) => SarStatus::ErrSessionTimeout,
+            Self::PathCollision(_) => SarStatus::ErrPathCollision,
+            Self::PathEscape(_) => SarStatus::ErrPathEscape,
             Self::MetadataMissing(_) => SarStatus::ErrMetadataMissing,
             Self::MetadataConflict(_) => SarStatus::ErrMetadataConflict,
             Self::RecoveryUnavailable(_) => SarStatus::ErrRecoveryUnavailable,
             Self::RecoveryCorrupted(_) => SarStatus::ErrRecoveryCorrupted,
-            Self::CompressionFailed(_) => SarStatus::ErrCompressionFailed,
-            Self::DecompressionFailed(_) => SarStatus::ErrDecompressionFailed,
             Self::WriteProtected(_) => SarStatus::ErrWriteProtected,
             Self::AlreadyExists(_) => SarStatus::ErrAlreadyExists,
-            Self::Cancelled(_) => SarStatus::ErrCancelled,
-            Self::Timeout(_) => SarStatus::ErrTimeout,
             Self::Internal(_) => SarStatus::ErrInternal,
+            Self::InvalidInput(_) => SarStatus::ErrInvalidInput,
             Self::NonceReuse(_) => SarStatus::ErrNonceReuse,
             Self::TooManyStreams(_) => SarStatus::ErrTooManyStreams,
         }

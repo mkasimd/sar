@@ -56,7 +56,7 @@ fn missing_heartbeat_beyond_timeout_returns_timeout() {
     let timeout = transport
         .check_inactivity(180_001)
         .expect_err("timeout expected");
-    assert!(matches!(timeout, sar_core::SarError::Timeout(_)));
+    assert!(matches!(timeout, sar_core::SarError::SessionTimeout(_)));
 }
 
 #[test]

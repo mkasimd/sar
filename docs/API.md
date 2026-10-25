@@ -191,7 +191,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `ResourceLimits::default` | `pub fn ResourceLimits::default() -> ResourceLimits` | Conservative safe defaults including max_cdc_chunk_count=1,000,000 and max_cdc_metadata_bytes=50 MiB. |
 | `ResourceLimits::unlimited` | `pub fn ResourceLimits::unlimited() -> ResourceLimits` | All limits set to u64::MAX. Intended for test use only; do not use in production with untrusted input. |
 | `SarError::status` | `pub const fn SarError::status(&self) -> SarStatus` | Map a SarError into its SAR status code. |
-| `SarStatus::code` | `pub const fn SarStatus::code(self) -> i32` | Return the numeric SAR status code. |
+| `SarStatus::code` | `pub const fn SarStatus::code(self) -> u16` | Return the numeric SAR status code. |
 | `SarStatus::name` | `pub const fn SarStatus::name(self) -> &str` | Return the registry constant name for a SAR status code. |
 | `Tlv::encoded_len` | `pub fn Tlv::encoded_len(&self) -> usize` | Return encoded TLV size including alignment padding. |
 | `validate_cdc_algo_id` | `pub fn validate_cdc_algo_id(id: u8) -> Result<(), SarError>` | Validates CDC algorithm ID and maps unsupported/reserved values to SarError |
@@ -239,8 +239,8 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `PartitionDescriptor` | `struct` | `pub struct PartitionDescriptor { ... }` | Optional 96-byte partition descriptor. |
 | `ResourceLimits` | `struct` | `pub struct ResourceLimits { pub max_archive_size: u64, pub max_entry_count: u64, pub max_lfh_bytes: u64, pub max_path_bytes: u64, pub max_tlv_bytes: u64, pub max_tlv_count: u64, pub max_cd_bytes: u64, pub max_sparse_map_bytes: u64, pub max_sparse_descriptors: u64, pub max_fragment_count: u64, pub max_fragment_group_span: u64, pub max_loss_tolerant_gap: u64, pub max_fec_value_bytes: u64, pub max_recovery_protected_range: u64, pub max_repair_working_set: u64, pub max_decoded_entry_size: u64, pub max_in_memory_buffer: u64, pub max_total_pipeline_memory: u64, pub max_cdc_chunk_count: usize, pub max_cdc_metadata_bytes: usize, ... }` | Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. |
 | `SarError` | `enum` | `pub enum SarError { ... }` | Top-level SAR error type used across sar-core. |
-| `SarStatus` | `enum` | `pub enum SarStatus { ... }` | SAR status and error registry values (`#[repr(i32)]`). |
-| `SarStatusParseError` | `struct` | `pub struct SarStatusParseError(pub i32);` | Error returned when converting an unknown integer into SarStatus. |
+| `SarStatus` | `enum` | `pub enum SarStatus { ... }` | SAR status and error registry values (`#[repr(u16)]`). |
+| `SarStatusParseError` | `struct` | `pub struct SarStatusParseError(pub u16);` | Error returned when converting an unknown u16 value into SarStatus. |
 | `SparseExtent` | `struct` | `pub struct SparseExtent { pub offset: u64, pub length: u64 }` | A single contiguous data extent within a sparse logical file. |
 | `Tlv` | `struct` | `pub struct Tlv { pub type_id: u8, pub value: Vec<u8> }` | Global metadata TLV block. |
 

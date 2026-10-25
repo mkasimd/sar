@@ -160,34 +160,34 @@ fn reserved_compression_returns_reserved_value() {
 
 #[test]
 fn corrupted_deflate_data_returns_sar_error() {
-    let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
-    let mut bytes = write_global_header(&GlobalHeader {
-        version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
-        flags,
-        partition_descriptor: None,
-        kms: None,
-    })
-    .expect("header");
-    let mut lfh = LocalFileHeader::minimal_store(b"d.bin".to_vec(), 4);
-    lfh.entry_mode = EntryMode::from_bits(1 << 3);
-    lfh.comp_algo_id = Some(COMP_ALGO_DEFLATE);
-    lfh.payload_size = 8;
-    let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
-    bytes.extend_from_slice(&lfh_bytes);
-    bytes.extend_from_slice(b"bad-data");
+    // The fixture "bad-data" happens to be a decodable deflate prefix that expands past the
+    // declared uncompressed size, so it hits the output limit before any other failure.
+    // Reserved block type 3 (0x07: BFINAL=1, BTYPE=11) is a genuinely invalid stream.
+    for (payload, expect_limit) in [(b"bad-data", true), (&[0x07u8; 8], false)] {
+        let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
+        let mut bytes = write_global_header(&GlobalHeader {
+            version: 1,
+            flags_bytes: flags.bits().to_le_bytes().to_vec(),
+            flags,
+            partition_descriptor: None,
+            kms: None,
+        })
+        .expect("header");
+        let mut lfh = LocalFileHeader::minimal_store(b"d.bin".to_vec(), 4);
+        lfh.entry_mode = EntryMode::from_bits(1 << 3);
+        lfh.comp_algo_id = Some(COMP_ALGO_DEFLATE);
+        lfh.payload_size = 8;
+        let lfh_bytes = write_lfh(&flags, &lfh).expect("lfh");
+        bytes.extend_from_slice(&lfh_bytes);
+        bytes.extend_from_slice(payload);
 
-    let err = read_single_entry(bytes).expect_err("must fail");
-    assert!(
-        matches!(
-            err,
-            SarError::DecompressionFailed(_)
-                | SarError::InvalidLength(_)
-                | SarError::Io(_)
-                | SarError::LimitExceeded(_)
-        ),
-        "{err:?}"
-    );
+        let err = read_single_entry(bytes).expect_err("must fail");
+        if expect_limit {
+            assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        } else {
+            assert!(matches!(err, SarError::Malformed(_)), "{err:?}");
+        }
+    }
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn corrupted_zstd_data_returns_sar_error() {
     bytes.extend_from_slice(b"bad-data");
 
     let err = read_single_entry(bytes).expect_err("must fail");
-    assert!(matches!(err, SarError::DecompressionFailed(_)));
+    assert!(matches!(err, SarError::Malformed(_)));
 }
 
 #[test]

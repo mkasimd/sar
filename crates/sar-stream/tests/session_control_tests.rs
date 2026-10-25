@@ -232,3 +232,48 @@ fn filesystem_opcode_validation_and_exposure_work() {
         other => panic!("unexpected event: {other:?}"),
     }
 }
+
+fn status_payload(code: [u8; 2]) -> Vec<u8> {
+    vec![0x34, 0x12, code[0], code[1], 0]
+}
+
+#[test]
+fn session_status_encodes_unsigned_little_endian_codes() {
+    let limits = ResourceLimits::default();
+    for (status, bytes) in [
+        (SarStatus::Ok, [0x00, 0x00]),
+        (SarStatus::WarnIncomplete, [0x01, 0x00]),
+        (SarStatus::ErrStreamState, [0x58, 0x02]),
+        (SarStatus::ErrSessionTimeout, [0x5D, 0x02]),
+        (SarStatus::ErrGeneric, [0xFF, 0xFF]),
+    ] {
+        let frame = SessionStatusFrame {
+            ref_sequence: 0x1234,
+            status,
+            message: Vec::new(),
+        };
+        let encoded = frame.to_bytes(&limits).expect("encode");
+        assert_eq!(encoded, status_payload(bytes));
+        assert_eq!(
+            SessionStatusFrame::parse(&encoded, &limits).expect("parse"),
+            frame
+        );
+    }
+}
+
+#[test]
+fn session_status_rejects_unrecognized_codes_deterministically() {
+    let limits = ResourceLimits::default();
+    // Retired (390), unassigned in-block (4, 606), reserved (900, 32767).
+    for code in [390_u16, 4, 606, 900, 32767] {
+        let err = SessionStatusFrame::parse(&status_payload(code.to_le_bytes()), &limits)
+            .expect_err("must reject");
+        assert!(matches!(err, SarError::ReservedValue(_)), "{code}: {err:?}");
+    }
+    // Implementation-private range falls back to SAR_ERR_MALFORMED (Section 10.5).
+    for code in [32768_u16, 65534] {
+        let err = SessionStatusFrame::parse(&status_payload(code.to_le_bytes()), &limits)
+            .expect_err("must reject");
+        assert!(matches!(err, SarError::Malformed(_)), "{code}: {err:?}");
+    }
+}

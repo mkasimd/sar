@@ -617,11 +617,8 @@ fn archive_reader_decompression_respects_entry_limit() {
 
     let err = reader.next_entry().expect_err("must fail");
     assert!(
-        matches!(
-            err,
-            SarError::LimitExceeded(_) | SarError::DecompressionFailed(_)
-        ),
-        "expected LimitExceeded or DecompressionFailed, got {err:?}"
+        matches!(err, SarError::LimitExceeded(_) | SarError::Malformed(_)),
+        "expected LimitExceeded or Malformed, got {err:?}"
     );
 }
 

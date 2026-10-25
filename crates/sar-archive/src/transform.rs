@@ -251,9 +251,11 @@ fn map_compression_error(error: CompressionError) -> SarError {
         CompressionError::ReservedValue(_) => {
             SarError::ReservedValue("compression algorithm id is reserved")
         }
-        CompressionError::CompressionFailed(_) => SarError::CompressionFailed("compression failed"),
+        CompressionError::CompressionFailed(_) => {
+            SarError::Internal("compression encoder initialization failed")
+        }
         CompressionError::DecompressionFailed(_) => {
-            SarError::DecompressionFailed("decompression failed")
+            SarError::Malformed("compressed payload is invalid")
         }
         CompressionError::LimitExceeded => SarError::LimitExceeded("decompression output limit"),
     }

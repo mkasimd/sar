@@ -301,7 +301,7 @@ fn mock_inactivity_timeout_via_explicit_time() {
     // At t=10_000 ms: past the 5 s inactivity window.
     let result = transport.check_inactivity(10_000);
     assert!(
-        matches!(result, Err(SarError::Timeout(_))),
+        matches!(result, Err(SarError::SessionTimeout(_))),
         "expected Timeout from check_inactivity, got: {result:?}"
     );
 }

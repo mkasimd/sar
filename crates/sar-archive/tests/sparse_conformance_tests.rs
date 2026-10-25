@@ -503,7 +503,7 @@ fn corrupted_compressed_sparse_fails_before_scatter_gather() {
     assert!(
         matches!(
             err,
-            SarError::DecompressionFailed(_) | SarError::InvalidLength(_) | SarError::Io(_)
+            SarError::Malformed(_) | SarError::InvalidLength(_) | SarError::Io(_)
         ),
         "expected decompression error, got {err:?}"
     );

@@ -224,7 +224,7 @@ fn exercise_tls_exporter_negative(seed: &[u8]) {
     );
 
     match result {
-        Err(SarError::AuthFailed(_) | SarError::DecryptFailed(_)) => {}
+        Err(SarError::AuthFailed(_)) => {}
         Ok(_) => panic!("session-binding mismatch decrypted successfully"),
         Err(_) => panic!("session-binding mismatch returned non-auth failure"),
     }

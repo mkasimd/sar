@@ -136,7 +136,7 @@ fn invalid_cd_padding_fails() {
         .expect("reader")
         .read_global_header()
         .expect_err("must fail");
-    assert!(matches!(err, SarError::InvalidAlignment(_)));
+    assert!(matches!(err, SarError::Malformed(_)));
 }
 
 #[test]

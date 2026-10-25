@@ -445,7 +445,7 @@ fn bad_aead_tag_auth_failure() {
     // The first (and only) entry should fail with an authentication error.
     let result = reader.next_entry();
     match result {
-        Err(SarError::AuthFailed(_) | SarError::DecryptFailed(_)) => {
+        Err(SarError::AuthFailed(_)) => {
             println!("[PASS] bad-aead-tag correctly rejected with auth failure");
         }
         Err(e) => panic!(
