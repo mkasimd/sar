@@ -22,9 +22,7 @@ use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
 use sar_core::{
     GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
-    format::{
-        GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
-    },
+    format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
 };
 
 // ---------------------------------------------------------------------------
@@ -345,10 +343,6 @@ fn vcdiff_loss_tolerant_does_not_suppress_patch_failed() {
     );
     lfh.fragment_id = Some(201);
     lfh.fragment_index = Some(0);
-    lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: corrupt_patch.len() as u32,
-    });
     lfh.patch_algo_id = Some(0x01); // VCDIFF
     lfh.delta_base_hash = Some(NON_ZERO_HASH);
     lfh.payload_size = corrupt_patch.len() as u64;

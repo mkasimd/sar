@@ -5,7 +5,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 
 use sar_archive::{ArchiveReader, ArchiveReaderOptions, inspect_recovery_metadata};
 use sar_core::{ResourceLimits, SarError};
-use sar_fragmentation::{FragmentDescriptor, FragmentEntry, validate_fragment_group};
+use sar_fragmentation::{FragmentEntry, validate_fragment_group};
 use sar_sparse::validate_sparse_extents;
 
 use crate::{
@@ -97,33 +97,16 @@ pub(crate) fn verify_archive(
         for (fid, group) in &frag_groups {
             let frag_entries: Vec<FragmentEntry> = group
                 .iter()
-                .filter_map(|entry| {
-                    let desc = entry.fragment_descriptor.as_ref()?;
-                    Some(FragmentEntry {
-                        fragment_index: entry.fragment_index.unwrap_or(0),
-                        is_last_fragment: entry.is_last_fragment,
-                        is_loss_tolerant: entry.is_loss_tolerant,
-                        descriptor: FragmentDescriptor {
-                            absolute_offset: desc.absolute_offset,
-                            fragment_size: desc.fragment_size,
-                        },
-                        payload: Vec::new(),
-                    })
+                .map(|entry| FragmentEntry {
+                    fragment_index: entry.fragment_index.unwrap_or(0),
+                    is_last_fragment: entry.is_last_fragment,
+                    is_loss_tolerant: entry.is_loss_tolerant,
+                    uncompressed_size: entry.uncompressed_size,
+                    payload: Vec::new(),
                 })
                 .collect();
 
-            let max_offset = frag_entries.iter().try_fold(0u64, |max_end, f| {
-                let end = f
-                    .descriptor
-                    .absolute_offset
-                    .checked_add(u64::from(f.descriptor.fragment_size))
-                    .ok_or(SarError::Overflow("fragment descriptor end"))?;
-                Ok::<u64, SarError>(max_end.max(end))
-            })?;
-
-            if let Err(err) =
-                validate_fragment_group(&frag_entries, max_offset, &limits.fragment_limits())
-            {
+            if let Err(err) = validate_fragment_group(&frag_entries, &limits.fragment_limits()) {
                 eprintln!("recovery verify: fragment group {fid} error: {err}");
                 frag_errors += 1;
             }

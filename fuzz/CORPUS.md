@@ -218,14 +218,15 @@ incremental session surfaces.
 
 **Purpose:** Target the FEC (Forward Error Correction) and packet
 fragmentation paths. Inputs include crafted fragment sequences, mismatched
-FEC metadata, overlapping or out-of-order fragments, and FEC repair attempts
+FEC metadata, out-of-order or duplicate-index fragments, and FEC repair attempts
 against entries with corrupted or absent repair blocks.
 
 **Example input shapes:**
 - LFH entries with FEC TLVs declaring more repair blocks than present in the
   data.
-- Fragment sequences with deliberate gaps, duplicates, or illegal fragment
-  offsets.
+- Fragment sequences with deliberate gaps, duplicate Fragment Indices, or
+  misplaced `LAST_FRAGMENT` markers (the canonical LFH carries only Fragment
+  ID and Fragment Index; there are no fragment offsets).
 - Archives where the FEC parity data length disagrees with the declared
   parameters.
 - Inputs that trigger FEC repair on an entry with every original shard
@@ -234,11 +235,16 @@ against entries with corrupted or absent repair blocks.
 **Expected fail-closed behavior:** Mismatched, absent, or malformed FEC data
 must produce a deterministic error. The repair path must not attempt
 out-of-bounds reads or allocations when shard counts are wrong. Fragment
-reassembly must reject overlapping or illegally-sized fragments without panic.
+reassembly must reject duplicate indices, contribution-length mismatches and
+incomplete groups without panic.
 
 **Current status:** PR4 seeds added (`fragment_gap_missing_index.bin`,
-`fragment_overlap_offsets.bin`, `fec_reserved_algo_nonempty.bin`,
-`fec_unsupported_algo.bin`) under `fuzz/seeds/fec_fragmentation/`. Partially
+`fragment_duplicate_index.bin`, `fec_reserved_algo_nonempty.bin`,
+`fec_unsupported_algo.bin`) under `fuzz/seeds/fec_fragmentation/`.
+The two fragment seeds use the canonical SAR v1.0 fragment LFH layout and are
+regenerated deterministically by `python tools/generate_fragment_fuzz_seeds.py`
+(`--check` verifies them). The obsolete `fragment_overlap_offsets.bin` was
+removed in M13b WP-3 because its meaning depended on absent wire offsets. Partially
 covered by `archive_logical_files`, `pr4_lfh_metadata_edges`,
 `pr4_tlv_metadata_edges`, `archive_entry_decode`, `archive_audit`, and
 `parse_lfh`/`parse_lfh_wide`.

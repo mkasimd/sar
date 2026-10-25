@@ -5,11 +5,10 @@
 
 use sar_core::{
     EntryMode, GlobalFlags,
-    format::{LfhFragmentDescriptor, LocalFileHeader, parse_lfh, write_lfh},
+    format::{LocalFileHeader, parse_lfh, write_lfh},
 };
 use sar_fragmentation::{
-    FragmentDescriptor, FragmentEntry, FragmentError, reconstruct_fragments,
-    validate_fragment_group,
+    FragmentEntry, FragmentError, reconstruct_fragments, validate_fragment_group,
 };
 
 fn unlimited_limits() -> sar_core::ResourceLimits {
@@ -29,8 +28,6 @@ fn make_frag_lfh(
     _flags: &GlobalFlags,
     fragment_id: u32,
     fragment_index: u32,
-    abs_offset: u64,
-    frag_size: u32,
     is_last: bool,
     is_loss_tolerant: bool,
     payload_size: u64,
@@ -56,10 +53,6 @@ fn make_frag_lfh(
         fec_algo_id: None,
         fragment_id: Some(fragment_id),
         fragment_index: Some(fragment_index),
-        fragment_descriptor: Some(LfhFragmentDescriptor {
-            absolute_offset: abs_offset,
-            fragment_size: frag_size,
-        }),
         iv_nonce: None,
         delta_base_hash: None,
         file_crc32: None,
@@ -81,173 +74,67 @@ fn make_frag_lfh(
 #[test]
 fn parse_write_fragment_metadata() {
     let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
-    let lfh = make_frag_lfh(&flags, 0xAB, 2, 1024, 512, false, false, 512);
+    let lfh = make_frag_lfh(&flags, 0xAB, 2, false, false, 512);
     let bytes = write_lfh(&flags, &lfh).expect("write LFH");
     let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse LFH");
 
     assert_eq!(parsed.fragment_id, Some(0xAB));
     assert_eq!(parsed.fragment_index, Some(2));
-    assert_eq!(
-        parsed.fragment_descriptor,
-        Some(LfhFragmentDescriptor {
-            absolute_offset: 1024,
-            fragment_size: 512,
-        })
-    );
+    // Contribution length is the LFH Uncompressed Size; no separate field.
+    assert_eq!(parsed.uncompressed_size, 512);
     assert!(parsed.entry_mode.is_fragment());
     assert!(!parsed.entry_mode.is_last_fragment());
     assert!(!parsed.entry_mode.is_loss_tolerant());
 }
 
 // ---------------------------------------------------------------------------
-// Reconstruction
+// Reconstruction (canonical Fragment Index ordering)
+//
+// Replaces the obsolete absolute-offset tests: `reject_overlapping_fragments`
+// and `reject_invalid_fragment_bounds` (descriptor offsets no longer exist on
+// the wire; retired) and the zero-filling `loss_tolerant_gap_*` test
+// (replaced by longest-contiguous-prefix semantics).
 // ---------------------------------------------------------------------------
+
+fn frag(index: u32, last: bool, lt: bool, data: &[u8]) -> FragmentEntry {
+    FragmentEntry {
+        fragment_index: index,
+        is_last_fragment: last,
+        is_loss_tolerant: lt,
+        uncompressed_size: data.len() as u64,
+        payload: data.to_vec(),
+    }
+}
 
 #[test]
 fn reconstruct_complete_fragment_set() {
-    // Two 8-byte fragments covering a 16-byte logical file.
     let frags = vec![
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 8,
-            },
-            payload: b"AAAAAAAA".to_vec(),
-        },
-        FragmentEntry {
-            fragment_index: 1,
-            is_last_fragment: true,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 8,
-                fragment_size: 8,
-            },
-            payload: b"BBBBBBBB".to_vec(),
-        },
+        frag(0, false, false, b"AAAAAAAA"),
+        frag(1, true, false, b"BBBBBBBB"),
     ];
-    let (data, degraded) =
-        reconstruct_fragments(frags, 16, &frag_unlimited()).expect("reconstruct");
+    let (data, degraded) = reconstruct_fragments(frags, &frag_unlimited()).expect("reconstruct");
     assert!(!degraded);
-    assert_eq!(&data[..8], b"AAAAAAAA");
-    assert_eq!(&data[8..], b"BBBBBBBB");
+    assert_eq!(data, b"AAAAAAAABBBBBBBB");
 }
 
 #[test]
 fn accept_out_of_order_fragments() {
-    // Provide fragments out of index order; reconstruct must sort them.
     let frags = vec![
-        FragmentEntry {
-            fragment_index: 1,
-            is_last_fragment: true,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 4,
-                fragment_size: 4,
-            },
-            payload: b"DDDD".to_vec(),
-        },
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 4,
-            },
-            payload: b"CCCC".to_vec(),
-        },
+        frag(1, true, false, b"DDDD"),
+        frag(0, false, false, b"CCCC"),
     ];
-    let (data, degraded) = reconstruct_fragments(frags, 8, &frag_unlimited()).expect("reconstruct");
+    let (data, degraded) = reconstruct_fragments(frags, &frag_unlimited()).expect("reconstruct");
     assert!(!degraded);
-    assert_eq!(&data[..4], b"CCCC");
-    assert_eq!(&data[4..], b"DDDD");
-}
-
-// ---------------------------------------------------------------------------
-// Validation errors
-// ---------------------------------------------------------------------------
-
-#[test]
-fn reject_overlapping_fragments() {
-    // Fragment 0 covers [0, 8) and fragment 1 covers [4, 12) — they overlap.
-    let frags = vec![
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 8,
-            },
-            payload: vec![0u8; 8],
-        },
-        FragmentEntry {
-            fragment_index: 1,
-            is_last_fragment: true,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 4,
-                fragment_size: 8,
-            },
-            payload: vec![0u8; 8],
-        },
-    ];
-    let err = validate_fragment_group(&frags, 12, &frag_unlimited()).expect_err("should fail");
-    assert!(
-        matches!(err, FragmentError::InvalidMap(_)),
-        "expected InvalidMap, got {err:?}"
-    );
-}
-
-#[test]
-fn reject_invalid_fragment_bounds() {
-    // Fragment descriptor extends past logical_size.
-    let frags = vec![FragmentEntry {
-        fragment_index: 0,
-        is_last_fragment: true,
-        is_loss_tolerant: false,
-        descriptor: FragmentDescriptor {
-            absolute_offset: 0,
-            fragment_size: 100,
-        },
-        payload: vec![0u8; 100],
-    }];
-    let err = validate_fragment_group(&frags, 50, &frag_unlimited()).expect_err("should fail");
-    assert!(
-        matches!(err, FragmentError::Bounds(_)),
-        "expected Bounds, got {err:?}"
-    );
+    assert_eq!(data, b"CCCCDDDD");
 }
 
 #[test]
 fn reject_missing_fragments_no_loss_tolerant() {
-    // Index gap: 0, 2 — index 1 is missing and LOSS_TOLERANT is not set.
     let frags = vec![
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 4,
-            },
-            payload: vec![0u8; 4],
-        },
-        FragmentEntry {
-            fragment_index: 2,
-            is_last_fragment: true,
-            is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 8,
-                fragment_size: 4,
-            },
-            payload: vec![0u8; 4],
-        },
+        frag(0, false, false, b"AAAA"),
+        frag(2, true, false, b"CCCC"),
     ];
-    let err = reconstruct_fragments(frags, 12, &frag_unlimited()).expect_err("should fail");
+    let err = reconstruct_fragments(frags, &frag_unlimited()).expect_err("should fail");
     assert!(
         matches!(err, FragmentError::FragmentGap(_)),
         "expected FragmentGap, got {err:?}"
@@ -255,37 +142,17 @@ fn reject_missing_fragments_no_loss_tolerant() {
 }
 
 #[test]
-fn loss_tolerant_gap_returns_warn_incomplete() {
-    // Index gap but LOSS_TOLERANT is set — reconstruct should succeed with
-    // is_degraded = true.
-    let frags = vec![
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: true,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 4,
-            },
-            payload: b"AAAA".to_vec(),
-        },
-        // Index 1 is missing
-        FragmentEntry {
-            fragment_index: 2,
-            is_last_fragment: true,
-            is_loss_tolerant: true,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 8,
-                fragment_size: 4,
-            },
-            payload: b"CCCC".to_vec(),
-        },
-    ];
-    let (data, degraded) =
-        reconstruct_fragments(frags, 12, &frag_unlimited()).expect("reconstruct");
+fn loss_tolerant_gap_emits_contiguous_prefix_only() {
+    let frags = vec![frag(0, false, true, b"AAAA"), frag(2, true, true, b"CCCC")];
+    let (data, degraded) = reconstruct_fragments(frags, &frag_unlimited()).expect("reconstruct");
     assert!(degraded, "expected degraded=true");
-    // Bytes [0..4] = AAAA, [4..8] = zeros (missing fragment), [8..12] = CCCC
-    assert_eq!(&data[..4], b"AAAA");
-    assert_eq!(&data[4..8], &[0u8; 4]);
-    assert_eq!(&data[8..12], b"CCCC");
+    // No synthetic zeros and no concatenation across the gap.
+    assert_eq!(data, b"AAAA");
+}
+
+#[test]
+fn validate_rejects_duplicate_index() {
+    let frags = vec![frag(0, false, false, b"A"), frag(0, true, false, b"B")];
+    let err = validate_fragment_group(&frags, &frag_unlimited()).expect_err("should fail");
+    assert!(matches!(err, FragmentError::DuplicateIndex(_)));
 }

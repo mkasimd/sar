@@ -18,7 +18,6 @@
 
 use sar_core::{
     GlobalFlags, SarError,
-    format::LfhFragmentDescriptor,
     format::{LocalFileHeader, compute_lfh_size, parse_lfh, write_lfh},
 };
 
@@ -158,10 +157,6 @@ fn lfh_field_ordering_has_delta_combined_with_all_flags() {
     lfh.fec_algo_id = Some(0x00);
     lfh.fragment_id = Some(7);
     lfh.fragment_index = Some(0);
-    lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 4,
-    });
     lfh.iv_nonce = Some([0u8; 24]);
     lfh.delta_base_hash = Some(hash);
     lfh.file_crc32 = Some(0xDEAD_BEEF);

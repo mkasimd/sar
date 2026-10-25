@@ -18,7 +18,8 @@
   },
   "limits": {},
   "notes": [
-    "DEFERRED: requires fragment descriptor with tail gap construction."
+    "DEFERRED: requires fragment descriptor with tail gap construction.",
+    "OBSOLETE (M13b WP-3): logical_size and descriptor end no longer exist. The canonical equivalent is a missing LAST_FRAGMENT / terminal Fragment Index. Reassigned to WP-4."
   ],
   "deferred": true,
   "compression": false,

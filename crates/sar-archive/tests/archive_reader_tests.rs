@@ -20,7 +20,9 @@ fn payload_out_of_bounds_is_rejected() {
     })
     .expect("header");
 
-    bytes.extend_from_slice(&17u32.to_le_bytes());
+    // Header Size 21 = 4+2+2+2+4+4+2 fixed bytes + 1 name byte (previously the
+    // incorrect value 17 only passed via an accidental truncation).
+    bytes.extend_from_slice(&21u32.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());

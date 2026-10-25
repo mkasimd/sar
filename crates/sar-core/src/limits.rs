@@ -128,13 +128,15 @@ pub struct ResourceLimits {
     /// fragmented file.  Default: 65 535.
     pub max_fragment_count: usize,
 
-    /// Maximum total byte span of a fragment group
-    /// (`max(absolute_offset + fragment_size)` across all descriptors in the
-    /// group).  Default: 1 GiB.
+    /// Maximum total decoded byte length of a fragment group (the checked sum
+    /// of the LFH `Uncompressed Size` of every fragment).  Default: 1 GiB.
     pub max_fragment_group_span: u64,
 
     /// Maximum byte gap between consecutive fragments when `LOSS_TOLERANT` is
     /// set.  Default: 1 GiB.
+    ///
+    /// Not consulted by canonical fragment reassembly (a missing fragment's
+    /// length is unknowable); see M13b.2.
     pub max_loss_tolerant_gap: u64,
 
     // ── Stateful streaming session layer ──────────────────────────────────────

@@ -2539,7 +2539,7 @@
           },
           {
             "name": "EntryFragmentMetadata",
-            "description": "Fragment descriptor fields from LFH FILE_FRAGMENTATION global flag.",
+            "description": "Fragment metadata from the LFH Fragment ID and Fragment Index fields (global FILE_FRAGMENTATION flag) plus the LAST_FRAGMENT and LOSS_TOLERANT entry mode bits. The canonical LFH carries no absolute offset or separate contribution size; contribution length is the LFH Uncompressed Size.",
             "metadata": {
               "since_milestone": "11a",
               "stability": "stable",
@@ -2553,7 +2553,7 @@
               "path": "src/metadata.rs"
             },
             "kind": "struct",
-            "signature": "pub struct EntryFragmentMetadata { pub fragment_id: u32, pub fragment_index: u32, pub absolute_offset: u64, pub fragment_size: u32 }"
+            "signature": "pub struct EntryFragmentMetadata { pub fragment_id: u32, pub fragment_index: u32, pub is_last: bool, pub is_loss_tolerant: bool }"
           },
           {
             "name": "EntrySparseMetadata",
@@ -2725,28 +2725,6 @@
             },
             "kind": "struct",
             "signature": "pub struct LocalFileHeader { ... }"
-          },
-          {
-            "name": "LfhFragmentDescriptor",
-            "description": "Fragment descriptor stored inline in a Local File Header. Records the absolute byte offset and declared byte size of this fragment's contribution within the fully reconstructed logical file. Replaces the former Option<(u64, u32)> tuple in LocalFileHeader.fragment_descriptor.",
-            "metadata": {
-              "since_milestone": "8",
-              "stability": "stable",
-              "related_spec_sections": [
-                "19"
-              ],
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": true,
-                "readiness": "candidate",
-                "notes": "Simple numeric fields, good FFI target."
-              },
-              "module": "format",
-              "path": "src/format.rs"
-            },
-            "kind": "struct",
-            "signature": "pub struct LfhFragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }"
           },
           {
             "name": "BinaryWriter",
@@ -3381,7 +3359,7 @@
           },
           {
             "name": "ArchiveReader::read_all_logical_files",
-            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments, applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output is returned with LogicalFile::is_degraded = true. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). Sparse reconstruction uses LFH Uncompressed Size as the final logical file size; trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid. The same protection applies to fragmented sparse entries using fragment-0's Uncompressed Size.",
+            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). For non-fragmented entries sparse reconstruction uses LFH Uncompressed Size as the final logical file size; complete fragmented sparse groups currently return SAR_ERR_UNSUPPORTED because Sparse Logical Size is not yet implemented (WP-5/M13b.2); trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
             "metadata": {
               "since_milestone": "8",
               "parameters": [
@@ -7171,7 +7149,7 @@
         "functions": [
           {
             "name": "validate_fragment_group",
-            "description": "Validates fragment count/group-span limits, descriptor bounds, and descriptor non-overlap.",
+            "description": "Validates fragment count, duplicate Fragment Index, LAST_FRAGMENT/LOSS_TOLERANT consistency, checked total contribution length and group-span/decoded-size limits. Does not compare payload bytes to Uncompressed Size, so metadata-only callers may pass empty payloads.",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7184,11 +7162,11 @@
               "module": "lib",
               "path": "src/lib.rs"
             },
-            "signature": "pub fn validate_fragment_group(frags: &[FragmentEntry], logical_size: u64, limits: &FragmentLimits) -> Result<(), FragmentError>"
+            "signature": "pub fn validate_fragment_group(frags: &[FragmentEntry], limits: &FragmentLimits) -> Result<(), FragmentError>"
           },
           {
             "name": "reconstruct_fragments",
-            "description": "Reassembles fragment payloads in order. Returns (data, is_degraded). Validates duplicate fragment indexes, payload-size agreement, index gaps, missing LAST_FRAGMENT, descriptor byte-range gaps (initial/middle/tail), and LOSS_TOLERANT degraded-output policy with max_loss_tolerant_gap.",
+            "description": "Reassembles decoded fragment contributions by concatenation in ascending Fragment Index order. Returns (data, is_degraded). Rejects duplicate indices, contribution-length mismatches and inconsistent LAST_FRAGMENT/LOSS_TOLERANT metadata; a complete group requires dense indices 0..n and LAST_FRAGMENT on the final index. Incomplete groups return FragmentGap unless LOSS_TOLERANT permits degraded output, which is limited to the longest contiguous prefix beginning at Fragment Index 0 (never zero-filled, shifted or length-inferred).",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7201,13 +7179,13 @@
               "module": "lib",
               "path": "src/lib.rs"
             },
-            "signature": "pub fn reconstruct_fragments(frags: Vec<FragmentEntry>, logical_size: u64, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>"
+            "signature": "pub fn reconstruct_fragments(frags: Vec<FragmentEntry>, limits: &FragmentLimits) -> Result<(Vec<u8>, bool), FragmentError>"
           }
         ],
         "types": [
           {
             "name": "FragmentError",
-            "description": "Error type for fragment operations. Variants: InvalidMap, Bounds, FragmentGap, LimitExceeded, Overflow. M11c-cp additions: PayloadSizeMismatch (payload length does not match descriptor.fragment_size, always fatal) and DuplicateIndex (duplicate fragment_index in group, always fatal even with LOSS_TOLERANT).",
+            "description": "Error type for fragment operations. Variants: Bounds, InvalidMap, FragmentGap, Overflow, LimitExceeded, PayloadSizeMismatch (decoded contribution length differs from LFH Uncompressed Size; always fatal; maps to SAR_ERR_INVALID_LENGTH), DuplicateIndex (duplicate Fragment Index; always fatal; maps to SAR_ERR_METADATA_CONFLICT) and MetadataConflict (duplicate/misplaced LAST_FRAGMENT or differing LOSS_TOLERANT across a group; maps to SAR_ERR_METADATA_CONFLICT).",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7242,26 +7220,8 @@
             "signature": "pub struct FragmentLimits { pub max_fragment_count: usize, pub max_fragment_group_span: u64, pub max_decoded_entry_size: u64, pub max_loss_tolerant_gap: u64, pub max_allocation_bytes: u64 }"
           },
           {
-            "name": "FragmentDescriptor",
-            "description": "Per-fragment extent descriptor.",
-            "metadata": {
-              "since_milestone": "11c",
-              "stability": "stable",
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": false,
-                "readiness": "not_ready"
-              },
-              "module": "lib",
-              "path": "src/lib.rs"
-            },
-            "kind": "struct",
-            "signature": "pub struct FragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }"
-          },
-          {
             "name": "FragmentEntry",
-            "description": "Decoded fragment with payload and metadata.",
+            "description": "Decoded fragment contribution with Fragment Index, LAST_FRAGMENT/LOSS_TOLERANT bits, declared contribution length (LFH Uncompressed Size) and decoded payload.",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7275,13 +7235,13 @@
               "path": "src/lib.rs"
             },
             "kind": "struct",
-            "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub is_last_fragment: bool, pub is_loss_tolerant: bool, pub descriptor: FragmentDescriptor, pub payload: Vec<u8> }"
+            "signature": "pub struct FragmentEntry { pub fragment_index: u32, pub is_last_fragment: bool, pub is_loss_tolerant: bool, pub uncompressed_size: u64, pub payload: Vec<u8> }"
           }
         ],
         "constants": []
       },
       "notes": [
-        "Milestone 11c-cp: Added FragmentError::PayloadSizeMismatch (payload.len() != descriptor.fragment_size, always fatal) and FragmentError::DuplicateIndex (duplicate fragment index, always fatal including with LOSS_TOLERANT). reconstruct_fragments now validates index gaps, missing LAST_FRAGMENT, and descriptor byte-range gaps (initial/middle/tail), applying sar_loss_tolerant::gap_degraded_output_permitted() and max_loss_tolerant_gap for degraded output policy. sar-fragmentation now depends on sar-loss-tolerant."
+        "M13b WP-3: removed FragmentDescriptor; reassembly is canonical Fragment Index ordering with contribution length from LFH Uncompressed Size (no absolute offsets). Added FragmentError::MetadataConflict. max_loss_tolerant_gap is retained in FragmentLimits but not consulted (missing-fragment length is unknowable); tracked under M13b.2. Earlier history: M11c-cp added PayloadSizeMismatch and DuplicateIndex; sar-fragmentation depends on sar-loss-tolerant."
       ],
       "metadata": {
         "milestones": [

@@ -28,9 +28,7 @@ use sar_compression::{COMP_ALGO_DEFLATE, CompressionOptions, encode_stream};
 use sar_core::{
     GlobalFlags, ResourceLimits, SarError,
     flags::EntryMode,
-    format::{
-        GlobalHeader, LfhFragmentDescriptor, LocalFileHeader, write_global_header, write_lfh,
-    },
+    format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
     sparse::{SparseExtent, write_sparse_map},
 };
 
@@ -367,10 +365,6 @@ fn store_patch_with_fragmentation_applies_after_fragment_reassembly() {
     lfh0.entry_mode = mode0;
     lfh0.fragment_id = Some(fragment_id);
     lfh0.fragment_index = Some(0);
-    lfh0.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: frag0_data.len() as u32,
-    });
     lfh0.patch_algo_id = Some(0x00); // STORE_PATCH
     lfh0.delta_base_hash = Some([0u8; 32]);
     lfh0.payload_size = frag0_data.len() as u64;
@@ -385,10 +379,6 @@ fn store_patch_with_fragmentation_applies_after_fragment_reassembly() {
     lfh1.entry_mode = mode1;
     lfh1.fragment_id = Some(fragment_id);
     lfh1.fragment_index = Some(1);
-    lfh1.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: frag0_data.len() as u64,
-        fragment_size: frag1_data.len() as u32,
-    });
     lfh1.patch_algo_id = Some(0x00); // STORE_PATCH
     lfh1.delta_base_hash = Some([0u8; 32]);
     lfh1.payload_size = frag1_data.len() as u64;
@@ -457,10 +447,6 @@ fn loss_tolerant_does_not_suppress_patch_failed() {
     );
     lfh.fragment_id = Some(99);
     lfh.fragment_index = Some(0);
-    lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: payload.len() as u32,
-    });
     lfh.patch_algo_id = Some(0x00); // STORE_PATCH
     lfh.delta_base_hash = Some([0u8; 32]);
     lfh.payload_size = payload.len() as u64;

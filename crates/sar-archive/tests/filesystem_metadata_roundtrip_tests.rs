@@ -893,7 +893,7 @@ fn metadata_present_in_lfh_before_compressed_payload() {
 
 #[test]
 fn metadata_with_fragmented_entry() {
-    use sar_core::format::{LfhFragmentDescriptor, LocalFileHeader};
+    use sar_core::format::LocalFileHeader;
 
     // Build a two-fragment archive manually: each fragment carries metadata.
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::HAS_PERMS;
@@ -911,10 +911,6 @@ fn metadata_with_fragmented_entry() {
     frag0.entry_mode = frag0_mode;
     frag0.fragment_id = Some(42);
     frag0.fragment_index = Some(0);
-    frag0.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 0,
-        fragment_size: 6,
-    });
     frag0.permissions = Some(0o755);
     let frag0_bytes = write_lfh(&flags, &frag0).expect("frag0 lfh");
     buf.extend_from_slice(&frag0_bytes);
@@ -926,10 +922,6 @@ fn metadata_with_fragmented_entry() {
     frag1.entry_mode = frag1_mode;
     frag1.fragment_id = Some(42);
     frag1.fragment_index = Some(1);
-    frag1.fragment_descriptor = Some(LfhFragmentDescriptor {
-        absolute_offset: 6,
-        fragment_size: 5,
-    });
     frag1.permissions = Some(0o755);
     let frag1_bytes = write_lfh(&flags, &frag1).expect("frag1 lfh");
     buf.extend_from_slice(&frag1_bytes);

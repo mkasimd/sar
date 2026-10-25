@@ -4,28 +4,31 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-//! Fragment-group semantic validation and reassembly for SAR file-fragmentation
-//! (Section 19).
+//! Fragment-group semantic validation and canonical reassembly for SAR
+//! file-fragmentation (Section 19).
 //!
-//! This crate owns fragment descriptor models, fragment group ordering and
-//! continuity validation, and fragment reassembly execution.  Raw LFH
-//! fragment fields, `IS_FRAGMENT`/`LAST_FRAGMENT` bits, and archive
+//! The canonical SAR v1.0 fragment representation carries only a Fragment ID
+//! and a Fragment Index in each LFH.  A fragment's contribution length is its
+//! LFH `Uncompressed Size`; there is no absolute offset on the wire.  This
+//! crate reassembles decoded fragment contributions by concatenating them in
+//! ascending Fragment Index order.
+//!
+//! Raw LFH fragment fields, `IS_FRAGMENT`/`LAST_FRAGMENT` bits, and archive
 //! reader/writer integration remain in `sar-core`.
 //!
 //! # Validation coverage
 //!
-//! | Check                                     | Function                   |
-//! |-------------------------------------------|----------------------------|
-//! | Fragment count / group span limits        | [`validate_fragment_group`] |
-//! | Descriptor bounds (offset+size ≤ logical) | [`validate_fragment_group`] |
-//! | Descriptor overlap (sorted order)         | [`validate_fragment_group`] |
-//! | Duplicate `fragment_index` (fatal)        | [`reconstruct_fragments`]  |
-//! | Payload length == `fragment_size`         | [`reconstruct_fragments`]  |
-//! | Index gaps / missing `LAST_FRAGMENT`      | [`reconstruct_fragments`]  |
-//! | Loss-tolerant gap policy                  | [`reconstruct_fragments`] via [`sar_loss_tolerant`] |
+//! | Check                                          | Function                    |
+//! |------------------------------------------------|-----------------------------|
+//! | Fragment count limit                           | [`validate_fragment_group`] |
+//! | Duplicate `fragment_index` (fatal)             | [`validate_fragment_group`] |
+//! | Contribution length == `uncompressed_size`     | [`reconstruct_fragments`]   |
+//! | `LAST_FRAGMENT` / `LOSS_TOLERANT` consistency  | [`validate_fragment_group`] |
+//! | Checked total length, span and output limits   | [`validate_fragment_group`] |
+//! | Dense index sequence and terminal marker       | [`reconstruct_fragments`]   |
+//! | Longest-contiguous-prefix degraded output      | [`reconstruct_fragments`] via [`sar_loss_tolerant`] |
 
 use sar_loss_tolerant::gap_degraded_output_permitted;
-use serde::Serialize;
 
 // ── Error type ───────────────────────────────────────────────────────────────
 
@@ -35,36 +38,41 @@ use serde::Serialize;
 /// implementation defined in that crate.
 #[derive(Debug, thiserror::Error)]
 pub enum FragmentError {
-    /// A fragment descriptor extends beyond the declared logical file size, or
-    /// a scatter-gather offset exceeds the output buffer.
+    /// A fragment bounds violation.
     #[error("fragment bounds error: {0}")]
     Bounds(&'static str),
 
-    /// Two fragment descriptors overlap in the logical address space.
+    /// A structurally invalid map.
     #[error("fragment invalid map: {0}")]
     InvalidMap(&'static str),
 
-    /// A gap in fragment indices was detected and `LOSS_TOLERANT` was not set.
+    /// A gap in the fragment sequence was detected and `LOSS_TOLERANT` did not
+    /// permit degraded output.
     #[error("fragment gap: {0}")]
     FragmentGap(&'static str),
 
-    /// An arithmetic overflow occurred during fragment offset/size computation.
+    /// An arithmetic overflow occurred during fragment size computation.
     #[error("fragment overflow: {0}")]
     Overflow(&'static str),
 
-    /// A resource limit was exceeded (fragment count, group span, or gap size).
+    /// A resource limit was exceeded (fragment count, group span, output size).
     #[error("fragment limit exceeded: {0}")]
     LimitExceeded(&'static str),
 
-    /// A fragment's `payload.len()` does not equal its `fragment_size`
-    /// descriptor field.  This is always fatal, regardless of `LOSS_TOLERANT`.
+    /// A fragment's decoded contribution length does not equal its declared
+    /// LFH `Uncompressed Size`.  Always fatal, regardless of `LOSS_TOLERANT`.
     #[error("fragment payload size mismatch: {0}")]
     PayloadSizeMismatch(&'static str),
 
-    /// Two or more fragments share the same `fragment_index`.  This is always
-    /// fatal, regardless of `LOSS_TOLERANT`.
+    /// Two or more fragments share the same `fragment_index`.  Always fatal,
+    /// regardless of `LOSS_TOLERANT`.
     #[error("fragment duplicate index: {0}")]
     DuplicateIndex(&'static str),
+
+    /// Fragment-group metadata is inconsistent (duplicate or misplaced
+    /// `LAST_FRAGMENT`, or differing `LOSS_TOLERANT` values).  Always fatal.
+    #[error("fragment metadata conflict: {0}")]
+    MetadataConflict(&'static str),
 }
 
 // ── Resource limits ───────────────────────────────────────────────────────────
@@ -72,17 +80,21 @@ pub enum FragmentError {
 /// Resource limits for fragment group validation and reassembly.
 ///
 /// Populated by `sar-core` from its unified `ResourceLimits` before calling
-/// into this crate.  All fields are checked **before** allocating or reading
-/// the corresponding number of bytes.
+/// into this crate.  All fields are checked **before** allocating the
+/// corresponding number of bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FragmentLimits {
     /// Maximum number of fragments in a single fragment group.
     pub max_fragment_count: usize,
-    /// Maximum logical span (in bytes) of a fragment group.
+    /// Maximum total decoded length (in bytes) of a fragment group.
     pub max_fragment_group_span: u64,
     /// Maximum decoded entry size in bytes.
     pub max_decoded_entry_size: u64,
     /// Maximum permitted loss-tolerant gap size in bytes.
+    ///
+    /// Not consulted by canonical reassembly: the length of a missing fragment
+    /// is not recoverable, so no gap length can be measured.  Retained for
+    /// limit-set compatibility pending M13b.2 review.
     pub max_loss_tolerant_gap: u64,
     /// Maximum in-memory allocation in bytes for a single operation.
     pub max_allocation_bytes: u64,
@@ -130,15 +142,6 @@ impl FragmentLimits {
         Ok(())
     }
 
-    fn check_loss_tolerant_gap(&self, bytes: u64) -> Result<(), FragmentError> {
-        if bytes > self.max_loss_tolerant_gap {
-            return Err(FragmentError::LimitExceeded(
-                "loss-tolerant gap exceeds configured limit",
-            ));
-        }
-        Ok(())
-    }
-
     fn allocation_len(&self, bytes: u64, context: &'static str) -> Result<usize, FragmentError> {
         if bytes > self.max_allocation_bytes {
             return Err(FragmentError::LimitExceeded(
@@ -155,553 +158,370 @@ impl FragmentLimits {
 
 // ── Public data types ─────────────────────────────────────────────────────────
 
-/// Typed fragment descriptor extracted from an LFH.
-///
-/// Mirrors the `(u64, u32)` pair stored in the `LocalFileHeader` as
-/// human-readable named fields.  The raw wire-format pair is owned by
-/// `sar-core`; this struct is the semantic view.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct FragmentDescriptor {
-    /// Absolute byte offset of this fragment within the logical file.
-    pub absolute_offset: u64,
-    /// Byte length of this fragment's contribution to the logical file.
-    pub fragment_size: u32,
-}
-
 /// One fragment's reassembly data.
 #[derive(Debug, Clone)]
 pub struct FragmentEntry {
-    /// Zero-based monotonic fragment sequence number.
+    /// Zero-based monotonic fragment sequence number (LFH Fragment Index).
     pub fragment_index: u32,
     /// True when the `LAST_FRAGMENT` mode bit is set.
     pub is_last_fragment: bool,
     /// True when the `LOSS_TOLERANT` mode bit is set.
     pub is_loss_tolerant: bool,
-    /// Descriptor: absolute offset and declared size in logical file.
-    pub descriptor: FragmentDescriptor,
-    /// Decoded fragment payload bytes.
+    /// Declared decoded contribution length: the LFH `Uncompressed Size`.
+    pub uncompressed_size: u64,
+    /// Decoded fragment contribution bytes.
     ///
-    /// Must equal `descriptor.fragment_size` in length.  A mismatch is always
-    /// fatal: [`reconstruct_fragments`] returns
+    /// Must equal `uncompressed_size` in length.  A mismatch is always fatal:
     /// [`FragmentError::PayloadSizeMismatch`] regardless of `LOSS_TOLERANT`.
     pub payload: Vec<u8>,
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────
 
-/// Validates fragment-group metadata consistency.
+/// Validates fragment-group metadata and size consistency.
 ///
-/// Checks (in order):
+/// Checks, in order:
 /// 1. Fragment count ≤ `limits.max_fragment_count`.
-/// 2. `logical_size` ≤ `limits.max_fragment_group_span`.
-/// 3. No fragment descriptor extends beyond `logical_size` (bounds check).
-/// 4. No two descriptors overlap (sorted by absolute offset).
+/// 2. No duplicate `fragment_index`.
+/// 3. At most one `LAST_FRAGMENT`, and no fragment with an index above it.
+/// 4. `LOSS_TOLERANT` is identical across the group.
+/// 5. Checked total contribution length (sum of declared `uncompressed_size`) ≤ group-span and decoded-entry limits.
 ///
-/// **Does not check**:
-/// - Payload-length agreement (that check lives in [`reconstruct_fragments`]).
-/// - Duplicate `fragment_index` (that check lives in [`reconstruct_fragments`]).
-/// - Index gaps or `LAST_FRAGMENT` presence (those checks live in
-///   [`reconstruct_fragments`]).
+/// Does **not** check payload bytes against `uncompressed_size`, index density,
+/// or terminal-marker presence; those are evaluated by
+/// [`reconstruct_fragments`].  Metadata-only callers may pass empty payloads.
 ///
 /// # Errors
 ///
-/// Returns [`FragmentError::LimitExceeded`] when a limit is exceeded.
-/// Returns [`FragmentError::Bounds`] when a fragment extends beyond
-/// `logical_size`.
-/// Returns [`FragmentError::InvalidMap`] when two fragment descriptors overlap.
-/// Returns [`FragmentError::Overflow`] on arithmetic overflow.
+/// [`FragmentError::LimitExceeded`], [`FragmentError::DuplicateIndex`],
+/// [`FragmentError::MetadataConflict`], or [`FragmentError::Overflow`].
 pub fn validate_fragment_group(
     fragments: &[FragmentEntry],
-    logical_size: u64,
     limits: &FragmentLimits,
 ) -> Result<(), FragmentError> {
     limits.check_fragment_count(fragments.len())?;
-    limits.check_fragment_group_span(logical_size)?;
-    // Validate each fragment independently
+
+    let mut indices: Vec<u32> = fragments.iter().map(|f| f.fragment_index).collect();
+    indices.sort_unstable();
+    if indices.windows(2).any(|w| w[0] == w[1]) {
+        return Err(FragmentError::DuplicateIndex(
+            "duplicate fragment_index detected",
+        ));
+    }
+
+    let mut total: u64 = 0;
     for frag in fragments {
-        let end = u64::from(frag.descriptor.fragment_size)
-            .checked_add(frag.descriptor.absolute_offset)
-            .ok_or(FragmentError::Overflow("fragment descriptor end overflow"))?;
-        if end > logical_size {
-            return Err(FragmentError::Bounds(
-                "fragment descriptor extends beyond logical file size",
+        total = total
+            .checked_add(frag.uncompressed_size)
+            .ok_or(FragmentError::Overflow("fragment length sum overflow"))?;
+    }
+
+    let mut last_index: Option<u32> = None;
+    for frag in fragments.iter().filter(|f| f.is_last_fragment) {
+        if last_index.is_some() {
+            return Err(FragmentError::MetadataConflict(
+                "multiple LAST_FRAGMENT markers in fragment group",
             ));
         }
+        last_index = Some(frag.fragment_index);
+    }
+    if let Some(last) = last_index
+        && fragments.iter().any(|f| f.fragment_index > last)
+    {
+        return Err(FragmentError::MetadataConflict(
+            "fragment index exceeds LAST_FRAGMENT index",
+        ));
     }
 
-    // Check for overlapping descriptors by sorting on absolute_offset
-    let mut sorted: Vec<&FragmentEntry> = fragments.iter().collect();
-    sorted.sort_by_key(|f| f.descriptor.absolute_offset);
-
-    let mut last_end: u64 = 0;
-    for frag in &sorted {
-        if frag.descriptor.absolute_offset < last_end {
-            return Err(FragmentError::InvalidMap("fragment descriptors overlap"));
-        }
-        last_end = frag
-            .descriptor
-            .absolute_offset
-            .checked_add(u64::from(frag.descriptor.fragment_size))
-            .ok_or(FragmentError::Overflow("fragment end overflow"))?;
+    if let Some(first) = fragments.first()
+        && fragments
+            .iter()
+            .any(|f| f.is_loss_tolerant != first.is_loss_tolerant)
+    {
+        return Err(FragmentError::MetadataConflict(
+            "LOSS_TOLERANT differs across fragment group",
+        ));
     }
 
+    limits.check_fragment_group_span(total)?;
+    limits.check_decoded_entry_size(total)?;
     Ok(())
 }
 
 // ── Reassembly ────────────────────────────────────────────────────────────────
 
-/// Reconstructs a logical file from a fragment group.
+/// Reconstructs a logical file from a fragment group by concatenating decoded
+/// contributions in ascending Fragment Index order.
 ///
-/// Algorithm:
-/// 1. Limit-check fragment count and group span.
-/// 2. **Fail closed** on duplicate `fragment_index` — always, regardless of
-///    `LOSS_TOLERANT`.
-/// 3. Sort fragments by `fragment_index`.
-/// 4. **Fail closed** on payload-size mismatch (`payload.len() !=
-///    fragment_size`) for each fragment — always, regardless of
-///    `LOSS_TOLERANT`.
-/// 5. Check for index gaps and missing `LAST_FRAGMENT` marker.  If gaps exist
-///    and `LOSS_TOLERANT` is **not** set (as determined by
-///    [`sar_loss_tolerant::gap_degraded_output_permitted`]), return
-///    [`FragmentError::FragmentGap`].  With `LOSS_TOLERANT`, continue and mark
-///    `is_degraded = true`.
-/// 6. Run [`validate_fragment_group`] for bounds/overlap checks.
-/// 7. Check descriptor byte-range gaps (initial/middle/tail).  If gaps exist
-///    and `LOSS_TOLERANT` is not set, return [`FragmentError::FragmentGap`].
-///    With `LOSS_TOLERANT`, enforce `limits.max_loss_tolerant_gap` and mark
-///    `is_degraded = true`.
-/// 8. Allocate a `logical_size`-byte zero buffer.
-/// 9. Scatter each fragment's `payload` at `descriptor.absolute_offset`.
+/// A group is complete when its indices are exactly `0..n` and the fragment
+/// with index `n - 1` carries `LAST_FRAGMENT`.
 ///
-/// Returns `(reconstructed_bytes, is_degraded)` where `is_degraded` is `true`
-/// when the output is incomplete due to missing fragments permitted by
-/// `LOSS_TOLERANT`.
+/// For an incomplete group:
+/// * without `LOSS_TOLERANT` the result is [`FragmentError::FragmentGap`];
+/// * with `LOSS_TOLERANT`, if Fragment Index 0 is present, only the longest
+///   contiguous valid prefix starting at index 0 is emitted and
+///   `is_degraded` is `true`; otherwise [`FragmentError::FragmentGap`].
+///
+/// Missing fragments are never zero-filled, their lengths are never inferred,
+/// and later fragments are never shifted across a gap.  Degraded output is not
+/// verified output.
+///
+/// Returns `(reconstructed_bytes, is_degraded)`.
 ///
 /// # Errors
 ///
-/// * [`FragmentError::DuplicateIndex`] — duplicate `fragment_index` (always
-///   fatal).
-/// * [`FragmentError::PayloadSizeMismatch`] — `payload.len() != fragment_size`
-///   (always fatal).
-/// * [`FragmentError::FragmentGap`] — gap without `LOSS_TOLERANT`.
-/// * [`FragmentError::Bounds`] / [`FragmentError::InvalidMap`] — from
-///   validation.
-/// * [`FragmentError::Overflow`] — on size arithmetic overflow.
-/// * [`FragmentError::LimitExceeded`] — when a resource limit is exceeded.
+/// Everything from [`validate_fragment_group`], plus
+/// [`FragmentError::PayloadSizeMismatch`], [`FragmentError::FragmentGap`] and
+/// allocation-limit errors.
 pub fn reconstruct_fragments(
     mut fragments: Vec<FragmentEntry>,
-    logical_size: u64,
     limits: &FragmentLimits,
 ) -> Result<(Vec<u8>, bool), FragmentError> {
-    limits.check_fragment_count(fragments.len())?;
-    limits.check_fragment_group_span(logical_size)?;
-    limits.check_decoded_entry_size(logical_size)?;
+    validate_fragment_group(&fragments, limits)?;
     if fragments.is_empty() {
-        let buf_size = limits.allocation_len(logical_size, "logical size")?;
-        return Ok((vec![0u8; buf_size], false));
+        return Err(FragmentError::FragmentGap("fragment group is empty"));
     }
-
-    // Sort by fragment_index ascending
+    for frag in &fragments {
+        let actual = u64::try_from(frag.payload.len())
+            .map_err(|_| FragmentError::Overflow("fragment payload length"))?;
+        if actual != frag.uncompressed_size {
+            return Err(FragmentError::PayloadSizeMismatch(
+                "fragment decoded length does not match LFH uncompressed size",
+            ));
+        }
+    }
     fragments.sort_by_key(|f| f.fragment_index);
 
-    // Duplicate index check — always fatal, regardless of LOSS_TOLERANT.
-    for pair in fragments.windows(2) {
-        if pair[0].fragment_index == pair[1].fragment_index {
-            return Err(FragmentError::DuplicateIndex(
-                "duplicate fragment_index detected",
-            ));
-        }
-    }
-
-    // Payload-size mismatch check — always fatal, regardless of LOSS_TOLERANT.
-    for frag in &fragments {
-        let declared = frag.descriptor.fragment_size as usize;
-        if frag.payload.len() != declared {
-            return Err(FragmentError::PayloadSizeMismatch(
-                "fragment payload length does not match descriptor fragment_size",
-            ));
-        }
-    }
-
-    let is_loss_tolerant = fragments.iter().any(|f| f.is_loss_tolerant);
-    let has_last = fragments.iter().any(|f| f.is_last_fragment);
-
-    // Check for index gaps / missing LAST_FRAGMENT marker.
-    let mut has_index_gap = !has_last;
-    if !has_index_gap {
-        for pair in fragments.windows(2) {
-            if pair[1].fragment_index != pair[0].fragment_index.wrapping_add(1) {
-                has_index_gap = true;
-                break;
-            }
-        }
-    }
-
-    if has_index_gap && !gap_degraded_output_permitted(is_loss_tolerant) {
+    if fragments[0].fragment_index != 0 {
         return Err(FragmentError::FragmentGap(
-            "fragment index gap or missing last-fragment marker",
+            "fragment index 0 is missing from fragment group",
         ));
     }
 
-    // Validate descriptor bounds and overlaps
-    validate_fragment_group(&fragments, logical_size, limits)?;
-
-    let mut sorted: Vec<&FragmentEntry> = fragments.iter().collect();
-    sorted.sort_by_key(|f| f.descriptor.absolute_offset);
-    let mut last_end: u64 = 0;
-    let mut has_descriptor_gap = false;
-    for frag in &sorted {
-        if frag.descriptor.absolute_offset > last_end {
-            let gap = frag
-                .descriptor
-                .absolute_offset
-                .checked_sub(last_end)
-                .ok_or(FragmentError::Overflow("fragment gap"))?;
-            if !gap_degraded_output_permitted(is_loss_tolerant) {
-                return Err(FragmentError::FragmentGap(
-                    "fragment descriptor byte-range gap",
-                ));
-            }
-            limits.check_loss_tolerant_gap(gap)?;
-            has_descriptor_gap = true;
-        }
-        last_end = frag
-            .descriptor
-            .absolute_offset
-            .checked_add(u64::from(frag.descriptor.fragment_size))
-            .ok_or(FragmentError::Overflow("fragment end overflow"))?;
+    let mut prefix_len: usize = 1;
+    while prefix_len < fragments.len()
+        && u64::from(fragments[prefix_len].fragment_index)
+            == u64::try_from(prefix_len)
+                .map_err(|_| FragmentError::Overflow("fragment prefix length"))?
+    {
+        prefix_len += 1;
     }
-    if logical_size > last_end {
-        let tail_gap = logical_size
-            .checked_sub(last_end)
-            .ok_or(FragmentError::Overflow("fragment tail gap"))?;
-        if !gap_degraded_output_permitted(is_loss_tolerant) {
+    let complete = prefix_len == fragments.len() && fragments[prefix_len - 1].is_last_fragment;
+
+    if !complete {
+        let loss_tolerant = gap_degraded_output_permitted(fragments[0].is_loss_tolerant);
+        if !loss_tolerant {
             return Err(FragmentError::FragmentGap(
-                "fragment descriptor byte-range gap",
+                "fragment group is incomplete and LOSS_TOLERANT is not set",
             ));
         }
-        limits.check_loss_tolerant_gap(tail_gap)?;
-        has_descriptor_gap = true;
+        fragments.truncate(prefix_len);
     }
 
-    // Allocate logical output buffer
-    let buf_size = limits.allocation_len(logical_size, "logical size usize")?;
-    let mut output = vec![0u8; buf_size];
-
-    // Scatter-gather: each fragment's payload goes to its absolute offset
+    let mut total: u64 = 0;
     for frag in &fragments {
-        let dst_start = usize::try_from(frag.descriptor.absolute_offset)
-            .map_err(|_| FragmentError::Overflow("fragment offset usize"))?;
-        let len = frag.payload.len();
-        let dst_end = dst_start
-            .checked_add(len)
-            .ok_or(FragmentError::Overflow("fragment end usize"))?;
-        if dst_end > buf_size {
-            return Err(FragmentError::Bounds(
-                "fragment payload extends beyond logical file size",
-            ));
-        }
-        output[dst_start..dst_end].copy_from_slice(&frag.payload);
+        total = total
+            .checked_add(frag.uncompressed_size)
+            .ok_or(FragmentError::Overflow("fragment length sum overflow"))?;
     }
-
-    Ok((output, has_index_gap || has_descriptor_gap))
+    let capacity = limits.allocation_len(total, "fragment output length")?;
+    let mut out = Vec::with_capacity(capacity);
+    for frag in &fragments {
+        out.extend_from_slice(&frag.payload);
+    }
+    Ok((out, !complete))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn limits() -> FragmentLimits {
+    fn frag(index: u32, last: bool, lt: bool, data: &[u8]) -> FragmentEntry {
+        FragmentEntry {
+            fragment_index: index,
+            is_last_fragment: last,
+            is_loss_tolerant: lt,
+            uncompressed_size: data.len() as u64,
+            payload: data.to_vec(),
+        }
+    }
+
+    fn unl() -> FragmentLimits {
         FragmentLimits::unlimited()
     }
 
-    fn make_entry(
-        index: u32,
-        is_last: bool,
-        is_loss_tolerant: bool,
-        offset: u64,
-        size: u32,
-        payload: Vec<u8>,
-    ) -> FragmentEntry {
-        FragmentEntry {
-            fragment_index: index,
-            is_last_fragment: is_last,
-            is_loss_tolerant,
-            descriptor: FragmentDescriptor {
-                absolute_offset: offset,
-                fragment_size: size,
-            },
-            payload,
+    #[test]
+    fn complete_dense_sequence() {
+        let (out, degraded) = reconstruct_fragments(
+            vec![frag(0, false, false, b"ab"), frag(1, true, false, b"cd")],
+            &unl(),
+        )
+        .expect("ok");
+        assert_eq!(out, b"abcd");
+        assert!(!degraded);
+    }
+
+    #[test]
+    fn out_of_order_input_ordered_by_index() {
+        let (out, _) = reconstruct_fragments(
+            vec![
+                frag(2, true, false, b"EF"),
+                frag(0, false, false, b"ab"),
+                frag(1, false, false, b"cd"),
+            ],
+            &unl(),
+        )
+        .expect("ok");
+        assert_eq!(out, b"abcdEF");
+    }
+
+    #[test]
+    fn duplicate_index_is_fatal_even_loss_tolerant() {
+        let err = reconstruct_fragments(
+            vec![frag(0, false, true, b"a"), frag(0, true, true, b"b")],
+            &unl(),
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::DuplicateIndex(_)));
+    }
+
+    #[test]
+    fn missing_first_fragment_fails_even_loss_tolerant() {
+        for lt in [false, true] {
+            let err = reconstruct_fragments(vec![frag(1, true, lt, b"b")], &unl())
+                .expect_err("must fail");
+            assert!(matches!(err, FragmentError::FragmentGap(_)));
         }
     }
 
     #[test]
-    fn complete_reassembly_two_fragments() {
-        let f0 = make_entry(0, false, false, 0, 5, b"Hello".to_vec());
-        let f1 = make_entry(1, true, false, 5, 6, b" World".to_vec());
-        let (data, degraded) =
-            reconstruct_fragments(vec![f0, f1], 11, &limits()).expect("reconstruct ok");
-        assert_eq!(data, b"Hello World");
-        assert!(!degraded);
+    fn missing_interior_fails_without_loss_tolerance() {
+        let err = reconstruct_fragments(
+            vec![frag(0, false, false, b"a"), frag(2, true, false, b"c")],
+            &unl(),
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::FragmentGap(_)));
     }
 
     #[test]
-    fn single_fragment_complete() {
-        let f0 = make_entry(0, true, false, 0, 4, b"test".to_vec());
-        let (data, degraded) =
-            reconstruct_fragments(vec![f0], 4, &limits()).expect("reconstruct ok");
-        assert_eq!(data, b"test");
-        assert!(!degraded);
-    }
-
-    #[test]
-    fn out_of_order_fragments_reassembled() {
-        let f1 = make_entry(1, true, false, 3, 3, b"BAR".to_vec());
-        let f0 = make_entry(0, false, false, 0, 3, b"FOO".to_vec());
-        let (data, degraded) =
-            reconstruct_fragments(vec![f1, f0], 6, &limits()).expect("reconstruct ok");
-        assert_eq!(data, b"FOOBAR");
-        assert!(!degraded);
-    }
-
-    #[test]
-    fn missing_fragment_without_loss_tolerant_is_error() {
-        // Fragment 0 and 2, gap at 1
-        let f0 = make_entry(0, false, false, 0, 4, b"AAAA".to_vec());
-        let f2 = make_entry(2, true, false, 8, 4, b"CCCC".to_vec());
-        let result = reconstruct_fragments(vec![f0, f2], 12, &limits());
-        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
-    }
-
-    #[test]
-    fn missing_fragment_with_loss_tolerant_produces_degraded_output() {
-        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
-        let f2 = make_entry(2, true, true, 8, 4, b"CCCC".to_vec());
-        let (data, degraded) =
-            reconstruct_fragments(vec![f0, f2], 12, &limits()).expect("reconstruct ok");
-        // Bytes 4-7 are zero-filled (gap), rest are as-written
-        assert_eq!(&data[0..4], b"AAAA");
-        assert_eq!(&data[4..8], b"\x00\x00\x00\x00");
-        assert_eq!(&data[8..12], b"CCCC");
+    fn missing_interior_loss_tolerant_emits_prefix_only() {
+        let (out, degraded) = reconstruct_fragments(
+            vec![
+                frag(0, false, true, b"aa"),
+                frag(1, false, true, b"bb"),
+                frag(3, true, true, b"dd"),
+            ],
+            &unl(),
+        )
+        .expect("ok");
         assert!(degraded);
+        // No zero fill, no concatenation across the gap.
+        assert_eq!(out, b"aabb");
     }
 
     #[test]
-    fn overlapping_fragment_descriptors_rejected() {
-        let f0 = make_entry(0, false, false, 0, 8, b"AAAAAAAA".to_vec());
-        let f1 = make_entry(1, true, false, 4, 8, b"BBBBBBBB".to_vec());
-        let result = reconstruct_fragments(vec![f0, f1], 16, &limits());
-        assert!(matches!(result, Err(FragmentError::InvalidMap(_))));
+    fn missing_terminal_fails_without_loss_tolerance() {
+        let err = reconstruct_fragments(
+            vec![frag(0, false, false, b"a"), frag(1, false, false, b"b")],
+            &unl(),
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::FragmentGap(_)));
     }
 
     #[test]
-    fn fragment_descriptor_beyond_logical_size_rejected() {
-        let f0 = make_entry(0, true, false, 10, 6, b"XXXXXX".to_vec());
-        let result = reconstruct_fragments(vec![f0], 12, &limits());
-        // offset 10 + size 6 = 16 > 12
-        assert!(matches!(result, Err(FragmentError::Bounds(_))));
-    }
-
-    #[test]
-    fn fragment_count_limit_exceeded() {
-        let limits = FragmentLimits {
-            max_fragment_count: 2,
-            ..FragmentLimits::unlimited()
-        };
-        let frags: Vec<FragmentEntry> = (0..3u32)
-            .map(|i| make_entry(i, i == 2, false, u64::from(i) * 4, 4, vec![0u8; 4]))
-            .collect();
-        let result = reconstruct_fragments(frags, 12, &limits);
-        assert!(matches!(result, Err(FragmentError::LimitExceeded(_))));
-    }
-
-    #[test]
-    fn max_fragment_group_span_exceeded() {
-        let limits = FragmentLimits {
-            max_fragment_group_span: 8,
-            ..FragmentLimits::unlimited()
-        };
-        let f0 = make_entry(0, true, false, 0, 4, b"AAAA".to_vec());
-        // logical_size 16 > max_fragment_group_span 8
-        let result = reconstruct_fragments(vec![f0], 16, &limits);
-        assert!(matches!(result, Err(FragmentError::LimitExceeded(_))));
-    }
-
-    #[test]
-    fn missing_last_fragment_marker_without_loss_tolerant_rejected() {
-        // No fragment has is_last_fragment = true
-        let f0 = make_entry(0, false, false, 0, 4, b"AAAA".to_vec());
-        let f1 = make_entry(1, false, false, 4, 4, b"BBBB".to_vec());
-        let result = reconstruct_fragments(vec![f0, f1], 8, &limits());
-        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
-    }
-
-    #[test]
-    fn validate_fragment_group_non_overlapping_ok() {
-        let frags = vec![
-            make_entry(0, false, false, 0, 4, vec![0u8; 4]),
-            make_entry(1, true, false, 4, 4, vec![0u8; 4]),
-        ];
-        assert!(validate_fragment_group(&frags, 8, &limits()).is_ok());
-    }
-
-    #[test]
-    fn validate_fragment_group_overlap_rejected() {
-        let frags = vec![
-            make_entry(0, false, false, 0, 8, vec![0u8; 8]),
-            make_entry(1, true, false, 4, 4, vec![0u8; 4]),
-        ];
-        let result = validate_fragment_group(&frags, 16, &limits());
-        assert!(matches!(result, Err(FragmentError::InvalidMap(_))));
-    }
-
-    // ── New: payload-size mismatch tests ─────────────────────────────────────
-
-    #[test]
-    fn payload_shorter_than_fragment_size_rejected() {
-        // declared size=8, payload=4 bytes
-        let f0 = make_entry(0, true, false, 0, 8, vec![0u8; 4]);
-        let result = reconstruct_fragments(vec![f0], 8, &limits());
-        assert!(
-            matches!(result, Err(FragmentError::PayloadSizeMismatch(_))),
-            "expected PayloadSizeMismatch, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn payload_longer_than_fragment_size_rejected() {
-        // declared size=4, payload=8 bytes
-        let f0 = make_entry(0, true, false, 0, 4, vec![0u8; 8]);
-        let result = reconstruct_fragments(vec![f0], 8, &limits());
-        assert!(
-            matches!(result, Err(FragmentError::PayloadSizeMismatch(_))),
-            "expected PayloadSizeMismatch, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn payload_size_mismatch_not_suppressed_by_loss_tolerant() {
-        // LOSS_TOLERANT is set but payload mismatch must still fail closed
-        let f0 = make_entry(0, true, true, 0, 8, vec![0u8; 4]);
-        let result = reconstruct_fragments(vec![f0], 8, &limits());
-        assert!(
-            matches!(result, Err(FragmentError::PayloadSizeMismatch(_))),
-            "expected PayloadSizeMismatch even with LOSS_TOLERANT, got {result:?}"
-        );
-    }
-
-    // ── New: duplicate index tests ────────────────────────────────────────────
-
-    #[test]
-    fn duplicate_fragment_index_rejected() {
-        // Two fragments with index 0
-        let f0a = make_entry(0, false, false, 0, 4, vec![0u8; 4]);
-        let f0b = make_entry(0, true, false, 4, 4, vec![0u8; 4]);
-        let result = reconstruct_fragments(vec![f0a, f0b], 8, &limits());
-        assert!(
-            matches!(result, Err(FragmentError::DuplicateIndex(_))),
-            "expected DuplicateIndex, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn duplicate_fragment_index_with_loss_tolerant_rejected() {
-        // Duplicate index must fail closed even with LOSS_TOLERANT set
-        let f0a = make_entry(0, false, true, 0, 4, vec![0u8; 4]);
-        let f0b = make_entry(0, true, true, 4, 4, vec![0u8; 4]);
-        let result = reconstruct_fragments(vec![f0a, f0b], 8, &limits());
-        assert!(
-            matches!(result, Err(FragmentError::DuplicateIndex(_))),
-            "expected DuplicateIndex even with LOSS_TOLERANT, got {result:?}"
-        );
-    }
-
-    // ── New: LAST_FRAGMENT behavior test ──────────────────────────────────────
-
-    #[test]
-    fn missing_last_fragment_with_loss_tolerant_produces_degraded_output() {
-        // No fragment has is_last_fragment = true, but LOSS_TOLERANT is set →
-        // degraded output is permitted
-        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
-        let f1 = make_entry(1, false, true, 4, 4, b"BBBB".to_vec());
-        let (data, degraded) =
-            reconstruct_fragments(vec![f0, f1], 8, &limits()).expect("reconstruct ok");
-        assert!(
-            degraded,
-            "expected degraded=true when LAST_FRAGMENT is absent"
-        );
-        assert_eq!(&data[..4], b"AAAA");
-        assert_eq!(&data[4..8], b"BBBB");
-    }
-
-    // ── New: loss-tolerant uses policy crate ──────────────────────────────────
-
-    #[test]
-    fn loss_tolerant_gap_uses_policy_crate() {
-        use sar_loss_tolerant::gap_degraded_output_permitted;
-        // Verify that the policy function is what controls gap acceptance
-        assert!(!gap_degraded_output_permitted(false));
-        assert!(gap_degraded_output_permitted(true));
-
-        // Without LOSS_TOLERANT: gap → error
-        let f0 = make_entry(0, false, false, 0, 4, b"AAAA".to_vec());
-        let f2 = make_entry(2, true, false, 8, 4, b"CCCC".to_vec());
-        assert!(matches!(
-            reconstruct_fragments(vec![f0, f2], 12, &limits()),
-            Err(FragmentError::FragmentGap(_))
-        ));
-
-        // With LOSS_TOLERANT: gap → degraded output
-        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
-        let f2 = make_entry(2, true, true, 8, 4, b"CCCC".to_vec());
-        let (_, degraded) = reconstruct_fragments(vec![f0, f2], 12, &limits())
-            .expect("loss-tolerant gap should succeed");
+    fn missing_terminal_loss_tolerant_is_degraded_prefix() {
+        let (out, degraded) = reconstruct_fragments(
+            vec![frag(0, false, true, b"a"), frag(1, false, true, b"b")],
+            &unl(),
+        )
+        .expect("ok");
         assert!(degraded);
+        assert_eq!(out, b"ab");
     }
 
     #[test]
-    fn descriptor_gap_without_loss_tolerant_fails() {
-        let f0 = make_entry(0, false, false, 0, 4, b"AAAA".to_vec());
-        let f1 = make_entry(1, true, false, 8, 4, b"BBBB".to_vec());
-        let result = reconstruct_fragments(vec![f0, f1], 12, &limits());
-        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
+    fn duplicate_last_fragment_is_conflict() {
+        let err = reconstruct_fragments(
+            vec![frag(0, true, false, b"a"), frag(1, true, false, b"b")],
+            &unl(),
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::MetadataConflict(_)));
     }
 
     #[test]
-    fn descriptor_gap_with_loss_tolerant_returns_degraded() {
-        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
-        let f1 = make_entry(1, true, true, 8, 4, b"BBBB".to_vec());
-        let (data, degraded) =
-            reconstruct_fragments(vec![f0, f1], 12, &limits()).expect("reconstruct ok");
-        assert_eq!(&data[0..4], b"AAAA");
-        assert_eq!(&data[4..8], &[0u8; 4]);
-        assert_eq!(&data[8..12], b"BBBB");
-        assert!(degraded);
+    fn fragment_after_last_is_conflict() {
+        let err = reconstruct_fragments(
+            vec![frag(0, true, true, b"a"), frag(1, false, true, b"b")],
+            &unl(),
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::MetadataConflict(_)));
     }
 
     #[test]
-    fn initial_descriptor_gap_without_loss_tolerant_fails() {
-        let f0 = make_entry(0, true, false, 4, 4, b"BBBB".to_vec());
-        let result = reconstruct_fragments(vec![f0], 8, &limits());
-        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
+    fn inconsistent_loss_tolerant_is_conflict() {
+        let err = reconstruct_fragments(
+            vec![frag(0, false, true, b"a"), frag(1, true, false, b"b")],
+            &unl(),
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::MetadataConflict(_)));
     }
 
     #[test]
-    fn tail_descriptor_gap_without_loss_tolerant_fails() {
-        let f0 = make_entry(0, true, false, 0, 4, b"AAAA".to_vec());
-        let result = reconstruct_fragments(vec![f0], 8, &limits());
-        assert!(matches!(result, Err(FragmentError::FragmentGap(_))));
+    fn contribution_length_mismatch_is_fatal() {
+        let mut f = frag(0, true, true, b"abc");
+        f.uncompressed_size = 2;
+        let err = reconstruct_fragments(vec![f], &unl()).expect_err("must fail");
+        assert!(matches!(err, FragmentError::PayloadSizeMismatch(_)));
     }
 
     #[test]
-    fn descriptor_gap_exceeds_max_loss_tolerant_gap_fails() {
-        let limits = FragmentLimits {
-            max_loss_tolerant_gap: 3,
-            ..FragmentLimits::unlimited()
-        };
-        let f0 = make_entry(0, false, true, 0, 4, b"AAAA".to_vec());
-        let f1 = make_entry(1, true, true, 8, 4, b"BBBB".to_vec());
-        let result = reconstruct_fragments(vec![f0, f1], 12, &limits);
-        assert!(matches!(result, Err(FragmentError::LimitExceeded(_))));
+    fn size_sum_overflow_is_checked() {
+        let mut a = frag(0, false, false, b"");
+        let mut b = frag(1, true, false, b"");
+        a.uncompressed_size = u64::MAX;
+        b.uncompressed_size = 1;
+        let err = validate_fragment_group(&[a, b], &unl()).expect_err("must fail");
+        assert!(matches!(err, FragmentError::Overflow(_)));
+    }
+
+    #[test]
+    fn limits_enforced() {
+        let mut l = unl();
+        l.max_fragment_count = 1;
+        let err = reconstruct_fragments(
+            vec![frag(0, false, false, b"a"), frag(1, true, false, b"b")],
+            &l,
+        )
+        .expect_err("must fail");
+        assert!(matches!(err, FragmentError::LimitExceeded(_)));
+
+        let mut l = unl();
+        l.max_decoded_entry_size = 1;
+        let err =
+            reconstruct_fragments(vec![frag(0, true, false, b"ab")], &l).expect_err("must fail");
+        assert!(matches!(err, FragmentError::LimitExceeded(_)));
+
+        let mut l = unl();
+        l.max_fragment_group_span = 1;
+        let err =
+            reconstruct_fragments(vec![frag(0, true, false, b"ab")], &l).expect_err("must fail");
+        assert!(matches!(err, FragmentError::LimitExceeded(_)));
+
+        let mut l = unl();
+        l.max_allocation_bytes = 1;
+        let err =
+            reconstruct_fragments(vec![frag(0, true, false, b"ab")], &l).expect_err("must fail");
+        assert!(matches!(err, FragmentError::LimitExceeded(_)));
+    }
+
+    #[test]
+    fn empty_group_is_gap() {
+        let err = reconstruct_fragments(vec![], &unl()).expect_err("must fail");
+        assert!(matches!(err, FragmentError::FragmentGap(_)));
     }
 }

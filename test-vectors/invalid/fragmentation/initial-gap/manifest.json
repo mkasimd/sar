@@ -19,7 +19,8 @@
   "limits": {},
   "notes": [
     "DEFERRED: requires precise fragment descriptor construction.",
-    "Required invariant: initial descriptor gap without LOSS_TOLERANT is always fatal."
+    "Required invariant: initial descriptor gap without LOSS_TOLERANT is always fatal.",
+    "OBSOLETE (M13b WP-3): descriptor offsets no longer exist. The canonical equivalent is a missing Fragment Index 0, which is SAR_ERR_FRAGMENT_GAP even under LOSS_TOLERANT. Reassigned to WP-4."
   ],
   "deferred": true,
   "compression": false,

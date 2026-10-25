@@ -139,11 +139,7 @@ fn empty_area_does_not_participate_in_fragment_grouping() {
     archive.extend_from_slice(&write_lfh(&flags, &lfh_empty).expect("lfh_empty"));
 
     // Real two-fragment group.
-    use sar_core::format::LfhFragmentDescriptor;
-    for (idx, abs_off, is_last, data) in [
-        (0u32, 0u64, false, b"AAAA" as &[u8]),
-        (1u32, 4u64, true, b"BBBB"),
-    ] {
+    for (idx, is_last, data) in [(0u32, false, b"AAAA" as &[u8]), (1u32, true, b"BBBB")] {
         let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 4);
         lfh.uncompressed_size = 4;
         let mode: u16 = if is_last {
@@ -154,10 +150,6 @@ fn empty_area_does_not_participate_in_fragment_grouping() {
         lfh.entry_mode = EntryMode::from_bits(mode);
         lfh.fragment_id = Some(42);
         lfh.fragment_index = Some(idx);
-        lfh.fragment_descriptor = Some(LfhFragmentDescriptor {
-            absolute_offset: abs_off,
-            fragment_size: 4,
-        });
         archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
         archive.extend_from_slice(data);
     }

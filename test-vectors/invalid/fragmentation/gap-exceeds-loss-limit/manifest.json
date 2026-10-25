@@ -21,7 +21,8 @@
     "max_loss_tolerant_gap": 1024
   },
   "notes": [
-    "DEFERRED: gap value must exceed max_loss_tolerant_gap (1024 bytes in this vector)."
+    "DEFERRED: gap value must exceed max_loss_tolerant_gap (1024 bytes in this vector).",
+    "OBSOLETE (M13b WP-3): the canonical format carries no offsets, so a missing fragment's length and a gap size are unknowable; max_loss_tolerant_gap is not applied to fragment reassembly. Reassigned to WP-4/M13b.2."
   ],
   "deferred": true,
   "compression": false,

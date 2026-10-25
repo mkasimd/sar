@@ -396,8 +396,9 @@ impl From<sar_fragmentation::FragmentError> for SarError {
             sar_fragmentation::FragmentError::FragmentGap(msg) => Self::FragmentGap(msg),
             sar_fragmentation::FragmentError::Overflow(msg) => Self::Overflow(msg),
             sar_fragmentation::FragmentError::LimitExceeded(msg) => Self::LimitExceeded(msg),
-            sar_fragmentation::FragmentError::PayloadSizeMismatch(msg) => Self::Malformed(msg),
-            sar_fragmentation::FragmentError::DuplicateIndex(msg) => Self::InvalidMap(msg),
+            sar_fragmentation::FragmentError::PayloadSizeMismatch(msg) => Self::InvalidLength(msg),
+            sar_fragmentation::FragmentError::DuplicateIndex(msg) => Self::MetadataConflict(msg),
+            sar_fragmentation::FragmentError::MetadataConflict(msg) => Self::MetadataConflict(msg),
         }
     }
 }

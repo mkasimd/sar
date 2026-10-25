@@ -15,7 +15,7 @@ use sar_core::{
     sparse::{SparseExtent, parse_sparse_map},
     tlv::{Tlv, parse_tlvs, write_tlvs},
 };
-use sar_fragmentation::{FragmentDescriptor, FragmentEntry, FragmentError, reconstruct_fragments};
+use sar_fragmentation::{FragmentEntry, FragmentError, reconstruct_fragments};
 use sar_sparse::{SparseError, apply_sparse_reconstruction, validate_sparse_extents};
 
 fn base_limits() -> ResourceLimits {
@@ -313,20 +313,14 @@ fn excessive_fragment_count_fails() {
             fragment_index: 0,
             is_last_fragment: false,
             is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 1,
-            },
+            uncompressed_size: 1,
             payload: vec![1],
         },
         FragmentEntry {
             fragment_index: 1,
             is_last_fragment: true,
             is_loss_tolerant: false,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 1,
-                fragment_size: 1,
-            },
+            uncompressed_size: 1,
             payload: vec![2],
         },
     ];
@@ -335,44 +329,13 @@ fn excessive_fragment_count_fails() {
         ..base_limits()
     };
 
-    let err =
-        reconstruct_fragments(fragments, 2, &limits.fragment_limits()).expect_err("must fail");
+    let err = reconstruct_fragments(fragments, &limits.fragment_limits()).expect_err("must fail");
     assert!(matches!(err, FragmentError::LimitExceeded(_)));
 }
 
-#[test]
-fn excessive_loss_tolerant_gap_fails() {
-    let fragments = vec![
-        FragmentEntry {
-            fragment_index: 0,
-            is_last_fragment: false,
-            is_loss_tolerant: true,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 0,
-                fragment_size: 1,
-            },
-            payload: vec![1],
-        },
-        FragmentEntry {
-            fragment_index: 2,
-            is_last_fragment: true,
-            is_loss_tolerant: true,
-            descriptor: FragmentDescriptor {
-                absolute_offset: 10,
-                fragment_size: 1,
-            },
-            payload: vec![2],
-        },
-    ];
-    let limits = ResourceLimits {
-        max_loss_tolerant_gap: 4,
-        ..base_limits()
-    };
-
-    let err =
-        reconstruct_fragments(fragments, 11, &limits.fragment_limits()).expect_err("must fail");
-    assert!(matches!(err, FragmentError::LimitExceeded(_)));
-}
+// `excessive_loss_tolerant_gap_fails` is retired: the canonical format carries
+// no offsets, so a missing fragment's length (and thus a gap size) is
+// unknowable.  `max_loss_tolerant_gap` is not consulted (see M13b.2).
 
 #[test]
 fn excessive_fec_value_size_fails() {

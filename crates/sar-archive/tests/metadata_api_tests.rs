@@ -698,7 +698,6 @@ fn metadata_structs_use_named_fields() {
     let _ = EntryFragmentMetadata {
         fragment_id: 0,
         fragment_index: 0,
-        descriptor: None,
         is_last: false,
         is_loss_tolerant: false,
     };
