@@ -28,9 +28,7 @@ fn build_cdc_archive_file(
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -50,9 +48,7 @@ fn build_indexed_cdc_provider_archive_file(dir: &std::path::Path) -> std::path::
     let flags = GlobalFlags::OPT_PRESENT | GlobalFlags::CDC_SUPPORT;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -67,7 +63,6 @@ fn build_indexed_cdc_provider_archive_file(dir: &std::path::Path) -> std::path::
     let cd = CentralDictionary {
         version: 1,
         file_count: 1,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![
             make_cdc_ext_provider_tlv(

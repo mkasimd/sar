@@ -29,9 +29,7 @@ fn metadata_with_flags(flags: GlobalFlags) -> ArchiveMetadata {
     ArchiveMetadata {
         global_header: GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         },
         central_dictionary: None,
@@ -44,15 +42,12 @@ fn minimal_indexed_metadata() -> ArchiveMetadata {
     ArchiveMetadata {
         global_header: GlobalHeader {
             version: 1,
-            flags_bytes: flags.bits().to_le_bytes().to_vec(),
             flags,
-            partition_descriptor: None,
             kms: None,
         },
         central_dictionary: Some(CentralDictionary {
             version: 1,
             file_count: 0,
-            partition_info: None,
             global_crc32: None,
             metadata: Vec::new(),
             offsets: Vec::new(),

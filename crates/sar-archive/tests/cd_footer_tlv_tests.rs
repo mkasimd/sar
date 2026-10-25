@@ -119,7 +119,6 @@ fn invalid_cd_padding_fails() {
     let cd = CentralDictionary {
         version: 1,
         file_count: 0,
-        partition_info: None,
         global_crc32: None,
         metadata: Vec::new(),
         offsets: Vec::new(),
@@ -188,7 +187,6 @@ fn parse_write_cd_helpers() {
     let cd = CentralDictionary {
         version: 1,
         file_count: 1,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![],
         offsets: vec![8],

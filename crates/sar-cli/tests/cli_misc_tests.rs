@@ -42,12 +42,7 @@ fn unsupported_features_fail_clearly() {
 
     let header = GlobalHeader {
         version: 1,
-        flags_bytes: (GlobalFlags::ENCRYPTED | GlobalFlags::NO_INDEX)
-            .bits()
-            .to_le_bytes()
-            .to_vec(),
         flags: GlobalFlags::ENCRYPTED | GlobalFlags::NO_INDEX,
-        partition_descriptor: None,
         kms: Some(KmsData {
             mode_id: 0xF0,
             payload: vec![],

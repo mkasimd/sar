@@ -32,7 +32,7 @@ fn test_key(fill: u8) -> SecretBytes {
 
 /// Builds the Global Header AAD bytes using the standard SAR magic and a simple
 /// flag set, as used by the canonical `global_header_aad_bytes` helper.
-fn make_global_header_aad(flags_bytes: &[u8]) -> Vec<u8> {
+fn make_global_header_aad(flags_bytes: &[u8; 4]) -> Vec<u8> {
     global_header_aad_bytes(b"SAR!", 1, flags_bytes)
 }
 
@@ -53,7 +53,7 @@ fn make_lfh_bytes(stream_id: u16, sequence_no: u16, tag: u8) -> Vec<u8> {
 // ── Test 1: Global Header bytes are included in AAD ───────────────────────
 
 /// The `global_header_aad_bytes` function must produce the canonical layout:
-/// `magic(4) + version(1) + reserved(1) + flags_size(2) + flags_bytes(n)`.
+/// `magic(4) + version(1) + reserved(1) + flags_size(2) + flags(4)`.
 #[test]
 fn global_header_aad_bytes_layout_is_canonical() {
     let flags_bytes = [0x01u8, 0x00, 0x00, 0x00]; // NO_INDEX
@@ -77,7 +77,7 @@ fn global_header_aad_bytes_layout_is_canonical() {
 /// section and the LFH bytes.
 #[test]
 fn build_aead_aad_is_concatenation_of_sections() {
-    let gh_section = make_global_header_aad(&[0x01, 0x00]);
+    let gh_section = make_global_header_aad(&[0x01, 0x00, 0x00, 0x00]);
     let lfh_bytes = make_lfh_bytes(42, 7, 0xAB);
     let aad = build_aead_aad(&gh_section, &lfh_bytes);
 

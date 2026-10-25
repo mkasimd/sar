@@ -49,7 +49,8 @@ Implementation policy notes (not wire-format behavior):
 
 * `ResourceLimits` values (e.g., `max_archive_size`, `max_entry_count`, `max_decoded_entry_size`) are implementation policy. The SAR wire format does not mandate specific numeric limits; the limits in `ResourceLimits` are enforcement points chosen by this implementation to prevent resource exhaustion. Callers may configure tighter or looser limits within safe ranges.
 * Reserved-value and unsupported-algorithm rejection behavior is fail-closed by implementation policy. The SAR wire format assigns reserved ranges but may not prescribe specific error codes; this implementation maps them to `SarError::ReservedValue` or `SarError::Unsupported` as implementation-defined fail-closed behavior.
-* Strict-mode rejection of reserved flags, unknown LFH fields, or unsupported algorithm IDs is implementation policy, not a universal SAR v1.0 interoperability requirement for all compliant readers.
+* Global Flags are exactly four bytes (Section 5.2): `Flags Size != 4` is `SAR_ERR_INVALID_LENGTH` and reserved Global Flags bits are `SAR_ERR_RESERVED_VALUE`; this is normative, not strict-mode policy. Unassigned Global Header versions are `SAR_ERR_RESERVED_VALUE` (Section 10.4.3). Rejection of unknown LFH fields or unsupported algorithm IDs remains implementation policy.
+* The `HAS_GLOBAL_EC` requires `OPT_PRESENT` check is a provisional implementation inference; its explicit normative basis is still under consideration.
 
 ## `sar-archive`
 
@@ -166,7 +167,7 @@ Implementation policy notes for supporting crates:
 * **`sar-fec`**: The `max_fec_value_bytes` and `max_repair_working_set` limits are implementation-defined resource controls. The wire format defines the FEC TLV structure; enforcement limits are this implementation's policy.
 * **`sar-loss-tolerant`**: The `allow_lossy` flag never bypasses `ResourceLimits` or AEAD authentication failures. Suppressing AEAD errors via loss-tolerant semantics is explicitly prohibited by implementation policy and is not optional. The SAR spec does not permit loss-tolerant semantics to override authentication.
 * **`sar-fragmentation`**: Fragment gap filling (with zeros) under `allow_lossy` is bounded by `max_loss_tolerant_gap`. This is implementation policy, not a SAR wire-format requirement.
-* **`sar-partition`**: This crate is an empty deferred placeholder. No partition/multi-volume logic exists. `PartitionDescriptor` wire types remain in `sar-core` to reserve namespace. The deferred status is an implementation decision; partition/multi-volume semantics are defined in the spec.
+* **`sar-partition`**: This crate is an empty deferred placeholder. No partition/multi-volume logic exists. The obsolete Global Header `PartitionDescriptor` and CD partition field were removed; `GlobalFlags::PARTITIONED_ARCHIVE` is still parsed, and archive, stream, recovery, transcript and CD entry points return `SAR_ERR_UNSUPPORTED` for it until partition support is implemented. The deferred status is an implementation decision; partition/multi-volume semantics are defined in the spec.
 
 ## Re-export policy note
 No compatibility re-export policy is implied by this document.

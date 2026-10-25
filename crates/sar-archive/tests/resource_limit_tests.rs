@@ -45,9 +45,7 @@ fn build_archive_with_global_ec() -> Vec<u8> {
     let flags = GlobalFlags::HAS_GLOBAL_EC | GlobalFlags::OPT_PRESENT;
     let header = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -59,7 +57,6 @@ fn build_archive_with_global_ec() -> Vec<u8> {
     let cd = CentralDictionary {
         version: 1,
         file_count: 0,
-        partition_info: None,
         global_crc32: None,
         metadata: vec![recovery_tlv],
         offsets: Vec::new(),
@@ -73,25 +70,19 @@ fn build_archive_with_global_ec() -> Vec<u8> {
 fn minimal_global_header(flags: GlobalFlags) -> Vec<u8> {
     write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header")
 }
 
 #[test]
-fn excessive_global_flags_size_fails() {
+fn non_four_global_flags_size_is_invalid_length_not_a_limit() {
     let mut bytes = b"SAR!\x01\x00\x08\x00".to_vec();
     bytes.extend_from_slice(&[0; 8]);
 
-    let limits = ResourceLimits {
-        max_global_flags_bytes: 4,
-        ..base_limits()
-    };
-    let err = parse_global_header(&bytes, &limits).expect_err("must fail");
-    assert!(matches!(err, SarError::LimitExceeded(_)));
+    let err = parse_global_header(&bytes, &base_limits()).expect_err("must fail");
+    assert!(matches!(err, SarError::InvalidLength(_)));
 }
 
 #[test]
@@ -205,7 +196,6 @@ fn excessive_cd_size_fails() {
     let cd = CentralDictionary {
         version: 1,
         file_count: 1,
-        partition_info: None,
         global_crc32: None,
         metadata: Vec::new(),
         offsets: vec![8],
@@ -263,7 +253,6 @@ fn excessive_cd_entry_count_fails() {
     let cd = CentralDictionary {
         version: 1,
         file_count: 2,
-        partition_info: None,
         global_crc32: None,
         metadata: Vec::new(),
         offsets: vec![8, 16],

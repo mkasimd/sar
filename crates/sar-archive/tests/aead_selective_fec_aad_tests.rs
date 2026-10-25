@@ -212,7 +212,7 @@ fn writer_and_reader_compute_identical_aad_for_aead_selective_fec() {
         parse_lfh(&archive[global_len..], &header.flags, &unlimited_limits()).expect("lfh");
     let final_lfh_bytes = &archive[global_len..global_len + lfh_len];
 
-    let global_aad = global_header_flags_bytes(&header);
+    let global_aad = global_header_flags_bytes(&header).expect("global header AAD");
     let reader_aad = sar_crypto::aad::build_aead_aad(
         &global_aad,
         &lfh_bytes_for_aad(

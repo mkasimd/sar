@@ -84,9 +84,7 @@ fn global_header_resolution_establishes_lfh_layout_and_entry_mode_semantics() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::COMPRESSED;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -212,9 +210,7 @@ fn unset_is_encrypted_treats_payload_as_plaintext_with_physical_fields_present()
 
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: Some(sar_core::format::KmsData {
             mode_id: 0x01,
             payload: kms_payload,
@@ -244,9 +240,7 @@ fn opcode_and_session_control_are_parsed_structurally_only() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -368,9 +362,7 @@ fn malformed_structural_data_returns_structural_error() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -421,9 +413,7 @@ fn compressed_store_patch_requires_decompress_before_patch() {
 
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

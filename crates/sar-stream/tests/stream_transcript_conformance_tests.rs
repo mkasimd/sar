@@ -316,3 +316,12 @@ fn strict_stream_transcript_validation_does_not_require_sar_archive() {
     let bytes = fs::read(&fixture_path).expect("fixture");
     run_strict_stream_transcript_validation(&bytes).expect("strict validation");
 }
+
+#[test]
+fn partitioned_global_header_transcript_is_unsupported() {
+    let mut bytes = b"SAR!\x01\x00\x04\x00".to_vec();
+    let flags = sar_core::GlobalFlags::NO_INDEX | sar_core::GlobalFlags::PARTITIONED_ARCHIVE;
+    bytes.extend_from_slice(&flags.bits().to_le_bytes());
+    let err = sar_stream::validate_stream_transcript(&bytes).expect_err("must fail");
+    assert!(matches!(err, sar_core::SarError::Unsupported(_)));
+}

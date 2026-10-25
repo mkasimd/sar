@@ -1333,11 +1333,99 @@
             "signature": "pub fn fec_size_field_offset(flags: GlobalFlags) -> usize"
           },
           {
+            "name": "decode_global_flags",
+            "description": "Decode four wire bytes into Global Flags: rejects reserved bits (RESERVED_VALUE) before assigned-flag conflicts (FLAG_CONFLICT).",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<GlobalFlags, SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "candidate",
+                "notes": "Pure validation helper."
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub fn decode_global_flags(bytes: [u8; 4]) -> Result<GlobalFlags, SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
+            "name": "require_unpartitioned_processing",
+            "description": "Return Unsupported when PARTITIONED_ARCHIVE is set; gate for processing entry points until partition support exists.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<(), SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "candidate",
+                "notes": "Pure validation helper."
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub fn require_unpartitioned_processing(flags: GlobalFlags) -> Result<(), SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
+            "name": "validate_global_header_prefix",
+            "description": "Validate the fixed 8-byte Global Header prefix: magic, version (unassigned is RESERVED_VALUE), reserved byte, and Flags Size == 4 (INVALID_LENGTH). Shared by the reader and incremental stream parser.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<(), SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "candidate",
+                "notes": "Pure validation helper."
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub fn validate_global_header_prefix(prefix: &[u8]) -> Result<(), SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
+            "name": "GlobalFlags::from_wire",
+            "description": "Convert a 32-bit wire value to GlobalFlags, rejecting reserved bits with RESERVED_VALUE.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<Self, SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "candidate",
+                "notes": "Pure validation helper."
+              },
+              "module": "flags",
+              "path": "src/flags.rs"
+            },
+            "signature": "pub fn from_wire(bits: u32) -> Result<Self, SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
             "name": "global_header_flags_bytes",
-            "description": "Return the serialized global-header flag section used by AEAD/AAD integration.",
+            "description": "Validate the Global Header version and Global Flags, then return the exact 12-byte magic/version/reserved/Flags-Size/flags prefix used by AEAD/AAD integration.",
             "metadata": {
               "since_milestone": "5",
-              "returns": "Vec<u8>",
+              "returns": "Result<Vec<u8>, SarError>",
               "stability": "internal_public",
               "implemented": true,
               "visibility": "public",
@@ -1349,7 +1437,10 @@
               "module": "format",
               "path": "src/format.rs"
             },
-            "signature": "pub fn global_header_flags_bytes(header: &GlobalHeader) -> Vec<u8>"
+            "signature": "pub fn global_header_flags_bytes(header: &GlobalHeader) -> Result<Vec<u8>, SarError>",
+            "errors": [
+              "SarError"
+            ]
           },
           {
             "name": "lfh_bytes_for_aad",
@@ -1394,7 +1485,7 @@
           },
           {
             "name": "parse_central_dictionary",
-            "description": "Parse a central dictionary from bytes.",
+            "description": "Parse a central dictionary from bytes. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred).",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<(CentralDictionary, usize), SarError>",
@@ -1438,7 +1529,7 @@
           },
           {
             "name": "parse_global_header",
-            "description": "Parse a global header from bytes.",
+            "description": "Parse a global header from bytes: exact Flags Size of 4, strict reserved-bit rejection, no partition descriptor, optional KMS extension.",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<(GlobalHeader, usize), SarError>",
@@ -1482,7 +1573,7 @@
           },
           {
             "name": "write_central_dictionary",
-            "description": "Serialize a central dictionary.",
+            "description": "Serialize a central dictionary. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred).",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<Vec<u8>, SarError>",
@@ -1523,7 +1614,7 @@
           },
           {
             "name": "write_global_header",
-            "description": "Serialize a global header.",
+            "description": "Serialize a global header with exactly four little-endian Global Flags bytes; rejects unassigned versions and reserved flag bits.",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<Vec<u8>, SarError>",
@@ -2538,7 +2629,7 @@
               "path": "src/format.rs"
             },
             "kind": "struct",
-            "signature": "pub struct CentralDictionary { pub version: u8, pub file_count: u64, pub partition_info: Option<(u16, u16)>, pub global_crc32: Option<u32>, pub metadata: Vec<Tlv>, pub offsets: Vec<u64> }"
+            "signature": "pub struct CentralDictionary { pub version: u8, pub file_count: u64, pub global_crc32: Option<u32>, pub metadata: Vec<Tlv>, pub offsets: Vec<u64> }"
           },
           {
             "name": "Footer",
@@ -2561,7 +2652,7 @@
           },
           {
             "name": "GlobalHeader",
-            "description": "Parsed SAR global header.",
+            "description": "Parsed SAR global header. Global Flags are always exactly four bytes on the wire; the typed `flags` field is authoritative.",
             "metadata": {
               "since_milestone": "2",
               "stability": "stable",
@@ -2576,7 +2667,7 @@
               "path": "src/format.rs"
             },
             "kind": "struct",
-            "signature": "pub struct GlobalHeader { pub version: u8, pub flags_bytes: Vec<u8>, pub flags: GlobalFlags, pub partition_descriptor: Option<PartitionDescriptor>, pub kms: Option<KmsData> }"
+            "signature": "pub struct GlobalHeader { pub version: u8, pub flags: GlobalFlags, pub kms: Option<KmsData> }"
           },
           {
             "name": "KmsData",
@@ -2637,25 +2728,6 @@
             },
             "kind": "struct",
             "signature": "pub struct LfhFragmentDescriptor { pub absolute_offset: u64, pub fragment_size: u32 }"
-          },
-          {
-            "name": "PartitionDescriptor",
-            "description": "Optional 96-byte partition descriptor.",
-            "metadata": {
-              "since_milestone": "2",
-              "stability": "stable",
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": true,
-                "readiness": "candidate",
-                "notes": "Simple numeric/byte fields, but functionality is not yet fully implemented at higher levels."
-              },
-              "module": "format",
-              "path": "src/format.rs"
-            },
-            "kind": "struct",
-            "signature": "pub struct PartitionDescriptor { ... }"
           },
           {
             "name": "BinaryWriter",
@@ -2759,6 +2831,42 @@
           }
         ],
         "constants": [
+          {
+            "name": "GLOBAL_FLAGS_SIZE",
+            "description": "Exact Global Flags size in bytes required by Section 5.2.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "u16",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub const GLOBAL_FLAGS_SIZE: u16 = 4;"
+          },
+          {
+            "name": "GLOBAL_HEADER_FIXED_LEN",
+            "description": "Length of the fixed Global Header prefix plus four Global Flags bytes.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "usize",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub const GLOBAL_HEADER_FIXED_LEN: usize = 12;"
+          },
           {
             "name": "TLV_DATA_HASH_BLAKE3",
             "description": "DATA_HASH/BLAKE3 TLV ID; explicitly not CDC metadata",
@@ -3067,12 +3175,12 @@
           {
             "name": "flags",
             "path": "src/flags.rs",
-            "item_count": 16
+            "item_count": 17
           },
           {
             "name": "format",
             "path": "src/format.rs",
-            "item_count": 22
+            "item_count": 26
           },
           {
             "name": "io",
@@ -4861,7 +4969,7 @@
           },
           {
             "name": "global_header_aad_bytes",
-            "description": "Build AAD bytes for a SAR global header.",
+            "description": "Build the 12-byte AAD prefix for a SAR global header from a fixed four-byte flags array.",
             "metadata": {
               "since_milestone": "5",
               "returns": "Vec<u8>",
@@ -4876,7 +4984,7 @@
               "module": "aad",
               "path": "src/aad.rs"
             },
-            "signature": "pub fn global_header_aad_bytes(magic: &[u8; 4], version: u8, flags_bytes: &[u8]) -> Vec<u8>"
+            "signature": "pub fn global_header_aad_bytes(magic: &[u8; 4], version: u8, flags_bytes: &[u8; 4]) -> Vec<u8>"
           },
           {
             "name": "aead_decrypt",
@@ -7231,7 +7339,7 @@
     {
       "name": "sar-partition",
       "path": "crates/sar-partition",
-      "description": "Partition/multi-volume archive support. Deliberately deferred in M11c. PartitionDescriptor and PARTITIONED_ARCHIVE remain in sar-core.",
+      "description": "Partition/multi-volume archive support. Deliberately deferred in M11c. GlobalFlags::PARTITIONED_ARCHIVE remains in sar-core; processing entry points return Unsupported until partition support is implemented.",
       "status": "deferred",
       "api": {
         "functions": [],

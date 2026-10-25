@@ -88,9 +88,7 @@ fn reader_rejects_raw_symlink_lfh_with_invalid_utf8_payload() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_SYMLINKS;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -119,9 +117,7 @@ fn is_symlink_without_has_symlinks_remains_rejected() {
     let flags = GlobalFlags::NO_INDEX;
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");

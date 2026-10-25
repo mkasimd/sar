@@ -1045,7 +1045,8 @@
         ]
       },
       "notes": [
-        "Under default ResourceLimits, flags_bytes.len() <= 65535 == u16::MAX, so no truncation occurs in practice. The risk only materializes with non-default or unlimited limits."
+        "Under default ResourceLimits, flags_bytes.len() <= 65535 == u16::MAX, so no truncation occurs in practice. The risk only materializes with non-default or unlimited limits.",
+        "Progress (WP-2a, M13b): the unchecked `as u16` conversion is eliminated by construction. Global Flags are a fixed four-byte field, so global_header_flags_bytes() and sar_crypto::aad::global_header_aad_bytes() write a constant Flags Size of 4 (the latter now takes &[u8; 4]); global_header_flags_bytes() returns Result and validates version and reserved bits. No variable flags buffer or flags-size limit remains, so the original overflow acceptance test is not applicable. crates/sar-crypto/src/aad.rs was also affected, although affected_artifacts lists only format.rs. Status is unchanged pending controller closure."
       ],
       "compatibility_impact": "preserves_compliant_inputs",
       "verification": {
@@ -1170,7 +1171,10 @@
           "Test that each TLV type ID in 0x05..=0x0F is rejected with a reserved-value error by `parse_tlvs`."
         ],
         "owner_milestone": "M13b.1"
-      }
+      },
+      "notes": [
+        "Reference (WP-2a, M13b): not addressed by WP-2a; TLV 0x05-0x0F reserved assignments remain owned by WP-2b."
+      ]
     },
     {
       "id": "M13-PARSER-004",
@@ -4201,7 +4205,10 @@
           "M13-PARSER-004",
           "M13-PARSER-001"
         ]
-      }
+      },
+      "notes": [
+        "Progress (WP-2a, M13b): the implementation is complete. GlobalHeader.flags_bytes and ResourceLimits.max_global_flags_bytes were removed; Global Flags are always exactly four little-endian bytes; Flags Size != 4 returns SAR_ERR_INVALID_LENGTH; any reserved bit (6, 7, 11-15, 21-23, 31) returns SAR_ERR_RESERVED_VALUE and is never truncated; the writer and AAD helper reject reserved bits. The invalid-unknown-global-flag vector now carries exactly one reserved bit (42 00 00 00) and expects SAR_ERR_RESERVED_VALUE. The registry schema has no implementation-progress status, so the status value is unchanged pending controller closure. The M13a.7 normative resolution (M13-PARSER-004) is unchanged."
+      ]
     },
     {
       "id": "M13-TRANSFORM-009",
@@ -4391,7 +4398,10 @@
           "M13-SPEC-004",
           "M13-TRANSFORM-009"
         ]
-      }
+      },
+      "notes": [
+        "Progress (WP-2a, M13b): only the obsolete Global Header PartitionDescriptor and CentralDictionary.partition_info were removed, and archive, stream, recovery, transcript and CD entry points now return SAR_ERR_UNSUPPORTED for PARTITIONED_ARCHIVE instead of processing the archive as an ordinary one. Partition Manifest, Partition Set validation and cross-Partition fragmentation are not implemented. Remaining (not closed): the full Section 19 model is owned by M13b.3 / WP-8."
+      ]
     },
     {
       "id": "M13-BOUNDARY-004",
@@ -4744,7 +4754,8 @@
       "M13a.5 crate-boundary, profile-boundary, transport, and FFI-readiness audit findings are included.",
       "M13a.6 cold-storage and tape-resilience audit findings are included.",
       "M13a.7 normative decisions leave the implementation temporarily inconsistent with specification.md; implementation, test, fuzz, test-vector, and API-inventory remediation is assigned to M13b through implementation_spec_mismatch findings.",
-      "WP-1a and WP-1b status-registry implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed."
+      "WP-1a and WP-1b status-registry implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed.",
+      "WP-2a Global Header and Global Flags implementation progress is recorded in finding notes; no finding status was changed."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }

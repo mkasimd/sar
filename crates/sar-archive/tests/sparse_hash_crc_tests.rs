@@ -55,9 +55,7 @@ fn build_sparse_archive_with_crc(
     }
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -102,9 +100,7 @@ fn content_hash_preserved_in_entry_metadata() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::DEDUPLICATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

@@ -81,10 +81,6 @@ pub struct ResourceLimits {
     /// caller may tighten this.  Default: 65 535.
     pub max_path_bytes: usize,
 
-    /// Maximum byte length of the global flags section
-    /// (`Global Flags Size` field, u16).  Default: 65 535.
-    pub max_global_flags_bytes: usize,
-
     /// Maximum byte length of the KMS payload embedded in the global header.
     /// Default: 64 KiB.
     pub max_kms_payload_bytes: usize,
@@ -229,7 +225,6 @@ impl Default for ResourceLimits {
             max_entry_count: 1_000_000,
             max_lfh_header_bytes: 1024 * 1024,
             max_path_bytes: 65_535,
-            max_global_flags_bytes: 65_535,
             max_kms_payload_bytes: 64 * 1024,
             max_tlv_bytes: 1024 * 1024,
             max_tlv_count: 1024,
@@ -277,7 +272,6 @@ impl ResourceLimits {
             max_entry_count: usize::MAX,
             max_lfh_header_bytes: usize::MAX,
             max_path_bytes: usize::MAX,
-            max_global_flags_bytes: usize::MAX,
             max_kms_payload_bytes: usize::MAX,
             max_tlv_bytes: usize::MAX,
             max_tlv_count: usize::MAX,
@@ -364,20 +358,6 @@ impl ResourceLimits {
         if bytes > self.max_path_bytes {
             return Err(SarError::LimitExceeded(
                 "path length exceeds configured limit",
-            ));
-        }
-        Ok(())
-    }
-
-    /// Checks that `bytes` does not exceed `max_global_flags_bytes`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`SarError::LimitExceeded`] when `bytes > max_global_flags_bytes`.
-    pub fn check_global_flags_bytes(&self, bytes: usize) -> Result<(), SarError> {
-        if bytes > self.max_global_flags_bytes {
-            return Err(SarError::LimitExceeded(
-                "global flags size exceeds configured limit",
             ));
         }
         Ok(())

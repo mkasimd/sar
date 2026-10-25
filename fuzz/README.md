@@ -448,8 +448,9 @@ runs.
 M12b.2 parser target for `sar_core::format::parse_global_header`.
 
 Covers Global Header structure, magic/version validation, global flag byte
-length handling, optional partition descriptor parsing, and optional KMS
-extension length handling.
+length handling (exactly four Global Flags bytes), reserved-bit rejection, and
+optional KMS extension length handling. The Global Header has no partition
+descriptor.
 
 ### `parse_lfh`
 

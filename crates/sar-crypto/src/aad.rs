@@ -3,14 +3,14 @@
 
 /// Build the global-header AAD section.
 ///
-/// Layout: `magic(4) + version(1) + reserved(1) + flags_size(2) + flags_bytes(flags_size)`.
-pub fn global_header_aad_bytes(magic: &[u8; 4], version: u8, flags_bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + flags_bytes.len());
+/// Layout: `magic(4) + version(1) + reserved(1) + flags_size(2) + flags(4)`, where
+/// `flags_size` is always 4 for SAR version 1.0.
+pub fn global_header_aad_bytes(magic: &[u8; 4], version: u8, flags_bytes: &[u8; 4]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(12);
     out.extend_from_slice(magic);
     out.push(version);
     out.push(0x00);
-    let flags_size = flags_bytes.len() as u16;
-    out.extend_from_slice(&flags_size.to_le_bytes());
+    out.extend_from_slice(&4u16.to_le_bytes());
     out.extend_from_slice(flags_bytes);
     out
 }

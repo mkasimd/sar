@@ -226,9 +226,7 @@ fn archive_reader_reserved_patch_algo_id_returns_reserved_value_error() {
     // Build a minimal valid archive with a reserved Patch Algo ID.
     let global_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
@@ -265,9 +263,7 @@ fn archive_reader_custom_patch_algo_id_returns_unsupported_error() {
 
     let global_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
@@ -303,9 +299,7 @@ fn archive_reader_assigned_patch_algo_id_passes_registry_check() {
 
     let global_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
@@ -352,9 +346,7 @@ fn entry_metadata_exposes_delta_fields_when_has_delta_set() {
 
     let global_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
@@ -391,9 +383,7 @@ fn entry_metadata_delta_fields_none_when_has_delta_not_set() {
 
     let global_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");
@@ -433,9 +423,7 @@ fn archive_reader_applies_store_patch_when_payload_length_matches() {
 
     let global_header = GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     };
     let mut archive_bytes = write_global_header(&global_header).expect("write header");

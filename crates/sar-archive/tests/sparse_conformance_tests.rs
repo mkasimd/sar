@@ -54,9 +54,7 @@ fn build_sparse_archive_64bit(
 
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -208,9 +206,7 @@ fn too_short_payload_fails_during_extraction() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -244,9 +240,7 @@ fn excess_payload_fails_during_extraction() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -286,9 +280,7 @@ fn extent_beyond_logical_size_returns_invalid_map() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -390,9 +382,7 @@ fn sparse_with_compression_decompresses_then_scatters() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::COMPRESSED | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("global header");
@@ -446,9 +436,7 @@ fn sparse_descriptor_lengths_apply_to_decompressed_bytes() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::COMPRESSED | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -473,9 +461,7 @@ fn corrupted_compressed_sparse_fails_before_scatter_gather() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::COMPRESSED | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -534,9 +520,7 @@ fn sparse_fragmentation_reassembly_before_scatter_gather() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -613,9 +597,7 @@ fn malformed_sparse_map_alignment_caught_during_read() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -650,9 +632,7 @@ fn sparse_missing_fragment_without_allow_lossy_fails() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -686,9 +666,7 @@ fn sparse_missing_fragment_with_allow_lossy_and_loss_tolerant_succeeds() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");
@@ -720,9 +698,7 @@ fn loss_tolerant_does_not_suppress_malformed_sparse_map() {
     let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::NO_INDEX;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     })
     .expect("header");

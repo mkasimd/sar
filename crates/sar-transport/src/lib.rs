@@ -1426,7 +1426,7 @@ fn decrypt_additional_control_payload(
     })?;
 
     // Build AAD: global-flags section || LFH bytes.
-    let global_flags_section = global_header_flags_bytes(active_header);
+    let global_flags_section = global_header_flags_bytes(active_header)?;
     let aad = build_aead_aad(&global_flags_section, lfh_bytes);
 
     // Authenticate and decrypt; never expose plaintext on failure.

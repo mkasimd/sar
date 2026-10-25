@@ -15,6 +15,10 @@ const SUPPORTED_GLOBAL_VERSION: u8 = 0x01;
 pub const SUPPORTED_CD_VERSION: u8 = 0x01;
 /// Byte offset of the first Global Flags byte within the encoded Global Header.
 pub const GLOBAL_HEADER_FLAGS_OFFSET: u64 = 8;
+/// Exact `Flags Size` value for SAR version 1.0.
+pub const GLOBAL_FLAGS_SIZE: u16 = 4;
+/// Length of the fixed Global Header segment (prefix plus Global Flags) in bytes.
+pub const GLOBAL_HEADER_FIXED_LEN: usize = 12;
 
 /// Parsed KMS extension data.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,32 +29,13 @@ pub struct KmsData {
     pub payload: Vec<u8>,
 }
 
-/// 96-byte partition descriptor.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PartitionDescriptor {
-    /// Partition set UUID.
-    pub partition_set_uuid: [u8; 16],
-    /// Zero-based partition index.
-    pub partition_index: u32,
-    /// Total partitions.
-    pub total_partitions: u32,
-    /// Previous partition hash.
-    pub previous_partition_hash: [u8; 32],
-    /// Partition hash.
-    pub partition_hash: [u8; 32],
-}
-
 /// Global header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalHeader {
     /// Header version.
     pub version: u8,
-    /// Raw global flags bytes.
-    pub flags_bytes: Vec<u8>,
-    /// Parsed low 32-bit flags.
+    /// Global Flags (exactly four bytes on the wire).
     pub flags: GlobalFlags,
-    /// Optional partition descriptor.
-    pub partition_descriptor: Option<PartitionDescriptor>,
     /// Optional KMS extension.
     pub kms: Option<KmsData>,
 }
@@ -163,8 +148,6 @@ pub struct CentralDictionary {
     pub version: u8,
     /// File count.
     pub file_count: u64,
-    /// Optional partition tuple (partition_id, total_partitions).
-    pub partition_info: Option<(u16, u16)>,
     /// Optional global CRC32.
     pub global_crc32: Option<u32>,
     /// Metadata TLVs.
@@ -207,67 +190,78 @@ fn write_size(writer: &mut BinaryWriter, flags: GlobalFlags, value: u64) -> Resu
     Ok(())
 }
 
+/// Validates the eight-byte Global Header prefix: Magic, Version, Reserved byte and
+/// `Flags Size`, in that order.
+///
+/// Callers that read the header incrementally use this to reject an invalid prefix
+/// as soon as eight bytes are available.
+///
+/// # Errors
+///
+/// Returns [`SarError::InvalidMagic`], [`SarError::ReservedValue`] (Version `0x00`,
+/// any unassigned Version, or a nonzero Reserved byte), [`SarError::InvalidLength`]
+/// (`Flags Size != 4`), or [`SarError::Truncated`] when fewer than eight bytes are present.
+pub fn validate_global_header_prefix(input: &[u8]) -> Result<(), SarError> {
+    let mut cursor = ParseCursor::new(input);
+    if cursor.read_bytes(4)? != MAGIC {
+        return Err(SarError::InvalidMagic);
+    }
+    if cursor.read_u8()? != SUPPORTED_GLOBAL_VERSION {
+        return Err(SarError::ReservedValue(
+            "reserved or unassigned Global Header version",
+        ));
+    }
+    if cursor.read_u8()? != 0 {
+        return Err(SarError::ReservedValue("global reserved byte must be zero"));
+    }
+    if cursor.read_u16_le()? != GLOBAL_FLAGS_SIZE {
+        return Err(SarError::InvalidLength("global flags size must equal 4"));
+    }
+    Ok(())
+}
+
+/// Decodes and validates four Global Flags bytes.
+///
+/// Reserved bits are rejected before assigned-flag conflicts are evaluated.
+///
+/// # Errors
+///
+/// Returns [`SarError::ReservedValue`] for a nonzero reserved bit and
+/// [`SarError::FlagConflict`] for an invalid assigned-flag combination.
+pub fn decode_global_flags(flags_bytes: [u8; 4]) -> Result<GlobalFlags, SarError> {
+    let flags = GlobalFlags::from_wire(u32::from_le_bytes(flags_bytes))?;
+    validate_global_flags(flags)?;
+    Ok(flags)
+}
+
+/// Rejects partition-specific processing, which is not implemented.
+///
+/// A `PARTITIONED_ARCHIVE` Global Header is valid, but its terminal Partition Manifest
+/// and partition-local Central Dictionary semantics are not supported yet.
+///
+/// # Errors
+///
+/// Returns [`SarError::Unsupported`] when `PARTITIONED_ARCHIVE` is set.
+pub fn require_unpartitioned_processing(flags: GlobalFlags) -> Result<(), SarError> {
+    if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
+        return Err(SarError::Unsupported(
+            "Partitioned Archive processing is not implemented",
+        ));
+    }
+    Ok(())
+}
+
 /// Parses the global header from a byte slice.
 pub fn parse_global_header(
     input: &[u8],
     limits: &ResourceLimits,
 ) -> Result<(GlobalHeader, usize), SarError> {
+    validate_global_header_prefix(input)?;
     let mut cursor = ParseCursor::new(input);
-    let magic = cursor.read_bytes(4)?;
-    if magic != MAGIC {
-        return Err(SarError::InvalidMagic);
-    }
-
-    let version = cursor.read_u8()?;
-    if version != SUPPORTED_GLOBAL_VERSION {
-        return Err(SarError::InvalidVersion(
-            "unsupported global header version",
-        ));
-    }
-
-    if cursor.read_u8()? != 0 {
-        return Err(SarError::ReservedValue("global reserved byte must be zero"));
-    }
-
-    let flags_size = usize::from(cursor.read_u16_le()?);
-    if flags_size < 4 {
-        return Err(SarError::InvalidLength("global flags size must be >= 4"));
-    }
-    limits.check_global_flags_bytes(flags_size)?;
-    let flags_bytes = cursor.read_bytes(flags_size)?.to_vec();
-
-    let mut low = [0u8; 4];
-    low.copy_from_slice(&flags_bytes[..4]);
-    let flags = GlobalFlags::from_bits_truncate(u32::from_le_bytes(low));
-    validate_global_flags(flags)?;
-
-    let partition_descriptor = if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-        let bytes = cursor.read_bytes(96)?;
-        let mut pcur = ParseCursor::new(bytes);
-        let mut uuid = [0u8; 16];
-        uuid.copy_from_slice(pcur.read_bytes(16)?);
-        let index = pcur.read_u32_le()?;
-        let total = pcur.read_u32_le()?;
-        let mut prev = [0u8; 32];
-        prev.copy_from_slice(pcur.read_bytes(32)?);
-        let mut hash = [0u8; 32];
-        hash.copy_from_slice(pcur.read_bytes(32)?);
-        let reserved = pcur.read_bytes(8)?;
-        if reserved.iter().any(|byte| *byte != 0) {
-            return Err(SarError::ReservedValue(
-                "partition descriptor reserved bytes must be zero",
-            ));
-        }
-        Some(PartitionDescriptor {
-            partition_set_uuid: uuid,
-            partition_index: index,
-            total_partitions: total,
-            previous_partition_hash: prev,
-            partition_hash: hash,
-        })
-    } else {
-        None
-    };
+    let _ = cursor.read_bytes(8)?;
+    let mut flags_bytes = [0u8; 4];
+    flags_bytes.copy_from_slice(cursor.read_bytes(4)?);
+    let flags = decode_global_flags(flags_bytes)?;
 
     let kms = if flags.contains(GlobalFlags::ENCRYPTED) {
         let mode_id = cursor.read_u8()?;
@@ -285,30 +279,29 @@ pub fn parse_global_header(
         None
     };
 
-    if !flags.contains(GlobalFlags::ENCRYPTED) && kms.is_some() {
-        return Err(SarError::FlagConflict(
-            "KMS extension must be omitted when ENCRYPTED is unset",
-        ));
-    }
-    if !flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) && partition_descriptor.is_some() {
-        return Err(SarError::FlagConflict(
-            "partition descriptor must be omitted when PARTITIONED_ARCHIVE is unset",
-        ));
-    }
-
     let header = GlobalHeader {
-        version,
-        flags_bytes,
+        version: SUPPORTED_GLOBAL_VERSION,
         flags,
-        partition_descriptor,
         kms,
     };
 
     Ok((header, cursor.position()))
 }
 
+/// Validates the writer-side invariants of the fixed Global Header segment.
+fn validate_global_header_for_write(header: &GlobalHeader) -> Result<(), SarError> {
+    if header.version != SUPPORTED_GLOBAL_VERSION {
+        return Err(SarError::ReservedValue(
+            "reserved or unassigned Global Header version",
+        ));
+    }
+    GlobalFlags::from_wire(header.flags.bits())?;
+    Ok(())
+}
+
 /// Encodes the global header.
 pub fn write_global_header(header: &GlobalHeader) -> Result<Vec<u8>, SarError> {
+    validate_global_header_for_write(header)?;
     validate_global_flags(header.flags)?;
 
     if header.flags.contains(GlobalFlags::ENCRYPTED) && header.kms.is_none() {
@@ -317,45 +310,13 @@ pub fn write_global_header(header: &GlobalHeader) -> Result<Vec<u8>, SarError> {
     if !header.flags.contains(GlobalFlags::ENCRYPTED) && header.kms.is_some() {
         return Err(SarError::FlagConflict("KMS extension requires ENCRYPTED"));
     }
-    if header.flags.contains(GlobalFlags::PARTITIONED_ARCHIVE)
-        && header.partition_descriptor.is_none()
-    {
-        return Err(SarError::FlagConflict(
-            "PARTITIONED_ARCHIVE requires partition descriptor",
-        ));
-    }
-    if !header.flags.contains(GlobalFlags::PARTITIONED_ARCHIVE)
-        && header.partition_descriptor.is_some()
-    {
-        return Err(SarError::FlagConflict(
-            "partition descriptor requires PARTITIONED_ARCHIVE",
-        ));
-    }
-
-    let mut flags_bytes = header.flags_bytes.clone();
-    if flags_bytes.len() < 4 {
-        return Err(SarError::InvalidLength("global flags bytes must be >= 4"));
-    }
-    let bits = header.flags.bits().to_le_bytes();
-    flags_bytes[..4].copy_from_slice(&bits);
 
     let mut writer = BinaryWriter::new();
     writer.write_bytes(&MAGIC);
     writer.write_u8(header.version);
     writer.write_u8(0);
-    let flags_len_u16 = u16::try_from(flags_bytes.len())
-        .map_err(|_| SarError::Overflow("global flags size does not fit u16"))?;
-    writer.write_u16_le(flags_len_u16);
-    writer.write_bytes(&flags_bytes);
-
-    if let Some(descriptor) = &header.partition_descriptor {
-        writer.write_bytes(&descriptor.partition_set_uuid);
-        writer.write_u32_le(descriptor.partition_index);
-        writer.write_u32_le(descriptor.total_partitions);
-        writer.write_bytes(&descriptor.previous_partition_hash);
-        writer.write_bytes(&descriptor.partition_hash);
-        writer.write_bytes(&[0u8; 8]);
-    }
+    writer.write_u16_le(GLOBAL_FLAGS_SIZE);
+    writer.write_bytes(&header.flags.bits().to_le_bytes());
 
     if let Some(kms) = &header.kms {
         writer.write_u8(kms.mode_id);
@@ -786,6 +747,7 @@ pub fn parse_central_dictionary(
 ) -> Result<(CentralDictionary, usize), SarError> {
     limits
         .check_cd_bytes(u64::try_from(input.len()).map_err(|_| SarError::Overflow("CD size"))?)?;
+    require_unpartitioned_processing(flags)?;
     let mut cursor = ParseCursor::new(input);
     let version = cursor.read_u8()?;
     if version != SUPPORTED_CD_VERSION {
@@ -799,11 +761,6 @@ pub fn parse_central_dictionary(
     }
 
     let file_count = read_size(&mut cursor, flags)?;
-    let partition_info = if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-        Some((cursor.read_u16_le()?, cursor.read_u16_le()?))
-    } else {
-        None
-    };
     let global_crc32 = if flags.contains(GlobalFlags::HAS_GLOBAL_CRC32) {
         Some(cursor.read_u32_le()?)
     } else {
@@ -837,7 +794,6 @@ pub fn parse_central_dictionary(
         CentralDictionary {
             version,
             file_count,
-            partition_info,
             global_crc32,
             metadata,
             offsets,
@@ -851,18 +807,11 @@ pub fn write_central_dictionary(
     cd: &CentralDictionary,
     flags: GlobalFlags,
 ) -> Result<Vec<u8>, SarError> {
+    require_unpartitioned_processing(flags)?;
     let mut writer = BinaryWriter::new();
     writer.write_u8(cd.version);
     writer.write_bytes(&[0u8; 7]);
     write_size(&mut writer, flags, cd.file_count)?;
-
-    if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
-        let (partition_id, total) = cd.partition_info.ok_or(SarError::MetadataMissing(
-            "partition info required for PARTITIONED_ARCHIVE",
-        ))?;
-        writer.write_u16_le(partition_id);
-        writer.write_u16_le(total);
-    }
 
     if flags.contains(GlobalFlags::HAS_GLOBAL_CRC32) {
         writer.write_u32_le(cd.global_crc32.ok_or(SarError::MetadataMissing(
@@ -909,16 +858,22 @@ pub fn write_footer(footer: Footer) -> [u8; 8] {
     footer.cd_offset.to_le_bytes()
 }
 
-/// Returns the raw bytes of the global-header AAD section.
-pub fn global_header_flags_bytes(header: &GlobalHeader) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + header.flags_bytes.len());
-    out.extend_from_slice(b"SAR!");
+/// Returns the raw bytes of the global-header AAD section: the eight-byte prefix
+/// followed by the four Global Flags bytes (12 bytes in total).
+///
+/// # Errors
+///
+/// Returns [`SarError::ReservedValue`] when the header version is not assigned or
+/// the flags carry a reserved bit.
+pub fn global_header_flags_bytes(header: &GlobalHeader) -> Result<Vec<u8>, SarError> {
+    validate_global_header_for_write(header)?;
+    let mut out = Vec::with_capacity(GLOBAL_HEADER_FIXED_LEN);
+    out.extend_from_slice(&MAGIC);
     out.push(header.version);
     out.push(0x00);
-    let flags_size = header.flags_bytes.len() as u16;
-    out.extend_from_slice(&flags_size.to_le_bytes());
-    out.extend_from_slice(&header.flags_bytes);
-    out
+    out.extend_from_slice(&GLOBAL_FLAGS_SIZE.to_le_bytes());
+    out.extend_from_slice(&header.flags.bits().to_le_bytes());
+    Ok(out)
 }
 
 /// Serialize a local file header into its on-wire bytes for AAD construction.

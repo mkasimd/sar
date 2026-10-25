@@ -9,9 +9,7 @@ use sar_stream::{SessionEntry, SessionFlags, SessionInitFrame};
 pub fn no_index_header() -> GlobalHeader {
     GlobalHeader {
         version: 1,
-        flags_bytes: GlobalFlags::NO_INDEX.bits().to_le_bytes().to_vec(),
         flags: GlobalFlags::NO_INDEX,
-        partition_descriptor: None,
         kms: None,
     }
 }
@@ -20,9 +18,7 @@ pub fn fragmented_no_index_header() -> GlobalHeader {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::FILE_FRAGMENTATION;
     GlobalHeader {
         version: 1,
-        flags_bytes: flags.bits().to_le_bytes().to_vec(),
         flags,
-        partition_descriptor: None,
         kms: None,
     }
 }
@@ -30,9 +26,7 @@ pub fn fragmented_no_index_header() -> GlobalHeader {
 pub fn indexed_header() -> GlobalHeader {
     GlobalHeader {
         version: 1,
-        flags_bytes: GlobalFlags::empty().bits().to_le_bytes().to_vec(),
         flags: GlobalFlags::empty(),
-        partition_descriptor: None,
         kms: None,
     }
 }
