@@ -30,8 +30,8 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SCHEMA = REPO_ROOT / "docs" / "MACHINE_READABLE_API.schema.json"
-DEFAULT_INPUT = REPO_ROOT / "docs" / "MACHINE_READABLE_API.json"
+DEFAULT_SCHEMA = REPO_ROOT / "docs" / "machine-readable" / "MACHINE_READABLE_API.schema.json"
+DEFAULT_INPUT = REPO_ROOT / "docs" / "machine-readable" / "MACHINE_READABLE_API.json"
 
 
 def load_json(path: Path) -> Any:
