@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "id": "invalid-frag-gap-exceeds-loss-limit",
-  "title": "Invalid: LOSS_TOLERANT gap exceeding max_loss_tolerant_gap",
+  "title": "HISTORICAL: LOSS_TOLERANT gap exceeding max_loss_tolerant_gap (obsolete)",
   "description": "SAR archive where a fragment gap exceeds max_loss_tolerant_gap even though LOSS_TOLERANT is set. Must fail closed when the gap exceeds the configured limit.",
   "kind": "invalid",
   "file": null,
@@ -21,8 +21,8 @@
     "max_loss_tolerant_gap": 1024
   },
   "notes": [
-    "DEFERRED: gap value must exceed max_loss_tolerant_gap (1024 bytes in this vector).",
-    "OBSOLETE (M13b WP-3): the canonical format carries no offsets, so a missing fragment's length and a gap size are unknowable; max_loss_tolerant_gap is not applied to fragment reassembly. Reassigned to WP-4/M13b.2."
+    "HISTORICAL/OBSOLETE (WP-4): the canonical format carries no offsets, so a missing fragment's length and a gap size are unknowable. max_loss_tolerant_gap is retained as a public option but is not applied to fragment reassembly and is not given new semantics.",
+    "Never activated; no binary exists."
   ],
   "deferred": true,
   "compression": false,

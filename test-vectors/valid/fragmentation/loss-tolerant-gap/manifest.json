@@ -11,10 +11,12 @@
   ],
   "features": [],
   "expected": {
-    "valid": false,
-    "status": "SAR_ERR_UNSUPPORTED",
-    "error": "Unsupported",
-    "warnings": []
+    "valid": true,
+    "status": "SAR_OK",
+    "error": null,
+    "warnings": [
+      "SAR_WARN_INCOMPLETE"
+    ]
   },
   "profile_expectations": {
     "static-archive": "reject",
@@ -28,7 +30,8 @@
   "notes": [
     "Reference-only manifest: no canonical binary fixture is committed in this pass.",
     "Discovered during the M12a vector audit. Real LOSS_TOLERANT fragment-gap coverage requires fragment metadata and degraded reassembly behavior.",
-    "The previous fallback STORE archive was removed so the vector does not overclaim loss-tolerant fragment-gap coverage."
+    "The previous fallback STORE archive was removed so the vector does not overclaim loss-tolerant fragment-gap coverage.",
+    "Corrected in WP-4: permitted degraded fragment reconstruction is a non-failure (specification Sections 6.2.3, 10 and 19.4.5) reported as SAR_WARN_INCOMPLETE, not SAR_ERR_UNSUPPORTED. The manifest schema requires SAR_OK for valid vectors, so the warning is carried in expected.warnings. The manifest stays deferred because the vector harness cannot yet verify degraded output or warnings; max_loss_tolerant_gap remains unenforced."
   ],
   "generated_by": "rust-generator",
   "compression": false,

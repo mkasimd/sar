@@ -64,7 +64,7 @@ test-vectors/
     compression/             - STORE / DEFLATE / ZSTD compression variants
     crypto/                  - AES-256-GCM and XChaCha20-Poly1305 encrypted archives
     fec/                     - real XOR/Reed-Solomon selective FEC archives and shared metadata fixture
-    fragmentation/           - deferred/reference-only fragment fixtures until real fragment binaries exist
+    fragmentation/           - canonical two-fragment reassembly (active); loss-tolerant-gap remains deferred (degraded output/warnings not expressible by the harness)
     sparse/                  - real sparse reconstruction fixtures plus deferred sparse+delta reference
     cdc/                     - real CDC literal-mode fixture plus deferred FASTCDC CDC_MAP reference
     delta/                   - real STORE_PATCH, VCDIFF, and SAR BSDIFF v1 fixtures
@@ -76,7 +76,7 @@ test-vectors/
     algorithms/              - unsupported/reserved compression/crypto/FEC/CDC/delta IDs
     crypto/                  - bad AEAD tag, wrong nonce, mismatched KMS
     fec/                     - malformed FEC metadata
-    fragmentation/           - gap, overlap, duplicate index, missing LAST_FRAGMENT
+    fragmentation/           - duplicate index, missing Index 0, missing terminal, interior gap, name mismatch, Class G conflict, physical order, non-terminal/terminal CRC (active); overlap (withdrawn) and gap-exceeds-loss-limit (historical) stay deferred
     sparse/                  - sparse extent overlap, zero-length, excessive size
     cdc/                     - malformed CDC metadata, reserved CDC IDs
     delta/                   - deterministic patch-algo/base-hash/truncation/limit fixtures

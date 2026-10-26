@@ -397,6 +397,7 @@ impl StreamArchiveParser {
             "missing encoded payload in transform phase",
         ))?;
 
+        crate::fragment_group::check_later_fragment_sparse_map(&lfh)?;
         let is_effectively_compressed = archive.header.flags.contains(GlobalFlags::COMPRESSED)
             && lfh.entry_mode.is_compressed();
         let is_encrypted =

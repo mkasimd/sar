@@ -844,7 +844,6 @@ fn known_deferred_feature_tags_are_not_canonical_unless_real() {
         "cdc-map",
         "sparse+delta",
         "loss-tolerant-gap",
-        "fragmentation",
         "recovery-tlv",
     ];
     let mut failures = Vec::new();

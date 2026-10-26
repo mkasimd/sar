@@ -468,4 +468,14 @@ fn canonical_fragment_fuzz_seeds_have_expected_status() {
     let mut reader = sar_archive::ArchiveReader::new(Cursor::new(dup.to_vec())).expect("reader");
     let err = reader.read_all_logical_files(false).expect_err("dup");
     assert!(matches!(err, SarError::MetadataConflict(_)), "{err:?}");
+
+    let order = include_bytes!("../../../fuzz/seeds/fec_fragmentation/fragment_physical_order.bin");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(order.to_vec())).expect("reader");
+    let err = reader.read_all_logical_files(false).expect_err("order");
+    assert!(matches!(err, SarError::Malformed(_)), "{err:?}");
+
+    let name = include_bytes!("../../../fuzz/seeds/fec_fragmentation/fragment_name_mismatch.bin");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(name.to_vec())).expect("reader");
+    let err = reader.read_all_logical_files(false).expect_err("name");
+    assert!(matches!(err, SarError::MetadataConflict(_)), "{err:?}");
 }

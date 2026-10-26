@@ -278,8 +278,8 @@ pub struct LogicalFile {
     pub fragment_id: Option<u32>,
     /// Fully reconstructed payload bytes.
     ///
-    /// For fragmented entries, fragments have been assembled at their declared
-    /// absolute offsets.  For sparse entries, holes are zero-filled.
+    /// For fragmented entries, fragment contributions have been concatenated in
+    /// ascending Fragment Index order.  For sparse entries, holes are zero-filled.
     pub data: Vec<u8>,
     /// `true` when the payload is incomplete due to missing fragments that were
     /// permitted by `LOSS_TOLERANT` semantics.  Callers **must not** treat this
@@ -844,6 +844,14 @@ pub struct ArchiveReader<R> {
     file_len: u64,
     cd: Option<CentralDictionary>,
     key_provider: Option<Box<dyn KeyProvider>>,
+    logical: LogicalState,
+}
+
+/// Progress of [`ArchiveReader::next_logical_entry`].
+enum LogicalState {
+    NotStarted,
+    Active(Box<crate::fragment_group::FragmentGroupCollector>),
+    Done,
 }
 
 /// Fills a required structural buffer, mapping a short read to `Truncated`.
@@ -885,6 +893,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             file_len,
             cd: None,
             key_provider: None,
+            logical: LogicalState::NotStarted,
         })
     }
 
@@ -1404,6 +1413,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         lfh_bytes: &[u8],
         encoded_payload: &[u8],
     ) -> Result<DecodedArchiveEntryParts, SarError> {
+        crate::fragment_group::check_later_fragment_sparse_map(lfh)?;
         let is_effectively_compressed =
             header.flags.contains(GlobalFlags::COMPRESSED) && lfh.entry_mode.is_compressed();
         let is_encrypted = lfh.entry_mode.is_encrypted();
@@ -1837,16 +1847,69 @@ impl<R: Read + Seek> ArchiveReader<R> {
         })
     }
 
+    /// Returns the next validated logical Entry in canonical order.
+    ///
+    /// Ordinary Entries are released as soon as no earlier incomplete
+    /// fragment group blocks them, so a consumer can process an archive
+    /// incrementally.  A fragment group is positioned at its Fragment Index 0
+    /// LFH and is released when complete, or at end of archive when
+    /// incomplete (reconstruction then applies the `LOSS_TOLERANT` rules).
+    /// Entries behind an incomplete group are retained, bounded by
+    /// `max_total_pipeline_memory`.
+    ///
+    /// Iteration starts at the first Entry and ends with `Ok(None)`; a
+    /// failure ends it.  [`Self::read_all_logical_files`] restarts it.
+    ///
+    /// # Errors
+    ///
+    /// Fragment-group validation errors (see [`Self::read_all_logical_files`]),
+    /// [`SarError::LimitExceeded`] when retention would exceed
+    /// `max_total_pipeline_memory`, and any error from [`Self::next_entry`].
+    pub fn next_logical_entry(
+        &mut self,
+    ) -> Result<Option<crate::fragment_group::CollectedEntry>, SarError> {
+        let mut collector = match std::mem::replace(&mut self.logical, LogicalState::Done) {
+            LogicalState::Done => return Ok(None),
+            LogicalState::Active(collector) => collector,
+            LogicalState::NotStarted => {
+                if self.global_header.is_none() {
+                    self.read_global_header()?;
+                }
+                self.next_offset = self.header_len;
+                Box::new(crate::fragment_group::FragmentGroupCollector::new(
+                    self.options.limits,
+                ))
+            }
+        };
+        loop {
+            if let Some(item) = collector.next_ready()? {
+                self.logical = LogicalState::Active(collector);
+                return Ok(Some(item));
+            }
+            if collector.is_input_finished() {
+                return Ok(None);
+            }
+            match self.next_entry()? {
+                Some(entry) => collector.push(entry)?,
+                None => collector.finish_input(),
+            }
+        }
+    }
+
     /// Reads all entries from the archive and returns fully reconstructed
     /// logical files.
     ///
     /// This high-level helper handles two cases that [`next_entry`] does not
     /// address automatically:
     ///
-    /// * **Fragment groups** — entries sharing a `fragment_id` are assembled
-    ///   using [`sar_fragmentation::reconstruct_fragments`].  All fragments must
+    /// * **Fragment groups** — entries sharing a `fragment_id` are validated by
+    ///   [`Self::next_logical_entry`] (physical Fragment
+    ///   Index order, Class G invariants, Index-0 Name/Path authority, neutral
+    ///   non-terminal integrity fields) and assembled using
+    ///   [`sar_fragmentation::reconstruct_fragments`].  All fragments must
     ///   be present unless `allow_lossy` is `true` **and** the group has
-    ///   `LOSS_TOLERANT` set.
+    ///   `LOSS_TOLERANT` set.  Logical files are returned in canonical order; a
+    ///   fragment group is positioned at its Fragment Index 0 LFH.
     /// * **Sparse entries** — when global `SPARSE_FILES` is active and an entry
     ///   carries a sparse map, the raw data segments are scattered into a
     ///   zero-filled logical-size buffer via
@@ -1884,11 +1947,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
     ///
     /// * [`SarError::FragmentGap`] — gap in fragment indices without
     ///   `allow_lossy`.
-    /// * [`SarError::InvalidMap`] — overlapping or out-of-bounds sparse extents
-    ///   or fragment descriptors.
+    /// * [`SarError::InvalidMap`] — overlapping or out-of-bounds sparse extents.
+    /// * [`SarError::MetadataConflict`] — duplicate Fragment Index, Class G
+    ///   mismatch, later-fragment Name/Path/Sparse Map conflict, or non-zero
+    ///   non-terminal File CRC32 / Content Hash.
+    /// * [`SarError::CrcMismatch`] — terminal File CRC32 does not match.
     /// * [`SarError::Overflow`] — arithmetic overflow or allocation limit
     ///   exceeded.
-    /// * [`SarError::Malformed`] — `IS_FRAGMENT` without a `fragment_id`.
+    /// * [`SarError::Malformed`] — `IS_FRAGMENT` without a `fragment_id`, an
+    ///   Index-0 fragment with an empty Name, or fragments out of strictly
+    ///   increasing physical Fragment Index order.
     /// * Any error propagated from [`next_entry`].
     ///
     /// # Sparse + fragmentation ordering
@@ -1902,12 +1970,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
     ///
     /// The Sparse Map **must** appear only in the fragment with `Fragment Index = 0`
     /// and describes the fully reassembled logical payload.  A Sparse Map on any
-    /// non-zero fragment index causes [`SarError::InvalidMap`].
+    /// non-zero fragment index causes [`SarError::MetadataConflict`].
     ///
     /// # CRC32 verification
     ///
     /// When the global `PER_FILE_CRC` flag is set and an entry carries a non-zero
-    /// `File CRC32` field, the CRC32 is verified against the **fully reconstructed**
+    /// `File CRC32` field (for a fragment group, the `LAST_FRAGMENT` LFH value),
+    /// the CRC32 is verified against the **fully reconstructed**
     /// logical file bytes (including sparse holes).  A mismatch returns
     /// [`SarError::CrcMismatch`].  LOSS_TOLERANT semantics do not suppress
     /// CRC32 mismatches on complete (non-degraded) output.
@@ -1917,8 +1986,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         &mut self,
         allow_lossy: bool,
     ) -> Result<Vec<LogicalFile>, SarError> {
-        use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
-        use std::collections::HashMap;
+        use crate::fragment_group::CollectedEntry;
 
         // Ensure global header is read.
         if self.global_header.is_none() {
@@ -1931,196 +1999,106 @@ impl<R: Read + Seek> ArchiveReader<R> {
             .ok_or(SarError::Malformed("global header missing after read"))?
             .clone();
 
-        // Reset cursor so callers may invoke this after prior next_entry calls.
-        self.next_offset = self.header_len;
+        // Restart canonical logical iteration from the data area start so
+        // callers may invoke this after prior next_entry calls.
+        self.logical = LogicalState::NotStarted;
 
-        // Collect all decoded entries.
-        let mut all_entries: Vec<EntryReader> = Vec::new();
-        while let Some(entry) = self.next_entry()? {
-            all_entries.push(entry);
-        }
-
-        // Preserve insertion order of first-seen fragment IDs.
-        let mut frag_order: Vec<u32> = Vec::new();
-
-        /// Accumulator for one logical-file fragment group.
-        struct FragGroup {
-            /// Name taken from the first-seen fragment entry.
-            name: String,
-            /// All fragment entries collected so far.
-            entries: Vec<EntryReader>,
-            /// Sparse extents from fragment index 0.  `None` when this group
-            /// has no sparse map.
-            sparse_extents: Option<Vec<SparseExtent>>,
-            /// File CRC32 from fragment index 0 for post-assembly verification.
-            /// `None` when the entry has no CRC32 field.
-            file_crc32: Option<u32>,
-        }
-
-        // fragment_id → FragGroup
-        let mut frag_groups: HashMap<u32, FragGroup> = HashMap::new();
         let mut result: Vec<LogicalFile> = Vec::new();
 
-        for entry in all_entries {
-            // Empty Areas (Name Length == 0, IS_FRAGMENT == 0) must not appear
-            // in logical file output.  They do not participate in sparse
-            // reconstruction, hashing, delta, or fragmentation.
-            if entry.metadata.name.is_empty() && !entry.metadata.is_fragment {
-                continue;
-            }
-
-            if entry.metadata.is_fragment {
-                let fid = entry.metadata.fragment_id.ok_or(SarError::Malformed(
-                    "IS_FRAGMENT set but fragment_id is absent",
-                ))?;
-
-                // Spec §13.7.6 / §19.6: Sparse Map MUST appear only in the
-                // fragment with Fragment Index = 0.  Any other placement is a
-                // hard error, even with allow_lossy.
-                let has_sparse = entry.metadata.sparse_extents.is_some();
-                if has_sparse && entry.metadata.fragment_index != Some(0) {
-                    return Err(SarError::InvalidMap(
-                        "sparse map present on non-zero fragment index; Sparse Map MUST appear only in fragment with Fragment Index = 0",
-                    ));
-                }
-
-                let group = frag_groups.entry(fid).or_insert_with(|| {
-                    frag_order.push(fid);
-                    FragGroup {
-                        name: entry.metadata.name.clone(),
-                        entries: Vec::new(),
-                        sparse_extents: None,
-                        file_crc32: None,
+        while let Some(item) = self.next_logical_entry()? {
+            match item {
+                CollectedEntry::Entry(entry) => {
+                    let name = entry.metadata.name.clone();
+                    let sparse = entry.metadata.sparse_extents.clone();
+                    let uncompressed_size = entry.metadata.uncompressed_size;
+                    let file_crc32 = entry.metadata.file_crc32;
+                    let data = Self::apply_sparse_if_needed(
+                        &self.options.limits,
+                        entry.payload,
+                        &sparse,
+                        uncompressed_size,
+                    )?;
+                    // CRC32 verification over the fully reconstructed logical file
+                    // (including sparse holes), per spec §17.5.
+                    if global.flags.contains(GlobalFlags::PER_FILE_CRC)
+                        && let Some(expected_crc) = file_crc32
+                    {
+                        let computed = crc32fast::hash(&data);
+                        if computed != expected_crc {
+                            return Err(SarError::CrcMismatch(
+                                "file CRC32 mismatch on reconstructed logical file",
+                            ));
+                        }
                     }
-                });
-                self.options.limits.check_fragment_count(
-                    group
-                        .entries
-                        .len()
-                        .checked_add(1)
-                        .ok_or(SarError::Overflow("fragment count"))?,
-                )?;
-
-                // Capture sparse map, logical size, and CRC32 from fragment 0.
-                if entry.metadata.fragment_index == Some(0) {
-                    if has_sparse {
-                        group.sparse_extents = entry.metadata.sparse_extents.clone();
-                    }
-                    group.file_crc32 = entry.metadata.file_crc32;
+                    result.push(LogicalFile {
+                        name,
+                        fragment_id: None,
+                        data,
+                        is_degraded: false,
+                    });
                 }
+                CollectedEntry::Group(group) => {
+                    let fid = group.fragment_id;
+                    let name = group.name.clone();
+                    let has_sparse = group
+                        .index0
+                        .as_ref()
+                        .is_some_and(|m| m.sparse_extents.is_some());
+                    // Authoritative File CRC32 is carried by LAST_FRAGMENT.
+                    let terminal_crc32 = group.terminal_crc32;
 
-                group.entries.push(entry);
-            } else {
-                let name = entry.metadata.name.clone();
-                let sparse = entry.metadata.sparse_extents.clone();
-                let uncompressed_size = entry.metadata.uncompressed_size;
-                let file_crc32 = entry.metadata.file_crc32;
-                let data = Self::apply_sparse_if_needed(
-                    &self.options.limits,
-                    entry.payload,
-                    &sparse,
-                    uncompressed_size,
-                )?;
-                // CRC32 verification over the fully reconstructed logical file
-                // (including sparse holes), per spec §17.5.
-                if global.flags.contains(GlobalFlags::PER_FILE_CRC)
-                    && let Some(expected_crc) = file_crc32
-                {
-                    let computed = crc32fast::hash(&data);
-                    if computed != expected_crc {
-                        return Err(SarError::CrcMismatch(
-                            "file CRC32 mismatch on reconstructed logical file",
+                    let (raw, is_degraded) = group.reconstruct(&self.options.limits)?;
+
+                    // When the caller does not allow lossy and degraded output was
+                    // produced by a LOSS_TOLERANT group, surface it as an error.
+                    if is_degraded && !allow_lossy {
+                        return Err(SarError::FragmentGap(
+                            "fragment group has gaps; use allow_lossy to permit degraded output",
                         ));
                     }
-                }
-                result.push(LogicalFile {
-                    name,
-                    fragment_id: None,
-                    data,
-                    is_degraded: false,
-                });
-            }
-        }
 
-        // Reconstruct each fragment group in first-seen order.
-        for fid in frag_order {
-            let FragGroup {
-                name,
-                entries: group_entries,
-                sparse_extents: group_sparse_extents,
-                file_crc32: group_file_crc32,
-            } = frag_groups.remove(&fid).ok_or(SarError::Malformed(
-                "fragment group ID vanished during reconstruction",
-            ))?;
+                    // Sparse reconstruction over an incomplete fragment prefix is not
+                    // permitted (spec §19.4.5).
+                    if is_degraded && has_sparse {
+                        return Err(SarError::FragmentGap(
+                            "sparse reconstruction requires a complete fragment group",
+                        ));
+                    }
 
-            // Build FragmentEntry list from decoded payloads.  The declared
-            // contribution length is the LFH Uncompressed Size.
-            let frag_entries: Vec<FragmentEntry> = group_entries
-                .into_iter()
-                .map(|e| FragmentEntry {
-                    fragment_index: e.metadata.fragment_index.unwrap_or(0),
-                    is_last_fragment: e.metadata.is_last_fragment,
-                    is_loss_tolerant: e.metadata.is_loss_tolerant,
-                    uncompressed_size: e.metadata.uncompressed_size,
-                    payload: e.payload,
-                })
-                .collect();
+                    // Spec §13.7.6 / §17.2 / §19.6 define sparse reconstruction over the
+                    // assembled group using the Sparse Logical Size carried in the Sparse
+                    // Map.  That field is not implemented yet (WP-5/M13b.2), and LFH
+                    // `Uncompressed Size` is only the fragment-local contribution length,
+                    // so reconstructing here would yield a wrongly sized file.  Fail closed
+                    // (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001).
+                    if has_sparse {
+                        return Err(SarError::Unsupported(
+                            "fragmented sparse reconstruction requires Sparse Logical Size (not yet implemented)",
+                        ));
+                    }
 
-            let (raw, is_degraded) =
-                reconstruct_fragments(frag_entries, &self.options.limits.fragment_limits())?;
+                    // CRC32 verification over the fully reconstructed logical file.
+                    // Degraded output is a partial prefix and is never CRC-verified.
+                    if !is_degraded
+                        && global.flags.contains(GlobalFlags::PER_FILE_CRC)
+                        && let Some(expected_crc) = terminal_crc32
+                    {
+                        let computed = crc32fast::hash(&raw);
+                        if computed != expected_crc {
+                            return Err(SarError::CrcMismatch(
+                                "file CRC32 mismatch on reconstructed fragment-group logical file",
+                            ));
+                        }
+                    }
 
-            // When the caller does not allow lossy and degraded output was
-            // produced by a LOSS_TOLERANT group, surface it as an error.
-            if is_degraded && !allow_lossy {
-                return Err(SarError::FragmentGap(
-                    "fragment group has gaps; use allow_lossy to permit degraded output",
-                ));
-            }
-
-            // Sparse reconstruction over an incomplete fragment prefix is not
-            // permitted (spec §19.4.5); degraded output is returned as-is only
-            // for non-sparse groups.
-            if is_degraded && group_sparse_extents.is_some() {
-                return Err(SarError::FragmentGap(
-                    "sparse reconstruction requires a complete fragment group",
-                ));
-            }
-
-            // Spec §13.7.6 / §17.2 / §19.6 define sparse reconstruction over the
-            // assembled group using the Sparse Logical Size carried in the Sparse
-            // Map.  That field is not implemented yet (WP-5/M13b.2), and LFH
-            // `Uncompressed Size` is only the fragment-local contribution length,
-            // so reconstructing here would yield a wrongly sized file.  Fail closed
-            // (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001).
-            let data = if group_sparse_extents.is_some() {
-                return Err(SarError::Unsupported(
-                    "fragmented sparse reconstruction requires Sparse Logical Size (not yet implemented)",
-                ));
-            } else {
-                raw
-            };
-
-            // CRC32 verification over the fully reconstructed logical file
-            // (after fragment reassembly and sparse reconstruction).
-            // Degraded output is a partial prefix and is never CRC-verified.
-            if !is_degraded
-                && global.flags.contains(GlobalFlags::PER_FILE_CRC)
-                && let Some(expected_crc) = group_file_crc32
-            {
-                let computed = crc32fast::hash(&data);
-                if computed != expected_crc {
-                    return Err(SarError::CrcMismatch(
-                        "file CRC32 mismatch on reconstructed fragment-group logical file",
-                    ));
+                    result.push(LogicalFile {
+                        name,
+                        fragment_id: Some(fid),
+                        data: raw,
+                        is_degraded,
+                    });
                 }
             }
-
-            result.push(LogicalFile {
-                name,
-                fragment_id: Some(fid),
-                data,
-                is_degraded,
-            });
         }
 
         Ok(result)

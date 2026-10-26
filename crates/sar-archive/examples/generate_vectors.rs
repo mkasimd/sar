@@ -979,6 +979,149 @@ fn generate_stream_transcript_vectors() {
 // main
 // ---------------------------------------------------------------------------
 
+/// One fragment of a hand-built canonical fragment group.
+struct FragSpec {
+    id: u32,
+    index: u32,
+    last: bool,
+    name: &'static str,
+    data: &'static [u8],
+    extra_mode: u16,
+    crc: u32,
+}
+
+fn frag_spec(index: u32, last: bool, name: &'static str, data: &'static [u8]) -> FragSpec {
+    FragSpec {
+        id: 1,
+        index,
+        last,
+        name,
+        data,
+        extra_mode: 0,
+        crc: 0,
+    }
+}
+
+/// Builds a deterministic NO_INDEX FILE_FRAGMENTATION archive from raw
+/// canonical fragment LFHs (spec 6.1.3).
+fn write_fragment_archive(extra_flags: GlobalFlags, frags: &[FragSpec]) -> Vec<u8> {
+    let flags = GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX | extra_flags;
+    let mut out = write_global_header(&GlobalHeader {
+        version: 1,
+        flags,
+        kms: None,
+    })
+    .unwrap();
+    for f in frags {
+        let mut lfh =
+            LocalFileHeader::minimal_store(f.name.as_bytes().to_vec(), f.data.len() as u64);
+        lfh.uncompressed_size = f.data.len() as u64;
+        let mut bits = (1u16 << 5) | f.extra_mode;
+        if f.last {
+            bits |= 1u16 << 6;
+        }
+        lfh.entry_mode = sar_core::flags::EntryMode::from_bits(bits);
+        lfh.fragment_id = Some(f.id);
+        lfh.fragment_index = Some(f.index);
+        lfh.file_crc32 = Some(f.crc);
+        out.extend_from_slice(&write_lfh(&flags, &lfh).unwrap());
+        out.extend_from_slice(f.data);
+    }
+    out
+}
+
+fn generate_fragment_group_vectors() {
+    let ab = || {
+        vec![
+            frag_spec(0, false, "frag.bin", b"AAAAAAAA"),
+            frag_spec(1, true, "", b"BBBBBBBB"),
+        ]
+    };
+    let none = GlobalFlags::empty();
+
+    write_fixture(
+        "valid/fragmentation/valid-reassembly/fragmented_two_parts.sar",
+        &write_fragment_archive(none, &ab()),
+    );
+    // Duplicate Fragment Index.
+    write_fixture(
+        "invalid/fragmentation/duplicate-index/duplicate_index.sar",
+        &write_fragment_archive(
+            none,
+            &[
+                frag_spec(0, false, "frag.bin", b"AAAAAAAA"),
+                frag_spec(0, false, "frag.bin", b"AAAAAAAA"),
+                frag_spec(1, true, "", b"BBBBBBBB"),
+            ],
+        ),
+    );
+    // Missing Fragment Index 0.
+    write_fixture(
+        "invalid/fragmentation/initial-gap/missing_index0.sar",
+        &write_fragment_archive(none, &[frag_spec(1, true, "", b"BBBBBBBB")]),
+    );
+    // Missing terminal fragment.
+    write_fixture(
+        "invalid/fragmentation/tail-gap/missing_terminal.sar",
+        &write_fragment_archive(none, &[frag_spec(0, false, "frag.bin", b"AAAAAAAA")]),
+    );
+    // Interior gap.
+    write_fixture(
+        "invalid/fragmentation/interior-gap/interior_gap.sar",
+        &write_fragment_archive(
+            none,
+            &[
+                frag_spec(0, false, "frag.bin", b"AAAAAAAA"),
+                frag_spec(2, true, "", b"CCCCCCCC"),
+            ],
+        ),
+    );
+    // Later-fragment Name differs from Fragment Index 0.
+    write_fixture(
+        "invalid/fragmentation/name-mismatch/name_mismatch.sar",
+        &write_fragment_archive(
+            none,
+            &[
+                frag_spec(0, false, "frag.bin", b"AAAAAAAA"),
+                frag_spec(1, true, "other.bin", b"BBBBBBBB"),
+            ],
+        ),
+    );
+    // Class G Entry Mode mismatch (HIDDEN_ATTR on one fragment only).
+    let mut hidden = ab();
+    hidden[1].extra_mode = 1 << 4;
+    write_fixture(
+        "invalid/fragmentation/class-g-conflict/class_g_conflict.sar",
+        &write_fragment_archive(none, &hidden),
+    );
+    // Out-of-order physical Fragment Index.
+    write_fixture(
+        "invalid/fragmentation/physical-order/physical_order.sar",
+        &write_fragment_archive(
+            none,
+            &[
+                frag_spec(0, false, "frag.bin", b"AAAAAAAA"),
+                frag_spec(2, true, "", b"CCCCCCCC"),
+                frag_spec(1, false, "", b"BBBBBBBB"),
+            ],
+        ),
+    );
+    // Non-zero File CRC32 on a non-terminal fragment.
+    let mut crc = ab();
+    crc[0].crc = 0x1234_5678;
+    write_fixture(
+        "invalid/fragmentation/nonterminal-crc/nonterminal_crc.sar",
+        &write_fragment_archive(GlobalFlags::PER_FILE_CRC, &crc),
+    );
+    // Wrong authoritative CRC32 on the LAST_FRAGMENT.
+    let mut bad = ab();
+    bad[1].crc = 1;
+    write_fixture(
+        "invalid/fragmentation/terminal-crc-mismatch/terminal_crc_mismatch.sar",
+        &write_fragment_archive(GlobalFlags::PER_FILE_CRC, &bad),
+    );
+}
+
 fn main() {
     // -----------------------------------------------------------------------
     // Valid: minimal
@@ -1177,15 +1320,11 @@ fn main() {
     // Valid: fragmentation — valid contiguous two-fragment group
     // -----------------------------------------------------------------------
 
-    // Fragmentation vectors remain deferred in this corrective pass. Do not
-    // emit placeholder STORE archives that overclaim fragment metadata.
-    skip_deferred_vector(
-        "valid/fragmentation/valid-reassembly/fragmented_two_parts.sar",
-        "real fragment-group fixtures require the streaming writer path",
-    );
+    // Canonical WP-4 fragment-group fixtures (raw LFH construction).
+    generate_fragment_group_vectors();
     skip_deferred_vector(
         "valid/fragmentation/loss-tolerant-gap/fragmented_loss_tolerant_gap.sar",
-        "real LOSS_TOLERANT fragment-gap fixtures require fragment metadata and degraded reassembly behavior",
+        "degraded output and warnings are not expressible by the conformance harness",
     );
 
     // -----------------------------------------------------------------------

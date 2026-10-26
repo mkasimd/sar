@@ -8,9 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sar_archive::{ArchiveReader, ArchiveReaderOptions, EntryReader};
-use sar_core::{EntryKind, GlobalFlags, ResourceLimits, SarError, sparse::SparseExtent};
-use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
+use sar_archive::{
+    ArchiveReader, ArchiveReaderOptions, EntryReader, fragment_group::CollectedEntry,
+};
+use sar_core::{EntryKind, GlobalFlags, ResourceLimits, SarError};
 
 use crate::{
     extraction::{
@@ -26,18 +27,6 @@ use crate::{
     },
     password::{CliKeyProvider, load_password},
 };
-
-#[derive(Debug)]
-struct FragGroup {
-    name: String,
-    entries: Vec<EntryReader>,
-    sparse_extents: Option<Vec<SparseExtent>>,
-    sparse_uncompressed_size: u64,
-    file_crc32: Option<u32>,
-    permissions: Option<u16>,
-    owner: Option<u32>,
-    timestamps: Option<[u64; 3]>,
-}
 
 pub(crate) fn extract_archive(
     archive: PathBuf,
@@ -62,104 +51,36 @@ pub(crate) fn extract_archive(
         reader = reader.with_key_provider(Box::new(CliKeyProvider::new(Some(password))));
     }
 
-    let mut frag_order = Vec::new();
-    let mut frag_groups = HashMap::<u32, FragGroup>::new();
     let mut pending_directories = HashMap::<String, PendingDirectoryMetadata>::new();
 
-    while let Some(entry) = reader.next_entry()? {
-        if entry.metadata.name.is_empty() && !entry.metadata.is_fragment {
-            continue;
-        }
-
-        if entry.metadata.is_fragment {
-            let fid = entry.metadata.fragment_id.ok_or(SarError::Malformed(
-                "IS_FRAGMENT set but fragment_id is absent",
-            ))?;
-            let has_sparse = entry.metadata.sparse_extents.is_some();
-            if has_sparse && entry.metadata.fragment_index != Some(0) {
-                return Err(SarError::InvalidMap(
-                    "sparse map present on non-zero fragment index; Sparse Map MUST appear only in fragment with Fragment Index = 0",
-                ));
+    // The archive reader validates fragment groups (physical order, Class G
+    // invariants, Index-0 Name/Path authority, neutral non-terminal integrity
+    // fields) and yields logical Entries in canonical order as soon as they
+    // are not blocked by an incomplete earlier group.
+    while let Some(item) = reader.next_logical_entry()? {
+        let group = match item {
+            CollectedEntry::Entry(entry) => {
+                extract_non_fragment_entry(
+                    &output_dir,
+                    &entry,
+                    header.flags,
+                    &limits,
+                    metadata,
+                    &mut pending_directories,
+                )?;
+                continue;
             }
+            CollectedEntry::Group(group) => group,
+        };
 
-            let group = frag_groups.entry(fid).or_insert_with(|| {
-                frag_order.push(fid);
-                FragGroup {
-                    name: entry.metadata.name.clone(),
-                    entries: Vec::new(),
-                    sparse_extents: None,
-                    sparse_uncompressed_size: 0,
-                    file_crc32: None,
-                    permissions: entry.metadata.permissions.map(|value| value.mode),
-                    owner: entry.metadata.owner.map(|value| value.uid_gid),
-                    timestamps: entry
-                        .metadata
-                        .timestamps
-                        .map(|value| [value.mtime, value.atime, value.ctime]),
-                }
-            });
-            limits.check_fragment_count(
-                group
-                    .entries
-                    .len()
-                    .checked_add(1)
-                    .ok_or(SarError::Overflow("fragment count"))?,
-            )?;
+        let name = group.name.clone();
+        let terminal_crc32 = group.terminal_crc32;
+        let index0 = group.index0.clone();
+        let has_sparse = index0
+            .as_ref()
+            .is_some_and(|meta| meta.sparse_extents.is_some());
 
-            if entry.metadata.fragment_index == Some(0) {
-                if has_sparse {
-                    group.sparse_extents = entry.metadata.sparse_extents.clone();
-                    group.sparse_uncompressed_size = entry.metadata.uncompressed_size;
-                }
-                group.file_crc32 = entry.metadata.file_crc32;
-                group.permissions = entry.metadata.permissions.map(|value| value.mode);
-                group.owner = entry.metadata.owner.map(|value| value.uid_gid);
-                group.timestamps = entry
-                    .metadata
-                    .timestamps
-                    .map(|value| [value.mtime, value.atime, value.ctime]);
-            }
-
-            group.entries.push(entry);
-            continue;
-        }
-
-        extract_non_fragment_entry(
-            &output_dir,
-            &entry,
-            header.flags,
-            &limits,
-            metadata,
-            &mut pending_directories,
-        )?;
-    }
-
-    for fid in frag_order {
-        let FragGroup {
-            name,
-            entries: group_entries,
-            sparse_extents,
-            sparse_uncompressed_size,
-            file_crc32,
-            permissions,
-            owner,
-            timestamps,
-        } = frag_groups.remove(&fid).ok_or(SarError::Malformed(
-            "fragment group ID vanished during reconstruction",
-        ))?;
-
-        let frag_entries: Vec<FragmentEntry> = group_entries
-            .into_iter()
-            .map(|entry| FragmentEntry {
-                fragment_index: entry.metadata.fragment_index.unwrap_or(0),
-                is_last_fragment: entry.metadata.is_last_fragment,
-                is_loss_tolerant: entry.metadata.is_loss_tolerant,
-                uncompressed_size: entry.metadata.uncompressed_size,
-                payload: entry.payload,
-            })
-            .collect();
-
-        let (raw, is_degraded) = reconstruct_fragments(frag_entries, &limits.fragment_limits())?;
+        let (raw, is_degraded) = group.reconstruct(&limits)?;
         if is_degraded && !allow_lossy {
             return Err(SarError::FragmentGap(
                 "fragment group has gaps; use allow_lossy to permit degraded output",
@@ -168,42 +89,46 @@ pub(crate) fn extract_archive(
         if is_degraded {
             eprintln!(
                 "warning: '{}' extracted with degraded (incomplete) content; \
-                 missing fragments were replaced with zero bytes (LOSS_TOLERANT). \
+                 only the contiguous fragment prefix from Fragment Index 0 was recovered (LOSS_TOLERANT). \
                  This output MUST NOT be used for integrity-critical purposes.",
                 name
             );
         }
+        if has_sparse {
+            if is_degraded {
+                return Err(SarError::FragmentGap(
+                    "sparse reconstruction requires a complete fragment group",
+                ));
+            }
+            // Sparse Logical Size is not implemented yet (WP-5/M13b.2); LFH
+            // Uncompressed Size is only the fragment contribution length.
+            return Err(SarError::Unsupported(
+                "fragmented sparse reconstruction requires Sparse Logical Size (not yet implemented)",
+            ));
+        }
 
         let rel = validate_relative_archive_path(&name)?;
         let out_path = prepare_output_file_path(&output_dir, &rel)?;
-        if let Some(extents) = sparse_extents.as_ref() {
-            let actual_crc =
-                compute_sparse_crc32(&raw, extents, sparse_uncompressed_size, &limits)?;
-            if header.flags.contains(GlobalFlags::PER_FILE_CRC) {
-                verify_crc32(
-                    file_crc32,
-                    actual_crc,
-                    "file CRC32 mismatch on reconstructed fragment-group logical file",
-                )?;
-            }
-            write_sparse_payload_via_temp(
-                &out_path,
-                &raw,
-                extents,
-                sparse_uncompressed_size,
-                &limits,
+        // The authoritative CRC32 is the LAST_FRAGMENT value; degraded output
+        // is never reported as integrity-verified.
+        if !is_degraded && header.flags.contains(GlobalFlags::PER_FILE_CRC) {
+            verify_crc32(
+                terminal_crc32,
+                crc32fast::hash(&raw),
+                "file CRC32 mismatch on reconstructed fragment-group logical file",
             )?;
-        } else {
-            if header.flags.contains(GlobalFlags::PER_FILE_CRC) {
-                verify_crc32(
-                    file_crc32,
-                    crc32fast::hash(&raw),
-                    "file CRC32 mismatch on reconstructed fragment-group logical file",
-                )?;
-            }
-            write_bytes_via_temp(&out_path, &raw)?;
         }
-        apply_file_metadata(&out_path, permissions, owner, timestamps, metadata)?;
+        write_bytes_via_temp(&out_path, &raw)?;
+        apply_file_metadata(
+            &out_path,
+            index0.as_ref().and_then(|m| m.permissions).map(|v| v.mode),
+            index0.as_ref().and_then(|m| m.owner).map(|v| v.uid_gid),
+            index0
+                .as_ref()
+                .and_then(|m| m.timestamps)
+                .map(|v| [v.mtime, v.atime, v.ctime]),
+            metadata,
+        )?;
     }
 
     finalize_directory_metadata(&output_dir, pending_directories, metadata)?;
