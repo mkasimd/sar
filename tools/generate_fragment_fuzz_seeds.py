@@ -62,6 +62,15 @@ SEEDS = {
     "fragment_duplicate_index.bin": global_header()
     + lfh(9, 0, b"dup.bin", b"ABCD", False)
     + lfh(9, 0, b"dup.bin", b"WXYZ", True),
+    # Physical Fragment Index order 0, 2, 1 (strictly increasing order required).
+    "fragment_physical_order.bin": global_header()
+    + lfh(5, 0, b"ord.bin", b"AA", False)
+    + lfh(5, 2, b"", b"CC", True)
+    + lfh(5, 1, b"", b"BB", False),
+    # A later fragment repeats a Name that differs from Fragment Index 0.
+    "fragment_name_mismatch.bin": global_header()
+    + lfh(6, 0, b"one.bin", b"AA", False)
+    + lfh(6, 1, b"two.bin", b"BB", True),
 }
 
 

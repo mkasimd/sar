@@ -3292,6 +3292,31 @@
             ]
           },
           {
+            "name": "ArchiveReader::next_logical_entry",
+            "description": "Returns the next validated logical Entry in canonical order as a CollectedEntry. Ordinary Entries are released as soon as no earlier incomplete fragment group blocks them; a fragment group is positioned at its Fragment Index 0 LFH and released when complete (or at end of archive when incomplete, where reconstruct applies the LOSS_TOLERANT rules). Entries behind an incomplete group are retained, with their decoded payload bytes counted and bounded by max_total_pipeline_memory (SAR_ERR_LIMIT_EXCEEDED, never evicting or reordering). Applies physical Fragment Index order, Class G, Index-0 Name/Path authority and neutral non-terminal integrity-field checks (archival semantics only; not used by Stateful Streaming). Iteration starts at the first Entry and ends with Ok(None); read_all_logical_files restarts it.",
+            "metadata": {
+              "module": "archive",
+              "path": "src/archive.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "13b",
+              "related_spec_sections": [
+                "6.1.3",
+                "10",
+                "19.4.5"
+              ],
+              "returns": "Result<Option<CollectedEntry>, SarError>"
+            },
+            "signature": "pub fn ArchiveReader<R>::next_logical_entry(&mut self) -> Result<Option<CollectedEntry>, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::LimitExceeded",
+              "SarError"
+            ]
+          },
+          {
             "name": "ArchiveReader::read_global_header",
             "description": "Parse the archive global header and, for indexed archives, the CD/footer.",
             "metadata": {
@@ -3359,7 +3384,7 @@
           },
           {
             "name": "ArchiveReader::read_all_logical_files",
-            "description": "High-level bounded extraction: reads all entries, assembles fragment groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Resets the read cursor so it can be called even after prior next_entry calls. When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns InvalidMap immediately (never suppressed by allow_lossy). For non-fragmented entries sparse reconstruction uses LFH Uncompressed Size as the final logical file size; complete fragmented sparse groups currently return SAR_ERR_UNSUPPORTED because Sparse Logical Size is not yet implemented (WP-5/M13b.2); trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
+            "description": "High-level bounded extraction: reads all logical Entries through ArchiveReader::next_logical_entry, which validates fragment groups (physical Fragment Index order, Class G invariants, Index-0 Name/Path authority, neutral non-terminal integrity fields), returns logical files in canonical order (a group at its Fragment Index 0 position), assembles groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Restarts logical iteration at the first Entry so it can be called even after prior next_entry calls. Entries retained behind an incomplete fragment group are bounded by max_total_pipeline_memory (SAR_ERR_LIMIT_EXCEEDED). When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns MetadataConflict immediately (never suppressed by allow_lossy); metadata conflicts are never downgraded to gaps. For fragment groups CRC32 is the LAST_FRAGMENT value; non-zero non-terminal File CRC32 or Content Hash returns MetadataConflict. Content Hash is not verified. For non-fragmented entries sparse reconstruction uses LFH Uncompressed Size as the final logical file size; complete fragmented sparse groups currently return SAR_ERR_UNSUPPORTED because Sparse Logical Size is not yet implemented (WP-5/M13b.2); trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
             "metadata": {
               "since_milestone": "8",
               "parameters": [
@@ -3390,7 +3415,8 @@
               "SarError::InvalidMap",
               "SarError::Overflow",
               "SarError::Malformed",
-              "SarError"
+              "SarError",
+              "SarError::LimitExceeded"
             ]
           },
           {
@@ -4014,6 +4040,25 @@
               "implemented": true,
               "since_milestone": "12a-audit-cp"
             }
+          },
+          {
+            "name": "FragmentGroup::reconstruct",
+            "description": "Concatenates fragment contributions in ascending Fragment Index order via sar_fragmentation::reconstruct_fragments. Returns (bytes, is_degraded). Does not verify File CRC32 and performs no sparse reconstruction.",
+            "metadata": {
+              "module": "fragment_group",
+              "path": "src/fragment_group.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "13b",
+              "related_spec_sections": [
+                "6.1.3",
+                "10",
+                "19.4.5"
+              ],
+              "returns": "Result<(Vec<u8>, bool), SarError>"
+            },
+            "signature": "pub fn FragmentGroup::reconstruct(self, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>"
           }
         ],
         "types": [
@@ -4272,7 +4317,7 @@
           },
           {
             "name": "LogicalFile",
-            "description": "A fully reconstructed logical file returned by ArchiveReader::read_all_logical_files. For fragmented entries, fragments have been assembled at their absolute offsets. For sparse entries, holes are zero-filled. is_degraded is true when the payload is incomplete due to LOSS_TOLERANT-permitted missing fragments.",
+            "description": "A fully reconstructed logical file returned by ArchiveReader::read_all_logical_files. For fragmented entries, fragment contributions have been concatenated in ascending Fragment Index order. For sparse entries, holes are zero-filled. is_degraded is true when the payload is incomplete due to LOSS_TOLERANT-permitted missing fragments.",
             "metadata": {
               "since_milestone": "8",
               "stability": "stable",
@@ -4898,6 +4943,44 @@
               "implemented": true,
               "since_milestone": "12a-audit-cp"
             }
+          },
+          {
+            "name": "CollectedEntry",
+            "description": "One validated logical item yielded by ArchiveReader::next_logical_entry: an ordinary decoded Entry, or a validated FragmentGroup positioned at its Fragment Index 0 Entry.",
+            "metadata": {
+              "module": "fragment_group",
+              "path": "src/fragment_group.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "13b",
+              "related_spec_sections": [
+                "6.1.3",
+                "10",
+                "19.4.5"
+              ]
+            },
+            "kind": "enum",
+            "signature": "pub enum CollectedEntry { Entry(Box<EntryReader>), Group(Box<FragmentGroup>) }"
+          },
+          {
+            "name": "FragmentGroup",
+            "description": "A structurally validated fragment group yielded by ArchiveReader::next_logical_entry. name/index0 come only from Fragment Index 0 (authoritative Name, Path, metadata); terminal_crc32 and terminal_content_hash come from the LAST_FRAGMENT LFH and an all-zero terminal value is still authoritative. terminal_content_hash is retained but not verified (final Content Hash verification is WP-6). index0 is None when Index 0 is missing (reconstruct then reports FragmentGap or an empty degraded prefix per LOSS_TOLERANT).",
+            "metadata": {
+              "module": "fragment_group",
+              "path": "src/fragment_group.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "13b",
+              "related_spec_sections": [
+                "6.1.3",
+                "10",
+                "19.4.5"
+              ]
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentGroup { pub fragment_id: u32, pub name: String, pub index0: Option<EntryMetadata>, pub terminal_crc32: Option<u32>, pub terminal_content_hash: Option<[u8; 32]> /* + private fragment entries */ }"
           }
         ],
         "constants": [

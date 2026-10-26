@@ -10,6 +10,8 @@
 pub mod archive;
 /// Conformance vector manifest types and schema validator (M12a).
 pub mod conformance;
+/// Fragment-group collection and cross-fragment consistency validation.
+pub mod fragment_group;
 /// Archive profile validation APIs.
 pub mod profile;
 /// Archive-level Data Recovery TLV inspection, planning, and repair.

@@ -862,7 +862,7 @@ fn attempt_full_parse(
         delta_base,
     };
     let mut reader = crate::archive::ArchiveReader::with_options(cursor, opts)?;
-    reader.read_global_header()?;
+    let global = reader.read_global_header()?;
 
     // Drain all entries without decrypting payloads (we don't have keys for
     // test vectors; just validate structure and metadata).
@@ -877,6 +877,25 @@ fn attempt_full_parse(
             Ok(None) => break,
             Err(e) => return Err(e),
         }
+    }
+
+    // Fragment-group consistency (Index-0 authority, Class G invariants,
+    // physical order, completeness) is a cross-entry property. Run the shared
+    // collector and strict reconstruction only for fragmentation archives that
+    // are not encrypted/compressed, as those payloads cannot be decoded here.
+    if global
+        .flags
+        .contains(sar_core::flags::GlobalFlags::FILE_FRAGMENTATION)
+        && !global
+            .flags
+            .contains(sar_core::flags::GlobalFlags::ENCRYPTED)
+    {
+        let opts = crate::archive::ArchiveReaderOptions {
+            limits: *limits,
+            delta_base: None,
+        };
+        let mut strict = crate::archive::ArchiveReader::with_options(Cursor::new(bytes), opts)?;
+        strict.read_all_logical_files(false)?;
     }
     Ok(())
 }

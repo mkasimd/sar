@@ -6,7 +6,7 @@
 //!
 //! Spec requirements tested:
 //! * Sparse Map MUST appear only in fragment with Fragment Index = 0.
-//! * Sparse Map on non-zero fragment index MUST return `SAR_ERR_INVALID_MAP`.
+//! * Sparse Map on non-zero fragment index MUST return `SAR_ERR_METADATA_CONFLICT`.
 //! * Fragment reassembly happens before sparse reconstruction.
 //! * The Sparse Map from fragment index 0 applies to the fully assembled group.
 //! * Trailing holes after sparse reconstruction across fragments are zero-filled.
@@ -175,12 +175,12 @@ fn sparse_map_from_fragment_index_0_applies_to_full_group() {
 }
 
 // ---------------------------------------------------------------------------
-// §2 Sparse Map on non-zero fragment index must return SAR_ERR_INVALID_MAP
+// §2 Sparse Map on non-zero fragment index must return SAR_ERR_METADATA_CONFLICT
 // ---------------------------------------------------------------------------
 
-/// Sparse Map on fragment index 1 (non-zero) must return SAR_ERR_INVALID_MAP.
+/// Sparse Map on fragment index 1 (non-zero) must return SAR_ERR_METADATA_CONFLICT.
 #[test]
-fn sparse_map_on_nonzero_fragment_index_returns_invalid_map() {
+fn sparse_map_on_nonzero_fragment_index_returns_metadata_conflict() {
     let extents = [SparseExtent {
         offset: 0,
         length: 4,
@@ -205,12 +205,12 @@ fn sparse_map_on_nonzero_fragment_index_returns_invalid_map() {
         .read_all_logical_files(false)
         .expect_err("should fail with sparse map on non-zero fragment");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
-        "expected SAR_ERR_INVALID_MAP, got {err:?}"
+        matches!(err, SarError::MetadataConflict(_)),
+        "expected SAR_ERR_METADATA_CONFLICT, got {err:?}"
     );
 }
 
-/// Sparse Map on fragment index 2 (non-zero) must return SAR_ERR_INVALID_MAP,
+/// Sparse Map on fragment index 2 (non-zero) must return SAR_ERR_METADATA_CONFLICT,
 /// even with allow_lossy = true.
 #[test]
 fn sparse_map_on_nonzero_fragment_not_suppressed_by_allow_lossy() {
@@ -244,8 +244,8 @@ fn sparse_map_on_nonzero_fragment_not_suppressed_by_allow_lossy() {
         .read_all_logical_files(true)
         .expect_err("should fail regardless of allow_lossy");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
-        "expected SAR_ERR_INVALID_MAP even with allow_lossy, got {err:?}"
+        matches!(err, SarError::MetadataConflict(_)),
+        "expected SAR_ERR_METADATA_CONFLICT even with allow_lossy, got {err:?}"
     );
 }
 
