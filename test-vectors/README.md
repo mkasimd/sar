@@ -209,6 +209,11 @@ Supported `kind` values: `file`, `directory`, `symlink`.
 }
 ```
 
+`logical_size` is the Sparse Logical Size carried at the start of the Sparse Map
+(the final apparent size, holes included). `size` is the gathered data length, which
+is the LFH `Uncompressed Size` for an unfragmented sparse Entry. An all-hole Entry has
+`"extents": []`.
+
 **Invalid/deferred vectors** may omit `entries` or leave it empty - no logical
 archive content exists or can be described for archives that are expected to fail.
 

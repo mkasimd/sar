@@ -1370,6 +1370,36 @@ fn main() {
         write_fixture("valid/sparse/simple/sparse_simple.sar", &buf);
     }
 
+    {
+        // All-hole 64-bit sparse file: Sparse Logical Size only, no extents.
+        let mut buf = Vec::new();
+        let mut writer = ArchiveWriter::new(
+            &mut buf,
+            ArchiveWriterOptions {
+                no_index: false,
+                sparse: true,
+                lfh_size_field_policy: sar_archive::LfhSizeFieldPolicy::Force64,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        writer
+            .write_sparse_entry(
+                "holes.bin",
+                &[],
+                sar_archive::SparseWriteOptions {
+                    logical_size: 4096,
+                    extents: Vec::new(),
+                },
+            )
+            .unwrap();
+        writer.finish().unwrap();
+        write_fixture(
+            "valid/sparse/all-hole-64bit/sparse_all_hole_64bit.sar",
+            &buf,
+        );
+    }
+
     // Sparse + delta ordering remains reference-only in this corrective pass.
     // Do not emit a STORE fallback that lacks combined sparse + patch metadata.
     skip_deferred_vector(

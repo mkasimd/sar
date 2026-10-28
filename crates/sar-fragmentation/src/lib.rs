@@ -325,8 +325,15 @@ pub fn reconstruct_fragments(
             .ok_or(FragmentError::Overflow("fragment length sum overflow"))?;
     }
     let capacity = limits.allocation_len(total, "fragment output length")?;
-    let mut out = Vec::with_capacity(capacity);
-    for frag in &fragments {
+    // Reuse the first contribution's buffer and release each later one as it is
+    // appended, so the group is never held twice at full size.
+    let mut contributions = fragments.into_iter();
+    let mut out = contributions
+        .next()
+        .map(|f| f.payload)
+        .ok_or(FragmentError::FragmentGap("fragment group is empty"))?;
+    out.reserve_exact(capacity.saturating_sub(out.len()));
+    for frag in contributions {
         out.extend_from_slice(&frag.payload);
     }
     Ok((out, !complete))

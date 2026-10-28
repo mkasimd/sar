@@ -36,6 +36,11 @@ pub enum SparseError {
     #[error("sparse truncated: {0}")]
     Truncated(&'static str),
 
+    /// The gathered data length does not equal the checked sum of the Sparse
+    /// Extent lengths.
+    #[error("sparse invalid length: {0}")]
+    InvalidLength(&'static str),
+
     /// A resource limit was exceeded.
     #[error("sparse limit exceeded: {0}")]
     LimitExceeded(&'static str),
@@ -116,6 +121,16 @@ pub struct SparseExtent {
     pub length: u64,
 }
 
+/// A decoded Sparse Map: the declared Sparse Logical Size followed by the
+/// ordered Sparse Extent descriptors.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SparseMap {
+    /// Declared apparent size of the reconstructed logical Entry.
+    pub logical_size: u64,
+    /// Sparse Extent descriptors in wire order.
+    pub extents: Vec<SparseExtent>,
+}
+
 // ── Validation ────────────────────────────────────────────────────────────────
 
 /// Validates a sparse extent list against the logical file size.
@@ -125,6 +140,8 @@ pub struct SparseExtent {
 /// - No extent's `offset + length` exceeds `logical_size`.
 /// - No two extents overlap (extents must be sorted by offset in ascending
 ///   order with no overlap; out-of-order entries fail the overlap check).
+///
+/// Returns the checked sum of extent lengths (the gathered-data length).
 ///
 /// **Does not check** payload-length agreement — that check lives in
 /// [`apply_sparse_reconstruction`], which receives the actual payload bytes.
@@ -138,7 +155,7 @@ pub fn validate_sparse_extents(
     extents: &[SparseExtent],
     logical_size: u64,
     limits: &SparseLimits,
-) -> Result<(), SparseError> {
+) -> Result<u64, SparseError> {
     limits.check_sparse_descriptor_count(extents.len())?;
     let mut last_end: u64 = 0;
     let mut total_length: u64 = 0;
@@ -165,10 +182,20 @@ pub fn validate_sparse_extents(
             .ok_or(SparseError::Overflow("sparse extent length sum overflow"))?;
         last_end = end;
     }
-    // Keep the checked running sum even when reconstruction is not performed
-    // here so malformed maps with overflowing total sparse lengths fail during
-    // validation.
-    let _checked_total_length = total_length;
+    Ok(total_length)
+}
+
+/// Checks that the gathered-data length equals the extent-length sum.
+///
+/// # Errors
+///
+/// Returns [`SparseError::InvalidLength`] when the lengths differ.
+pub fn check_gathered_length(gathered_len: u64, extent_total: u64) -> Result<(), SparseError> {
+    if gathered_len != extent_total {
+        return Err(SparseError::InvalidLength(
+            "gathered sparse data length does not equal the sum of extent lengths",
+        ));
+    }
     Ok(())
 }
 
@@ -184,10 +211,9 @@ pub fn validate_sparse_extents(
 /// # Errors
 ///
 /// Returns [`SparseError::InvalidMap`] when any extent's `offset + length`
-/// exceeds `logical_size` or when the payload has excess bytes beyond declared
-/// extents.
-/// Returns [`SparseError::Truncated`] when `payload` is shorter than the total
-/// data described by `extents`.
+/// exceeds `logical_size`.
+/// Returns [`SparseError::InvalidLength`] when `payload` is not exactly as long
+/// as the checked sum of extent lengths (checked before allocation).
 /// Returns [`SparseError::Overflow`] on arithmetic overflow.
 pub fn apply_sparse_reconstruction(
     payload: &[u8],
@@ -197,7 +223,10 @@ pub fn apply_sparse_reconstruction(
 ) -> Result<Vec<u8>, SparseError> {
     limits.check_decoded_entry_size(logical_size)?;
     let logical_size_usize = limits.allocation_len(logical_size, "logical size usize")?;
-    validate_sparse_extents(extents, logical_size, limits)?;
+    let total = validate_sparse_extents(extents, logical_size, limits)?;
+    let payload_len =
+        u64::try_from(payload.len()).map_err(|_| SparseError::Overflow("payload length"))?;
+    check_gathered_length(payload_len, total)?;
     let mut output = vec![0u8; logical_size_usize];
     let mut payload_pos: usize = 0;
 
@@ -224,7 +253,7 @@ pub fn apply_sparse_reconstruction(
             .checked_add(len)
             .ok_or(SparseError::Overflow("payload position"))?;
         if src_end > payload.len() {
-            return Err(SparseError::Truncated(
+            return Err(SparseError::InvalidLength(
                 "payload too short for declared sparse extents",
             ));
         }
@@ -232,7 +261,7 @@ pub fn apply_sparse_reconstruction(
         payload_pos = src_end;
     }
     if payload_pos != payload.len() {
-        return Err(SparseError::InvalidMap(
+        return Err(SparseError::InvalidLength(
             "sparse payload has excess bytes beyond declared extents",
         ));
     }
@@ -365,11 +394,11 @@ mod tests {
     }
 
     #[test]
-    fn payload_too_short_returns_truncated() {
+    fn payload_too_short_returns_invalid_length() {
         let extents = vec![ext(0, 8)];
         let payload = b"ABCD"; // only 4 bytes, but 8 declared
         let result = apply_sparse_reconstruction(payload, &extents, 8, &limits());
-        assert!(matches!(result, Err(SparseError::Truncated(_))));
+        assert!(matches!(result, Err(SparseError::InvalidLength(_))));
     }
 
     #[test]
@@ -377,7 +406,28 @@ mod tests {
         let extents = vec![ext(0, 4)];
         let payload = b"ABCDEFGH"; // 8 bytes, only 4 declared
         let result = apply_sparse_reconstruction(payload, &extents, 8, &limits());
-        assert!(matches!(result, Err(SparseError::InvalidMap(_))));
+        assert!(matches!(result, Err(SparseError::InvalidLength(_))));
+    }
+
+    #[test]
+    fn all_hole_entry_reconstructs_to_logical_size() {
+        let out =
+            apply_sparse_reconstruction(b"", &[], 5, &limits()).expect("all-hole reconstruct");
+        assert_eq!(out, vec![0u8; 5]);
+        let out = apply_sparse_reconstruction(b"", &[], 0, &limits()).expect("empty reconstruct");
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn extent_sum_overflow_is_overflow() {
+        let extents = vec![ext(0, u64::MAX - 1), ext(u64::MAX - 1, 1)];
+        let result = validate_sparse_extents(&extents, u64::MAX, &limits());
+        assert!(result.is_ok());
+        let extents = vec![ext(0, u64::MAX), ext(1, u64::MAX)];
+        assert!(matches!(
+            validate_sparse_extents(&extents, u64::MAX, &limits()),
+            Err(SparseError::Overflow(_)) | Err(SparseError::InvalidMap(_))
+        ));
     }
 
     #[test]

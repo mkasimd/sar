@@ -31,7 +31,7 @@ Includes:
 * Global Header/LFH/Central Dictionary/Footer/TLV wire structures and parsing/writing.
 * Flag/entry-mode/status/error definitions and mapping.
 * Resource-limit model and checked parsing/arithmetic helpers.
-* Low-level sparse-map wire helpers.
+* Low-level sparse-map wire helpers (`SparseMap`: Sparse Logical Size plus extents).
 
 Does not own:
 

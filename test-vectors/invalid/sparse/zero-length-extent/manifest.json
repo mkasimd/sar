@@ -12,8 +12,8 @@
   ],
   "expected": {
     "valid": false,
-    "status": "SAR_ERR_INVALID_LENGTH",
-    "error": "InvalidLength",
+    "status": "SAR_ERR_INVALID_MAP",
+    "error": "InvalidMap",
     "warnings": []
   },
   "limits": {},

@@ -73,6 +73,7 @@ Seed-backed corpus categories are documented in [`CORPUS.md`](CORPUS.md):
 - `allocator_churn` — repeated bounded allocation/cleanup cycles
 - `stream_session` — frame ordering, session ID collisions, lifecycle sequence errors
 - `fec_fragmentation` — FEC parity mismatches, fragment gaps, duplicate fragment indices
+- `sparse_map` — canonical 32/64-bit Sparse Logical Size maps, malformed maps, fragmented sparse groups
 - `cdc_delta` — CDC boundary overflows, missing delta bases, out-of-bounds patch offsets
 - `metadata_edge_cases` — maximum-length paths, reserved flags, CD/LFH disagreements
 - `filesystem_metadata_malformed` — path traversal, overflow timestamps, hostile symlinks
@@ -842,6 +843,7 @@ PR4 seed categories and the fuzz targets that consume them:
 | `cdc_delta`                   | ✓ | - | ✓ | ✓ | ✓ | - | ✓ |
 | `metadata_edge_cases`         | - | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `filesystem_metadata_malformed` | ✓ | ✓ | - | ✓ | ✓ | - | - |
+| `sparse_map`                  | ✓ | - | - | ✓ | - | ✓ | - |
 
 ## PR5 seed consumption summary
 

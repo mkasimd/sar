@@ -44,9 +44,15 @@ fn write_sparse_archive(
     })
     .expect("global header");
 
-    let sparse_map_bytes = write_sparse_map(extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: uncompressed_size,
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), payload.len() as u64);
-    lfh.uncompressed_size = uncompressed_size;
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);
@@ -297,4 +303,59 @@ fn extract_allow_lossy_with_sparse_archive_succeeds() {
 
     let extracted = fs::read(out_dir.join("f.bin")).expect("read");
     assert_eq!(extracted, b"HELLO");
+}
+
+/// Fragmented sparse entries extract to the Sparse Logical Size, including an
+/// empty terminal contribution and a trailing hole, via the CLI group path.
+#[test]
+fn extract_fragmented_sparse_uses_sparse_logical_size() {
+    use sar_core::{flags::EntryMode, sparse::SparseMap};
+
+    let td = tempdir().expect("tmp");
+    let flags = GlobalFlags::SPARSE_FILES | GlobalFlags::FILE_FRAGMENTATION | GlobalFlags::NO_INDEX;
+    let mut archive = write_global_header(&GlobalHeader {
+        version: 1,
+        flags,
+        kms: None,
+    })
+    .expect("header");
+    let map = SparseMap {
+        logical_size: 10,
+        extents: vec![SparseExtent {
+            offset: 2,
+            length: 4,
+        }],
+    };
+    for (idx, payload) in [&b"ABCD"[..], &b""[..]].into_iter().enumerate() {
+        let mut mode = 1u16 << 5;
+        if idx == 1 {
+            mode |= 1u16 << 6;
+        }
+        let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), payload.len() as u64);
+        lfh.entry_mode = EntryMode::from_bits(mode);
+        lfh.fragment_id = Some(5);
+        lfh.fragment_index = Some(u32::try_from(idx).expect("idx"));
+        if idx == 0 {
+            lfh.sparse_map = write_sparse_map(&map, false).expect("map");
+        }
+        archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+        archive.extend_from_slice(payload);
+    }
+    let path = td.path().join("frag.sar");
+    fs::write(&path, &archive).expect("write");
+    let out_dir = td.path().join("out");
+
+    sar()
+        .args([
+            "extract",
+            path.to_str().expect("str"),
+            out_dir.to_str().expect("str"),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(out_dir.join("f.bin")).expect("read"),
+        b"\0\0ABCD\0\0\0\0"
+    );
 }

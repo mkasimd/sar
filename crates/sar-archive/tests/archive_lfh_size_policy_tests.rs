@@ -160,7 +160,15 @@ fn auto_policy_chooses_64bit_when_large_logical_size_seen() {
 
     let (header, lfh) = parse_header_and_first_lfh(&out);
     assert!(header.flags.contains(GlobalFlags::SIZE_64BIT));
-    assert_eq!(lfh.uncompressed_size, u64::from(u32::MAX) + 1);
+    // LFH Uncompressed Size is the gathered length; the logical size is in the map.
+    assert_eq!(lfh.uncompressed_size, 1);
+    let map = sar_core::sparse::parse_sparse_map(
+        &lfh.sparse_map,
+        true,
+        &sar_core::limits::ResourceLimits::default(),
+    )
+    .expect("map");
+    assert_eq!(map.logical_size, u64::from(u32::MAX) + 1);
 }
 
 #[test]

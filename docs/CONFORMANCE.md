@@ -271,7 +271,7 @@ by M12b fuzzing infrastructure without changing the M12a schema.
   - `valid/recovery/archive-xor/` and `valid/recovery/archive-rs/` for archive-level Central Dictionary Recovery TLVs (`recovery:*` tags)
 
 ### Sparse, fragmentation, and loss-tolerant behavior
-- Sparse map parse/write, validation, and bounded reconstruction.
+- Sparse map parse/write (Sparse Logical Size followed by extents; 32-bit or 64-bit per `64BIT_SIZE`), validation, and bounded reconstruction to the Sparse Logical Size, including all-hole Entries and complete fragmented sparse groups.
 - Fragment group validation and reassembly.
 - `LOSS_TOLERANT` degraded-output behavior for missing-fragment cases only.
 - Authentication/structural failures are never bypassed by lossy flags.

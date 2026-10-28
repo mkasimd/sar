@@ -423,7 +423,6 @@ impl StreamArchiveParser {
             && patch_raw_id == PATCH_ALGO_STORE_PATCH
             && !is_effectively_compressed
             && !is_encrypted
-            && !is_sparse
             && lfh.payload_size != lfh.uncompressed_size
         {
             return Err(SarError::PatchFailed(
@@ -431,12 +430,13 @@ impl StreamArchiveParser {
             ));
         }
 
-        let decode_expected =
-            if is_sparse || (is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH) {
-                self.options.max_decoded_entry_size()
-            } else {
-                lfh.uncompressed_size
-            };
+        // LFH `Uncompressed Size` is the transform-boundary length, never the
+        // Sparse Logical Size.
+        let decode_expected = if is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH {
+            self.options.max_decoded_entry_size()
+        } else {
+            lfh.uncompressed_size
+        };
 
         let crypto = if is_encrypted {
             let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
@@ -483,12 +483,7 @@ impl StreamArchiveParser {
         let decoded = if is_has_delta {
             match patch_raw_id {
                 PATCH_ALGO_STORE_PATCH => {
-                    if !is_sparse {
-                        apply_store_patch(&decoded, lfh.uncompressed_size)
-                            .map_err(map_patch_error)?
-                    } else {
-                        decoded
-                    }
+                    apply_store_patch(&decoded, lfh.uncompressed_size).map_err(map_patch_error)?
                 }
                 PATCH_ALGO_VCDIFF => {
                     validate_delta_pre_dispatch(
@@ -554,24 +549,21 @@ impl StreamArchiveParser {
             decoded
         };
 
-        if !is_sparse {
-            if u64::try_from(decoded.len())
-                .map_err(|_| SarError::Overflow("decoded payload len"))?
-                != lfh.uncompressed_size
-            {
-                return Err(SarError::InvalidLength(
-                    "decoded payload size does not match LFH Uncompressed Size",
-                ));
-            }
-            if !is_effectively_compressed
-                && !is_encrypted
-                && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
-                && lfh.payload_size != lfh.uncompressed_size
-            {
-                return Err(SarError::InvalidLength(
-                    "STORE mode requires Payload Size == Uncompressed Size",
-                ));
-            }
+        if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
+            != lfh.uncompressed_size
+        {
+            return Err(SarError::InvalidLength(
+                "decoded payload size does not match LFH Uncompressed Size",
+            ));
+        }
+        if !is_effectively_compressed
+            && !is_encrypted
+            && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
+            && lfh.payload_size != lfh.uncompressed_size
+        {
+            return Err(SarError::InvalidLength(
+                "STORE mode requires Payload Size == Uncompressed Size",
+            ));
         }
 
         let fec = if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
@@ -581,19 +573,28 @@ impl StreamArchiveParser {
             None
         };
 
+        let sparse_map: Option<sar_core::sparse::SparseMap> = if is_sparse {
+            let is_64bit = archive.header.flags.contains(GlobalFlags::SIZE_64BIT);
+            let map = sar_core::sparse::parse_sparse_map(
+                &lfh.sparse_map,
+                is_64bit,
+                &self.options.limits,
+            )?;
+            let extent_total = sar_sparse::validate_sparse_extents(
+                &map.extents,
+                map.logical_size,
+                &self.options.limits.sparse_limits(),
+            )?;
+            // A fragment is only a contribution; its group is checked on assembly.
+            if !lfh.entry_mode.is_fragment() {
+                sar_sparse::check_gathered_length(lfh.uncompressed_size, extent_total)?;
+            }
+            Some(map)
+        } else {
+            None
+        };
         let sparse_extents: Option<Vec<sar_core::sparse::SparseExtent>> =
-            if archive.header.flags.contains(GlobalFlags::SPARSE_FILES)
-                && !lfh.sparse_map.is_empty()
-            {
-                let is_64bit = archive.header.flags.contains(GlobalFlags::SIZE_64BIT);
-                Some(sar_core::sparse::parse_sparse_map(
-                    &lfh.sparse_map,
-                    is_64bit,
-                    &self.options.limits,
-                )?)
-            } else {
-                None
-            };
+            sparse_map.as_ref().map(|m| m.extents.clone());
 
         let cdc_algo_id_opt: Option<u8> = if archive.header.flags.contains(GlobalFlags::CDC_SUPPORT)
         {
@@ -603,6 +604,17 @@ impl StreamArchiveParser {
         } else {
             None
         };
+        // The reader performs no CDC recipe resolution, so a non-literal
+        // CDC Algo ID means the decoded payload is an unresolved Hash Recipe,
+        // which must not be consumed as gathered sparse data (spec §13.1.3).
+        if sparse_map.is_some()
+            && !lfh.entry_mode.is_fragment()
+            && cdc_algo_id_opt.is_some_and(|id| id != sar_core::cdc::CDC_ALGO_LITERAL)
+        {
+            return Err(SarError::Unsupported(
+                "sparse reconstruction after CDC recipe resolution is not supported",
+            ));
+        }
 
         let name_str = String::from_utf8(lfh.name.clone())
             .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
@@ -704,10 +716,11 @@ impl StreamArchiveParser {
         };
 
         let sparse: Option<sar_core::metadata::EntrySparseMetadata> =
-            sparse_extents
+            sparse_map
                 .as_ref()
-                .map(|extents| sar_core::metadata::EntrySparseMetadata {
-                    extents: extents.clone(),
+                .map(|map| sar_core::metadata::EntrySparseMetadata {
+                    logical_size: map.logical_size,
+                    extents: map.extents.clone(),
                 });
 
         let has_crc = archive.header.flags.contains(GlobalFlags::PER_FILE_CRC);

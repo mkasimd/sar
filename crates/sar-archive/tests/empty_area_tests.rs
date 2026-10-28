@@ -104,7 +104,18 @@ fn empty_area_not_included_when_sparse_flag_active() {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: extents
+                .iter()
+                .map(|e| e.offset + e.length)
+                .max()
+                .unwrap_or(0),
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
     let mut lfh_real = LocalFileHeader::minimal_store(b"file.bin".to_vec(), 4);
     lfh_real.uncompressed_size = 4;
     lfh_real.sparse_map = sparse_map_bytes;

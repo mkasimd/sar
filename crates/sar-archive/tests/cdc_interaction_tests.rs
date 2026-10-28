@@ -323,11 +323,22 @@ fn cdc_support_with_sparse_entry_works() {
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT | GlobalFlags::SPARSE_FILES;
 
-    let extents = vec![SparseExtent {
+    let extents = [SparseExtent {
         offset: 0,
         length: 4,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: extents
+                .iter()
+                .map(|e| e.offset + e.length)
+                .max()
+                .unwrap_or(0),
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
 
     let mut bytes = write_global_header(&GlobalHeader {
         version: 1,
@@ -374,4 +385,191 @@ fn recipe_payload_empty_is_valid_zero_chunks() {
     let count = sar_core::cdc::validate_recipe_payload(&[], &ResourceLimits::default())
         .expect("empty recipe should be valid");
     assert_eq!(count, 0);
+}
+
+// ---------------------------------------------------------------------------
+// CDC + SPARSE: an unresolved Hash Recipe is never gathered sparse data
+// (spec §13.1.3, §20.3).  The reader performs no recipe resolution, so every
+// non-literal CDC Algo ID on a sparse Entry fails closed.
+// ---------------------------------------------------------------------------
+
+mod sparse_cdc_boundary {
+    use std::io::Cursor;
+
+    use sar_archive::{ArchiveReader, StreamArchiveParser, StreamStep};
+    use sar_core::{
+        GlobalFlags, SarError,
+        flags::EntryMode,
+        format::{GlobalHeader, LocalFileHeader, write_global_header, write_lfh},
+        sparse::{SparseExtent, SparseMap, write_sparse_map},
+    };
+
+    /// Gathered data "AAAA" at offset 4 of a 12-byte logical file.
+    fn map_bytes() -> Vec<u8> {
+        write_sparse_map(
+            &SparseMap {
+                logical_size: 12,
+                extents: vec![SparseExtent {
+                    offset: 4,
+                    length: 4,
+                }],
+            },
+            false,
+        )
+        .expect("map")
+    }
+
+    fn flags(fragmented: bool) -> GlobalFlags {
+        let mut f = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT | GlobalFlags::SPARSE_FILES;
+        if fragmented {
+            f |= GlobalFlags::FILE_FRAGMENTATION;
+        }
+        f
+    }
+
+    fn unfragmented(cdc: u8) -> Vec<u8> {
+        let flags = flags(false);
+        let mut out = write_global_header(&GlobalHeader {
+            version: 1,
+            flags,
+            kms: None,
+        })
+        .expect("header");
+        let mut lfh = LocalFileHeader::minimal_store(b"s.bin".to_vec(), 4);
+        lfh.cdc_algo_id = Some(cdc);
+        lfh.sparse_map = map_bytes();
+        out.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+        out.extend_from_slice(b"AAAA");
+        out
+    }
+
+    /// Two fragments of two bytes each; `with_terminal` omits the last one.
+    fn fragmented(cdc: u8, with_terminal: bool) -> Vec<u8> {
+        let flags = flags(true);
+        let mut out = write_global_header(&GlobalHeader {
+            version: 1,
+            flags,
+            kms: None,
+        })
+        .expect("header");
+        let parts: &[(u32, &[u8])] = if with_terminal {
+            &[(0, b"AA"), (1, b"AA")]
+        } else {
+            &[(0, b"AA"), (2, b"AA")]
+        };
+        for (n, (index, payload)) in parts.iter().enumerate() {
+            let mut mode = 1u16 << 5;
+            if n == 1 {
+                mode |= 1u16 << 6;
+            }
+            let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 2);
+            lfh.entry_mode = EntryMode::from_bits(mode);
+            lfh.fragment_id = Some(9);
+            lfh.fragment_index = Some(*index);
+            lfh.cdc_algo_id = Some(cdc);
+            if *index == 0 {
+                lfh.sparse_map = map_bytes();
+            }
+            out.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+            out.extend_from_slice(payload);
+        }
+        out
+    }
+
+    fn read_all(bytes: Vec<u8>, lossy: bool) -> Result<Vec<u8>, SarError> {
+        let mut reader = ArchiveReader::new(Cursor::new(bytes))?;
+        let mut files = reader.read_all_logical_files(lossy)?;
+        Ok(files.remove(0).data)
+    }
+
+    fn expected() -> Vec<u8> {
+        let mut v = vec![0u8; 12];
+        v[4..8].copy_from_slice(b"AAAA");
+        v
+    }
+
+    fn stream_result(bytes: &[u8]) -> Result<(), SarError> {
+        let mut parser = StreamArchiveParser::new();
+        parser.push_bytes(bytes).expect("push");
+        parser.finalize_input();
+        loop {
+            if matches!(parser.step()?, StreamStep::Complete) {
+                return Ok(());
+            }
+        }
+    }
+
+    #[test]
+    fn literal_cdc_sparse_is_accepted() {
+        assert_eq!(read_all(unfragmented(0x00), false).expect("ok"), expected());
+        assert_eq!(
+            read_all(fragmented(0x00, true), false).expect("ok"),
+            expected()
+        );
+        stream_result(&unfragmented(0x00)).expect("stream ok");
+        stream_result(&fragmented(0x00, true)).expect("stream ok");
+    }
+
+    #[test]
+    fn cdc_support_without_sparse_is_not_rejected() {
+        let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT;
+        let mut out = write_global_header(&GlobalHeader {
+            version: 1,
+            flags,
+            kms: None,
+        })
+        .expect("header");
+        let mut lfh = LocalFileHeader::minimal_store(b"n.bin".to_vec(), 4);
+        lfh.cdc_algo_id = Some(0x02);
+        out.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+        out.extend_from_slice(&[7u8; 4]);
+        let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
+        assert_eq!(
+            reader.read_all_logical_files(false).expect("ok")[0].data,
+            [7u8; 4]
+        );
+    }
+
+    #[test]
+    fn unfragmented_sparse_with_active_cdc_is_unsupported() {
+        let bytes = unfragmented(0x02);
+        let err = read_all(bytes.clone(), false).expect_err("must fail");
+        assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+        let mut reader = ArchiveReader::new(Cursor::new(bytes.clone())).expect("reader");
+        reader.read_global_header().expect("header");
+        assert!(matches!(reader.next_entry(), Err(SarError::Unsupported(_))));
+        assert!(matches!(
+            stream_result(&bytes),
+            Err(SarError::Unsupported(_))
+        ));
+    }
+
+    #[test]
+    fn fragmented_sparse_with_active_cdc_is_unsupported() {
+        for lossy in [false, true] {
+            let err = read_all(fragmented(0x02, true), lossy).expect_err("must fail");
+            assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn incomplete_fragmented_sparse_with_active_cdc_is_fragment_gap() {
+        for lossy in [false, true] {
+            let err = read_all(fragmented(0x02, false), lossy).expect_err("must fail");
+            assert!(matches!(err, SarError::FragmentGap(_)), "{err:?}");
+        }
+    }
+
+    #[test]
+    fn earlier_cdc_algorithm_id_status_is_preserved() {
+        // RABIN / CUSTOM are assigned-but-unsupported; 0x05 is reserved.
+        for (id, want_reserved) in [(0x01u8, false), (0xF0, false), (0x05, true)] {
+            let err = read_all(unfragmented(id), false).expect_err("must fail");
+            if want_reserved {
+                assert!(matches!(err, SarError::ReservedValue(_)), "{err:?}");
+            } else {
+                assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+            }
+        }
+    }
 }

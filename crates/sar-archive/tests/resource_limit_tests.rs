@@ -296,7 +296,7 @@ fn excessive_sparse_map_byte_size_fails() {
 
 #[test]
 fn excessive_sparse_descriptor_count_fails() {
-    let bytes = vec![0; 16];
+    let bytes = vec![0; 20];
     let limits = ResourceLimits {
         max_sparse_descriptors: 1,
         ..base_limits()

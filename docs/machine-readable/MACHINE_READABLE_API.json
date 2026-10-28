@@ -2190,13 +2190,13 @@
           },
           {
             "name": "parse_sparse_map",
-            "description": "Parses a sparse map byte blob into a Vec<SparseExtent>. Enforces configured limits before allocating.",
+            "description": "Parses a canonical Sparse Map blob (Sparse Logical Size followed by Sparse Extent descriptors; u32 LE fields, or u64 LE when is_64bit) into a SparseMap. A blob shorter than the size field or with a misaligned descriptor remainder returns InvalidMap. Enforces max_sparse_map_bytes and max_sparse_descriptors before allocating. An absent map (Sparse Map Size = 0) must be treated as non-sparse by the caller.",
             "metadata": {
               "safety_notes": [
                 "Limit check precedes vec allocation; no unbounded allocation possible."
               ],
               "since_milestone": "8",
-              "returns": "Result<Vec<SparseExtent>, SarError>",
+              "returns": "Result<SparseMap, SarError>",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2207,19 +2207,18 @@
               "module": "sparse",
               "path": "src/sparse.rs"
             },
-            "signature": "pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<Vec<SparseExtent>, SarError>",
+            "signature": "pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<SparseMap, SarError>",
             "errors": [
               "SarError::LimitExceeded",
-              "SarError::InvalidLength",
-              "SarError::Truncated"
+              "SarError::InvalidMap"
             ]
           },
           {
             "name": "write_sparse_map",
-            "description": "Serializes sparse extents to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates.",
+            "description": "Serializes a SparseMap (Sparse Logical Size followed by extents) to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if the logical size or any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates.",
             "metadata": {
               "since_milestone": "11c-cp",
-              "returns": "Vec<u8>",
+              "returns": "Result<Vec<u8>, SarError>",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -2230,9 +2229,9 @@
               "module": "sparse",
               "path": "src/sparse.rs"
             },
-            "signature": "pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError>",
+            "signature": "pub fn write_sparse_map(map: &SparseMap, is_64bit: bool) -> Result<Vec<u8>, SarError>",
             "errors": [
-              "SarError::Overflow if 32-bit mode and offset or length exceeds u32::MAX"
+              "SarError::Overflow if 32-bit mode and the logical size, an offset or a length exceeds u32::MAX"
             ]
           }
         ],
@@ -2825,6 +2824,24 @@
             },
             "kind": "struct",
             "signature": "pub struct SparseExtent { pub offset: u64, pub length: u64 }"
+          },
+          {
+            "name": "SparseMap",
+            "description": "Canonical decoded Sparse Map (spec 17.1): the Sparse Logical Size (final apparent file size) and the ordered Sparse Extents. Re-exported from sar-sparse.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "sparse",
+              "path": "src/sparse.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct SparseMap { pub logical_size: u64, pub extents: Vec<SparseExtent> }"
           }
         ],
         "constants": [
@@ -3384,7 +3401,7 @@
           },
           {
             "name": "ArchiveReader::read_all_logical_files",
-            "description": "High-level bounded extraction: reads all logical Entries through ArchiveReader::next_logical_entry, which validates fragment groups (physical Fragment Index order, Class G invariants, Index-0 Name/Path authority, neutral non-terminal integrity fields), returns logical files in canonical order (a group at its Fragment Index 0 position), assembles groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Restarts logical iteration at the first Entry so it can be called even after prior next_entry calls. Entries retained behind an incomplete fragment group are bounded by max_total_pipeline_memory (SAR_ERR_LIMIT_EXCEEDED). When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns MetadataConflict immediately (never suppressed by allow_lossy); metadata conflicts are never downgraded to gaps. For fragment groups CRC32 is the LAST_FRAGMENT value; non-zero non-terminal File CRC32 or Content Hash returns MetadataConflict. Content Hash is not verified. For non-fragmented entries sparse reconstruction uses LFH Uncompressed Size as the final logical file size; complete fragmented sparse groups currently return SAR_ERR_UNSUPPORTED because Sparse Logical Size is not yet implemented (WP-5/M13b.2); trailing holes are filled with 0x00. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Uncompressed Size and a sparse extent near the end (e.g. Uncompressed Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
+            "description": "High-level bounded extraction: reads all logical Entries through ArchiveReader::next_logical_entry, which validates fragment groups (physical Fragment Index order, Class G invariants, Index-0 Name/Path authority, neutral non-terminal integrity fields), returns logical files in canonical order (a group at its Fragment Index 0 position), assembles groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Restarts logical iteration at the first Entry so it can be called even after prior next_entry calls. Entries retained behind an incomplete fragment group are bounded by max_total_pipeline_memory (SAR_ERR_LIMIT_EXCEEDED). When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns MetadataConflict immediately (never suppressed by allow_lossy); metadata conflicts are never downgraded to gaps. For fragment groups CRC32 is the LAST_FRAGMENT value; non-zero non-terminal File CRC32 or Content Hash returns MetadataConflict. Content Hash is not verified. Sparse entries are reconstructed to the Sparse Logical Size carried by the Sparse Map (never an LFH Uncompressed Size, which is the gathered length for unfragmented entries and the contribution length for fragments); holes are filled with 0x00. A complete fragmented sparse group is reconstructed only after full group assembly, after validating that the summed contribution lengths equal the summed extent lengths (SAR_ERR_INVALID_LENGTH); an incomplete sparse group returns SAR_ERR_FRAGMENT_GAP even with allow_lossy and LOSS_TOLERANT; a fragmented sparse group that still requires a non-STORE_PATCH group-wide stage returns SAR_ERR_UNSUPPORTED. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Sparse Logical Size and a sparse extent near the end (e.g. Sparse Logical Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
             "metadata": {
               "since_milestone": "8",
               "parameters": [
@@ -4059,6 +4076,26 @@
               "returns": "Result<(Vec<u8>, bool), SarError>"
             },
             "signature": "pub fn FragmentGroup::reconstruct(self, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>"
+          },
+          {
+            "name": "FragmentGroup::validate_sparse",
+            "description": "Validates a sparse fragment group before reconstruction and returns the Index-0 sparse metadata (Sparse Logical Size and extents), or None for a non-sparse group. Checks in order: group completeness (SAR_ERR_FRAGMENT_GAP even with LOSS_TOLERANT), fail-closed for a group-wide patch other than STORE_PATCH or a non-literal CDC Algo ID, i.e. an unresolved Hash Recipe (SAR_ERR_UNSUPPORTED), Sparse Logical Size against max_decoded_entry_size (SAR_ERR_LIMIT_EXCEEDED), extent validity (SAR_ERR_INVALID_MAP / SAR_ERR_OVERFLOW), and that the sum of contribution lengths equals the sum of extent lengths (SAR_ERR_INVALID_LENGTH). Allocates nothing.",
+            "metadata": {
+              "module": "fragment_group",
+              "path": "src/fragment_group.rs",
+              "visibility": "public",
+              "stability": "evolving",
+              "implemented": true,
+              "since_milestone": "13b",
+              "related_spec_sections": [
+                "6.1.3",
+                "17.2",
+                "17.5",
+                "19.4.5"
+              ],
+              "returns": "Result<Option<&EntrySparseMetadata>, SarError>"
+            },
+            "signature": "pub fn FragmentGroup::validate_sparse(&self, limits: &ResourceLimits) -> Result<Option<&EntrySparseMetadata>, SarError>"
           }
         ],
         "types": [
@@ -7449,7 +7486,7 @@
         "functions": [
           {
             "name": "validate_sparse_extents",
-            "description": "Validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within logical size, and arithmetic overflow safety. Does not validate payload-length agreement.",
+            "description": "Validates descriptor-count limits, non-zero length, sorted order, non-overlap, bounds within the Sparse Logical Size, and arithmetic overflow safety. Returns the checked sum of extent lengths (the expected gathered-data length). Does not validate payload-length agreement.",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7462,11 +7499,28 @@
               "module": "lib",
               "path": "src/lib.rs"
             },
-            "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<(), SparseError>"
+            "signature": "pub fn validate_sparse_extents(extents: &[SparseExtent], logical_size: u64, limits: &SparseLimits) -> Result<u64, SparseError>"
+          },
+          {
+            "name": "check_gathered_length",
+            "description": "Compares the gathered-data length with the checked sum of extent lengths; a mismatch returns SparseError::InvalidLength (SAR_ERR_INVALID_LENGTH).",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "signature": "pub fn check_gathered_length(gathered_len: u64, extent_total: u64) -> Result<(), SparseError>"
           },
           {
             "name": "apply_sparse_reconstruction",
-            "description": "Scatter/gather reconstruction of logical file from payload and extent map; validates payload-length agreement because payload bytes are available.",
+            "description": "Scatter/gather reconstruction of the logical file from gathered payload bytes and the extent map. logical_size is the Sparse Logical Size. Checks the gathered length against the extent-length sum (InvalidLength) before allocating; an empty extent list yields an all-hole buffer.",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7485,7 +7539,7 @@
         "types": [
           {
             "name": "SparseError",
-            "description": "Error type for sparse operations. Variants: InvalidMap, Truncated, LimitExceeded, Overflow.",
+            "description": "Error type for sparse operations. Variants: InvalidMap, Truncated, LimitExceeded, Overflow, InvalidLength.",
             "metadata": {
               "since_milestone": "11c",
               "stability": "stable",
@@ -7536,6 +7590,24 @@
             },
             "kind": "struct",
             "signature": "pub struct SparseExtent { pub offset: u64, pub length: u64 }"
+          },
+          {
+            "name": "SparseMap",
+            "description": "Canonical decoded Sparse Map (spec 17.1): Sparse Logical Size plus ordered Sparse Extents. Wire parse/write remains in sar-core.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct SparseMap { pub logical_size: u64, pub extents: Vec<SparseExtent> }"
           }
         ],
         "constants": []
@@ -8908,7 +8980,7 @@
       "sparse_expansion_bomb": {
         "attack_shape": "tiny stored payload + huge Uncompressed Size + sparse extent near end of logical file",
         "protection": "apply_sparse_reconstruction and read_all_logical_files reject oversized logical_size before allocation. Error is LimitExceeded, not InvalidMap.",
-        "fragmented_sparse": "Fragmented sparse entries use fragment-0's Uncompressed Size; the same LimitExceeded check applies.",
+        "fragmented_sparse": "Fragmented sparse entries use the Sparse Logical Size from the Index-0 Sparse Map; the same LimitExceeded check applies (FragmentGroup::validate_sparse, CLI staging).",
         "test": "pipeline_memory_tests::sparse_expansion_bomb_reject and sparse_expansion_bomb_bounded_success verify reject and bounded-success paths"
       },
       "compression_expansion": {

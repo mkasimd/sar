@@ -5,12 +5,22 @@
 
 use sar_core::{
     error::SarError,
-    sparse::{SparseExtent, parse_sparse_map, write_sparse_map},
+    sparse::{SparseExtent, SparseMap, parse_sparse_map, write_sparse_map},
 };
 use sar_sparse::{SparseError, apply_sparse_reconstruction, validate_sparse_extents};
 
 fn unlimited_limits() -> sar_core::ResourceLimits {
     sar_core::ResourceLimits::unlimited()
+}
+
+/// Builds a map whose Sparse Logical Size is the end of the last extent.
+fn map_of(extents: &[SparseExtent]) -> SparseMap {
+    SparseMap {
+        logical_size: extents
+            .last()
+            .map_or(0, |e| e.offset.saturating_add(e.length)),
+        extents: extents.to_vec(),
+    }
 }
 
 fn sparse_unlimited() -> sar_sparse::SparseLimits {
@@ -33,14 +43,16 @@ fn parse_write_sparse_map_32bit() {
             length: 2048,
         },
     ];
-    let bytes = write_sparse_map(&extents, false).expect("write 32-bit sparse map ok");
-    assert_eq!(bytes.len(), 16); // 2 × 8 bytes
+    let bytes = write_sparse_map(&map_of(&extents), false).expect("write 32-bit sparse map ok");
+    assert_eq!(bytes.len(), 4 + 16); // size + 2 × 8 bytes
+    assert_eq!(&bytes[..4], &6144u32.to_le_bytes());
     let parsed = parse_sparse_map(&bytes, false, &unlimited_limits()).expect("parse 32-bit");
-    assert_eq!(parsed.len(), 2);
-    assert_eq!(parsed[0].offset, 0);
-    assert_eq!(parsed[0].length, 1024);
-    assert_eq!(parsed[1].offset, 4096);
-    assert_eq!(parsed[1].length, 2048);
+    assert_eq!(parsed.logical_size, 6144);
+    assert_eq!(parsed.extents.len(), 2);
+    assert_eq!(parsed.extents[0].offset, 0);
+    assert_eq!(parsed.extents[0].length, 1024);
+    assert_eq!(parsed.extents[1].offset, 4096);
+    assert_eq!(parsed.extents[1].length, 2048);
 }
 
 #[test]
@@ -55,13 +67,14 @@ fn parse_write_sparse_map_64bit() {
             length: 1,
         },
     ];
-    let bytes = write_sparse_map(&extents, true).expect("write 64-bit sparse map ok");
-    assert_eq!(bytes.len(), 32); // 2 × 16 bytes
+    let bytes = write_sparse_map(&map_of(&extents), true).expect("write 64-bit sparse map ok");
+    assert_eq!(bytes.len(), 8 + 32); // size + 2 × 16 bytes
+    assert_eq!(&bytes[..8], &u64::MAX.to_le_bytes());
     let parsed = parse_sparse_map(&bytes, true, &unlimited_limits()).expect("parse 64-bit");
-    assert_eq!(parsed[0].offset, 0xFFFF_FFFF_0000_0000);
-    assert_eq!(parsed[0].length, 0x0000_0000_FFFF_FFFF);
-    assert_eq!(parsed[1].offset, u64::MAX - 1);
-    assert_eq!(parsed[1].length, 1);
+    assert_eq!(parsed.extents[0].offset, 0xFFFF_FFFF_0000_0000);
+    assert_eq!(parsed.extents[0].length, 0x0000_0000_FFFF_FFFF);
+    assert_eq!(parsed.extents[1].offset, u64::MAX - 1);
+    assert_eq!(parsed.extents[1].length, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,8 +184,8 @@ fn reconstruct_rejects_excess_payload() {
     let err = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect_err("should fail with excess payload");
     assert!(
-        matches!(err, SparseError::InvalidMap(_)),
-        "expected InvalidMap for excess payload, got {err:?}"
+        matches!(err, SparseError::InvalidLength(_)),
+        "expected InvalidLength for excess payload, got {err:?}"
     );
 }
 
@@ -188,8 +201,8 @@ fn reconstruct_rejects_short_payload() {
     let err = apply_sparse_reconstruction(payload, &extents, 10, &sparse_unlimited())
         .expect_err("should fail with short payload");
     assert!(
-        matches!(err, SparseError::Truncated(_)),
-        "expected Truncated, got {err:?}"
+        matches!(err, SparseError::InvalidLength(_)),
+        "expected InvalidLength, got {err:?}"
     );
 }
 
@@ -289,13 +302,80 @@ fn sparse_invalid_map_error_code() {
 
 #[test]
 fn parse_sparse_map_alignment_error() {
-    // 5 bytes is not a multiple of 8
-    let bad = [0u8; 5];
+    // 4-byte size + 5 descriptor bytes is not a multiple of the 8-byte extent
+    let bad = [0u8; 9];
     let err = parse_sparse_map(&bad, false, &unlimited_limits()).expect_err("should fail");
     assert!(
-        matches!(err, SarError::InvalidLength(_)),
-        "expected InvalidLength, got {err:?}"
+        matches!(err, SarError::InvalidMap(_)),
+        "expected InvalidMap, got {err:?}"
     );
+}
+
+#[test]
+fn parse_sparse_map_shorter_than_size_field_is_invalid_map() {
+    for (len, is_64bit) in [(0usize, false), (3, false), (0, true), (7, true)] {
+        let bad = vec![0u8; len];
+        let err = parse_sparse_map(&bad, is_64bit, &unlimited_limits()).expect_err("short");
+        assert!(matches!(err, SarError::InvalidMap(_)), "{len}: {err:?}");
+    }
+}
+
+#[test]
+fn parse_sparse_map_64bit_alignment_counts_only_descriptor_bytes() {
+    // 8-byte size + 8 descriptor bytes: not a multiple of the 16-byte extent.
+    let err = parse_sparse_map(&[0u8; 16], true, &unlimited_limits()).expect_err("misaligned");
+    assert!(matches!(err, SarError::InvalidMap(_)));
+    // 8-byte size + one 16-byte extent is well formed.
+    let map = parse_sparse_map(&[0u8; 24], true, &unlimited_limits()).expect("aligned");
+    assert_eq!(map.extents.len(), 1);
+}
+
+#[test]
+fn size_only_map_is_an_all_hole_entry() {
+    let wire = write_sparse_map(
+        &SparseMap {
+            logical_size: 4096,
+            extents: vec![],
+        },
+        false,
+    )
+    .expect("write");
+    assert_eq!(wire, 4096u32.to_le_bytes());
+    let map = parse_sparse_map(&wire, false, &unlimited_limits()).expect("parse");
+    assert_eq!(map.logical_size, 4096);
+    assert!(map.extents.is_empty());
+
+    let wire64 = write_sparse_map(&map, true).expect("write 64");
+    assert_eq!(wire64, 4096u64.to_le_bytes());
+}
+
+#[test]
+fn write_sparse_map_32bit_rejects_logical_size_overflow() {
+    let map = SparseMap {
+        logical_size: u64::from(u32::MAX) + 1,
+        extents: vec![],
+    };
+    assert!(matches!(
+        write_sparse_map(&map, false),
+        Err(SarError::Overflow(_))
+    ));
+    assert!(write_sparse_map(&map, true).is_ok());
+}
+
+#[test]
+fn parse_sparse_map_enforces_byte_and_descriptor_limits() {
+    let mut limits = unlimited_limits();
+    limits.max_sparse_map_bytes = 8;
+    assert!(matches!(
+        parse_sparse_map(&[0u8; 12], false, &limits),
+        Err(SarError::LimitExceeded(_))
+    ));
+    let mut limits = unlimited_limits();
+    limits.max_sparse_descriptors = 1;
+    assert!(matches!(
+        parse_sparse_map(&[0u8; 20], false, &limits),
+        Err(SarError::LimitExceeded(_))
+    ));
 }
 
 #[test]
@@ -325,11 +405,11 @@ fn write_sparse_map_32bit_accepts_fitting_values() {
         offset: u64::from(u32::MAX) - 1,
         length: 1,
     }];
-    let bytes = write_sparse_map(&extents, false).expect("32-bit write ok");
-    assert_eq!(bytes.len(), 8);
+    let bytes = write_sparse_map(&map_of(&extents), false).expect("32-bit write ok");
+    assert_eq!(bytes.len(), 4 + 8);
     let parsed = parse_sparse_map(&bytes, false, &unlimited_limits()).expect("parse ok");
-    assert_eq!(parsed[0].offset, u64::from(u32::MAX) - 1);
-    assert_eq!(parsed[0].length, 1);
+    assert_eq!(parsed.extents[0].offset, u64::from(u32::MAX) - 1);
+    assert_eq!(parsed.extents[0].length, 1);
 }
 
 /// 32-bit write rejects offset exceeding u32::MAX.
@@ -339,7 +419,7 @@ fn write_sparse_map_32bit_rejects_offset_overflow() {
         offset: u64::from(u32::MAX) + 1,
         length: 1,
     }];
-    let err = write_sparse_map(&extents, false).expect_err("should fail");
+    let err = write_sparse_map(&map_of(&extents), false).expect_err("should fail");
     assert!(
         matches!(err, SarError::Overflow(_)),
         "expected Overflow for large offset, got {err:?}"
@@ -353,7 +433,7 @@ fn write_sparse_map_32bit_rejects_length_overflow() {
         offset: 0,
         length: u64::from(u32::MAX) + 1,
     }];
-    let err = write_sparse_map(&extents, false).expect_err("should fail");
+    let err = write_sparse_map(&map_of(&extents), false).expect_err("should fail");
     assert!(
         matches!(err, SarError::Overflow(_)),
         "expected Overflow for large length, got {err:?}"
@@ -369,15 +449,15 @@ fn write_sparse_map_64bit_preserves_large_values() {
         offset: large_offset,
         length: large_length,
     }];
-    let bytes = write_sparse_map(&extents, true).expect("64-bit write ok");
-    assert_eq!(bytes.len(), 16);
+    let bytes = write_sparse_map(&map_of(&extents), true).expect("64-bit write ok");
+    assert_eq!(bytes.len(), 8 + 16);
     let parsed = parse_sparse_map(&bytes, true, &unlimited_limits()).expect("parse ok");
     assert_eq!(
-        parsed[0].offset, large_offset,
+        parsed.extents[0].offset, large_offset,
         "offset must not be truncated"
     );
     assert_eq!(
-        parsed[0].length, large_length,
+        parsed.extents[0].length, large_length,
         "length must not be truncated"
     );
 }
@@ -392,6 +472,13 @@ fn sparse_error_invalid_map_converts_to_sar_invalid_map() {
     let se = sar_sparse::SparseError::InvalidMap("test");
     let sar: SarError = se.into();
     assert!(matches!(sar, SarError::InvalidMap(_)));
+}
+
+/// SparseError::InvalidLength converts to SarError::InvalidLength.
+#[test]
+fn sparse_error_invalid_length_converts_to_sar_invalid_length() {
+    let sar: SarError = sar_sparse::SparseError::InvalidLength("test").into();
+    assert!(matches!(sar, SarError::InvalidLength(_)));
 }
 
 /// SparseError::Overflow converts to SarError::Overflow.

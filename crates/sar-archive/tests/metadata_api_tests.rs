@@ -701,7 +701,10 @@ fn metadata_structs_use_named_fields() {
         is_last: false,
         is_loss_tolerant: false,
     };
-    let _ = EntrySparseMetadata { extents: vec![] };
+    let _ = EntrySparseMetadata {
+        logical_size: 0,
+        extents: vec![],
+    };
     let _ = EntryHashMetadata {
         crc32: None,
         content_hash: None,

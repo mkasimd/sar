@@ -9,7 +9,7 @@ use std::{
 };
 
 use sar_core::{ResourceLimits, SarError, sparse::SparseExtent};
-use sar_sparse::validate_sparse_extents;
+use sar_sparse::{check_gathered_length, validate_sparse_extents};
 
 const ZERO_CHUNK_LEN: usize = 8192;
 
@@ -27,6 +27,22 @@ pub(crate) fn write_bytes_via_temp(out_path: &Path, data: &[u8]) -> Result<(), S
     result
 }
 
+/// Checks the Sparse Logical Size limit, extent validity, and that the gathered
+/// payload length equals the extent-length sum, before any output is produced.
+fn check_sparse_payload(
+    payload: &[u8],
+    extents: &[SparseExtent],
+    logical_size: u64,
+    limits: &ResourceLimits,
+) -> Result<(), SarError> {
+    limits.check_decoded_entry_size(logical_size)?;
+    let extent_total = validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
+    let payload_len =
+        u64::try_from(payload.len()).map_err(|_| SarError::Overflow("sparse payload length"))?;
+    check_gathered_length(payload_len, extent_total)?;
+    Ok(())
+}
+
 pub(crate) fn write_sparse_payload_via_temp(
     out_path: &Path,
     payload: &[u8],
@@ -34,8 +50,7 @@ pub(crate) fn write_sparse_payload_via_temp(
     logical_size: u64,
     limits: &ResourceLimits,
 ) -> Result<(), SarError> {
-    limits.check_decoded_entry_size(logical_size)?;
-    validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
+    check_sparse_payload(payload, extents, logical_size, limits)?;
     let tmp_path = make_temp_output_path(out_path)?;
     let result = (|| -> Result<(), SarError> {
         let mut file = open_temp_file(&tmp_path)?;
@@ -78,8 +93,7 @@ pub(crate) fn compute_sparse_crc32(
     logical_size: u64,
     limits: &ResourceLimits,
 ) -> Result<u32, SarError> {
-    limits.check_decoded_entry_size(logical_size)?;
-    validate_sparse_extents(extents, logical_size, &limits.sparse_limits())?;
+    check_sparse_payload(payload, extents, logical_size, limits)?;
     let mut hasher = crc32fast::Hasher::new();
     let zero_chunk = [0u8; ZERO_CHUNK_LEN];
     let mut payload_pos = 0usize;

@@ -41,9 +41,15 @@ fn write_sparse_archive(
     })
     .expect("global header");
 
-    let sparse_map_bytes = write_sparse_map(extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: uncompressed_size,
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), payload.len() as u64);
-    lfh.uncompressed_size = uncompressed_size;
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(payload);
@@ -75,10 +81,16 @@ fn write_two_fragment_sparse_archive(
             length: 2,
         },
     ];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size,
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
 
     let mut lfh0 = LocalFileHeader::minimal_store(b"frag.bin".to_vec(), 2);
-    lfh0.uncompressed_size = logical_size;
     lfh0.entry_mode = EntryMode::from_bits(1u16 << 5);
     lfh0.fragment_id = Some(42);
     lfh0.fragment_index = Some(0);
@@ -87,7 +99,6 @@ fn write_two_fragment_sparse_archive(
     archive.extend_from_slice(b"AB");
 
     let mut lfh1 = LocalFileHeader::minimal_store(b"frag.bin".to_vec(), 2);
-    lfh1.uncompressed_size = 2;
     lfh1.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6));
     lfh1.fragment_id = Some(42);
     lfh1.fragment_index = Some(1);
