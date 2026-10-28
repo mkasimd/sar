@@ -5,9 +5,9 @@
 //!
 //! This module provides physical LFH sparse map parse/write functions:
 //!
-//! * [`parse_sparse_map`] — decodes the on-wire byte blob into a
-//!   `Vec<SparseExtent>`.
-//! * [`write_sparse_map`] — encodes `SparseExtent` values to the on-wire byte
+//! * [`parse_sparse_map`] — decodes the on-wire byte blob (Sparse Logical Size
+//!   followed by Sparse Extent descriptors) into a [`SparseMap`].
+//! * [`write_sparse_map`] — encodes a [`SparseMap`] to the on-wire byte
 //!   format.  Returns an error rather than silently truncating `u64` values
 //!   that exceed `u32::MAX` in 32-bit sparse-map mode.
 //!
@@ -17,102 +17,121 @@
 //!
 //! # Architectural note on `SparseExtent` re-export
 //!
-//! [`SparseExtent`] is re-exported here because it is the shared data type
+//! [`SparseExtent`] and [`SparseMap`] are re-exported here because it is the shared data type
 //! between the wire-format functions in this module and the semantic functions
 //! in `sar-sparse`.  Callers of [`parse_sparse_map`] and [`write_sparse_map`]
-//! need to name the type without an additional direct dependency on `sar-sparse`.
+//! need to name the types without an additional direct dependency on `sar-sparse`.
 
-pub use sar_sparse::SparseExtent;
+pub use sar_sparse::{SparseExtent, SparseMap};
 
 use crate::{error::SarError, limits::ResourceLimits};
 
-/// Parses a sparse map byte blob into a [`Vec<SparseExtent>`].
+/// Parses a Sparse Map byte blob (`Sparse Logical Size || extents`).
 ///
-/// When `is_64bit` is `true`, each entry is 16 bytes (`u64 offset, u64
-/// length`); otherwise 8 bytes (`u32 offset, u32 length`).
+/// When `is_64bit` is `true`, the logical size is a `u64` and each extent is
+/// 16 bytes (`u64 offset, u64 length`); otherwise the size is a `u32` and each
+/// extent is 8 bytes.  The blob must be non-empty: an absent map is signalled
+/// by a Sparse Map Size of zero and is handled by the caller.
+///
+/// Semantic extent validation is performed separately by
+/// `sar_sparse::validate_sparse_extents`.
 ///
 /// # Errors
 ///
-/// Returns [`SarError::InvalidLength`] when `bytes` is not a multiple of the
-/// entry size.
+/// Returns [`SarError::InvalidMap`] when `bytes` is shorter than the Sparse
+/// Logical Size field or the remainder is not a multiple of the extent size.
+/// Returns [`SarError::LimitExceeded`] when the byte length or descriptor count
+/// exceeds the configured limits.
 pub fn parse_sparse_map(
     bytes: &[u8],
     is_64bit: bool,
     limits: &ResourceLimits,
-) -> Result<Vec<SparseExtent>, SarError> {
+) -> Result<SparseMap, SarError> {
     limits.check_sparse_map_bytes(bytes.len())?;
-    let entry_size: usize = if is_64bit { 16 } else { 8 };
-    if !bytes.len().is_multiple_of(entry_size) {
-        return Err(SarError::InvalidLength(
-            "sparse map byte length is not a multiple of entry size",
+    let width: usize = if is_64bit { 8 } else { 4 };
+    let entry_size = width * 2;
+    if bytes.len() < width {
+        return Err(SarError::InvalidMap(
+            "sparse map is shorter than the sparse logical size field",
         ));
     }
-    let count = bytes.len() / entry_size;
+    let (size_bytes, descriptors) = bytes.split_at(width);
+    if !descriptors.len().is_multiple_of(entry_size) {
+        return Err(SarError::InvalidMap(
+            "sparse map descriptor bytes are not a multiple of the extent size",
+        ));
+    }
+    let count = descriptors.len() / entry_size;
     limits.check_sparse_descriptor_count(count)?;
     if count > isize::MAX as usize / std::mem::size_of::<SparseExtent>() {
         return Err(SarError::Overflow("sparse descriptor allocation"));
     }
-    let mut extents = Vec::with_capacity(count);
-    let mut pos = 0;
-    for _ in 0..count {
+    let read = |chunk: &[u8]| -> u64 {
         if is_64bit {
-            let offset = u64::from_le_bytes(
-                bytes[pos..pos + 8]
-                    .try_into()
-                    .map_err(|_| SarError::Truncated("sparse entry offset"))?,
-            );
-            let length = u64::from_le_bytes(
-                bytes[pos + 8..pos + 16]
-                    .try_into()
-                    .map_err(|_| SarError::Truncated("sparse entry length"))?,
-            );
-            extents.push(SparseExtent { offset, length });
-            pos += 16;
+            let mut b = [0u8; 8];
+            b.copy_from_slice(chunk);
+            u64::from_le_bytes(b)
         } else {
-            let offset = u64::from(u32::from_le_bytes(
-                bytes[pos..pos + 4]
-                    .try_into()
-                    .map_err(|_| SarError::Truncated("sparse entry offset"))?,
-            ));
-            let length = u64::from(u32::from_le_bytes(
-                bytes[pos + 4..pos + 8]
-                    .try_into()
-                    .map_err(|_| SarError::Truncated("sparse entry length"))?,
-            ));
-            extents.push(SparseExtent { offset, length });
-            pos += 8;
+            let mut b = [0u8; 4];
+            b.copy_from_slice(chunk);
+            u64::from(u32::from_le_bytes(b))
         }
+    };
+    let logical_size = read(size_bytes);
+    let mut extents = Vec::with_capacity(count);
+    for chunk in descriptors.chunks_exact(entry_size) {
+        extents.push(SparseExtent {
+            offset: read(&chunk[..width]),
+            length: read(&chunk[width..]),
+        });
     }
-    Ok(extents)
+    Ok(SparseMap {
+        logical_size,
+        extents,
+    })
 }
 
-/// Encodes sparse extents to the on-wire byte format.
+/// Encodes a [`SparseMap`] to the on-wire byte format.
 ///
-/// When `is_64bit` is `true` each entry is written as two little-endian `u64`
-/// values; otherwise as two little-endian `u32` values.
+/// When `is_64bit` is `true` the logical size and each extent field are written
+/// as little-endian `u64` values; otherwise as little-endian `u32` values.
 ///
 /// # Errors
 ///
-/// In 32-bit mode (`is_64bit = false`), returns [`SarError::Overflow`] if any
-/// extent's `offset` or `length` exceeds [`u32::MAX`].  Silent truncation is
-/// never permitted.
-pub fn write_sparse_map(extents: &[SparseExtent], is_64bit: bool) -> Result<Vec<u8>, SarError> {
-    let entry_size: usize = if is_64bit { 16 } else { 8 };
-    let mut bytes = Vec::with_capacity(extents.len() * entry_size);
-    for extent in extents {
+/// In 32-bit mode (`is_64bit = false`), returns [`SarError::Overflow`] if the
+/// logical size or any extent `offset` or `length` exceeds [`u32::MAX`].
+/// Silent truncation is never permitted.
+pub fn write_sparse_map(map: &SparseMap, is_64bit: bool) -> Result<Vec<u8>, SarError> {
+    let width: usize = if is_64bit { 8 } else { 4 };
+    let total = map
+        .extents
+        .len()
+        .checked_mul(width * 2)
+        .and_then(|n| n.checked_add(width))
+        .ok_or(SarError::Overflow("sparse map byte length"))?;
+    let mut bytes = Vec::with_capacity(total);
+    let mut put = |value: u64, what: &'static str| -> Result<(), SarError> {
         if is_64bit {
-            bytes.extend_from_slice(&extent.offset.to_le_bytes());
-            bytes.extend_from_slice(&extent.length.to_le_bytes());
+            bytes.extend_from_slice(&value.to_le_bytes());
         } else {
-            let offset32 = u32::try_from(extent.offset).map_err(|_| {
-                SarError::Overflow("sparse extent offset exceeds u32::MAX in 32-bit sparse map")
-            })?;
-            let length32 = u32::try_from(extent.length).map_err(|_| {
-                SarError::Overflow("sparse extent length exceeds u32::MAX in 32-bit sparse map")
-            })?;
-            bytes.extend_from_slice(&offset32.to_le_bytes());
-            bytes.extend_from_slice(&length32.to_le_bytes());
+            let v = u32::try_from(value).map_err(|_| SarError::Overflow(what))?;
+            bytes.extend_from_slice(&v.to_le_bytes());
         }
+        Ok(())
+    };
+    put(
+        map.logical_size,
+        "sparse logical size exceeds u32::MAX in 32-bit sparse map",
+    )?;
+    for extent in &map.extents {
+        put(
+            extent.offset,
+            "sparse extent offset exceeds u32::MAX in 32-bit sparse map",
+        )?;
+        put(
+            extent.length,
+            "sparse extent length exceeds u32::MAX in 32-bit sparse map",
+        )?;
     }
     Ok(bytes)
 }

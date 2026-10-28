@@ -60,9 +60,15 @@ fn build_sparse_archive_with_crc(
     })
     .expect("header");
 
-    let sparse_map_bytes = write_sparse_map(extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: uncompressed_size,
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), payload.len() as u64);
-    lfh.uncompressed_size = uncompressed_size;
     lfh.sparse_map = sparse_map_bytes;
     lfh.file_crc32 = file_crc32;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
@@ -109,7 +115,18 @@ fn content_hash_preserved_in_entry_metadata() {
         offset: 0,
         length: 3,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: extents
+                .iter()
+                .map(|e| e.offset + e.length)
+                .max()
+                .unwrap_or(0),
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
     let mut lfh = LocalFileHeader::minimal_store(b"f.bin".to_vec(), 3);
     lfh.uncompressed_size = 3;
     lfh.sparse_map = sparse_map_bytes;

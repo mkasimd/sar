@@ -251,6 +251,34 @@ covered by `archive_logical_files`, `pr4_lfh_metadata_edges`,
 
 ---
 
+### `sparse_map`
+
+**Purpose:** Exercise the canonical SAR v1.0 Sparse Map (Sparse Logical Size
+followed by Sparse Extents; u32 or u64 little-endian per `64BIT_SIZE`) and
+sparse reconstruction, including fragmented sparse Entries.
+
+**Example input shapes:**
+- Valid 32-bit and 64-bit maps with leading/trailing holes, all-hole
+  (size-only) maps and a zero logical size.
+- Short, misaligned, zero-length, overlapping, unordered, out-of-bounds and
+  overflowing extents.
+- Maximum declared logical sizes with no gathered data.
+- Gathered-length mismatches and `Uncompressed Size` set to the logical size.
+- Fragmented groups: complete, empty Index-0 contribution, later-fragment map,
+  missing fragment and contribution-length mismatch.
+
+**Expected fail-closed behavior:** `SAR_ERR_INVALID_MAP`, `SAR_ERR_OVERFLOW`,
+`SAR_ERR_INVALID_LENGTH`, `SAR_ERR_LIMIT_EXCEEDED`, `SAR_ERR_METADATA_CONFLICT`
+or `SAR_ERR_FRAGMENT_GAP` per specification.md Section 17.5, without panic or
+allocation of an unbounded logical buffer.
+
+**Current status:** Added in M13b WP-5 under `fuzz/seeds/sparse_map/`;
+regenerated deterministically by `python tools/generate_sparse_fuzz_seeds.py`
+(`--check` verifies them). Consumed by `archive_logical_files`,
+`archive_entry_decode` and `parse_lfh` via `tools/copy_fuzz_seeds.sh`.
+
+---
+
 ### `cdc_delta`
 
 **Purpose:** Cover content-defined chunking (CDC) boundary computation and

@@ -336,8 +336,8 @@ fn payload_length_mismatch_returns_map_or_format_error() {
     let err = apply_sparse_reconstruction(&[0u8; 5], &extents, 10, &s(&unlimited()))
         .expect_err("must fail");
     assert!(
-        matches!(err, SparseError::Truncated(_)),
-        "expected Truncated, got {err:?}"
+        matches!(err, SparseError::InvalidLength(_)),
+        "expected InvalidLength, got {err:?}"
     );
 }
 
@@ -408,13 +408,23 @@ fn fragmented_sparse_expansion_bomb_fails_safely() {
         offset: 1023,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: extents
+                .iter()
+                .map(|e| e.offset + e.length)
+                .max()
+                .unwrap_or(0),
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
     // Fragment 0: declares logical_size=1024 via uncompressed_size, carries sparse map
     let mut lfh0 = LocalFileHeader::minimal_store(b"bomb.bin".to_vec(), 1);
-    lfh0.uncompressed_size = 1024; // huge logical size
     lfh0.entry_mode = EntryMode::from_bits((1u16 << 5) | (1u16 << 6)); // IS_FRAGMENT | LAST_FRAGMENT
     lfh0.fragment_id = Some(77);
     lfh0.fragment_index = Some(0);
@@ -782,13 +792,23 @@ fn read_all_logical_files_rejects_sparse_expansion_bomb() {
         offset: 1024,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: extents
+                .iter()
+                .map(|e| e.offset + e.length)
+                .max()
+                .unwrap_or(0),
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
     // Entry with uncompressed_size=1025 and one stored byte
     let mut lfh = LocalFileHeader::minimal_store(b"bomb.bin".to_vec(), 1);
-    lfh.uncompressed_size = 1025;
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&[0x00u8]);
@@ -823,12 +843,22 @@ fn read_all_logical_files_sparse_bounded_success() {
         offset: 1023,
         length: 1,
     }];
-    let sparse_map_bytes = write_sparse_map(&extents, false).expect("write sparse map ok");
+    let sparse_map_bytes = write_sparse_map(
+        &sar_core::sparse::SparseMap {
+            logical_size: extents
+                .iter()
+                .map(|e| e.offset + e.length)
+                .max()
+                .unwrap_or(0),
+            extents: extents.to_vec(),
+        },
+        false,
+    )
+    .expect("write sparse map ok");
 
     let mut archive = header_bytes(flags);
 
     let mut lfh = LocalFileHeader::minimal_store(b"ok.bin".to_vec(), 1);
-    lfh.uncompressed_size = 1024;
     lfh.sparse_map = sparse_map_bytes;
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(&[0x42u8]);

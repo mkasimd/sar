@@ -18,8 +18,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use sar_core::{
     error::SarError, flags::EntryMode, format::LocalFileHeader, limits::ResourceLimits,
+    metadata::EntrySparseMetadata,
 };
 use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
+
+use sar_cdc::CDC_ALGO_LITERAL;
+use sar_delta::PATCH_ALGO_STORE_PATCH;
+use sar_sparse::{check_gathered_length, validate_sparse_extents};
 
 use crate::archive::{EntryMetadata, EntryReader};
 
@@ -119,6 +124,84 @@ pub struct FragmentGroup {
 }
 
 impl FragmentGroup {
+    /// Validates the Sparse Map retained from Fragment Index 0 against the group
+    /// before any contribution is concatenated.
+    ///
+    /// Returns `Ok(None)` for a non-sparse group.  For a sparse group the
+    /// checks run in this order:
+    ///
+    /// 1. The group must be complete (Fragment Index 0 through `LAST_FRAGMENT`).
+    ///    An incomplete sparse group is [`SarError::FragmentGap`] even when
+    ///    `LOSS_TOLERANT` is set (specification Section 19.4.5).
+    /// 2. A group-wide patch other than `STORE_PATCH` is not implemented and
+    ///    fails closed with [`SarError::Unsupported`].  A non-literal CDC Algo ID
+    ///    (an unresolved Hash Recipe) also fails closed with
+    ///    [`SarError::Unsupported`].
+    /// 3. The Sparse Logical Size must not exceed `max_decoded_entry_size`.
+    /// 4. The checked sum of contribution lengths (the gathered length) must
+    ///    equal the checked sum of Sparse Extent lengths
+    ///    ([`SarError::InvalidLength`]).
+    ///
+    /// # Errors
+    ///
+    /// As described above, plus [`SarError::InvalidMap`] and
+    /// [`SarError::Overflow`] from extent validation.
+    pub fn validate_sparse(
+        &self,
+        limits: &ResourceLimits,
+    ) -> Result<Option<&EntrySparseMetadata>, SarError> {
+        let Some(sparse) = self.index0.as_ref().and_then(|m| m.sparse.as_ref()) else {
+            return Ok(None);
+        };
+        let terminal = self.entries.iter().find(|e| e.metadata.is_last_fragment);
+        let complete = terminal.is_some_and(|t| {
+            t.metadata
+                .fragment_index
+                .is_some_and(|i| u64::from(i) + 1 == self.entries.len() as u64)
+        });
+        if !complete {
+            return Err(SarError::FragmentGap(
+                "sparse reconstruction requires a complete fragment group",
+            ));
+        }
+        if self
+            .index0
+            .as_ref()
+            .and_then(|m| m.patch_algo_id)
+            .is_some_and(|id| id != PATCH_ALGO_STORE_PATCH)
+        {
+            return Err(SarError::Unsupported(
+                "fragmented sparse reconstruction with a group-wide patch is not supported",
+            ));
+        }
+        // The reader performs no CDC recipe resolution; a non-literal CDC Algo ID
+        // means the reassembled bytes are an unresolved Hash Recipe, not gathered data.
+        if self
+            .index0
+            .as_ref()
+            .and_then(|m| m.cdc_algo_id)
+            .is_some_and(|id| id != CDC_ALGO_LITERAL)
+        {
+            return Err(SarError::Unsupported(
+                "fragmented sparse reconstruction after CDC recipe resolution is not supported",
+            ));
+        }
+        limits.check_decoded_entry_size(sparse.logical_size)?;
+        let extent_total = validate_sparse_extents(
+            &sparse.extents,
+            sparse.logical_size,
+            &limits.sparse_limits(),
+        )?;
+        let mut gathered: u64 = 0;
+        for entry in &self.entries {
+            gathered = gathered
+                .checked_add(entry.metadata.uncompressed_size)
+                .ok_or(SarError::Overflow("fragment contribution length sum"))?;
+        }
+        check_gathered_length(gathered, extent_total)?;
+        Ok(Some(sparse))
+    }
+
     /// Reconstructs the group by ascending Fragment Index concatenation.
     ///
     /// Returns `(bytes, is_degraded)`.  Incomplete groups fail with

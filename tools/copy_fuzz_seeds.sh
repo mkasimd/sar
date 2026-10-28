@@ -115,6 +115,16 @@ copy_seeds archive_audit \
 copy_seeds archive_logical_files \
   extraction_race
 
+# M13b WP-5 sparse_map seeds: canonical Sparse Logical Size maps and malformed variants.
+copy_seeds archive_logical_files \
+  sparse_map
+
+copy_seeds archive_entry_decode \
+  sparse_map
+
+copy_seeds parse_lfh \
+  sparse_map
+
 # profile_rejection seeds: header-level version, reserved-byte, and flag-conflict shapes.
 # Consumed by global-header and high-level structural targets.
 copy_seeds parse_global_header \

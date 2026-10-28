@@ -76,9 +76,9 @@ pub(crate) fn extract_archive(
         let name = group.name.clone();
         let terminal_crc32 = group.terminal_crc32;
         let index0 = group.index0.clone();
-        let has_sparse = index0
-            .as_ref()
-            .is_some_and(|meta| meta.sparse_extents.is_some());
+        // Incomplete sparse groups fail with FRAGMENT_GAP, and the Index-0 Sparse
+        // Map is checked against the contributions before any concatenation.
+        let sparse = group.validate_sparse(&limits)?.cloned();
 
         let (raw, is_degraded) = group.reconstruct(&limits)?;
         if is_degraded && !allow_lossy {
@@ -94,31 +94,39 @@ pub(crate) fn extract_archive(
                 name
             );
         }
-        if has_sparse {
-            if is_degraded {
-                return Err(SarError::FragmentGap(
-                    "sparse reconstruction requires a complete fragment group",
-                ));
-            }
-            // Sparse Logical Size is not implemented yet (WP-5/M13b.2); LFH
-            // Uncompressed Size is only the fragment contribution length.
-            return Err(SarError::Unsupported(
-                "fragmented sparse reconstruction requires Sparse Logical Size (not yet implemented)",
-            ));
-        }
 
         let rel = validate_relative_archive_path(&name)?;
         let out_path = prepare_output_file_path(&output_dir, &rel)?;
         // The authoritative CRC32 is the LAST_FRAGMENT value; degraded output
         // is never reported as integrity-verified.
-        if !is_degraded && header.flags.contains(GlobalFlags::PER_FILE_CRC) {
-            verify_crc32(
-                terminal_crc32,
-                crc32fast::hash(&raw),
-                "file CRC32 mismatch on reconstructed fragment-group logical file",
+        if let Some(sparse) = sparse.as_ref() {
+            // The logical file (holes included) is never materialized in memory:
+            // the CRC is streamed over zero runs and the output is written by
+            // extent into a sparse temporary file.
+            if header.flags.contains(GlobalFlags::PER_FILE_CRC) {
+                verify_crc32(
+                    terminal_crc32,
+                    compute_sparse_crc32(&raw, &sparse.extents, sparse.logical_size, &limits)?,
+                    "file CRC32 mismatch on reconstructed fragment-group logical file",
+                )?;
+            }
+            write_sparse_payload_via_temp(
+                &out_path,
+                &raw,
+                &sparse.extents,
+                sparse.logical_size,
+                &limits,
             )?;
+        } else {
+            if !is_degraded && header.flags.contains(GlobalFlags::PER_FILE_CRC) {
+                verify_crc32(
+                    terminal_crc32,
+                    crc32fast::hash(&raw),
+                    "file CRC32 mismatch on reconstructed fragment-group logical file",
+                )?;
+            }
+            write_bytes_via_temp(&out_path, &raw)?;
         }
-        write_bytes_via_temp(&out_path, &raw)?;
         apply_file_metadata(
             &out_path,
             index0.as_ref().and_then(|m| m.permissions).map(|v| v.mode),
@@ -154,13 +162,10 @@ fn extract_non_fragment_entry(
         EntryKind::Symlink => extract_symlink_entry(output_dir, &rel, entry, metadata),
         EntryKind::RegularFile => {
             let out_path = prepare_output_file_path(output_dir, &rel)?;
-            if let Some(extents) = entry.metadata.sparse_extents.as_ref() {
-                let actual_crc = compute_sparse_crc32(
-                    &entry.payload,
-                    extents,
-                    entry.metadata.uncompressed_size,
-                    limits,
-                )?;
+            if let Some(sparse) = entry.metadata.sparse.as_ref() {
+                let extents = &sparse.extents;
+                let actual_crc =
+                    compute_sparse_crc32(&entry.payload, extents, sparse.logical_size, limits)?;
                 if global_flags.contains(GlobalFlags::PER_FILE_CRC) {
                     verify_crc32(
                         entry.metadata.file_crc32,
@@ -172,7 +177,7 @@ fn extract_non_fragment_entry(
                     &out_path,
                     &entry.payload,
                     extents,
-                    entry.metadata.uncompressed_size,
+                    sparse.logical_size,
                     limits,
                 )?;
             } else {

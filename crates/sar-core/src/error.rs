@@ -409,6 +409,7 @@ impl From<sar_sparse::SparseError> for SarError {
             sar_sparse::SparseError::InvalidMap(msg) => Self::InvalidMap(msg),
             sar_sparse::SparseError::Overflow(msg) => Self::Overflow(msg),
             sar_sparse::SparseError::Truncated(msg) => Self::Truncated(msg),
+            sar_sparse::SparseError::InvalidLength(msg) => Self::InvalidLength(msg),
             sar_sparse::SparseError::LimitExceeded(msg) => Self::LimitExceeded(msg),
         }
     }

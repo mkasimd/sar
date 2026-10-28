@@ -264,10 +264,13 @@ pub struct EntryFragmentMetadata {
 
 /// Sparse file metadata.
 ///
-/// Present when the `SPARSE_FILES` global flag is set and the sparse map is
-/// non-empty.
+/// Present when the `SPARSE_FILES` global flag is set and the Sparse Map Size
+/// is non-zero (a present map).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct EntrySparseMetadata {
+    /// Declared Sparse Logical Size: the apparent size of the reconstructed
+    /// Entry.  Authoritative over the LFH `Uncompressed Size`.
+    pub logical_size: u64,
     /// Parsed sparse extents describing non-hole data regions.
     pub extents: Vec<SparseExtent>,
 }

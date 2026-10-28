@@ -22,7 +22,10 @@ use sar_delta::{
     vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
-use sar_sparse::{SparseExtent, apply_sparse_reconstruction, validate_sparse_extents};
+use sar_sparse::{
+    SparseExtent, SparseMap, apply_sparse_reconstruction, check_gathered_length,
+    validate_sparse_extents,
+};
 use serde::Serialize;
 
 use sar_core::{
@@ -98,7 +101,7 @@ pub struct EntryMetadata {
     /// True when the `LOSS_TOLERANT` entry mode bit is set.
     pub is_loss_tolerant: bool,
     /// Parsed sparse extents.  `None` when `SPARSE_FILES` is not enabled or
-    /// the sparse map is empty.
+    /// the Sparse Map Size is zero (absent map).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sparse_extents: Option<Vec<SparseExtent>>,
     /// Per-file CRC32.  `None` when `PER_FILE_CRC` global flag is not set
@@ -241,8 +244,8 @@ pub struct EntryMetadata {
     /// Delta metadata.  `None` when `HAS_DELTA` global flag is not set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta: Option<sar_core::metadata::EntryDeltaMetadata>,
-    /// Sparse metadata.  `None` when `SPARSE_FILES` global flag is not set or
-    /// the sparse map is empty.
+    /// Sparse metadata (Sparse Logical Size and extents).  `None` when the
+    /// `SPARSE_FILES` global flag is not set or the Sparse Map Size is zero.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sparse: Option<sar_core::metadata::EntrySparseMetadata>,
     /// Combined CRC32 and content-hash metadata.  `None` when neither
@@ -600,7 +603,8 @@ impl Default for ArchiveWriterOptions {
 ///
 /// The caller supplies:
 /// * `logical_size` — full apparent file size including all sparse holes, stored as
-///   LFH `Uncompressed Size`.  Must be >= the end of every declared extent.
+///   the leading Sparse Logical Size of the Sparse Map.  Must be >= the end of
+///   every declared extent.
 /// * `extents` — ordered, non-overlapping sparse extents describing how
 ///   `gathered_payload` maps into the logical file.  The sum of all
 ///   `extent.length` values must equal the length of the `gathered_payload`
@@ -609,9 +613,10 @@ impl Default for ArchiveWriterOptions {
 /// The writer validates all constraints before emitting any bytes.
 #[derive(Debug, Clone)]
 pub struct SparseWriteOptions {
-    /// Full logical file size, including all sparse holes.  This becomes the
-    /// LFH `Uncompressed Size` and is **required** to be set explicitly.
-    /// The writer will not derive this value from the extents alone.
+    /// Full logical file size, including all sparse holes.  This is encoded as
+    /// the leading Sparse Logical Size of the Sparse Map (the LFH
+    /// `Uncompressed Size` is the gathered-data length) and is **required** to
+    /// be set explicitly.  The writer will not derive it from the extents.
     pub logical_size: u64,
     /// Ordered, non-overlapping sparse extents that describe the data regions.
     pub extents: Vec<SparseExtent>,
@@ -1437,7 +1442,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
             && patch_raw_id == PATCH_ALGO_STORE_PATCH
             && !is_effectively_compressed
             && !is_encrypted
-            && !is_sparse
             && lfh.payload_size != lfh.uncompressed_size
         {
             return Err(SarError::PatchFailed(
@@ -1445,12 +1449,14 @@ impl<R: Read + Seek> ArchiveReader<R> {
             ));
         }
 
-        let decode_expected =
-            if is_sparse || (is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH) {
-                self.options.max_decoded_entry_size()
-            } else {
-                lfh.uncompressed_size
-            };
+        // LFH `Uncompressed Size` is the transform-boundary length (the gathered
+        // data for an unfragmented sparse Entry, the contribution for a
+        // fragment), never the Sparse Logical Size.
+        let decode_expected = if is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH {
+            self.options.max_decoded_entry_size()
+        } else {
+            lfh.uncompressed_size
+        };
 
         let effective_comp_algo_id = if is_effectively_compressed {
             lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
@@ -1499,12 +1505,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let decoded = if is_has_delta {
             match patch_raw_id {
                 PATCH_ALGO_STORE_PATCH => {
-                    if !is_sparse {
-                        apply_store_patch(&decoded, lfh.uncompressed_size)
-                            .map_err(map_patch_error)?
-                    } else {
-                        decoded
-                    }
+                    apply_store_patch(&decoded, lfh.uncompressed_size).map_err(map_patch_error)?
                 }
                 PATCH_ALGO_VCDIFF => {
                     validate_delta_pre_dispatch(
@@ -1570,24 +1571,21 @@ impl<R: Read + Seek> ArchiveReader<R> {
             decoded
         };
 
-        if !is_sparse {
-            if u64::try_from(decoded.len())
-                .map_err(|_| SarError::Overflow("decoded payload len"))?
-                != lfh.uncompressed_size
-            {
-                return Err(SarError::InvalidLength(
-                    "decoded payload size does not match LFH Uncompressed Size",
-                ));
-            }
-            if !is_effectively_compressed
-                && !is_encrypted
-                && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
-                && lfh.payload_size != lfh.uncompressed_size
-            {
-                return Err(SarError::InvalidLength(
-                    "STORE mode requires Payload Size == Uncompressed Size",
-                ));
-            }
+        if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
+            != lfh.uncompressed_size
+        {
+            return Err(SarError::InvalidLength(
+                "decoded payload size does not match LFH Uncompressed Size",
+            ));
+        }
+        if !is_effectively_compressed
+            && !is_encrypted
+            && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
+            && lfh.payload_size != lfh.uncompressed_size
+        {
+            return Err(SarError::InvalidLength(
+                "STORE mode requires Payload Size == Uncompressed Size",
+            ));
         }
 
         let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
@@ -1597,17 +1595,30 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
+        let sparse_map: Option<SparseMap> = if is_sparse {
+            let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
+            let map = sar_core::sparse::parse_sparse_map(
+                &lfh.sparse_map,
+                is_64bit,
+                &self.options.limits,
+            )?;
+            let extent_total = validate_sparse_extents(
+                &map.extents,
+                map.logical_size,
+                &self.options.limits.sparse_limits(),
+            )?;
+            // An unfragmented sparse Entry's decoded payload is the complete
+            // gathered data; a fragment is only a contribution, checked when the
+            // group is assembled.
+            if !lfh.entry_mode.is_fragment() {
+                check_gathered_length(lfh.uncompressed_size, extent_total)?;
+            }
+            Some(map)
+        } else {
+            None
+        };
         let sparse_extents: Option<Vec<SparseExtent>> =
-            if header.flags.contains(GlobalFlags::SPARSE_FILES) && !lfh.sparse_map.is_empty() {
-                let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
-                Some(sar_core::sparse::parse_sparse_map(
-                    &lfh.sparse_map,
-                    is_64bit,
-                    &self.options.limits,
-                )?)
-            } else {
-                None
-            };
+            sparse_map.as_ref().map(|m| m.extents.clone());
 
         let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
             let algo_id = lfh.cdc_algo_id.unwrap_or(0);
@@ -1616,6 +1627,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
         } else {
             None
         };
+        // The reader performs no CDC recipe resolution, so a non-literal
+        // CDC Algo ID means the decoded payload is an unresolved Hash Recipe,
+        // which must not be consumed as gathered sparse data (spec §13.1.3).
+        if sparse_map.is_some()
+            && !lfh.entry_mode.is_fragment()
+            && cdc_algo_id_opt.is_some_and(|id| id != sar_core::cdc::CDC_ALGO_LITERAL)
+        {
+            return Err(SarError::Unsupported(
+                "sparse reconstruction after CDC recipe resolution is not supported",
+            ));
+        }
 
         let name = String::from_utf8(lfh.name.clone())
             .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
@@ -1726,12 +1748,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
-        let sparse =
-            sparse_extents
-                .as_ref()
-                .map(|extents| sar_core::metadata::EntrySparseMetadata {
-                    extents: extents.clone(),
-                });
+        let sparse = sparse_map
+            .as_ref()
+            .map(|map| sar_core::metadata::EntrySparseMetadata {
+                logical_size: map.logical_size,
+                extents: map.extents.clone(),
+            });
 
         let has_crc = header.flags.contains(GlobalFlags::PER_FILE_CRC);
         let has_hash = header.flags.contains(GlobalFlags::DEDUPLICATION);
@@ -1925,15 +1947,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// AEAD authentication failures are **never** suppressed by `allow_lossy`.
     /// Format errors are **never** suppressed by `allow_lossy`.
     ///
-    /// # Sparse logical-size derivation
+    /// # Sparse logical size
     ///
-    /// For non-fragmented entries the logical size is the LFH `Uncompressed Size`
-    /// and any gap after the final sparse extent is reconstructed as `0x00`.
-    /// For fragmented entries, LFH `Uncompressed Size` is only the
-    /// fragment-local contribution length; the final logical size must come from
-    /// the Sparse Map's Sparse Logical Size (spec 17.2), which is not yet
-    /// implemented (WP-5/M13b.2). Fragmented sparse groups therefore fail closed
-    /// with `SAR_ERR_UNSUPPORTED` (incomplete ones with `SAR_ERR_FRAGMENT_GAP`).
+    /// The final apparent size of a sparse entry is the Sparse Logical Size at
+    /// the start of the Sparse Map (spec 17.2), never an LFH `Uncompressed Size`.
+    /// LFH `Uncompressed Size` is the fragment-local contribution length (or, for
+    /// unfragmented entries, the gathered-data length). Fragmented sparse groups
+    /// are reconstructed only after the complete group is assembled; the gathered
+    /// length must equal the sum of the extent lengths
+    /// ([`SarError::InvalidLength`]). An incomplete sparse group always returns
+    /// [`SarError::FragmentGap`], even with `allow_lossy` and `LOSS_TOLERANT`.
     ///
     /// Sparse logical sizes are capped to
     /// [`ResourceLimits::max_decoded_entry_size`].
@@ -2009,14 +2032,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             match item {
                 CollectedEntry::Entry(entry) => {
                     let name = entry.metadata.name.clone();
-                    let sparse = entry.metadata.sparse_extents.clone();
-                    let uncompressed_size = entry.metadata.uncompressed_size;
                     let file_crc32 = entry.metadata.file_crc32;
                     let data = Self::apply_sparse_if_needed(
                         &self.options.limits,
                         entry.payload,
-                        &sparse,
-                        uncompressed_size,
+                        entry.metadata.sparse.as_ref(),
                     )?;
                     // CRC32 verification over the fully reconstructed logical file
                     // (including sparse holes), per spec §17.5.
@@ -2040,10 +2060,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 CollectedEntry::Group(group) => {
                     let fid = group.fragment_id;
                     let name = group.name.clone();
-                    let has_sparse = group
-                        .index0
-                        .as_ref()
-                        .is_some_and(|m| m.sparse_extents.is_some());
+                    // Incomplete sparse groups and inconsistent Sparse Maps fail
+                    // before any payload is concatenated (spec §19.4.5, §17.5).
+                    let sparse_meta = group.validate_sparse(&self.options.limits)?.cloned();
                     // Authoritative File CRC32 is carried by LAST_FRAGMENT.
                     let terminal_crc32 = group.terminal_crc32;
 
@@ -2057,25 +2076,14 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         ));
                     }
 
-                    // Sparse reconstruction over an incomplete fragment prefix is not
-                    // permitted (spec §19.4.5).
-                    if is_degraded && has_sparse {
-                        return Err(SarError::FragmentGap(
-                            "sparse reconstruction requires a complete fragment group",
-                        ));
-                    }
-
-                    // Spec §13.7.6 / §17.2 / §19.6 define sparse reconstruction over the
-                    // assembled group using the Sparse Logical Size carried in the Sparse
-                    // Map.  That field is not implemented yet (WP-5/M13b.2), and LFH
-                    // `Uncompressed Size` is only the fragment-local contribution length,
-                    // so reconstructing here would yield a wrongly sized file.  Fail closed
-                    // (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001).
-                    if has_sparse {
-                        return Err(SarError::Unsupported(
-                            "fragmented sparse reconstruction requires Sparse Logical Size (not yet implemented)",
-                        ));
-                    }
+                    // Sparse reconstruction follows complete Fragment Reassembly
+                    // (spec §13.7.6, §17.6) and uses the Index-0 Sparse Logical Size.
+                    let raw = match sparse_meta.as_ref() {
+                        Some(meta) => {
+                            Self::apply_sparse_if_needed(&self.options.limits, raw, Some(meta))?
+                        }
+                        None => raw,
+                    };
 
                     // CRC32 verification over the fully reconstructed logical file.
                     // Degraded output is a partial prefix and is never CRC-verified.
@@ -2104,40 +2112,54 @@ impl<R: Read + Seek> ArchiveReader<R> {
         Ok(result)
     }
 
-    /// Applies sparse reconstruction when `sparse_extents` is `Some` and
-    /// non-empty; otherwise returns `payload` unchanged.
+    /// Applies sparse reconstruction when `sparse` is `Some`; otherwise returns
+    /// `payload` unchanged.
     ///
-    /// `uncompressed_size` is the LFH `Uncompressed Size` field, which the
-    /// spec defines as the full logical file size including trailing holes.
-    /// The sparse payload bytes (sum of extent lengths) may be smaller.
+    /// `payload` is the complete gathered data.  The output has exactly the
+    /// Sparse Logical Size declared by the Sparse Map, which is authoritative
+    /// (an absent map is the only pass-through case; a present map with no
+    /// extents yields an all-hole Entry).
     ///
-    /// Returns [`SarError::Overflow`] when `uncompressed_size` exceeds
-    /// `max_size`, preventing unbounded allocation.
+    /// The Sparse Logical Size is checked against `max_decoded_entry_size`, and
+    /// the simultaneously held gathered data, output buffer and extent list
+    /// against `max_total_pipeline_memory`, before the output is allocated.
     fn apply_sparse_if_needed(
         limits: &ResourceLimits,
         payload: Vec<u8>,
-        sparse_extents: &Option<Vec<SparseExtent>>,
-        uncompressed_size: u64,
+        sparse: Option<&sar_core::metadata::EntrySparseMetadata>,
     ) -> Result<Vec<u8>, SarError> {
-        let Some(extents) = sparse_extents else {
+        let Some(sparse) = sparse else {
             return Ok(payload);
         };
-        if extents.is_empty() {
-            return Ok(payload);
-        }
-
-        // Use LFH Uncompressed Size as the authoritative logical file size.
-        // This correctly handles trailing sparse holes that extend beyond the
-        // last extent.
-        limits.check_decoded_entry_size(uncompressed_size)?;
-        validate_sparse_extents(extents, uncompressed_size, &limits.sparse_limits())?;
+        check_sparse_memory(limits, payload.len(), sparse)?;
         Ok(apply_sparse_reconstruction(
             &payload,
-            extents,
-            uncompressed_size,
+            &sparse.extents,
+            sparse.logical_size,
             &limits.sparse_limits(),
         )?)
     }
+}
+
+/// Checks the bytes held at once while scattering: gathered data, the output
+/// buffer of Sparse Logical Size, and the extent list.
+pub(crate) fn check_sparse_memory(
+    limits: &ResourceLimits,
+    gathered_len: usize,
+    sparse: &sar_core::metadata::EntrySparseMetadata,
+) -> Result<(), SarError> {
+    limits.check_decoded_entry_size(sparse.logical_size)?;
+    let gathered =
+        u64::try_from(gathered_len).map_err(|_| SarError::Overflow("sparse gathered length"))?;
+    let extent_bytes = u64::try_from(sparse.extents.len())
+        .ok()
+        .and_then(|n| n.checked_mul(std::mem::size_of::<SparseExtent>() as u64))
+        .ok_or(SarError::Overflow("sparse extent list bytes"))?;
+    let held = gathered
+        .checked_add(sparse.logical_size)
+        .and_then(|n| n.checked_add(extent_bytes))
+        .ok_or(SarError::Overflow("sparse reconstruction memory"))?;
+    limits.check_total_pipeline_memory(held)
 }
 
 /// Archive writer with compression and optional encryption support.
@@ -3067,7 +3089,7 @@ impl<W: Write> ArchiveWriter<W> {
         let payload_len_u64 = u64::try_from(gathered_payload.len())
             .map_err(|_| SarError::Overflow("gathered payload length overflow"))?;
         if payload_len_u64 != total_extent_bytes {
-            return Err(SarError::InvalidMap(
+            return Err(SarError::InvalidLength(
                 "gathered_payload length does not equal sum of sparse extent lengths",
             ));
         }
@@ -3097,12 +3119,19 @@ impl<W: Write> ArchiveWriter<W> {
         self.apply_size_policy(sparse.logical_size, encoded_len)?;
         self.emit_global_header_if_needed()?;
 
-        // Build LFH: uncompressed_size = logical_size (full sparse extent including holes).
+        // Build LFH: Uncompressed Size is the gathered-data length; the Sparse
+        // Logical Size is carried only by the leading Sparse Map field.
         let is_64bit = self.flags.contains(GlobalFlags::SIZE_64BIT);
-        let sparse_map_bytes = sar_core::sparse::write_sparse_map(&sparse.extents, is_64bit)?;
+        let sparse_map_bytes = sar_core::sparse::write_sparse_map(
+            &SparseMap {
+                logical_size: sparse.logical_size,
+                extents: sparse.extents,
+            },
+            is_64bit,
+        )?;
 
         let mut lfh = LocalFileHeader::minimal_store(name.as_bytes().to_vec(), encoded_len);
-        lfh.uncompressed_size = sparse.logical_size;
+        lfh.uncompressed_size = payload_len_u64;
         if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
             lfh.cdc_algo_id = Some(sar_core::cdc::CDC_ALGO_LITERAL);
         }

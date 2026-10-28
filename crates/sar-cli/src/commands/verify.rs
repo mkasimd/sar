@@ -76,9 +76,13 @@ pub(crate) fn verify_archive(
 
         let mut sparse_errors = 0u32;
         for entry in &entries {
-            if entry.sparse_extents.as_ref().is_some_and(|ext| {
-                validate_sparse_extents(ext, entry.uncompressed_size, &limits.sparse_limits())
-                    .is_err()
+            if entry.sparse.as_ref().is_some_and(|sparse| {
+                validate_sparse_extents(
+                    &sparse.extents,
+                    sparse.logical_size,
+                    &limits.sparse_limits(),
+                )
+                .is_err()
             }) {
                 eprintln!("recovery verify: sparse extent error in '{}'", entry.name);
                 sparse_errors += 1;

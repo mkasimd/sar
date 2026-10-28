@@ -235,8 +235,8 @@ fn sparse_writer_rejects_short_payload() {
         )
         .expect_err("must reject short payload");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
-        "expected InvalidMap for payload length mismatch, got {err:?}"
+        matches!(err, SarError::InvalidLength(_)),
+        "expected InvalidLength for payload length mismatch, got {err:?}"
     );
 }
 
@@ -268,8 +268,8 @@ fn sparse_writer_rejects_excess_payload() {
         )
         .expect_err("must reject excess payload");
     assert!(
-        matches!(err, SarError::InvalidMap(_)),
-        "expected InvalidMap for payload length mismatch, got {err:?}"
+        matches!(err, SarError::InvalidLength(_)),
+        "expected InvalidLength for payload length mismatch, got {err:?}"
     );
 }
 
