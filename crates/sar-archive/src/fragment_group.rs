@@ -81,6 +81,9 @@ fn group_invariant_mismatch(a: &LocalFileHeader, b: &LocalFileHeader) -> Option<
     if a.delta_base_hash != b.delta_base_hash {
         return Some("Delta Base Hash differs across fragment group");
     }
+    if a.hash_algo_id != b.hash_algo_id {
+        return Some("Hash Algo ID differs across fragment group");
+    }
     if a.uid_gid != b.uid_gid {
         return Some("UID/GID differs across fragment group");
     }

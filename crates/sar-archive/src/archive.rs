@@ -108,6 +108,10 @@ pub struct EntryMetadata {
     /// or the field contains zero.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_crc32: Option<u32>,
+    /// LFH Hash Algo ID selecting the Content Hash algorithm.  `None` when the
+    /// `DEDUPLICATION` global flag is not set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash_algo_id: Option<u8>,
     /// Content hash (32 bytes).  `None` when `DEDUPLICATION` global flag is
     /// not set.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -367,6 +371,9 @@ pub struct EntryInput {
     pub sequence_no: Option<u16>,
     /// Per-file CRC32.  Written when `with_per_file_crc` is enabled.
     pub file_crc32: Option<u32>,
+    /// LFH Hash Algo ID (`0x30` SHA-256, `0x31` BLAKE3-256, `0x32` SHA3-256)
+    /// written with the Content Hash.  Defaults to BLAKE3-256 when `None`.
+    pub hash_algo_id: Option<u8>,
     /// Content hash (32 bytes).  Written when `with_content_hash` is enabled.
     pub content_hash: Option<[u8; 32]>,
     /// Delta write options.  When `Some`, the writer generates a real patch
@@ -1760,6 +1767,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let hash = if has_crc || has_hash {
             Some(sar_core::metadata::EntryHashMetadata {
                 crc32: if has_crc { lfh.file_crc32 } else { None },
+                hash_algo_id: if has_hash { lfh.hash_algo_id } else { None },
                 content_hash: if has_hash { lfh.content_hash } else { None },
             })
         } else {
@@ -1784,6 +1792,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
             is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
             sparse_extents,
             file_crc32: lfh.file_crc32,
+            hash_algo_id: lfh.hash_algo_id,
             content_hash: lfh.content_hash,
             cdc_algo_id: cdc_algo_id_opt,
             patch_algo_id: if is_has_delta {
@@ -3007,6 +3016,11 @@ impl<W: Write> ArchiveWriter<W> {
         }
 
         if self.flags.contains(GlobalFlags::DEDUPLICATION) {
+            let algo_id = entry
+                .hash_algo_id
+                .unwrap_or(sar_crypto::algorithm::HASH_BLAKE3);
+            sar_core::validate_lfh_hash_algo_id(algo_id)?;
+            lfh.hash_algo_id = Some(algo_id);
             lfh.content_hash = entry.content_hash.or(Some(ZERO_CONTENT_HASH));
         }
 

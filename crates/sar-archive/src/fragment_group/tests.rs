@@ -78,6 +78,7 @@ fn decode(flags: GlobalFlags, specs: &[Spec]) -> Vec<EntryReader> {
         lfh.fragment_id = id;
         lfh.fragment_index = index;
         lfh.file_crc32 = Some(0);
+        lfh.hash_algo_id = Some(0x31);
         lfh.content_hash = Some(hash);
         lfh.uid_gid = Some(0);
         lfh.timestamps = Some([0; 3]);
@@ -287,6 +288,25 @@ fn terminal_all_zero_content_hash_is_retained_as_authoritative() {
 fn non_terminal_nonzero_content_hash_is_metadata_conflict() {
     assert!(matches!(
         push_all(hash_group([9; 32], [7; 32])),
+        Err(SarError::MetadataConflict(_))
+    ));
+}
+
+#[test]
+fn matching_hash_algo_ids_are_accepted() {
+    let mut entries = hash_group([0; 32], [7; 32]);
+    for entry in &mut entries {
+        entry.header.hash_algo_id = Some(0x30);
+    }
+    assert!(push_all(entries).is_ok());
+}
+
+#[test]
+fn conflicting_hash_algo_ids_are_metadata_conflict() {
+    let mut entries = hash_group([0; 32], [7; 32]);
+    entries[1].header.hash_algo_id = Some(0x30);
+    assert!(matches!(
+        push_all(entries),
         Err(SarError::MetadataConflict(_))
     ));
 }

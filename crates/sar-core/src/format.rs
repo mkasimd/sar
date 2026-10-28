@@ -75,6 +75,9 @@ pub struct LocalFileHeader {
     pub delta_base_hash: Option<[u8; 32]>,
     /// File CRC32 (when global PER_FILE_CRC).
     pub file_crc32: Option<u32>,
+    /// Hash Algo ID selecting the Content Hash algorithm (when global
+    /// DEDUPLICATION).  Class G: identical across a fragment group.
+    pub hash_algo_id: Option<u8>,
     /// Content hash (when global DEDUPLICATION).
     pub content_hash: Option<[u8; 32]>,
     /// UID/GID (when global EXT_UID_GID).
@@ -114,6 +117,7 @@ impl LocalFileHeader {
             iv_nonce: None,
             delta_base_hash: None,
             file_crc32: None,
+            hash_algo_id: None,
             content_hash: None,
             uid_gid: None,
             timestamps: None,
@@ -360,7 +364,7 @@ pub fn compute_lfh_size(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<u6
         add(4)?;
     }
     if flags.contains(GlobalFlags::DEDUPLICATION) {
-        add(32)?;
+        add(1 + 32)?;
     }
     if flags.contains(GlobalFlags::EXT_UID_GID) {
         add(4)?;
@@ -491,12 +495,14 @@ pub fn parse_lfh(
         None
     };
 
-    let content_hash = if flags.contains(GlobalFlags::DEDUPLICATION) {
+    let (hash_algo_id, content_hash) = if flags.contains(GlobalFlags::DEDUPLICATION) {
+        let algo_id = hdr_cursor.read_u8()?;
+        validate_lfh_hash_algo_id(algo_id)?;
         let mut h = [0u8; 32];
         h.copy_from_slice(hdr_cursor.read_bytes(32)?);
-        Some(h)
+        (Some(algo_id), Some(h))
     } else {
-        None
+        (None, None)
     };
 
     let uid_gid = if flags.contains(GlobalFlags::EXT_UID_GID) {
@@ -603,6 +609,7 @@ pub fn parse_lfh(
         iv_nonce,
         delta_base_hash,
         file_crc32,
+        hash_algo_id,
         content_hash,
         uid_gid,
         timestamps,
@@ -619,6 +626,19 @@ pub fn parse_lfh(
     }
 
     Ok((lfh, header_size))
+}
+
+/// Validates an LFH `Hash Algo ID` against the SAR hash registry.
+///
+/// SHA-256 (`0x30`), BLAKE3-256 (`0x31`) and SHA3-256 (`0x32`) are assigned.
+/// Every other value is reserved and returns `SAR_ERR_RESERVED_VALUE`.
+pub fn validate_lfh_hash_algo_id(id: u8) -> Result<(), SarError> {
+    match id {
+        sar_crypto::algorithm::HASH_SHA256
+        | sar_crypto::algorithm::HASH_BLAKE3
+        | sar_crypto::algorithm::HASH_SHA3_256 => Ok(()),
+        _ => Err(SarError::ReservedValue("reserved LFH Hash Algo ID")),
+    }
 }
 
 /// Encodes LFH bytes.
@@ -673,6 +693,11 @@ pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, 
         writer.write_u32_le(lfh.file_crc32.unwrap_or(0));
     }
     if flags.contains(GlobalFlags::DEDUPLICATION) {
+        let algo_id = lfh.hash_algo_id.ok_or(SarError::Malformed(
+            "DEDUPLICATION requires an LFH Hash Algo ID",
+        ))?;
+        validate_lfh_hash_algo_id(algo_id)?;
+        writer.write_u8(algo_id);
         writer.write_bytes(&lfh.content_hash.unwrap_or([0u8; 32]));
     }
     if flags.contains(GlobalFlags::EXT_UID_GID) {
@@ -891,7 +916,7 @@ pub fn fec_size_field_offset(flags: GlobalFlags) -> usize {
         off += 4; // File CRC32
     }
     if flags.contains(GlobalFlags::DEDUPLICATION) {
-        off += 32; // Content Hash
+        off += 1 + 32; // Hash Algo ID + Content Hash
     }
     if flags.contains(GlobalFlags::EXT_UID_GID) {
         off += 4; // UID/GID

@@ -48,8 +48,8 @@ pub use format::{
     GLOBAL_HEADER_FLAGS_OFFSET, GlobalHeader, KmsData, LocalFileHeader, compute_lfh_size,
     decode_global_flags, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
     lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
-    require_unpartitioned_processing, validate_global_header_prefix, write_central_dictionary,
-    write_footer, write_global_header, write_lfh,
+    require_unpartitioned_processing, validate_global_header_prefix, validate_lfh_hash_algo_id,
+    write_central_dictionary, write_footer, write_global_header, write_lfh,
 };
 pub use limits::ResourceLimits;
 pub use metadata::{

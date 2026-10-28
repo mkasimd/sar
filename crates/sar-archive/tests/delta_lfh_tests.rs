@@ -160,6 +160,7 @@ fn lfh_field_ordering_has_delta_combined_with_all_flags() {
     lfh.iv_nonce = Some([0u8; 24]);
     lfh.delta_base_hash = Some(hash);
     lfh.file_crc32 = Some(0xDEAD_BEEF);
+    lfh.hash_algo_id = Some(0x31);
     lfh.content_hash = Some([2u8; 32]);
     lfh.uid_gid = Some(0x1000_2000);
     lfh.timestamps = Some([100, 200, 300]);

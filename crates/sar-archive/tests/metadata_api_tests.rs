@@ -440,6 +440,31 @@ fn reader_exposes_content_hash_metadata_when_deduplication_enabled() {
     assert_eq!(entry.metadata.content_hash, Some(hash_bytes));
     let hash_meta = entry.metadata.hash.expect("hash metadata");
     assert_eq!(hash_meta.content_hash, Some(hash_bytes));
+    assert_eq!(entry.metadata.hash_algo_id, Some(0x31), "writer default");
+    assert_eq!(hash_meta.hash_algo_id, Some(0x31));
+}
+
+#[test]
+fn writer_encodes_selected_hash_algo_id_and_rejects_reserved() {
+    let opts = || sar_archive::ArchiveWriterOptions {
+        no_index: true,
+        with_content_hash: true,
+        ..Default::default()
+    };
+    let input = |id| sar_archive::EntryInput {
+        name: "f.bin".into(),
+        payload: b"d".to_vec(),
+        hash_algo_id: Some(id),
+        content_hash: Some([1u8; 32]),
+        ..Default::default()
+    };
+    let entry = write_read_entry(opts(), input(0x30)).expect("sha256");
+    assert_eq!(entry.metadata.hash_algo_id, Some(0x30));
+    let err = write_read_entry(opts(), input(0x2F)).expect_err("reserved");
+    assert!(
+        matches!(err, sar_core::SarError::ReservedValue(_)),
+        "{err:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -707,6 +732,7 @@ fn metadata_structs_use_named_fields() {
     };
     let _ = EntryHashMetadata {
         crc32: None,
+        hash_algo_id: None,
         content_hash: None,
     };
 }

@@ -76,6 +76,7 @@ fn build_with(flags: GlobalFlags, frags: &[Frag]) -> Vec<u8> {
         lfh.fragment_index = Some(f.index);
         lfh.stream_id = f.stream_id;
         lfh.file_crc32 = Some(f.crc);
+        lfh.hash_algo_id = Some(0x31);
         lfh.content_hash = Some(f.hash);
         lfh.uid_gid = Some(f.uid_gid);
         lfh.timestamps = Some(f.timestamps);
