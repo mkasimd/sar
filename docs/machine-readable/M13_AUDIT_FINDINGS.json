@@ -4637,6 +4637,75 @@
       }
     },
     {
+      "id": "M13-CRYPTO-008",
+      "title": "LFH Content Hash has no algorithm selector and final Content Hash verification is not implemented",
+      "finding_type": "implementation_spec_mismatch",
+      "source_milestone": "M13a.7",
+      "areas": [
+        "cryptography",
+        "wire_format",
+        "compatibility",
+        "interoperability"
+      ],
+      "status": "confirmed",
+      "severity": "high",
+      "priority": "high",
+      "confidence": "high",
+      "summary": "The LFH Content Hash was a bare 32-byte field with no defined digest algorithm, and no Content Hash verification exists.",
+      "current_behavior": "Before SAR-M13b-COORD-HASH-001 the LFH carried only a 32-byte Content Hash under DEDUPLICATION. The Content Hash is retained (including the terminal fragment value) but never verified and SAR_ERR_HASH_MISMATCH is never produced.",
+      "expected_behavior": "A one-byte Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256, 0x32 SHA3-256) precedes Content Hash when DEDUPLICATION is set; it is group-invariant (Class G, SAR_ERR_METADATA_CONFLICT on difference); Content Hash remains completion-authoritative (Class C) and is verified over the final logical Entry (including sparse holes), returning SAR_ERR_HASH_MISMATCH on mismatch.",
+      "impact": "Content Hash values are not interoperable or verifiable, and archives written with the previous layout are unsupported under the corrected layout.",
+      "affected_artifacts": [
+        "specification.md",
+        "crates/sar-core/src/format.rs",
+        "crates/sar-archive/src/archive.rs",
+        "crates/sar-archive/src/fragment_group.rs",
+        "crates/sar-archive/src/stream.rs"
+      ],
+      "evidence": [
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-core/src/format.rs",
+          "locator": "parse_lfh/write_lfh DEDUPLICATION field",
+          "description": "Historical (pre-prerequisite) evidence: only a 32-byte Content Hash field was parsed and written; no algorithm identifier existed."
+        }
+      ],
+      "normative_basis": [
+        {
+          "document": "specification.md",
+          "locator": "Sections 6.1.2, 6.1.3, 9.4, 12.1, 19.1.4",
+          "requirement": "Hash Algo ID precedes Content Hash; SHA-256 and BLAKE3-256 are mandatory for LFH Content Hash processing; the digest covers the final logical Entry."
+        }
+      ],
+      "compatibility_impact": "wire_incompatible",
+      "resolution_owner": "M13b.2",
+      "remediation": {
+        "owner": "M13b.2",
+        "requirements": [
+          "Add the LFH Hash Algo ID field, validation and Class G group check (LFH prerequisite).",
+          "Compute and verify the final logical Content Hash with the selected algorithm after complete reconstruction, including sparse holes (WP-6)."
+        ]
+      },
+      "verification": {
+        "test_requirement": "required",
+        "acceptance_criteria": [
+          "LFH layout, reserved IDs and conflicting fragment IDs are covered by tests.",
+          "A Content Hash mismatch yields SAR_ERR_HASH_MISMATCH for unfragmented, fragmented and sparse Entries."
+        ],
+        "owner_milestone": "M13b.2"
+      },
+      "relationships": {
+        "related_findings": [
+          "M13-CRYPTO-007",
+          "M13-TRANSFORM-010"
+        ]
+      },
+      "notes": [
+        "Decision record: SAR-M13b-COORD-HASH-001 (adopted for M13b; controller review deferred to M13b closure).",
+        "Progress (LFH Hash Algo ID prerequisite): specification.md, sar-core LFH parser/writer, metadata, writer defaults (BLAKE3-256), fragment-group Class G validation and tests are implemented. Legacy LFHs without Hash Algo ID are unsupported: the parser uses only the updated canonical layout, with no automatic legacy detection, fallback or reinterpretation, and malformed inputs return the applicable normative errors (typically SAR_ERR_INVALID_LENGTH or SAR_ERR_RESERVED_VALUE). Because legacy and current layouts share the same Global Header version and the first byte of a legacy Content Hash may coincide with an assigned Hash Algo ID, universal rejection of every structurally ambiguous legacy byte sequence is not guaranteed. No repository fixture or test vector encoded DEDUPLICATION. Final Content Hash verification remains WP-6."
+      ]
+    },
+    {
       "id": "M13-TRANSPORT-004",
       "title": "Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules",
       "finding_type": "implementation_spec_mismatch",
@@ -4792,7 +4861,8 @@
       "WP-1a and WP-1b status-registry implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed.",
       "WP-2a Global Header and Global Flags implementation progress is recorded in finding notes; no finding status was changed.",
       "WP-3 canonical fragment LFH implementation progress is recorded in finding notes; the schema has no implementation-progress field, so finding status values are unchanged and no finding with remaining remediation is closed. M13-TRANSFORM-009 and M13-TRANSFORM-010 forward ownership was corrected from M13b.3 to M13b.2 by controller planning correction; partition-related ownership is unchanged.",
-      "SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001: fragmented sparse Entries are normatively supported; runtime support is temporarily incomplete and fails closed with SAR_ERR_UNSUPPORTED. Seven ignored tests and one active replacement test are recorded under M13-TRANSFORM-010; WP-5/M13b.2 owns restoration and the max_loss_tolerant_gap disposition."
+      "SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001: fragmented sparse Entries are normatively supported; runtime support is temporarily incomplete and fails closed with SAR_ERR_UNSUPPORTED. Seven ignored tests and one active replacement test are recorded under M13-TRANSFORM-010; WP-5/M13b.2 owns restoration and the max_loss_tolerant_gap disposition.",
+      "SAR-M13b-COORD-HASH-001: LFH Hash Algo ID prerequisite recorded under M13-CRYPTO-008 (wire-incompatible correction); no existing finding status was changed."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }

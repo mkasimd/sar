@@ -203,7 +203,7 @@ Certain combinations of assigned flags are invalid and MUST be rejected as defin
 | 26 | `HAS_SYMLINKS` | Support for symbolic link entries. |
 | 27 | `EXT_UID_GID` | Headers include 32-bit UID/GID fields (16-bit each). |
 | 28 | `EXT_TIME` | Headers include 3x 64-bit Unix timestamps (m/a/ctime). |
-| 29 | `DEDUPLICATION` | Headers include content-based hashes (e.g., BLAKE3). |
+| 29 | `DEDUPLICATION` | Headers include a Hash Algo ID and a content-based Content Hash (Section 6.1.3). |
 | 30 | `SPARSE_FILES` | Support for sparse filesystem holes. |
 | 31 | `RESERVED` | MUST be zero. |
 
@@ -593,19 +593,20 @@ The sequence of fields is strictly deterministic and the presence of LFH fields 
 | 14    | IV / Nonce        | 24B  | `ENCRYPTED` (Bit 10)         |
 | 15    | Delta Base Hash   | 32B  | `HAS_DELTA` (Bit 9)          |
 | 16    | File CRC32        | 4B   | `PER_FILE_CRC` (Bit 17)      |
-| 17    | Content Hash      | 32B  | `DEDUPLICATION` (Bit 29)     |
-| 18    | UID / GID         | 4B   | `EXT_UID_GID` (Bit 27)       |
-| 19    | Timestamps        | 24B  | `EXT_TIME` (Bit 28)          |
-| 20    | Permissions       | 2B   | `HAS_PERMS` (Bit 25)         |
-| 21    | Name Length       | 2B   | Always                       |
-| 22    | Path Length       | 2B   | `HAS_PATH` (Bit 24)          |
-| 23    | Sparse Map Size   | 4B   | `SPARSE_FILES` (Bit 30)      |
-| 24    | FEC Size          | 3B   | `SELECTIVE_FEC` (Bit 20)     |
-| 25    | Name String       | Var  | Always                       |
-| 26    | Path String       | Var  | `HAS_PATH` (Bit 24)          |
-| 27    | Sparse Map        | Var  | `SPARSE_FILES` (Bit 30)      |
-| 28    | FEC Value         | Var  | `SELECTIVE_FEC` (Bit 20)     |
-| 29    | Payload Data      | Var  | Size = Payload Size          |
+| 17    | Hash Algo ID      | 1B   | `DEDUPLICATION` (Bit 29)     |
+| 18    | Content Hash      | 32B  | `DEDUPLICATION` (Bit 29)     |
+| 19    | UID / GID         | 4B   | `EXT_UID_GID` (Bit 27)       |
+| 20    | Timestamps        | 24B  | `EXT_TIME` (Bit 28)          |
+| 21    | Permissions       | 2B   | `HAS_PERMS` (Bit 25)         |
+| 22    | Name Length       | 2B   | Always                       |
+| 23    | Path Length       | 2B   | `HAS_PATH` (Bit 24)          |
+| 24    | Sparse Map Size   | 4B   | `SPARSE_FILES` (Bit 30)      |
+| 25    | FEC Size          | 3B   | `SELECTIVE_FEC` (Bit 20)     |
+| 26    | Name String       | Var  | Always                       |
+| 27    | Path String       | Var  | `HAS_PATH` (Bit 24)          |
+| 28    | Sparse Map        | Var  | `SPARSE_FILES` (Bit 30)      |
+| 29    | FEC Value         | Var  | `SELECTIVE_FEC` (Bit 20)     |
+| 30    | Payload Data      | Var  | Size = Payload Size          |
 
 `Uncompressed Size` and `Payload Size` use 4-byte unsigned integer encoding when `64BIT_SIZE` is unset and 8-byte unsigned integer encoding when `64BIT_SIZE` is set.
 
@@ -827,6 +828,7 @@ The authoritative classification for fragmented LFHs is:
 | IV / Nonce                   | L/N   | Describes the current encrypted fragment. Ordinary inert-field rules apply when encryption is inactive.              |
 | Delta Base Hash              | G     | MUST be identical across the group when present.                                                                     |
 | File CRC32                   | C     | Neutral on non-terminal fragments; authoritative on `LAST_FRAGMENT`.                                                 |
+| Hash Algo ID                 | G     | MUST be identical across all fragments of the group when present.                                                    |
 | Content Hash                 | C     | Neutral on non-terminal fragments; authoritative on `LAST_FRAGMENT`.                                                 |
 | UID / GID                    | G     | MUST be identical across the group when present.                                                                     |
 | Timestamps                   | G     | MUST be identical across the group when present.                                                                     |
@@ -866,6 +868,12 @@ When `DEDUPLICATION` causes Content Hash to be physically present:
 
 * every fragment for which `LAST_FRAGMENT` is unset MUST encode Content Hash as all zero bytes;
 * the fragment for which `LAST_FRAGMENT` is set MUST encode the authoritative final logical Entry Content Hash value.
+
+When `DEDUPLICATION` is set, a one-byte `Hash Algo ID` is physically present immediately before `Content Hash` in every LFH. It selects the digest algorithm of Content Hash for the final logical Entry, including bytes represented by sparse holes. It uses the registered hash identifiers of Section 9.4: `0x30` (SHA256), `0x31` (BLAKE3-256) and `0x32` (SHA3_256). Each produces a 32-byte digest, and the Content Hash field length remains 32 bytes. `Hash Algo ID` does not select or modify the Central Dictionary `DATA_HASH` algorithm.
+
+Implementations that support LFH Content Hash processing MUST implement SHA256 (`0x30`) and BLAKE3-256 (`0x31`). Support for SHA3_256 (`0x32`) is OPTIONAL. A reserved `Hash Algo ID` MUST return `SAR_ERR_RESERVED_VALUE`; an assigned but unsupported `Hash Algo ID` MUST return `SAR_ERR_UNSUPPORTED`.
+
+`Hash Algo ID` is group-invariant (Class G). All fragments of one logical Entry MUST encode the same value, and a difference MUST return `SAR_ERR_METADATA_CONFLICT`. Neutral (all-zero) Content Hash values on non-terminal fragments are not interpreted under the algorithm identifier.
 
 Neutral integrity values on non-terminal fragments MUST NOT be interpreted as integrity declarations.
 
@@ -2749,7 +2757,7 @@ The `DATA_HASH` block anchors the Central Dictionary to the Data Area. When the 
 
 The algorithm used MUST be set by the least-significant nibble (4 bits) of the 1 byte TLV Type ID:
  * `0x30`: SHA256
- * `0x31`: BLAKE3
+ * `0x31`: BLAKE3-256
  * `0x32`: SHA3_256
 
 Any herein not explicitly noted ID values are RESERVED and MAY be used in future revisions.
@@ -2759,7 +2767,7 @@ The TLV Length field MUST match the digest size of the selected hashing algorith
 Implementations that support DATA_HASH processing MUST implement:
 
 * `SHA256` (`0x30`)
-* `BLAKE3` (`0x31`)
+* `BLAKE3-256` (`0x31`)
 
 Support for `SHA3_256` (`0x32`) is OPTIONAL.
 
@@ -3168,7 +3176,7 @@ The following algorithms and KMS modes MUST be supported for the applicable role
 | CDC            | FASTCDC (`0x02`)                                       |
 | Delta          | STORE_PATCH (`0x00`), VCDIFF (`0x01`)                  |
 | Signatures     | Ed25519 (raw) (`0x24`), RSA-PSS (ASN.1-DER) (`0x23`)   |
-| Hashing        | SHA256 (`0x30`), BLAKE3 (`0x31`)                       |
+| Hashing        | SHA256 (`0x30`), BLAKE3-256 (`0x31`)                   |
 
 Standard PBKDF2 and ARGON2 support MUST satisfy the mandatory interoperability requirements defined for those KMS modes in Section 5.3.4.
 
@@ -5013,7 +5021,7 @@ Partition-capable conforming implementations MUST support complete Partition Set
 
 #### 19.1.4 Partition Content Commitment and Hash Linkage
 
-Manifest Version 1 uses the existing SAR DATA_HASH algorithm identifier namespace. SHA256 (`0x30`), BLAKE3 (`0x31`), and SHA3_256 (`0x32`) produce the required 32-byte digest size. A partition-capable implementation MUST support SHA256 for Partition Manifest hashing.
+Manifest Version 1 uses the existing SAR DATA_HASH algorithm identifier namespace. SHA256 (`0x30`), BLAKE3-256 (`0x31`), and SHA3_256 (`0x32`) produce the required 32-byte digest size. A partition-capable implementation MUST support SHA256 for Partition Manifest hashing.
 
 Every Manifest in one Partition Set MUST use the same Hash Algorithm ID.
 
@@ -5366,7 +5374,7 @@ In distributed environments, such as Edge-to-Cloud streaming, the Catalog MAY be
 
 **Security Considerations**: The use of external provider URIs introduces potential security risks, including unauthorized data access, data exfiltration, or interaction with untrusted endpoints. Implementations SHOULD validate and sanitize all URIs before use. Implementations MAY restrict acceptable URI schemes, enforce allowlists of trusted domains, or apply other policy controls in an implementation-defined manner. Implementations SHOULD provide mechanisms to disable external provider resolution entirely or require explicit user consent before accessing external resources.
 
-Implementations MUST NOT emit `CDC_EXT_PROVIDER` using TLV Type ID `0x31`, because `0x31` is assigned to `DATA_HASH/BLAKE3` by Section 9.4.
+Implementations MUST NOT emit `CDC_EXT_PROVIDER` using TLV Type ID `0x31`, because `0x31` is assigned to `DATA_HASH/BLAKE3-256` by Section 9.4.
 
 ### 21.3 Hybrid Deduplication Performance
 

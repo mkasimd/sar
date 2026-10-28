@@ -45,6 +45,7 @@ fn parses_lfh_with_conditional_fields() {
     lfh.fragment_index = Some(0);
     lfh.delta_base_hash = Some([1u8; 32]);
     lfh.file_crc32 = Some(0xAABBCCDD);
+    lfh.hash_algo_id = Some(0x31);
     lfh.content_hash = Some([2u8; 32]);
     lfh.uid_gid = Some(0x1234_5678);
     lfh.timestamps = Some([1, 2, 3]);
@@ -299,4 +300,118 @@ fn obsolete_descriptor_layout_is_rejected() {
     obsolete[..4].copy_from_slice(&size.to_le_bytes());
     let err = parse_lfh(&obsolete, &FRAG_FLAGS, &unlimited_limits()).expect_err("must fail");
     assert!(matches!(err, SarError::InvalidLength(_)), "got {err:?}");
+}
+
+// --- LFH Hash Algo ID (DEDUPLICATION) ---------------------------------------
+
+fn dedup_lfh(algo: Option<u8>) -> LocalFileHeader {
+    let mut lfh = LocalFileHeader::minimal_store(b"h".to_vec(), 1);
+    lfh.hash_algo_id = algo;
+    lfh.content_hash = Some([0xA5; 32]);
+    lfh
+}
+
+#[test]
+fn hash_algo_id_precedes_content_hash_and_adds_one_byte() {
+    let plain = GlobalFlags::NO_INDEX;
+    let dedup = GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION;
+    let lfh = dedup_lfh(Some(0x31));
+    let bytes = write_lfh(&dedup, &lfh).expect("write");
+    let base = write_lfh(&plain, &dedup_lfh(None)).expect("write plain");
+    assert_eq!(bytes.len(), base.len() + 1 + 32);
+    assert_eq!(
+        compute_lfh_size(&dedup, &lfh).expect("size"),
+        u64::try_from(bytes.len()).expect("len")
+    );
+    // Hash Algo ID is immediately followed by the 32-byte Content Hash.
+    let id_pos = bytes.iter().position(|b| *b == 0x31).expect("algo id");
+    assert_eq!(&bytes[id_pos + 1..id_pos + 33], &[0xA5; 32]);
+    let (parsed, consumed) = parse_lfh(&bytes, &dedup, &unlimited_limits()).expect("parse");
+    assert_eq!(consumed, bytes.len());
+    assert_eq!(parsed.hash_algo_id, Some(0x31));
+    assert_eq!(parsed.content_hash, Some([0xA5; 32]));
+}
+
+#[test]
+fn hash_algo_id_absent_without_deduplication() {
+    let flags = GlobalFlags::NO_INDEX;
+    let bytes = write_lfh(&flags, &dedup_lfh(Some(0x31))).expect("write");
+    let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse");
+    assert_eq!(parsed.hash_algo_id, None);
+    assert_eq!(parsed.content_hash, None);
+}
+
+#[test]
+fn assigned_hash_algo_ids_round_trip() {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION;
+    for id in [0x30u8, 0x31, 0x32] {
+        let bytes = write_lfh(&flags, &dedup_lfh(Some(id))).expect("write");
+        let (parsed, _) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse");
+        assert_eq!(parsed.hash_algo_id, Some(id));
+    }
+}
+
+#[test]
+fn reserved_hash_algo_ids_are_rejected_on_parse_and_write() {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION;
+    let good = write_lfh(&flags, &dedup_lfh(Some(0x31))).expect("write");
+    let id_pos = good.iter().position(|b| *b == 0x31).expect("algo id");
+    for id in [0x00u8, 0x2F, 0x33, 0x3F, 0x40, 0xFF] {
+        let mut bytes = good.clone();
+        bytes[id_pos] = id;
+        let err = parse_lfh(&bytes, &flags, &unlimited_limits()).expect_err("reserved");
+        assert!(
+            matches!(err, SarError::ReservedValue(_)),
+            "{id:#x}: {err:?}"
+        );
+        let err = write_lfh(&flags, &dedup_lfh(Some(id))).expect_err("reserved write");
+        assert!(
+            matches!(err, SarError::ReservedValue(_)),
+            "{id:#x}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn writer_requires_hash_algo_id_under_deduplication() {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION;
+    let err = write_lfh(&flags, &dedup_lfh(None)).expect_err("missing id");
+    assert!(matches!(err, SarError::Malformed(_)), "got {err:?}");
+}
+
+#[test]
+fn legacy_layout_with_matching_header_size_is_not_accepted() {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION;
+    let current = write_lfh(&flags, &dedup_lfh(Some(0x31))).expect("write");
+    let id_pos = current.iter().position(|b| *b == 0x31).expect("algo id");
+    let mut old = current.clone();
+    old.remove(id_pos);
+    let size = u32::try_from(old.len()).expect("size");
+    old[..4].copy_from_slice(&size.to_le_bytes());
+    assert!(parse_lfh(&old, &flags, &unlimited_limits()).is_err());
+}
+
+#[test]
+fn size_64bit_with_deduplication_round_trips() {
+    let flags = GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION | GlobalFlags::SIZE_64BIT;
+    let mut lfh = dedup_lfh(Some(0x32));
+    lfh.uncompressed_size = 0x1_0000_0001;
+    lfh.payload_size = 0x2_0000_0002;
+    let bytes = write_lfh(&flags, &lfh).expect("write");
+    assert_eq!(
+        compute_lfh_size(&flags, &lfh).expect("size"),
+        u64::try_from(bytes.len()).expect("len")
+    );
+    let narrow = write_lfh(
+        &(GlobalFlags::NO_INDEX | GlobalFlags::DEDUPLICATION),
+        &dedup_lfh(Some(0x32)),
+    )
+    .expect("narrow");
+    assert_eq!(bytes.len(), narrow.len() + 8);
+    let (parsed, consumed) = parse_lfh(&bytes, &flags, &unlimited_limits()).expect("parse");
+    assert_eq!(consumed, bytes.len());
+    assert_eq!(parsed.uncompressed_size, 0x1_0000_0001);
+    assert_eq!(parsed.payload_size, 0x2_0000_0002);
+    assert_eq!(parsed.hash_algo_id, Some(0x32));
+    assert_eq!(parsed.content_hash, Some([0xA5; 32]));
 }

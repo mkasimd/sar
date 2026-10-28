@@ -284,6 +284,10 @@ pub struct EntryHashMetadata {
     /// the field is non-zero.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub crc32: Option<u32>,
+    /// LFH Hash Algo ID selecting the Content Hash algorithm.  `Some` when the
+    /// `DEDUPLICATION` global flag is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash_algo_id: Option<u8>,
     /// Content hash (32 bytes).  `Some` when the `DEDUPLICATION` global flag
     /// is set.
     #[serde(

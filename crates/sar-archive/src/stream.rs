@@ -728,6 +728,7 @@ impl StreamArchiveParser {
         let hash: Option<sar_core::metadata::EntryHashMetadata> = if has_crc || has_hash {
             Some(sar_core::metadata::EntryHashMetadata {
                 crc32: if has_crc { lfh.file_crc32 } else { None },
+                hash_algo_id: if has_hash { lfh.hash_algo_id } else { None },
                 content_hash: if has_hash { lfh.content_hash } else { None },
             })
         } else {
@@ -761,6 +762,7 @@ impl StreamArchiveParser {
             is_loss_tolerant: lfh.entry_mode.is_loss_tolerant(),
             sparse_extents,
             file_crc32: lfh.file_crc32,
+            hash_algo_id: lfh.hash_algo_id,
             content_hash: lfh.content_hash,
             cdc_algo_id: cdc_algo_id_opt,
             patch_algo_id: if is_has_delta {

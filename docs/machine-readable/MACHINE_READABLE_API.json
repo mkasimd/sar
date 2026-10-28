@@ -1052,6 +1052,28 @@
             ]
           },
           {
+            "name": "validate_lfh_hash_algo_id",
+            "description": "Validate an LFH Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256, 0x32 SHA3-256). Reserved values return SAR_ERR_RESERVED_VALUE.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<(), SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "ready",
+                "notes": "Simple numeric validation helper."
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub fn validate_lfh_hash_algo_id(id: u8) -> Result<(), SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
             "name": "validate_lfh_fec_algo_id",
             "description": "Validate an LFH FEC algorithm ID.",
             "metadata": {
@@ -2575,7 +2597,7 @@
           },
           {
             "name": "EntryHashMetadata",
-            "description": "Content hash algorithm ID and hash bytes from LFH DEDUPLICATION field.",
+            "description": "Optional File CRC32, LFH Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256, 0x32 SHA3-256) and 32-byte Content Hash decoded from the LFH. hash_algo_id and content_hash are Some only when DEDUPLICATION is set.",
             "metadata": {
               "since_milestone": "11a",
               "stability": "stable",
@@ -2590,7 +2612,7 @@
               "path": "src/metadata.rs"
             },
             "kind": "struct",
-            "signature": "pub struct EntryHashMetadata { pub algo_id: u8, pub hash: [u8; 32] }"
+            "signature": "pub struct EntryHashMetadata { pub crc32: Option<u32>, pub hash_algo_id: Option<u8>, pub content_hash: Option<[u8; 32]> }"
           },
           {
             "name": "EntryMode",
@@ -4331,7 +4353,7 @@
               "path": "src/archive.rs"
             },
             "kind": "struct",
-            "signature": "pub struct EntryInput { pub name: String, pub payload: Vec<u8>, pub kind: Option<EntryKind>, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub stream_id: Option<u16>, pub sequence_no: Option<u16>, pub file_crc32: Option<u32>, pub content_hash: Option<EntryHashMetadata> }"
+            "signature": "pub struct EntryInput { pub name: String, pub payload: Vec<u8>, pub kind: Option<EntryKind>, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub stream_id: Option<u16>, pub sequence_no: Option<u16>, pub file_crc32: Option<u32>, pub hash_algo_id: Option<u8>, pub content_hash: Option<[u8; 32]> }"
           },
           {
             "name": "EntryMetadata",
@@ -4350,7 +4372,7 @@
               "path": "src/archive.rs"
             },
             "kind": "struct",
-            "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8>, pub kind: EntryKind, pub path: Option<String>, pub symlink_target: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub compression_presence: FieldPresence<EntryCompressionMetadata>, pub encryption_presence: FieldPresence<EntryEncryptionMetadata>, pub fec_presence: FieldPresence<EntryFecMetadata>, pub fragment_presence: FieldPresence<EntryFragmentMetadata>, pub cdc: Option<EntryCdcMetadata>, pub delta: Option<EntryDeltaMetadata>, pub sparse: Option<EntrySparseMetadata>, pub content_hash_meta: Option<EntryHashMetadata>, pub raw_entry_mode: u16, pub path_presence: FieldPresence<String>, pub permissions_presence: FieldPresence<EntryPermissionMetadata>, pub owner_presence: FieldPresence<EntryOwnerMetadata>, pub timestamps_presence: FieldPresence<EntryTimestampMetadata> }"
+            "signature": "pub struct EntryMetadata { pub name: String, pub flags: EntryMode, pub compression: CompressionAlgorithm, pub sparse_extents: Vec<SparseExtent>, pub file_crc32: Option<u32>, pub hash_algo_id: Option<u8>, pub content_hash: Option<[u8; 32]>, pub cdc_algo_id: Option<u8>, pub kind: EntryKind, pub path: Option<String>, pub symlink_target: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<EntryTimestampMetadata>, pub is_hidden: bool, pub compression_presence: FieldPresence<EntryCompressionMetadata>, pub encryption_presence: FieldPresence<EntryEncryptionMetadata>, pub fec_presence: FieldPresence<EntryFecMetadata>, pub fragment_presence: FieldPresence<EntryFragmentMetadata>, pub cdc: Option<EntryCdcMetadata>, pub delta: Option<EntryDeltaMetadata>, pub sparse: Option<EntrySparseMetadata>, pub content_hash_meta: Option<EntryHashMetadata>, pub raw_entry_mode: u16, pub path_presence: FieldPresence<String>, pub permissions_presence: FieldPresence<EntryPermissionMetadata>, pub owner_presence: FieldPresence<EntryOwnerMetadata>, pub timestamps_presence: FieldPresence<EntryTimestampMetadata> }"
           },
           {
             "name": "LogicalFile",

@@ -131,6 +131,7 @@ fn content_hash_preserved_in_entry_metadata() {
     lfh.uncompressed_size = 3;
     lfh.sparse_map = sparse_map_bytes;
     let expected_hash: [u8; 32] = [0xABu8; 32];
+    lfh.hash_algo_id = Some(0x31);
     lfh.content_hash = Some(expected_hash);
     archive.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
     archive.extend_from_slice(b"ABC");

@@ -195,6 +195,7 @@ Registry status: `in_progress`
 | `M13-BOUNDARY-004` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.2` | Compliance Profile implementation and naming do not reflect the finalized profile model |
 | `M13-BOUNDARY-005` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.1` | Test vectors, fuzz seeds, conformance lists, and API inventory encode the superseded contract |
 | `M13-CRYPTO-007` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | KMS Master Secret hierarchy, standard Entry key derivation, and full Global Header AAD are not implemented |
+| `M13-CRYPTO-008` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | LFH Content Hash has no algorithm selector and final Content Hash verification is not implemented |
 | `M13-TRANSPORT-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules |
 | `M13-FFI-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | SarStatus registry does not implement the finalized Section 10 status model |
 
@@ -2471,6 +2472,58 @@ Requirement: `required`
 #### Relationships
 
 * **Related findings:** `M13-SPEC-003`, `M13-BOUNDARY-004`, `M13-CRYPTO-001`
+
+### M13-CRYPTO-008: LFH Content Hash has no algorithm selector and final Content Hash verification is not implemented
+
+| Field | Value |
+| --- | --- |
+| Type | implementation_spec_mismatch |
+| Source milestone | M13a.7 |
+| Status | confirmed |
+| Severity | high |
+| Priority | high |
+| Owner | M13b.2 |
+| Compatibility | wire_incompatible |
+
+#### Summary
+
+The LFH Content Hash was a bare 32-byte field with no defined digest algorithm, and no Content Hash verification exists.
+
+#### Current Behavior
+
+Before SAR-M13b-COORD-HASH-001 the LFH carried only a 32-byte Content Hash under DEDUPLICATION. The Content Hash is retained (including the terminal fragment value) but never verified and SAR_ERR_HASH_MISMATCH is never produced.
+
+#### Expected Behavior
+
+A one-byte Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256, 0x32 SHA3-256) precedes Content Hash when DEDUPLICATION is set; it is group-invariant (Class G, SAR_ERR_METADATA_CONFLICT on difference); Content Hash remains completion-authoritative (Class C) and is verified over the final logical Entry (including sparse holes), returning SAR_ERR_HASH_MISMATCH on mismatch.
+
+#### Impact
+
+Content Hash values are not interoperable or verifiable, and archives written with the previous layout are unsupported under the corrected layout.
+
+#### Evidence
+
+* `crates/sar-core/src/format.rs` (parse_lfh/write_lfh DEDUPLICATION field): Historical (pre-prerequisite) evidence: only a 32-byte Content Hash field was parsed and written; no algorithm identifier existed.
+
+#### Normative Basis
+
+* `specification.md` (Sections 6.1.2, 6.1.3, 9.4, 12.1, 19.1.4): Hash Algo ID precedes Content Hash; SHA-256 and BLAKE3-256 are mandatory for LFH Content Hash processing; the digest covers the final logical Entry.
+
+#### Remediation
+
+* Add the LFH Hash Algo ID field, validation and Class G group check (LFH prerequisite).
+* Compute and verify the final logical Content Hash with the selected algorithm after complete reconstruction, including sparse holes (WP-6).
+
+#### Verification
+
+Requirement: `required`
+
+* LFH layout, reserved IDs and conflicting fragment IDs are covered by tests.
+* A Content Hash mismatch yields SAR_ERR_HASH_MISMATCH for unfragmented, fragmented and sparse Entries.
+
+#### Relationships
+
+* **Related findings:** `M13-CRYPTO-007`, `M13-TRANSFORM-010`
 
 ### M13-TRANSPORT-004: Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules
 

@@ -56,6 +56,7 @@ fn make_frag_lfh(
         iv_nonce: None,
         delta_base_hash: None,
         file_crc32: None,
+        hash_algo_id: None,
         content_hash: None,
         uid_gid: None,
         timestamps: None,
