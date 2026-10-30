@@ -46,6 +46,7 @@ completeness is claimed.
 | `transform_pipeline_fuzz` | Transform read/decode with any declared compression algorithm ID |
 | `delta_bsdiff_apply` | Bounded `sar_delta::apply_bsdiff` patch execution (WP-7) |
 | `delta_vcdiff_apply` | Bounded `sar_delta::apply_vcdiff` patch execution (WP-7) |
+| `archive_repair` | `inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive` with real XOR/RS parity, erasure ranges, tampered plans and limits (WP-7B) |
 
 ### Stream transcript/stateful targets
 
@@ -594,8 +595,43 @@ Seeds live in `fuzz/seeds/delta_apply/` and are generated deterministically by
 `python tools/generate_delta_fuzz_seeds.py` (`--check` verifies them). They
 include valid and malformed patches (truncation, bad magic, size mismatch,
 oversized declared output, negative seeks). Archive-level delta reconstruction
-is covered by deterministic tests, not by these targets. The archive repair
-fuzz target belongs to WP-7B.
+is covered by deterministic tests, not by these targets.
+
+### `archive_repair`
+
+M13b WP-7B archive-level repair target. Input byte 0 selects the mode:
+
+* Structured (`0`): codec (XOR or Reed-Solomon), geometry, protected length,
+  RECOVERY TLV selector, working-set limit, plan tamper selector and up to 8
+  erasure ranges. The target builds a real archive with genuine parity,
+  corrupts the requested ranges, and asserts that any successful repair is
+  byte-identical to the pristine archive.
+* Raw (`1`): header (tamper, selector, limit, range count, `(offset, length)`
+  pairs) followed by arbitrary archive bytes, so malformed archives and
+  recovery metadata reach inspection, planning and repair.
+
+Both modes call `inspect_recovery_metadata`, `plan_archive_repair` and
+`repair_archive`, including a hand-built and deliberately tampered
+`RecoveryPlan`, which must be rejected. A repair that succeeds under a limit
+must also succeed under a larger one. Inputs are capped at 64 KiB and the
+working-set limit at 64 MiB. The layout is documented at the top of
+`fuzz/fuzz_targets/archive_repair.rs`.
+
+Seeds live in `fuzz/seeds/archive_repair/` (22 files: 12 structured, 10 raw).
+They are generated deterministically by
+`SAR_WRITE_FUZZ_SEEDS=1 cargo test -p sar-archive --test archive_repair_fuzz_seeds`;
+the same test without the variable verifies them. They include valid XOR and
+RS repairs, overlapping ranges, tampered plans, tight limits, overflowing,
+out-of-range, unaligned and pre-range erasures, truncated archives and
+corrupted footers.
+
+Three evidence levels are distinguished and must not be conflated:
+
+* Corpus replay (`-runs=0`): executes the committed seeds once; deterministic.
+* Short bounded fuzz run (`-max_total_time=30 -max_len=4096`): a local smoke
+  check for crashes, not a coverage claim.
+* Sustained fuzzing: long-running, corpus-accumulating campaigns; not
+  performed as part of WP-7B.
 
 ### `crypto_auth_tls_exporter_negative`
 

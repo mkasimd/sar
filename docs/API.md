@@ -139,7 +139,7 @@ Compression algorithm registry plus bounded stream encode/decode helpers.
 | `CompressionAlgorithm` | `enum` | `pub enum CompressionAlgorithm { Store, Deflate, Zstd }` | Compression registry enum. |
 | `CompressionError` | `enum` | `pub enum CompressionError { ... }` | Compression/decompression error type. |
 | `CompressionOptions` | `struct` | `pub struct CompressionOptions { pub level: Option<u8> }` | Compression encode settings. |
-| `DecompressionOptions` | `struct` | `pub struct DecompressionOptions { pub max_output_size: u64 }` | Decode-time output bound for decompression. |
+| `DecompressionOptions` | `struct` | `pub struct DecompressionOptions { pub max_output_size: u64 }` | Decode-time decoded-output bound for decompression. max_output_size limits bytes delivered to the output writer only; it does not bound decoder-internal memory (DEFLATE history window, ZSTD context/window/tables) or total process memory. |
 
 #### Public constants
 
@@ -148,6 +148,7 @@ Compression algorithm registry plus bounded stream encode/decode helpers.
 | `COMP_ALGO_DEFLATE` | `pub const COMP_ALGO_DEFLATE: u8 = 0x01` | DEFLATE registry identifier. |
 | `COMP_ALGO_STORE` | `pub const COMP_ALGO_STORE: u8 = 0x00` | STORE registry identifier. |
 | `COMP_ALGO_ZSTD` | `pub const COMP_ALGO_ZSTD: u8 = 0x02` | ZSTD registry identifier. |
+| `ZSTD_MAX_WINDOW_LOG` | `pub const ZSTD_MAX_WINDOW_LOG: u32 = 27` | Largest zstd frame window (log2, 27 = 128 MiB) accepted by the decoder; frames declaring a larger window fail with CompressionError::DecompressionFailed. |
 
 ### `sar-core`
 

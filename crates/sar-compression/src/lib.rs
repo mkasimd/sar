@@ -19,6 +19,14 @@ pub const COMP_ALGO_DEFLATE: u8 = 0x01;
 /// ZSTD algorithm identifier.
 pub const COMP_ALGO_ZSTD: u8 = 0x02;
 
+/// Largest zstd frame window (as a power of two, 128 MiB) the decoder accepts.
+///
+/// This equals the libzstd streaming default and is pinned explicitly so the
+/// decoder-internal window allocation stays bounded independently of
+/// [`DecompressionOptions::max_output_size`]. Frames that declare a larger window
+/// fail with [`CompressionError::DecompressionFailed`].
+pub const ZSTD_MAX_WINDOW_LOG: u32 = 27;
+
 /// Compression algorithm mapping for SAR registry values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionAlgorithm {
@@ -71,9 +79,27 @@ pub struct CompressionOptions {
 }
 
 /// Decompression options for decoding.
+///
+/// # Memory
+///
+/// `max_output_size` bounds only the number of decoded bytes delivered to the
+/// output writer. It does **not** bound total process memory. SAR itself uses a
+/// fixed 8 KiB copy buffer, but the underlying decoders keep internal state that is
+/// outside this limit:
+///
+/// * DEFLATE (`flate2` with the pure-Rust `miniz_oxide` backend) keeps a 32 KiB
+///   history window plus fixed-size Huffman tables and input buffering.
+/// * ZSTD (`libzstd` through `zstd`) allocates a decoder context, the frame window
+///   (up to `1 << ZSTD_MAX_WINDOW_LOG` = 128 MiB; frames declaring a larger window
+///   are rejected), entropy tables and a block buffer. Window size is chosen by
+///   the compressed frame, not by `max_output_size`.
+///
+/// These internal allocations are not measured or accounted by SAR; callers that
+/// need a hard process memory bound must additionally apply OS or allocator limits.
 #[derive(Debug, Clone, Copy)]
 pub struct DecompressionOptions {
-    /// Hard cap for decoded bytes to prevent decompression bombs.
+    /// Hard cap for decoded bytes delivered to the output (decompression-bomb
+    /// guard). Does not bound decoder-internal memory.
     pub max_output_size: u64,
 }
 
@@ -153,6 +179,9 @@ pub fn decode_stream(
             let source_failed = Cell::new(false);
             let mut source = SourceTracker::new(input, &source_failed);
             let mut decoder = zstd::stream::Decoder::new(&mut source)
+                .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
+            decoder
+                .window_log_max(ZSTD_MAX_WINDOW_LOG)
                 .map_err(|e| CompressionError::DecompressionFailed(e.to_string()))?;
             copy_bounded(&mut decoder, output, options.max_output_size, |e| {
                 decoder_read_error(&source_failed, e)

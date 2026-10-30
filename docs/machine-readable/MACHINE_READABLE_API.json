@@ -628,7 +628,7 @@
           },
           {
             "name": "DecompressionOptions",
-            "description": "Decode-time output bound for decompression.",
+            "description": "Decode-time decoded-output bound for decompression. max_output_size limits bytes delivered to the output writer only; it does not bound decoder-internal memory (DEFLATE history window, ZSTD context/window/tables) or total process memory.",
             "metadata": {
               "since_milestone": "4",
               "stability": "stable",
@@ -703,6 +703,25 @@
               "path": "src/lib.rs"
             },
             "signature": "pub const COMP_ALGO_ZSTD: u8 = 0x02"
+          },
+          {
+            "name": "ZSTD_MAX_WINDOW_LOG",
+            "description": "Largest zstd frame window (log2, 27 = 128 MiB) accepted by the decoder; frames declaring a larger window fail with CompressionError::DecompressionFailed.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "u32",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "ready",
+                "notes": "Simple numeric constant."
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "signature": "pub const ZSTD_MAX_WINDOW_LOG: u32 = 27"
           }
         ]
       },
@@ -3991,7 +4010,7 @@
           {
             "name": "plan_archive_repair",
             "signature": "pub fn plan_archive_repair(archive_bytes: &[u8], erasures: ErasureInput, limits: &ResourceLimits) -> Result<RecoveryPlan, SarError>",
-            "description": "Validates an erasure input and builds an executable repair plan. Returns SarError::RecoveryUnavailable when the archive lacks HAS_GLOBAL_EC, has no RECOVERY TLV, or erasures lie outside the protected range or are not block-aligned.",
+            "description": "Validates an erasure input and builds an executable repair plan from a single layout parse. Returns SarError::RecoveryUnavailable when the archive lacks HAS_GLOBAL_EC, has no RECOVERY TLV, or erasures lie outside the protected range or are not block-aligned. Erasure ranges are validated with checked arithmetic; zero block sizes are rejected.",
             "use_for": "Building a validated RecoveryPlan before calling repair_archive.",
             "notes": [
               "Implementation policy: requires explicit, block-aligned byte erasures. The block-alignment constraint is an implementation restriction due to an open spec question about arbitrary sub-block erasure handling (see docs/SPEC_QUESTIONS.md).",
@@ -4016,15 +4035,18 @@
           {
             "name": "repair_archive",
             "signature": "pub fn repair_archive(archive_bytes: &[u8], plan: &RecoveryPlan, limits: &ResourceLimits) -> Result<(Vec<u8>, RepairReport), SarError>",
-            "description": "Executes a repair plan and returns the repaired archive bytes and a RepairReport. Applies XOR or RS erasure recovery on the protected range. The caller is responsible for writing returned bytes to a temp file and renaming only after structural verification.",
+            "description": "Executes a repair plan and returns the repaired archive bytes and a RepairReport. Applies XOR or RS erasure recovery on the protected range. The plan is treated as untrusted and fully re-validated against the archive (protected range, algorithm IDs, TLV length, erasure ranges) with checked arithmetic. max_repair_working_set is enforced before each allocation stage against a conservative peak-live-memory model (input archive, selected TLV, merged ranges, erasure index, codec padded output plus estimated scratch, recovered buffer plus repaired output). Codec scratch (including Reed-Solomon matrix memory derived from k and parity count) and the Central Dictionary parse stage are conservative estimates, not exact measurements; the shared Central Dictionary parser may allocate more than the modelled 2 x cd_len. The caller is responsible for writing returned bytes to a temp file and renaming only after structural verification.",
             "use_for": "Executing an archive-level repair after building a RecoveryPlan from plan_archive_repair.",
             "notes": [
               "Implementation policy: in-memory API returning full repaired archive as Vec<u8>. Callers must provide appropriate ResourceLimits for untrusted input; the recovery APIs enforce those limits before allocating repair working sets.",
-              "Implementation policy: write returned bytes to a temp file and rename to final destination only after structural verification."
+              "Implementation policy: write returned bytes to a temp file and rename to final destination only after structural verification.",
+              "Working-set accounting is a staged conservative model, not exact measurement of library internals; Central Dictionary parser allocations may exceed the modelled amount (recorded for later hardening); it does not cover the plan, caller copies, or allocator overhead. Codec recovery CPU cost is O(groups x erasures) and is not bounded by max_repair_working_set."
             ],
             "errors": [
-              "SarError::EcFailed — erasures exceed parity capacity",
-              "SarError::RecoveryUnavailable — repair not supported or TLV not found"
+              "SarError::EcFailed — erasures exceed parity capacity (checked before the erasure index is allocated)",
+              "SarError::RecoveryUnavailable — repair not supported, TLV not found, erasure outside protected range, or unaligned erasure",
+              "SarError::LimitExceeded — max_repair_working_set would be exceeded at any allocation stage",
+              "SarError::Overflow / Bounds / InvalidLength / Malformed — plan overflows or is inconsistent with the archive or RECOVERY TLV"
             ],
             "metadata": {
               "module": "recovery",
@@ -9253,11 +9275,11 @@
         "test": "pipeline_memory_tests::sparse_expansion_bomb_reject and sparse_expansion_bomb_bounded_success verify reject and bounded-success paths"
       },
       "compression_expansion": {
-        "protection": "sar-compression enforces a caller-provided max_output_size parameter. Decompression output is bounded by max_decoded_entry_size."
+        "protection": "sar-compression enforces a caller-provided max_output_size parameter on decoded output bytes. It does not bound decoder-internal memory: DEFLATE keeps a 32 KiB history window and ZSTD allocates a context and a frame window up to 128 MiB (ZSTD_MAX_WINDOW_LOG = 27; larger windows are rejected). Decompression output is bounded by max_decoded_entry_size."
       },
       "fec_recovery_working_set": {
         "fec_bound": "max_fec_value_bytes bounds FEC parity allocations.",
-        "repair_bound": "max_repair_working_set bounds archive-level repair buffer.",
+        "repair_bound": "max_repair_working_set bounds the modelled archive-level repair working set (staged, conservative; CD parse and codec scratch are estimates).",
         "fec_internal_ceiling": "sar-fec caps XOR and Reed-Solomon parity allocations at 256 MiB internal ceiling."
       },
       "cli_resource_safety": {

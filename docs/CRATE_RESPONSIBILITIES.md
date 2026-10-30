@@ -164,7 +164,7 @@ Does not own:
 
 Implementation policy notes for supporting crates:
 
-* **`sar-compression`**: The `max_output_size` decompression bound is implementation policy (caller-configured). The SAR wire format defines the `Uncompressed Size` field; enforcement of decompression bomb limits is implementation behavior.
+* **`sar-compression`**: The `max_output_size` decompression bound is implementation policy (caller-configured). The SAR wire format defines the `Uncompressed Size` field; enforcement of decompression bomb limits is implementation behavior. `max_output_size` bounds decoded output bytes only; it does not bound decoder-internal memory (DEFLATE history window; ZSTD context and frame window, capped at `ZSTD_MAX_WINDOW_LOG` = 27, i.e. 128 MiB) or total process memory.
 * **`sar-fec`**: The internal 256 MiB ceiling on XOR and Reed-Solomon parity allocations is implementation policy. The SAR wire format does not mandate specific parity size limits.
 * **`sar-fec`**: The `max_fec_value_bytes` and `max_repair_working_set` limits are implementation-defined resource controls. The wire format defines the FEC TLV structure; enforcement limits are this implementation's policy.
 * **`sar-loss-tolerant`**: The `allow_lossy` flag never bypasses `ResourceLimits` or AEAD authentication failures. Suppressing AEAD errors via loss-tolerant semantics is explicitly prohibited by implementation policy and is not optional. The SAR spec does not permit loss-tolerant semantics to override authentication.

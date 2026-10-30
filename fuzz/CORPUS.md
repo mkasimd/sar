@@ -313,6 +313,11 @@ M13b WP-7 adds patch-execution seeds under `fuzz/seeds/delta_apply/`
 `python tools/generate_delta_fuzz_seeds.py` (`--check` verifies) and consumed by
 `delta_bsdiff_apply` and `delta_vcdiff_apply`.
 
+M13b WP-7B adds archive-repair seeds under `fuzz/seeds/archive_repair/`
+(22 files; first byte selects structured or raw mode), generated and verified by
+`crates/sar-archive/tests/archive_repair_fuzz_seeds.rs` and consumed by
+`archive_repair`.
+
 ---
 
 ### `metadata_edge_cases`

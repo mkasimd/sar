@@ -635,6 +635,23 @@ This milestone completion does not claim exhaustive fuzzing, complete malicious
 corpus coverage, production hardening completion, independent security audit
 completion, certification, compliance, or stable API/ABI guarantees.
 
+## M13b WP-7B: archive repair target
+
+Target: `archive_repair` (seeds in `fuzz/seeds/archive_repair/`, 22 files).
+
+Evidence recorded locally (nightly `cargo fuzz`, Linux):
+
+* Compiled: `cargo +nightly fuzz build archive_repair`.
+* Corpus replay: `-runs=0` over all 22 seeds, no crash. Seeds reach success
+  (valid XOR/RS repairs, no-erasure copy) and the intended rejections
+  (`LimitExceeded`, `EcFailed`, `RecoveryUnavailable`, `Bounds`).
+* Short bounded run: `-max_total_time=30 -max_len=4096 -rss_limit_mb=512`,
+  130,132 executions, no crash, OOM or timeout.
+
+Corpus replay, a 30-second bounded run and sustained fuzzing are different
+evidence levels. This is not a sustained campaign and claims no exhaustive
+coverage. The generated libFuzzer corpus is not committed.
+
 ## M13b WP-7: delta patch application targets
 
 Targets: `delta_bsdiff_apply`, `delta_vcdiff_apply` (seeds in
