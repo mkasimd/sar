@@ -85,6 +85,28 @@ pub struct ResourceLimits {
     /// Default: 64 KiB.
     pub max_kms_payload_bytes: usize,
 
+    // ── KDF (KMS) work factors ───────────────────────────────────────────────
+    /// Maximum accepted PBKDF2 iteration count.  Valid KMS parameters above
+    /// this value return `SAR_ERR_LIMIT_EXCEEDED`.  Default: 2 000 000 (about
+    /// 3.3x the mandatory 600 000).
+    pub max_pbkdf2_iterations: u32,
+
+    /// Maximum accepted KDF salt length in bytes (PBKDF2 and Argon2).
+    /// Default: 64 (exactly the mandatory interoperable salt size).
+    pub max_kdf_salt_bytes: usize,
+
+    /// Maximum accepted Argon2 memory cost in KiB.  Default: 262 144 (256 MiB, 4x
+    /// the mandatory 65 536 KiB).
+    pub max_argon2_memory_kib: u32,
+
+    /// Maximum accepted Argon2 time cost.  Default: 6 (2x the
+    /// mandatory 3).
+    pub max_argon2_time_cost: u32,
+
+    /// Maximum accepted Argon2 parallelism.  Default: 8 (2x the
+    /// mandatory 4).
+    pub max_argon2_parallelism: u16,
+
     // ── TLV ──────────────────────────────────────────────────────────────────
     /// Maximum byte length of a single TLV value field.  Default: 1 MiB.
     pub max_tlv_bytes: usize,
@@ -228,6 +250,11 @@ impl Default for ResourceLimits {
             max_lfh_header_bytes: 1024 * 1024,
             max_path_bytes: 65_535,
             max_kms_payload_bytes: 64 * 1024,
+            max_pbkdf2_iterations: sar_crypto::KdfLimits::DEFAULT_MAX_PBKDF2_ITERATIONS,
+            max_kdf_salt_bytes: sar_crypto::KdfLimits::DEFAULT_MAX_KDF_SALT_BYTES,
+            max_argon2_memory_kib: sar_crypto::KdfLimits::DEFAULT_MAX_ARGON2_MEMORY_KIB,
+            max_argon2_time_cost: sar_crypto::KdfLimits::DEFAULT_MAX_ARGON2_TIME_COST,
+            max_argon2_parallelism: sar_crypto::KdfLimits::DEFAULT_MAX_ARGON2_PARALLELISM,
             max_tlv_bytes: 1024 * 1024,
             max_tlv_count: 1024,
             max_cd_bytes: 256 * 1024 * 1024,
@@ -275,6 +302,11 @@ impl ResourceLimits {
             max_lfh_header_bytes: usize::MAX,
             max_path_bytes: usize::MAX,
             max_kms_payload_bytes: usize::MAX,
+            max_pbkdf2_iterations: u32::MAX,
+            max_kdf_salt_bytes: usize::MAX,
+            max_argon2_memory_kib: u32::MAX,
+            max_argon2_time_cost: u32::MAX,
+            max_argon2_parallelism: u16::MAX,
             max_tlv_bytes: usize::MAX,
             max_tlv_count: usize::MAX,
             max_cd_bytes: u64::MAX,
@@ -697,6 +729,19 @@ impl ResourceLimits {
         Ok(())
     }
 
+    /// Converts this `ResourceLimits` into the [`sar_crypto::KdfLimits`] applied
+    /// to KMS key-derivation parameters before derivation.
+    #[must_use]
+    pub fn kdf_limits(&self) -> sar_crypto::KdfLimits {
+        sar_crypto::KdfLimits {
+            max_pbkdf2_iterations: self.max_pbkdf2_iterations,
+            max_kdf_salt_bytes: self.max_kdf_salt_bytes,
+            max_argon2_memory_kib: self.max_argon2_memory_kib,
+            max_argon2_time_cost: self.max_argon2_time_cost,
+            max_argon2_parallelism: self.max_argon2_parallelism,
+        }
+    }
+
     /// Converts this `ResourceLimits` into a [`sar_fragmentation::FragmentLimits`]
     /// suitable for fragment group validation and reassembly.
     #[must_use]
@@ -738,6 +783,25 @@ mod tests {
         assert!(l.max_lfh_header_bytes > 0);
         assert!(l.max_decoded_entry_size > 0);
         assert!(l.max_fec_value_bytes > 0);
+    }
+
+    #[test]
+    fn kdf_limits_admit_mandatory_interop_ranges_and_unlimited_is_wider() {
+        let l = ResourceLimits::default();
+        assert!(l.max_pbkdf2_iterations >= 600_000);
+        assert!(l.max_kdf_salt_bytes >= 64);
+        assert!(l.max_argon2_memory_kib >= 65_536);
+        assert!(l.max_argon2_time_cost >= 3);
+        assert!(l.max_argon2_parallelism >= 4);
+        // Defaults stay finite.
+        assert!(l.max_pbkdf2_iterations < u32::MAX);
+        let u = ResourceLimits::unlimited();
+        assert_eq!(u.max_pbkdf2_iterations, u32::MAX);
+        assert!(u.max_argon2_memory_kib >= l.max_argon2_memory_kib);
+        assert_eq!(
+            l.kdf_limits().max_pbkdf2_iterations,
+            l.max_pbkdf2_iterations
+        );
     }
 
     #[test]

@@ -120,9 +120,11 @@ pub struct FragmentGroup {
     pub terminal_crc32: Option<u32>,
     /// Authoritative Content Hash from the `LAST_FRAGMENT` LFH, when that LFH
     /// is present and carries the field.  An all-zero terminal value is still
-    /// authoritative.  Retained for later verification (WP-6); it is not
-    /// verified here.
+    /// authoritative.  Verified by the logical-file readers after complete
+    /// reassembly.
     pub terminal_content_hash: Option<[u8; 32]>,
+    /// LFH Hash Algo ID of the terminal fragment (group-invariant, Class G).
+    pub terminal_hash_algo_id: Option<u8>,
     entries: Vec<EntryReader>,
 }
 
@@ -240,6 +242,7 @@ struct GroupState {
     index0: Option<EntryMetadata>,
     terminal_crc32: Option<u32>,
     terminal_content_hash: Option<[u8; 32]>,
+    terminal_hash_algo_id: Option<u8>,
     entries: Vec<EntryReader>,
     /// Decoded payload bytes currently retained in `entries`.
     retained: u64,
@@ -429,6 +432,7 @@ impl FragmentGroupCollector {
                     index0: None,
                     terminal_crc32: None,
                     terminal_content_hash: None,
+                    terminal_hash_algo_id: None,
                     entries: Vec::new(),
                     retained: 0,
                     complete: false,
@@ -506,6 +510,7 @@ impl FragmentGroupCollector {
             // Hash; an all-zero terminal value is still authoritative.
             group.terminal_crc32 = entry.header.file_crc32;
             group.terminal_content_hash = entry.header.content_hash;
+            group.terminal_hash_algo_id = entry.header.hash_algo_id;
         }
         group.seen.insert(index);
         group.max_index = group.max_index.max(index);
@@ -574,6 +579,7 @@ impl FragmentGroupCollector {
                     index0: state.index0.take(),
                     terminal_crc32: state.terminal_crc32,
                     terminal_content_hash: state.terminal_content_hash,
+                    terminal_hash_algo_id: state.terminal_hash_algo_id,
                     entries: std::mem::take(&mut state.entries),
                 }))))
             }

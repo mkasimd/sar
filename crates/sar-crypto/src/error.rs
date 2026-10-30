@@ -33,4 +33,10 @@ pub enum SarCryptoError {
     /// Flags or configuration values conflict.
     #[error("flag conflict: {0}")]
     FlagConflict(&'static str),
+    /// Supplied key material was rejected (unwrap failure or wrong length).
+    #[error("key rejected: {0}")]
+    KeyRejected(&'static str),
+    /// A syntactically valid parameter exceeds a configured resource limit.
+    #[error("limit exceeded: {0}")]
+    LimitExceeded(&'static str),
 }

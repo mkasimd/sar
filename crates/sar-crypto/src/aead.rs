@@ -8,7 +8,7 @@ use chacha20poly1305::{Tag as XTag, XChaCha20Poly1305, XNonce};
 use rand_core::RngCore;
 use zeroize::Zeroize;
 
-use crate::algorithm::{AEAD_KEY_SIZE, AEAD_TAG_SIZE, ENCR_AES256_GCM, ENCR_XCHACHA20_POLY};
+use crate::algorithm::{AEAD_TAG_SIZE, ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, native_key_len};
 use crate::error::SarCryptoError;
 use crate::secret::SecretBytes;
 
@@ -23,8 +23,10 @@ pub fn aead_encrypt(
     aad: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, SarCryptoError> {
-    if key.len() != AEAD_KEY_SIZE {
-        return Err(SarCryptoError::InvalidLength("key must be 32 bytes"));
+    if key.len() != native_key_len(algo_id)? {
+        return Err(SarCryptoError::InvalidLength(
+            "key must match the algorithm's native key length",
+        ));
     }
     validate_nonce_field(algo_id, iv_nonce_field, true)?;
 
@@ -66,8 +68,10 @@ pub fn aead_decrypt(
     aad: &[u8],
     ciphertext_with_tag: &[u8],
 ) -> Result<Vec<u8>, SarCryptoError> {
-    if key.len() != AEAD_KEY_SIZE {
-        return Err(SarCryptoError::InvalidLength("key must be 32 bytes"));
+    if key.len() != native_key_len(algo_id)? {
+        return Err(SarCryptoError::InvalidLength(
+            "key must match the algorithm's native key length",
+        ));
     }
     if ciphertext_with_tag.len() < TAG_SIZE {
         return Err(SarCryptoError::InvalidLength(
@@ -162,8 +166,8 @@ pub fn validate_nonce_field(
     match algo_id {
         ENCR_AES256_GCM => {
             if strict && field[12..].iter().any(|byte| *byte != 0) {
-                return Err(SarCryptoError::Malformed(
-                    "AES-GCM nonce field: bytes [12..24] must be zero",
+                return Err(SarCryptoError::ReservedValue(
+                    "AES-GCM nonce field: bytes [12..24] are reserved and must be zero",
                 ));
             }
             Ok(())

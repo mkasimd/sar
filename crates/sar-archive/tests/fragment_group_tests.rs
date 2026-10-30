@@ -317,7 +317,7 @@ fn nonzero_nonterminal_content_hash_is_metadata_conflict() {
 }
 
 #[test]
-fn zero_terminal_integrity_values_are_valid() {
+fn zero_terminal_integrity_values_are_authoritative() {
     let (a, mut b) = pair();
     // Zero terminal CRC is authoritative; payload CRC is not zero, so this is a mismatch.
     b.crc = 0;
@@ -328,9 +328,65 @@ fn zero_terminal_integrity_values_are_valid() {
         ),
         Err(SarError::CrcMismatch(_))
     ));
-    // Zero Content Hash on all fragments is structurally valid.
-    let files = read(build_with(GlobalFlags::DEDUPLICATION, &[a, b]), false).expect("valid");
+    // An all-zero terminal Content Hash is an ordinary authoritative digest
+    // value, not an absent hash; it does not match the logical Entry.
+    assert!(matches!(
+        read(build_with(GlobalFlags::DEDUPLICATION, &[a, b]), false),
+        Err(SarError::HashMismatch(_))
+    ));
+}
+
+fn blake3_of(data: &[u8]) -> [u8; 32] {
+    sar_crypto::hash::blake3_hash(data)
+}
+
+#[test]
+fn terminal_content_hash_is_verified_over_reassembled_entry() {
+    let (a, mut b) = pair();
+    b.hash = blake3_of(b"AAAABBBB");
+    let files = read(
+        build_with(GlobalFlags::DEDUPLICATION, &[a.clone(), b.clone()]),
+        false,
+    )
+    .expect("matching terminal hash");
     assert_eq!(files[0].data, b"AAAABBBB");
+
+    // A hash of only the terminal contribution does not verify.
+    b.hash = blake3_of(b"BBBB");
+    assert!(matches!(
+        read(build_with(GlobalFlags::DEDUPLICATION, &[a, b]), false),
+        Err(SarError::HashMismatch(_))
+    ));
+}
+
+#[test]
+fn loss_tolerant_never_masks_a_complete_group_hash_mismatch() {
+    let (mut a, mut b) = pair();
+    a.mode_extra |= LOSS;
+    b.mode_extra |= LOSS;
+    b.hash = [0x5A; 32];
+    for lossy in [false, true] {
+        assert!(matches!(
+            read(
+                build_with(GlobalFlags::DEDUPLICATION, &[a.clone(), b.clone()]),
+                lossy
+            ),
+            Err(SarError::HashMismatch(_))
+        ));
+    }
+}
+
+#[test]
+fn sha256_hash_algo_id_selects_the_digest() {
+    let (a, mut b) = pair();
+    b.hash = sar_crypto::hash::sha256(b"AAAABBBB");
+    let archive = build_with(GlobalFlags::DEDUPLICATION, &[a, b]);
+    // `build_with` writes Hash Algo ID 0x31 (BLAKE3-256); the SHA-256 digest
+    // must therefore fail under the declared algorithm.
+    assert!(matches!(
+        read(archive, false),
+        Err(SarError::HashMismatch(_))
+    ));
 }
 
 #[test]

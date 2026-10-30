@@ -3,17 +3,19 @@
 
 use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::sync::Mutex;
 
 use sar_compression::COMP_ALGO_STORE;
 use sar_crypto::aad::build_aead_aad;
 use sar_crypto::{
     ENCR_AES256_GCM, ENCR_XCHACHA20_POLY, KMS_TLS_EXPORTER, KeyProvider, KmsContext, KmsParams,
-    SecretBytes,
+    MasterSecretScope, SecretBytes,
     aead::generate_nonce,
+    derive_entry_key,
     kms::tls_exporter::parse_tls_exporter_kms_payload,
     kms::types::{parse_kms_payload, serialize_kms_payload},
-    provider::resolve_cek,
-    validate_encr_algo_id,
+    provider::resolve_master_secret,
+    validate_entry_encr_algo_id,
 };
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
@@ -34,8 +36,8 @@ use sar_core::{
     format::{
         CentralDictionary, Footer, GLOBAL_HEADER_FIXED_LEN, GLOBAL_HEADER_FLAGS_OFFSET,
         GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION, decode_global_flags,
-        global_header_flags_bytes, lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary,
-        parse_footer, parse_global_header, parse_lfh, require_unpartitioned_processing,
+        lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary, parse_footer,
+        parse_global_header, parse_lfh, require_unpartitioned_processing,
         validate_global_header_prefix, write_central_dictionary, write_footer, write_global_header,
     },
     limits::ResourceLimits,
@@ -47,7 +49,6 @@ use crate::transform::{
 };
 
 const ZERO_DELTA_BASE_HASH: [u8; 32] = [0u8; 32];
-const ZERO_CONTENT_HASH: [u8; 32] = [0u8; 32];
 
 /// Metadata summary for profile/verification checks.
 #[derive(Debug, Clone)]
@@ -374,7 +375,15 @@ pub struct EntryInput {
     /// LFH Hash Algo ID (`0x30` SHA-256, `0x31` BLAKE3-256, `0x32` SHA3-256)
     /// written with the Content Hash.  Defaults to BLAKE3-256 when `None`.
     pub hash_algo_id: Option<u8>,
-    /// Content hash (32 bytes).  Written when `with_content_hash` is enabled.
+    /// Explicit Content Hash (32 bytes), honoured when `with_content_hash` is
+    /// enabled.
+    ///
+    /// * `None`: the writer generates the digest of the final logical Entry
+    ///   (sparse holes included) with `hash_algo_id`.
+    /// * `Some(value)`: `value` is written verbatim and is **not** checked by
+    ///   the writer; a wrong value is detected by the reader as
+    ///   `SAR_ERR_HASH_MISMATCH`.  An all-zero value is an ordinary digest,
+    ///   not an absent hash.
     pub content_hash: Option<[u8; 32]>,
     /// Delta write options.  When `Some`, the writer generates a real patch
     /// from `delta.base` + `payload` and stores the patch bytes.  The global
@@ -502,7 +511,7 @@ impl ArchiveRecoverySettings {
 pub struct EncryptionSettings {
     /// AEAD algorithm ID (`ENCR_AES256_GCM` or `ENCR_XCHACHA20_POLY`).
     pub algo_id: u8,
-    /// KMS parameters used to resolve and serialize the CEK.
+    /// KMS parameters used to establish the KMS Master Secret and serialize the KMS payload.
     pub kms_params: KmsParams,
 }
 
@@ -550,6 +559,10 @@ pub struct ArchiveWriterOptions {
     pub with_delta: bool,
     /// LFH size-field encoding policy for `Uncompressed Size` and `Payload Size`.
     pub lfh_size_field_policy: LfhSizeFieldPolicy,
+    /// Resource limits applied by the writer.  The KDF work-factor limits
+    /// are checked before KMS key derivation; valid parameters above them
+    /// return `SAR_ERR_LIMIT_EXCEEDED`.
+    pub limits: ResourceLimits,
 }
 
 /// LFH size-field encoding policy used by the archive writer.
@@ -602,6 +615,7 @@ impl Default for ArchiveWriterOptions {
             with_symlinks: false,
             with_delta: false,
             lfh_size_field_policy: LfhSizeFieldPolicy::Auto,
+            limits: ResourceLimits::default(),
         }
     }
 }
@@ -849,13 +863,16 @@ pub struct ArchiveReader<R> {
     reader: R,
     options: ArchiveReaderOptions,
     global_header: Option<GlobalHeader>,
-    global_flags_section: Vec<u8>,
+    /// Raw encoded Global Header bytes `[0, first LFH)`, retained for AEAD AAD.
+    global_header_bytes: Vec<u8>,
     header_len: u64,
     data_end: u64,
     next_offset: u64,
     file_len: u64,
     cd: Option<CentralDictionary>,
     key_provider: Option<Box<dyn KeyProvider>>,
+    /// KMS Master Secret for this physical archive; the KDF runs once.
+    master_secret: Mutex<MasterSecretScope>,
     logical: LogicalState,
 }
 
@@ -898,13 +915,14 @@ impl<R: Read + Seek> ArchiveReader<R> {
             reader,
             options,
             global_header: None,
-            global_flags_section: Vec::new(),
+            global_header_bytes: Vec::new(),
             header_len: 0,
             data_end: 0,
             next_offset: 0,
             file_len,
             cd: None,
             key_provider: None,
+            master_secret: Mutex::new(MasterSecretScope::new()),
             logical: LogicalState::NotStarted,
         })
     }
@@ -913,6 +931,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
     #[must_use]
     pub fn with_key_provider(mut self, key_provider: Box<dyn KeyProvider>) -> Self {
         self.key_provider = Some(key_provider);
+        self.master_secret = Mutex::new(MasterSecretScope::new());
         self
     }
 
@@ -949,6 +968,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         let (header, consumed) = parse_global_header(&header_bytes, &self.options.limits)?;
+        // A (re)read header starts a new KMS scope.
+        self.master_secret = Mutex::new(MasterSecretScope::new());
         if let Some(kms) = &header.kms {
             // Mode 0x04 TLS_EXPORTER: structural validation is deferred to the
             // transport layer (requires an active TLS session).  Skip generic
@@ -1029,7 +1050,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
             (cd_offset, Some(cd))
         };
 
-        self.global_flags_section = global_header_flags_bytes(&header)?;
+        self.global_header_bytes = header_bytes
+            .get(..consumed)
+            .ok_or(SarError::Internal(
+                "global header length exceeds read bytes",
+            ))?
+            .to_vec();
         self.global_header = Some(header.clone());
         self.header_len = header_len;
         self.data_end = data_end;
@@ -1475,19 +1501,28 @@ impl<R: Read + Seek> ArchiveReader<R> {
             let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
                 "encrypted entry missing encryption algorithm ID",
             ))?;
-            validate_encr_algo_id(algo_id).map_err(SarError::from)?;
+            validate_entry_encr_algo_id(algo_id).map_err(SarError::from)?;
             let provider = self.key_provider.as_deref().ok_or(SarError::KeyMissing(
                 "no key provider configured for encrypted archive",
             ))?;
             let context = build_kms_context(header)?;
-            let key = resolve_cek(provider, &context).map_err(SarError::from)?;
             let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
                 "encrypted entry missing IV/nonce field",
             ))?;
+            let key = {
+                let mut scope = self
+                    .master_secret
+                    .lock()
+                    .map_err(|_| SarError::Internal("master secret scope poisoned"))?;
+                let master = scope
+                    .get_or_resolve(provider, &context, &self.options.limits.kdf_limits())
+                    .map_err(SarError::from)?;
+                derive_entry_key(master, algo_id, &iv_nonce).map_err(SarError::from)?
+            };
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
             let aad_lfh_bytes =
                 lfh_bytes_for_aad(header.flags, lfh_bytes, fec_algo_id, lfh.fec_value.len())?;
-            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
+            let aad = build_aead_aad(&self.global_header_bytes, &aad_lfh_bytes);
             Some(EntryCryptoContext {
                 algo_id,
                 iv_nonce,
@@ -2059,6 +2094,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
                             ));
                         }
                     }
+                    crate::content_hash::verify_logical(
+                        entry.metadata.hash_algo_id,
+                        entry.metadata.content_hash,
+                        &data,
+                    )?;
                     result.push(LogicalFile {
                         name,
                         fragment_id: None,
@@ -2074,6 +2114,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     let sparse_meta = group.validate_sparse(&self.options.limits)?.cloned();
                     // Authoritative File CRC32 is carried by LAST_FRAGMENT.
                     let terminal_crc32 = group.terminal_crc32;
+                    let terminal_content_hash = group.terminal_content_hash;
+                    let terminal_hash_algo_id = group.terminal_hash_algo_id;
 
                     let (raw, is_degraded) = group.reconstruct(&self.options.limits)?;
 
@@ -2108,6 +2150,16 @@ impl<R: Read + Seek> ArchiveReader<R> {
                         }
                     }
 
+                    // The terminal Content Hash is authoritative and is checked
+                    // only over a complete reconstruction; LOSS_TOLERANT never
+                    // masks a mismatch.
+                    if !is_degraded {
+                        crate::content_hash::verify_logical(
+                            terminal_hash_algo_id,
+                            terminal_content_hash,
+                            &raw,
+                        )?;
+                    }
                     result.push(LogicalFile {
                         name,
                         fragment_id: Some(fid),
@@ -2181,10 +2233,11 @@ pub struct ArchiveWriter<W> {
     offsets: Vec<u64>,
     cd_metadata: Vec<Tlv>,
     finished: bool,
-    cek: Option<SecretBytes>,
+    master_secret: Option<SecretBytes>,
     encr_algo_id: Option<u8>,
     used_nonces: HashSet<[u8; 24]>,
-    global_flags_section: Vec<u8>,
+    /// Exact encoded Global Header bytes emitted by this writer (AEAD AAD prefix).
+    global_header_bytes: Vec<u8>,
     header_kms: Option<KmsData>,
     header_written: bool,
     fec: Option<FecSettings>,
@@ -2345,6 +2398,7 @@ impl<W: Write> ArchiveWriter<W> {
             with_symlinks,
             with_delta,
             lfh_size_field_policy,
+            limits,
         } = options;
 
         let has_recovery_cd_metadata = cd_metadata
@@ -2420,10 +2474,10 @@ impl<W: Write> ArchiveWriter<W> {
             flags |= GlobalFlags::SIZE_64BIT;
         }
 
-        let mut cek = None;
+        let mut master_secret = None;
         let mut encr_algo_id = None;
         let kms = if let Some(encryption) = &encryption {
-            validate_encr_algo_id(encryption.algo_id).map_err(SarError::from)?;
+            validate_entry_encr_algo_id(encryption.algo_id).map_err(SarError::from)?;
             if !matches!(encryption.algo_id, ENCR_AES256_GCM | ENCR_XCHACHA20_POLY) {
                 return Err(SarError::Unsupported(
                     "archive writer supports only AES-256-GCM and XChaCha20-Poly1305",
@@ -2438,17 +2492,19 @@ impl<W: Write> ArchiveWriter<W> {
             let provider = key_provider
                 .as_deref()
                 .ok_or(SarError::KeyMissing("encryption requires a key provider"))?;
-            cek = Some(resolve_cek(provider, &context).map_err(SarError::from)?);
+            master_secret = Some(
+                resolve_master_secret(provider, &context, &limits.kdf_limits())
+                    .map_err(SarError::from)?,
+            );
             encr_algo_id = Some(encryption.algo_id);
             Some(KmsData {
                 mode_id,
-                payload: serialize_kms_payload(&encryption.kms_params),
+                payload: serialize_kms_payload(&encryption.kms_params).map_err(SarError::from)?,
             })
         } else {
             None
         };
 
-        let limits = ResourceLimits::default();
         for tlv in &cd_metadata {
             if sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
                 sar_core::cdc::validate_cdc_metadata_tlv(tlv, &limits)?;
@@ -2471,10 +2527,10 @@ impl<W: Write> ArchiveWriter<W> {
             offsets: Vec::new(),
             cd_metadata,
             finished: false,
-            cek,
+            master_secret,
             encr_algo_id,
             used_nonces: HashSet::new(),
-            global_flags_section: Vec::new(),
+            global_header_bytes: Vec::new(),
             header_kms: kms,
             header_written: false,
             fec,
@@ -2545,6 +2601,18 @@ impl<W: Write> ArchiveWriter<W> {
         Ok(())
     }
 
+    /// Derives the per-Entry key from the writer's KMS Master Secret.
+    fn derive_writer_entry_key(
+        &self,
+        algo_id: u8,
+        nonce: &[u8; 24],
+    ) -> Result<SecretBytes, SarError> {
+        let master = self.master_secret.as_ref().ok_or(SarError::KeyMissing(
+            "writer KMS Master Secret is unavailable",
+        ))?;
+        derive_entry_key(master, algo_id, nonce).map_err(SarError::from)
+    }
+
     fn emit_global_header_if_needed(&mut self) -> Result<(), SarError> {
         if self.header_written {
             return Ok(());
@@ -2556,8 +2624,8 @@ impl<W: Write> ArchiveWriter<W> {
             flags: self.flags,
             kms: self.header_kms.clone(),
         };
-        self.global_flags_section = global_header_flags_bytes(&header)?;
         let bytes = write_global_header(&header)?;
+        self.global_header_bytes.clone_from(&bytes);
         if let Some(recovery) = &self.archive_recovery {
             let recovery_start = usize::try_from(recovery.global_flags_start_offset)
                 .map_err(|_| SarError::Overflow("global header flags offset usize"))?;
@@ -2723,11 +2791,8 @@ impl<W: Write> ArchiveWriter<W> {
                 fec_algo_id,
                 lfh.fec_value.len(),
             )?;
-            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
-            let key = self
-                .cek
-                .as_ref()
-                .ok_or(SarError::KeyMissing("writer CEK is unavailable"))?;
+            let aad = build_aead_aad(&self.global_header_bytes, &aad_lfh_bytes);
+            let key = self.derive_writer_entry_key(algo_id, &nonce)?;
             encoded_payload = encode_payload_v2(
                 &wire_payload,
                 EncodingPlanV2 {
@@ -2738,7 +2803,7 @@ impl<W: Write> ArchiveWriter<W> {
                         algo_id,
                         iv_nonce: nonce,
                         aad,
-                        key: key.clone(),
+                        key,
                     }),
                 },
             )?;
@@ -3021,7 +3086,13 @@ impl<W: Write> ArchiveWriter<W> {
                 .unwrap_or(sar_crypto::algorithm::HASH_BLAKE3);
             sar_core::validate_lfh_hash_algo_id(algo_id)?;
             lfh.hash_algo_id = Some(algo_id);
-            lfh.content_hash = entry.content_hash.or(Some(ZERO_CONTENT_HASH));
+            // The digest covers the final logical Entry.  An explicit
+            // `content_hash` is written verbatim; an all-zero value is an
+            // ordinary digest value, not "absent".
+            lfh.content_hash = Some(match entry.content_hash {
+                Some(explicit) => explicit,
+                None => crate::content_hash::digest_logical(algo_id, &entry.payload)?,
+            });
         }
 
         // When HAS_DELTA is globally active, every LFH must carry Patch Algo ID
@@ -3139,7 +3210,7 @@ impl<W: Write> ArchiveWriter<W> {
         let sparse_map_bytes = sar_core::sparse::write_sparse_map(
             &SparseMap {
                 logical_size: sparse.logical_size,
-                extents: sparse.extents,
+                extents: sparse.extents.clone(),
             },
             is_64bit,
         )?;
@@ -3150,6 +3221,17 @@ impl<W: Write> ArchiveWriter<W> {
             lfh.cdc_algo_id = Some(sar_core::cdc::CDC_ALGO_LITERAL);
         }
         lfh.sparse_map = sparse_map_bytes;
+        if self.flags.contains(GlobalFlags::DEDUPLICATION) {
+            // Digest of the final logical Entry, including holes.
+            let algo_id = sar_crypto::algorithm::HASH_BLAKE3;
+            lfh.hash_algo_id = Some(algo_id);
+            lfh.content_hash = Some(crate::content_hash::digest_sparse_logical(
+                algo_id,
+                gathered_payload,
+                &sparse.extents,
+                sparse.logical_size,
+            )?);
+        }
         if self.flags.contains(GlobalFlags::COMPRESSED) {
             lfh.comp_algo_id = Some(self.compression.algo_id);
         }
@@ -3197,11 +3279,8 @@ impl<W: Write> ArchiveWriter<W> {
                 fec_algo_id,
                 lfh.fec_value.len(),
             )?;
-            let aad = build_aead_aad(&self.global_flags_section, &aad_lfh_bytes);
-            let key = self
-                .cek
-                .as_ref()
-                .ok_or(SarError::KeyMissing("writer CEK is unavailable"))?;
+            let aad = build_aead_aad(&self.global_header_bytes, &aad_lfh_bytes);
+            let key = self.derive_writer_entry_key(algo_id, &nonce)?;
             encoded_payload = encode_payload_v2(
                 gathered_payload,
                 EncodingPlanV2 {
@@ -3212,7 +3291,7 @@ impl<W: Write> ArchiveWriter<W> {
                         algo_id,
                         iv_nonce: nonce,
                         aad,
-                        key: key.clone(),
+                        key,
                     }),
                 },
             )?;

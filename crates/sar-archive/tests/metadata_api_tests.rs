@@ -193,10 +193,11 @@ fn reader_exposes_encryption_metadata_present_inactive_without_is_encrypted() {
         kms: Some(sar_core::format::KmsData {
             mode_id: 0x01,
             payload: {
-                let mut p = vec![1, 16];
-                p.extend_from_slice(&[0x11; 16]);
+                let mut p = vec![1];
                 p.extend_from_slice(&100_000u32.to_le_bytes());
                 p.extend_from_slice(&32u16.to_le_bytes());
+                p.push(16);
+                p.extend_from_slice(&[0x11; 16]);
                 p
             },
         }),

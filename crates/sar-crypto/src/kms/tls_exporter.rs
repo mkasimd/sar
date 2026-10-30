@@ -42,17 +42,22 @@ pub const TLS_EXPORTER_KEY_USAGE_CLIENT_TO_SERVER: u8 = 0x01;
 /// Sender/Receiver role.
 pub const TLS_EXPORTER_KEY_USAGE_SERVER_TO_CLIENT: u8 = 0x02;
 
-/// Recommended TLS exporter label for SAR-over-QUIC.
+/// The exact TLS exporter label for Context Version `0x01` (Section 18.6.3).
+pub const TLS_EXPORTER_LABEL_V1: &[u8; 15] = b"EXPORTER-SAR-v1";
+
+/// Pre-WP-6 exporter label used by the legacy directional exporter test
+/// harness.  It does not match Section 18.6.3; the directional exporter
+/// remediation is assigned to M13b.4.
 pub const EXPORTER_LABEL_QUIC_AEAD: &[u8] = b"EXPORTER-SAR-v1-QUIC-AEAD";
 
-/// Recommended TLS exporter label for SAR-over-TCP+TLS.
+/// Pre-WP-6 exporter label (see [`EXPORTER_LABEL_QUIC_AEAD`]).
 pub const EXPORTER_LABEL_TCP_TLS_AEAD: &[u8] = b"EXPORTER-SAR-v1-TLS-AEAD";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // KMS payload structure
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Parsed Mode `0x04 TLS_EXPORTER` KMS payload.
+/// Parsed Mode `0x04 TLS_EXPORTER` KMS payload (Section 5.3.3).
 ///
 /// Contains derivation metadata only.  Does not contain any raw keys,
 /// wrapping keys, private keys, or TLS exporter output.
@@ -62,165 +67,137 @@ pub const EXPORTER_LABEL_TCP_TLS_AEAD: &[u8] = b"EXPORTER-SAR-v1-TLS-AEAD";
 /// context produced by [`encode_tls_exporter_context_v1`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TlsExporterParams {
-    /// ASCII TLS exporter label.
-    pub exporter_label: String,
     /// Context version; MUST be `0x01` ([`TLS_EXPORTER_CONTEXT_VERSION_1`]).
     pub context_version: u8,
-    /// SAR AEAD algorithm identifier.
-    pub aead_algo_id: u8,
     /// Post-export KDF algorithm identifier.  MUST be `0x00`
     /// ([`TLS_EXPORTER_KDF_DIRECT`]); nonzero values are reserved.
     pub kdf_algo_id: u8,
     /// Hash algorithm used for Global Header binding.
     pub global_header_hash_algo_id: u8,
-    /// Non-secret salt / context bytes.
-    pub salt: Vec<u8>,
-    /// Required AEAD key length in bytes.  MUST match the selected AEAD algorithm.
+    /// Directional KMS Master Secret length; MUST be `32`.
     pub derived_key_length: u16,
-    /// Profile flags.  All bits are reserved and MUST be `0`.
-    pub flags: u16,
+    /// ASCII exporter label; MUST be `EXPORTER-SAR-v1` for Context Version `0x01`.
+    pub exporter_label: String,
+    /// Non-secret salt bytes; MUST be empty for Context Version `0x01`.
+    pub salt: Vec<u8>,
+}
+
+/// Validates a Global Header Hash Algo ID against the SAR hash registry.
+///
+/// # Errors
+///
+/// `Unsupported` for assigned-but-unimplemented identifiers, `ReservedValue`
+/// for unassigned identifiers.
+pub fn validate_exporter_hash_algo_id(id: u8) -> Result<(), SarCryptoError> {
+    match id {
+        crate::algorithm::HASH_SHA256 | crate::algorithm::HASH_BLAKE3 => Ok(()),
+        crate::algorithm::HASH_SHA3_256 => Err(SarCryptoError::Unsupported(
+            "TLS_EXPORTER Global Header Hash Algo ID SHA3-256 not implemented",
+        )),
+        _ => Err(SarCryptoError::ReservedValue(
+            "TLS_EXPORTER Global Header Hash Algo ID is reserved",
+        )),
+    }
 }
 
 /// Parses a raw Mode `0x04 TLS_EXPORTER` KMS payload byte slice.
 ///
-/// Validates structural constraints (ASCII label, reserved bits, supported
-/// context version and KDF Algo ID) but does **not** perform AEAD key
-/// derivation.
+/// Validates structure and registry values (Context Version, KDF Algo ID,
+/// hash algorithm, Derived Key Length, label, salt) but does **not** perform
+/// key derivation.
 ///
 /// # Errors
 ///
-/// Returns [`SarCryptoError::Malformed`] for structural violations,
-/// [`SarCryptoError::ReservedValue`] for nonzero reserved fields, and
-/// [`SarCryptoError::Unsupported`] for unimplemented extension points.
+/// * [`SarCryptoError::Malformed`] for truncation, trailing bytes or a wrong label.
+/// * [`SarCryptoError::ReservedValue`] for a reserved Context Version, KDF
+///   Algo ID or hash identifier.
+/// * [`SarCryptoError::Unsupported`] for an assigned but unimplemented hash.
+/// * [`SarCryptoError::InvalidLength`] for a wrong Derived Key Length, label
+///   length or salt length.
 pub fn parse_tls_exporter_kms_payload(payload: &[u8]) -> Result<TlsExporterParams, SarCryptoError> {
-    // Wire format:
-    // [0]       Exporter Label Length (u8)
-    // [1..]     Exporter Label (var, ASCII)
-    // [+0]      Context Version (u8)
-    // [+1]      AEAD Algo ID (u8)
-    // [+2]      KDF Algo ID (u8)
-    // [+3]      Global Header Hash Algo ID (u8)
-    // [+4]      Salt Length (u8)
-    // [+5..]    Salt (var)
-    // [+0]      Derived Key Length (u16 LE)
-    // [+2]      Flags (u16 LE)
+    // Wire format (Section 5.3.3):
+    // Context Version(1) KDF Algo ID(1) Global Header Hash Algo ID(1)
+    // Derived Key Length(2 LE) Exporter Label Length(1) Salt Length(1)
+    // Exporter Label(var) Salt(var)
+    let mut cur = crate::kms::types::Cursor::new(payload);
+    let context_version = cur.u8("TLS_EXPORTER KMS payload truncated")?;
+    let kdf_algo_id = cur.u8("TLS_EXPORTER KMS payload truncated")?;
+    let global_header_hash_algo_id = cur.u8("TLS_EXPORTER KMS payload truncated")?;
+    let derived_key_length = cur.u16("TLS_EXPORTER KMS payload truncated")?;
+    let label_len = usize::from(cur.u8("TLS_EXPORTER KMS payload truncated")?);
+    let salt_len = usize::from(cur.u8("TLS_EXPORTER KMS payload truncated")?);
+    let label_bytes = cur.take(label_len, "TLS_EXPORTER exporter label truncated")?;
+    let salt = cur.take(salt_len, "TLS_EXPORTER salt truncated")?.to_vec();
+    cur.finish("TLS_EXPORTER KMS payload has trailing bytes")?;
 
-    if payload.is_empty() {
-        return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER KMS payload too short: missing label length",
-        ));
-    }
-    let label_len = usize::from(payload[0]);
-    let label_end = 1usize
-        .checked_add(label_len)
-        .ok_or(SarCryptoError::Malformed(
-            "TLS_EXPORTER label length overflow",
-        ))?;
-    if payload.len() < label_end + 7 {
-        return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER KMS payload too short: truncated before fixed fields",
-        ));
-    }
-    let label_bytes = &payload[1..label_end];
-    if !label_bytes.is_ascii() {
-        return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER exporter label must be ASCII",
-        ));
-    }
-    if label_bytes.is_empty() {
-        return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER exporter label must not be empty",
-        ));
-    }
-    let exporter_label = String::from_utf8(label_bytes.to_vec())
-        .map_err(|_| SarCryptoError::Malformed("TLS_EXPORTER label is not valid UTF-8"))?;
-
-    let mut pos = label_end;
-    let context_version = payload[pos];
-    pos += 1;
     if context_version != TLS_EXPORTER_CONTEXT_VERSION_1 {
-        return Err(SarCryptoError::Unsupported(
-            "TLS_EXPORTER: only context version 0x01 is supported",
+        return Err(SarCryptoError::ReservedValue(
+            "TLS_EXPORTER reserved Context Version",
         ));
     }
-
-    let aead_algo_id = payload[pos];
-    pos += 1;
-    let kdf_algo_id = payload[pos];
-    pos += 1;
     if kdf_algo_id != TLS_EXPORTER_KDF_DIRECT {
         return Err(SarCryptoError::ReservedValue(
             "TLS_EXPORTER: nonzero KDF Algo ID is reserved",
         ));
     }
-
-    let global_header_hash_algo_id = payload[pos];
-    pos += 1;
-
-    // Salt Length
-    if pos >= payload.len() {
+    validate_exporter_hash_algo_id(global_header_hash_algo_id)?;
+    if usize::from(derived_key_length) != crate::algorithm::KMS_MASTER_SECRET_SIZE {
+        return Err(SarCryptoError::InvalidLength(
+            "TLS_EXPORTER Derived Key Length must be 32",
+        ));
+    }
+    if label_bytes.len() != TLS_EXPORTER_LABEL_V1.len() {
+        return Err(SarCryptoError::InvalidLength(
+            "TLS_EXPORTER Exporter Label Length must be 15",
+        ));
+    }
+    if label_bytes != TLS_EXPORTER_LABEL_V1 {
         return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER KMS payload too short: missing salt length",
+            "TLS_EXPORTER Exporter Label must be EXPORTER-SAR-v1",
         ));
     }
-    let salt_len = usize::from(payload[pos]);
-    pos += 1;
-    let salt_end = pos.checked_add(salt_len).ok_or(SarCryptoError::Malformed(
-        "TLS_EXPORTER salt length overflow",
-    ))?;
-    if payload.len() < salt_end + 4 {
-        return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER KMS payload too short: truncated in salt / derived key length",
+    if !salt.is_empty() {
+        return Err(SarCryptoError::InvalidLength(
+            "TLS_EXPORTER Salt Length must be 0 for Context Version 0x01",
         ));
     }
-    let salt = payload[pos..salt_end].to_vec();
-    pos = salt_end;
-
-    // Derived Key Length (u16 LE)
-    let derived_key_length = u16::from_le_bytes([payload[pos], payload[pos + 1]]);
-    pos += 2;
-    if derived_key_length == 0 {
-        return Err(SarCryptoError::Malformed(
-            "TLS_EXPORTER derived_key_length must be nonzero",
-        ));
-    }
-
-    // Flags (u16 LE) — all bits reserved
-    let flags = u16::from_le_bytes([payload[pos], payload[pos + 1]]);
-    if flags != 0 {
-        return Err(SarCryptoError::ReservedValue(
-            "TLS_EXPORTER flags: reserved bits must be zero",
-        ));
-    }
+    let exporter_label = String::from_utf8(label_bytes.to_vec())
+        .map_err(|_| SarCryptoError::Malformed("TLS_EXPORTER label is not valid UTF-8"))?;
 
     Ok(TlsExporterParams {
-        exporter_label,
         context_version,
-        aead_algo_id,
         kdf_algo_id,
         global_header_hash_algo_id,
-        salt,
         derived_key_length,
-        flags,
+        exporter_label,
+        salt,
     })
 }
 
 /// Serialises a [`TlsExporterParams`] into the on-wire KMS payload bytes.
-#[must_use]
-pub fn serialize_tls_exporter_kms_payload(params: &TlsExporterParams) -> Vec<u8> {
+///
+/// # Errors
+///
+/// Returns [`SarCryptoError::InvalidLength`] when the label or salt length
+/// does not fit its one-byte wire field.
+pub fn serialize_tls_exporter_kms_payload(
+    params: &TlsExporterParams,
+) -> Result<Vec<u8>, SarCryptoError> {
     let label = params.exporter_label.as_bytes();
-    let mut out = Vec::new();
-    out.push(label.len() as u8);
-    out.extend_from_slice(label);
+    let label_len = u8::try_from(label.len())
+        .map_err(|_| SarCryptoError::InvalidLength("exporter label length exceeds 255"))?;
+    let salt_len = u8::try_from(params.salt.len())
+        .map_err(|_| SarCryptoError::InvalidLength("salt length exceeds 255"))?;
+    let mut out = Vec::with_capacity(8 + label.len() + params.salt.len());
     out.push(params.context_version);
-    out.push(params.aead_algo_id);
     out.push(params.kdf_algo_id);
     out.push(params.global_header_hash_algo_id);
-    out.push(params.salt.len() as u8);
-    out.extend_from_slice(&params.salt);
     out.extend_from_slice(&params.derived_key_length.to_le_bytes());
-    out.extend_from_slice(&params.flags.to_le_bytes());
-    out
+    out.push(label_len);
+    out.push(salt_len);
+    out.extend_from_slice(label);
+    out.extend_from_slice(&params.salt);
+    Ok(out)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

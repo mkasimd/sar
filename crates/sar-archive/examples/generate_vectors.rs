@@ -1817,11 +1817,12 @@ fn main() {
             kms: Some(sar_core::format::KmsData {
                 mode_id: 0x01, // PBKDF2
                 payload: {
-                    // Minimal KMS payload: PRF=1, salt_len=16, salt(16), iterations(4), dklen(2)
-                    let mut p = vec![0x01u8, 0x10]; // PRF ID + salt_len
-                    p.extend_from_slice(&[0xAAu8; 16]); // salt
-                    p.extend_from_slice(&100_000u32.to_le_bytes()); // iterations >= 100,000
-                    p.extend_from_slice(&32u16.to_le_bytes()); // dklen
+                    // Section 5.3.3 PBKDF2 payload: PRF, iterations, DKL, salt len, salt.
+                    let mut p = vec![0x01u8];
+                    p.extend_from_slice(&100_000u32.to_le_bytes());
+                    p.extend_from_slice(&32u16.to_le_bytes());
+                    p.push(0x10);
+                    p.extend_from_slice(&[0xAAu8; 16]);
                     p
                 },
             }),

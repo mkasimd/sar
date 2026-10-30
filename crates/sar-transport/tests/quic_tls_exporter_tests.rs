@@ -26,7 +26,39 @@ use sar_crypto::{
     serialize_tls_exporter_kms_payload,
 };
 
-// ── Tests 16: TLS_EXPORTER KMS parser validation ──────────────────────────────
+// ── Tests 16: TLS_EXPORTER KMS parser validation (Section 5.3.3) ──────────────
+
+/// Canonical payload:
+/// `ContextVer || KDF || HashAlgo || DKL(2) || LabelLen || SaltLen || Label || Salt`.
+fn exporter_payload(
+    context_version: u8,
+    kdf: u8,
+    hash_algo: u8,
+    dkl: u16,
+    label: &[u8],
+    salt: &[u8],
+) -> Vec<u8> {
+    let mut payload = vec![context_version, kdf, hash_algo];
+    payload.extend_from_slice(&dkl.to_le_bytes());
+    payload.push(label.len() as u8);
+    payload.push(salt.len() as u8);
+    payload.extend_from_slice(label);
+    payload.extend_from_slice(salt);
+    payload
+}
+
+const CANONICAL_LABEL: &[u8] = b"EXPORTER-SAR-v1";
+
+fn valid_exporter_payload() -> Vec<u8> {
+    exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x30,
+        32,
+        CANONICAL_LABEL,
+        &[],
+    )
+}
 
 #[test]
 fn tls_exporter_kms_parser_rejects_empty_payload() {
@@ -38,59 +70,49 @@ fn tls_exporter_kms_parser_rejects_empty_payload() {
 }
 
 #[test]
-fn tls_exporter_kms_parser_rejects_non_ascii_label() {
-    // Label with non-ASCII bytes (0x80..=0xFF).
-    let label = vec![0xFF, 0xFE]; // 2-byte non-ASCII label
-    let mut payload = vec![label.len() as u8];
-    payload.extend_from_slice(&label);
-    // Append the minimum required fixed fields.
-    payload.push(TLS_EXPORTER_CONTEXT_VERSION_1); // context version
-    payload.push(0x01); // aead algo id
-    payload.push(TLS_EXPORTER_KDF_DIRECT); // kdf algo id
-    payload.push(0x01); // gh hash algo id
-    payload.push(0x00); // salt length = 0
-    payload.extend_from_slice(&32u16.to_le_bytes()); // derived key length
-    payload.extend_from_slice(&0u16.to_le_bytes()); // flags = 0
-
+fn tls_exporter_kms_parser_rejects_wrong_label() {
+    let payload = exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x30,
+        32,
+        b"EXPORTER-SAR-v2",
+        &[],
+    );
     let result = parse_tls_exporter_kms_payload(&payload);
     assert!(
         matches!(result, Err(sar_crypto::SarCryptoError::Malformed(_))),
-        "non-ASCII label must be Malformed; got {result:?}"
+        "non-canonical label must be Malformed; got {result:?}"
     );
 }
 
 #[test]
-fn tls_exporter_kms_parser_rejects_empty_label() {
-    // Zero-length label.
-    let mut payload = vec![0u8]; // label length = 0
-    payload.push(TLS_EXPORTER_CONTEXT_VERSION_1);
-    payload.push(0x01);
-    payload.push(TLS_EXPORTER_KDF_DIRECT);
-    payload.push(0x01);
-    payload.push(0x00); // salt length = 0
-    payload.extend_from_slice(&32u16.to_le_bytes());
-    payload.extend_from_slice(&0u16.to_le_bytes());
-
+fn tls_exporter_kms_parser_rejects_wrong_label_length() {
+    let payload = exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x30,
+        32,
+        b"",
+        &[],
+    );
     let result = parse_tls_exporter_kms_payload(&payload);
     assert!(
-        matches!(result, Err(sar_crypto::SarCryptoError::Malformed(_))),
-        "empty label must be Malformed; got {result:?}"
+        matches!(result, Err(sar_crypto::SarCryptoError::InvalidLength(_))),
+        "empty label must be InvalidLength; got {result:?}"
     );
 }
 
 #[test]
-fn tls_exporter_kms_parser_rejects_nonzero_kdf_id() {
-    let label = b"EXPORTER-SAR-TEST";
-    let mut payload = vec![label.len() as u8];
-    payload.extend_from_slice(label);
-    payload.push(TLS_EXPORTER_CONTEXT_VERSION_1);
-    payload.push(0x01); // aead algo id
-    payload.push(0x01); // kdf algo id = nonzero (reserved)
-    payload.push(0x01);
-    payload.push(0x00);
-    payload.extend_from_slice(&32u16.to_le_bytes());
-    payload.extend_from_slice(&0u16.to_le_bytes());
-
+fn tls_exporter_kms_parser_rejects_reserved_kdf_id() {
+    let payload = exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        0x01,
+        0x30,
+        32,
+        CANONICAL_LABEL,
+        &[],
+    );
     let result = parse_tls_exporter_kms_payload(&payload);
     assert!(
         matches!(result, Err(sar_crypto::SarCryptoError::ReservedValue(_))),
@@ -99,93 +121,106 @@ fn tls_exporter_kms_parser_rejects_nonzero_kdf_id() {
 }
 
 #[test]
-fn tls_exporter_kms_parser_rejects_nonzero_flags() {
-    let label = b"EXPORTER-SAR-TEST";
-    let mut payload = vec![label.len() as u8];
-    payload.extend_from_slice(label);
-    payload.push(TLS_EXPORTER_CONTEXT_VERSION_1);
-    payload.push(0x01);
-    payload.push(TLS_EXPORTER_KDF_DIRECT);
-    payload.push(0x01);
-    payload.push(0x00);
-    payload.extend_from_slice(&32u16.to_le_bytes());
-    payload.extend_from_slice(&0x0001u16.to_le_bytes()); // flags nonzero
-
+fn tls_exporter_kms_parser_rejects_reserved_context_version() {
+    let payload = exporter_payload(
+        0x02,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x30,
+        32,
+        CANONICAL_LABEL,
+        &[],
+    );
     let result = parse_tls_exporter_kms_payload(&payload);
     assert!(
         matches!(result, Err(sar_crypto::SarCryptoError::ReservedValue(_))),
-        "nonzero flags must be ReservedValue; got {result:?}"
+        "reserved context version must be ReservedValue; got {result:?}"
     );
 }
 
 #[test]
-fn tls_exporter_kms_parser_rejects_unsupported_context_version() {
-    let label = b"EXPORTER-SAR-TEST";
-    let mut payload = vec![label.len() as u8];
-    payload.extend_from_slice(label);
-    payload.push(0x02); // context version = 0x02 (unsupported)
-    payload.push(0x01);
-    payload.push(TLS_EXPORTER_KDF_DIRECT);
-    payload.push(0x01);
-    payload.push(0x00);
-    payload.extend_from_slice(&32u16.to_le_bytes());
-    payload.extend_from_slice(&0u16.to_le_bytes());
-
-    let result = parse_tls_exporter_kms_payload(&payload);
-    assert!(
-        matches!(result, Err(sar_crypto::SarCryptoError::Unsupported(_))),
-        "unsupported context version must be Unsupported; got {result:?}"
+fn tls_exporter_kms_parser_validates_hash_algo_registry() {
+    for (hash_algo, ok) in [(0x30u8, true), (0x31, true)] {
+        let payload = exporter_payload(
+            TLS_EXPORTER_CONTEXT_VERSION_1,
+            TLS_EXPORTER_KDF_DIRECT,
+            hash_algo,
+            32,
+            CANONICAL_LABEL,
+            &[],
+        );
+        assert_eq!(parse_tls_exporter_kms_payload(&payload).is_ok(), ok);
+    }
+    let sha3 = exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x32,
+        32,
+        CANONICAL_LABEL,
+        &[],
     );
+    assert!(matches!(
+        parse_tls_exporter_kms_payload(&sha3),
+        Err(sar_crypto::SarCryptoError::Unsupported(_))
+    ));
+    let reserved = exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x01,
+        32,
+        CANONICAL_LABEL,
+        &[],
+    );
+    assert!(matches!(
+        parse_tls_exporter_kms_payload(&reserved),
+        Err(sar_crypto::SarCryptoError::ReservedValue(_))
+    ));
 }
 
 #[test]
-fn tls_exporter_kms_parser_rejects_zero_derived_key_length() {
-    let label = b"EXPORTER-SAR-TEST";
-    let mut payload = vec![label.len() as u8];
-    payload.extend_from_slice(label);
-    payload.push(TLS_EXPORTER_CONTEXT_VERSION_1);
-    payload.push(0x01);
-    payload.push(TLS_EXPORTER_KDF_DIRECT);
-    payload.push(0x01);
-    payload.push(0x00);
-    payload.extend_from_slice(&0u16.to_le_bytes()); // derived key length = 0
-    payload.extend_from_slice(&0u16.to_le_bytes());
+fn tls_exporter_kms_parser_rejects_wrong_derived_key_length() {
+    for dkl in [0u16, 16, 64] {
+        let payload = exporter_payload(
+            TLS_EXPORTER_CONTEXT_VERSION_1,
+            TLS_EXPORTER_KDF_DIRECT,
+            0x30,
+            dkl,
+            CANONICAL_LABEL,
+            &[],
+        );
+        let result = parse_tls_exporter_kms_payload(&payload);
+        assert!(
+            matches!(result, Err(sar_crypto::SarCryptoError::InvalidLength(_))),
+            "DKL {dkl} must be InvalidLength; got {result:?}"
+        );
+    }
+}
 
+#[test]
+fn tls_exporter_kms_parser_rejects_nonzero_salt() {
+    let payload = exporter_payload(
+        TLS_EXPORTER_CONTEXT_VERSION_1,
+        TLS_EXPORTER_KDF_DIRECT,
+        0x30,
+        32,
+        CANONICAL_LABEL,
+        b"salt",
+    );
     let result = parse_tls_exporter_kms_payload(&payload);
     assert!(
-        matches!(result, Err(sar_crypto::SarCryptoError::Malformed(_))),
-        "zero derived key length must be Malformed; got {result:?}"
+        matches!(result, Err(sar_crypto::SarCryptoError::InvalidLength(_))),
+        "nonempty salt must be InvalidLength; got {result:?}"
     );
 }
 
 #[test]
 fn tls_exporter_kms_parser_accepts_valid_payload() {
-    let label = b"EXPORTER-SAR-v1-QUIC-AEAD";
-    let salt = b"test-salt";
-    let mut payload = vec![label.len() as u8];
-    payload.extend_from_slice(label);
-    payload.push(TLS_EXPORTER_CONTEXT_VERSION_1);
-    payload.push(0x01); // aead algo id
-    payload.push(TLS_EXPORTER_KDF_DIRECT);
-    payload.push(0x01); // gh hash algo id
-    payload.push(salt.len() as u8);
-    payload.extend_from_slice(salt);
-    payload.extend_from_slice(&32u16.to_le_bytes()); // derived key length
-    payload.extend_from_slice(&0u16.to_le_bytes()); // flags = 0
-
-    let result = parse_tls_exporter_kms_payload(&payload);
-    assert!(
-        result.is_ok(),
-        "valid payload must parse successfully; got {result:?}"
-    );
-
-    let params = result.expect("parsed params");
-    assert_eq!(params.exporter_label, "EXPORTER-SAR-v1-QUIC-AEAD");
+    let params = parse_tls_exporter_kms_payload(&valid_exporter_payload()).expect("valid");
+    assert_eq!(params.exporter_label, "EXPORTER-SAR-v1");
     assert_eq!(params.context_version, TLS_EXPORTER_CONTEXT_VERSION_1);
     assert_eq!(params.kdf_algo_id, TLS_EXPORTER_KDF_DIRECT);
-    assert_eq!(params.salt, salt);
+    assert_eq!(params.global_header_hash_algo_id, 0x30);
+    assert!(params.salt.is_empty());
     assert_eq!(params.derived_key_length, 32);
-    assert_eq!(params.flags, 0);
 }
 
 // ── Test 17: TLS_EXPORTER context encoding is deterministic ──────────────────
@@ -539,17 +574,27 @@ async fn missing_sar_magic_on_quic_stream_causes_rejection() {
 #[test]
 fn tls_exporter_params_serialize_parse_roundtrip() {
     let params = TlsExporterParams {
-        exporter_label: "EXPORTER-SAR-v1-QUIC-AEAD".to_owned(),
+        exporter_label: "EXPORTER-SAR-v1".to_owned(),
         context_version: TLS_EXPORTER_CONTEXT_VERSION_1,
-        aead_algo_id: 0x01,
         kdf_algo_id: TLS_EXPORTER_KDF_DIRECT,
-        global_header_hash_algo_id: 0x01,
-        salt: vec![0x11, 0x22, 0x33],
+        global_header_hash_algo_id: 0x31,
+        salt: Vec::new(),
         derived_key_length: 32,
-        flags: 0,
     };
 
-    let serialized = serialize_tls_exporter_kms_payload(&params);
+    let serialized = serialize_tls_exporter_kms_payload(&params).expect("serialize");
+    assert_eq!(serialized, {
+        let mut expected = exporter_payload(
+            TLS_EXPORTER_CONTEXT_VERSION_1,
+            TLS_EXPORTER_KDF_DIRECT,
+            0x31,
+            32,
+            CANONICAL_LABEL,
+            &[],
+        );
+        expected.shrink_to_fit();
+        expected
+    });
     let parsed = parse_tls_exporter_kms_payload(&serialized).expect("roundtrip parse");
 
     assert_eq!(parsed, params, "serialize/parse roundtrip must be lossless");
