@@ -292,3 +292,45 @@ fn encode_io_failures_are_io() {
         );
     }
 }
+
+fn zstd_frame_with_window_log(window_log: u32) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    let mut encoder = zstd::stream::Encoder::new(&mut encoded, 1).expect("encoder");
+    encoder.window_log(window_log).expect("window log");
+    std::io::Write::write_all(&mut encoder, b"window test payload").expect("write");
+    encoder.finish().expect("finish");
+    encoded
+}
+
+#[test]
+fn zstd_frame_at_window_limit_decodes() {
+    let encoded = zstd_frame_with_window_log(sar_compression::ZSTD_MAX_WINDOW_LOG);
+    let mut decoded = Vec::new();
+    decode_stream(
+        COMP_ALGO_ZSTD,
+        &mut encoded.as_slice(),
+        &mut decoded,
+        DecompressionOptions {
+            max_output_size: 1024,
+        },
+    )
+    .expect("decode at limit");
+    assert_eq!(decoded, b"window test payload");
+}
+
+#[test]
+fn zstd_frame_above_window_limit_is_rejected() {
+    let encoded = zstd_frame_with_window_log(sar_compression::ZSTD_MAX_WINDOW_LOG + 1);
+    let mut decoded = Vec::new();
+    let err = decode_stream(
+        COMP_ALGO_ZSTD,
+        &mut encoded.as_slice(),
+        &mut decoded,
+        DecompressionOptions {
+            max_output_size: 1024,
+        },
+    )
+    .expect_err("window above limit");
+    assert!(matches!(err, CompressionError::DecompressionFailed(_)));
+    assert!(decoded.is_empty());
+}

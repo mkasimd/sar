@@ -309,6 +309,20 @@ M13b WP-7 delta pipeline (spec §6.1.2, §8.4, §13.1):
 - Tests: `crates/sar-archive/tests/delta_pipeline_tests.rs`; fuzzing:
   `delta_bsdiff_apply` and `delta_vcdiff_apply` (bounded local runs only).
 
+### Archive-level recovery (M13b WP-7B)
+- `repair_archive` re-validates caller-constructed `RecoveryPlan` values with
+  checked arithmetic and enforces `max_repair_working_set` before each
+  allocation stage against a conservative peak-live-memory model (input
+  archive, TLV, merged ranges, erasure index, codec padded output plus
+  estimated scratch, recovered buffer plus repaired output). Codec scratch
+  (RS: symbol buffers, GF matrices, Vandermonde, index vectors) and the
+  Central Dictionary parse stage are estimates, not exact; the shared
+  Central Dictionary parser may allocate more than modelled.
+- Tests: `crates/sar-archive/tests/recovery_resource_tests.rs`; fuzzing:
+  `archive_repair` (replay and short bounded run only; no sustained campaign).
+- Decompression: `max_output_size` bounds decoded output only, not
+  decoder-internal memory; zstd frame windows above 128 MiB are rejected.
+
 ### Streaming/session and transport
 - Streaming parser/state model and session semantics (`sar-stream`).
 - SAR-over-TCP and SAR-over-QUIC transport bindings (`sar-transport`) in current implemented profile.

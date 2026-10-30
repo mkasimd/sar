@@ -2438,7 +2438,10 @@
           "Successful repair still completes when the corrected estimate remains within the configured limit."
         ],
         "owner_milestone": "M13b.2"
-      }
+      },
+      "notes": [
+        "Remediation evidence (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): repair_archive now enforces max_repair_working_set before each allocation stage against a staged peak-live-memory model derived from actual buffer lifetimes (input archive A, cloned selected TLV, merged ranges, erasure index, codec padded output plus estimated scratch, recovered buffer plus repaired output); temporaries are dropped before output construction and the cloned TLV set is reduced to the selected TLV. The previously undercounted configuration (XOR stripe 255, 64 KiB blocks) is now rejected. Tests: crates/sar-archive/tests/recovery_resource_tests.rs (exact L / L-1 boundaries for XOR, RS, no-erasure and merge paths; repaired output compared byte-for-byte with the pristine archive). Residual limits: RS codec scratch is derived from k, parity count and symbol size (symbol buffers + 4*min(k,parity)^2 matrix bytes + parity*k Vandermonde + index vectors; corrective pass SAR-M13b-WP7B-IMPLEMENTATION-REVIEW-001) and, like the Central Dictionary parse estimate (2*cd_len), is an estimate, not a measurement; the shared Central Dictionary parser can allocate more than modelled (Vec<Tlv> overhead up to ~4*cd_len for minimal TLVs; offsets table sized from the declared file count, bounded only by max_entry_count) and is recorded for later parser hardening; allocator overhead is not modelled; codec CPU is O(groups x erasures). Status intentionally left for reviewer disposition."
+      ]
     },
     {
       "id": "M13-TRANSFORM-001",
@@ -2861,7 +2864,8 @@
         "test_requirement": "not_required"
       },
       "notes": [
-        "Progress (WP-7, SAR-M13b-WP7-IMPLEMENTATION-001): the delta_bsdiff_apply and delta_vcdiff_apply fuzz targets execute real apply_bsdiff/apply_vcdiff under bounded limits with valid and malformed seeds (fuzz/seeds/delta_apply). Evidence: both targets compiled, seeds replayed, and one 30-second bounded run each with no crash; this is not a sustained campaign. Remaining (not closed): the archive-level repair fuzz target (WP-7B)."
+        "Progress (WP-7, SAR-M13b-WP7-IMPLEMENTATION-001): the delta_bsdiff_apply and delta_vcdiff_apply fuzz targets execute real apply_bsdiff/apply_vcdiff under bounded limits with valid and malformed seeds (fuzz/seeds/delta_apply). Evidence: both targets compiled, seeds replayed, and one 30-second bounded run each with no crash; this is not a sustained campaign. Remaining (not closed): the archive-level repair fuzz target (WP-7B).",
+        "Progress (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): the archive_repair fuzz target (fuzz/fuzz_targets/archive_repair.rs) exercises inspect_recovery_metadata, plan_archive_repair and repair_archive with real XOR/RS parity, varied erasure ranges, tampered RecoveryPlan values and varied limits; 22 deterministic seeds in fuzz/seeds/archive_repair (valid and malformed). Evidence: target built, all seeds replayed (-runs=0) and one 30-second bounded run (130,132 executions) with no crash; this is not a sustained campaign. The repair-fuzz obligation is satisfied at this evidence level together with the WP-7 delta targets, but the combined finding is not closed here pending reviewer disposition and any sustained-fuzzing expectation."
       ]
     },
     {
@@ -2916,7 +2920,10 @@
           "Document that DEFLATE/ZSTD decoder library-internal working memory is not currently represented by a dedicated SAR `ResourceLimits` field.",
           "If a future SAR-specific decoder-memory control is added, document which field governs it and how it interacts with decoded-output limits."
         ]
-      }
+      },
+      "notes": [
+        "Remediation evidence (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): DecompressionOptions rustdoc, docs/CRATE_RESPONSIBILITIES.md, docs/CONFORMANCE.md and the API inventory now state that max_output_size bounds decoded output bytes only and does not bound decoder-internal memory (DEFLATE history window; ZSTD context, frame window and tables) or process memory. The zstd decoder now pins window_log_max to ZSTD_MAX_WINDOW_LOG = 27 (128 MiB, equal to the libzstd default) and frames declaring a larger window are rejected; tests: crates/sar-compression/tests/compression_tests.rs. No SAR ResourceLimits field governs decoder-internal memory; DEFLATE and ZSTD internal allocations remain unmeasured by SAR. Status intentionally left for reviewer disposition."
+      ]
     },
     {
       "id": "M13-RECOVERY-002",

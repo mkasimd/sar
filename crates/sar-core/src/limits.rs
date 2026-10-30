@@ -192,8 +192,13 @@ pub struct ResourceLimits {
     /// Default: 16 GiB.
     pub max_recovery_protected_range: u64,
 
-    /// Maximum working-set byte size for archive-level repair operations.
-    /// Default: 2 GiB.
+    /// Maximum modelled working-set byte size for archive-level repair
+    /// operations, enforced by `repair_archive` before each allocation stage.
+    /// The model is conservative and includes the input archive, retained
+    /// buffers, codec padded output and estimated codec scratch.  Codec
+    /// scratch and the Central Dictionary parse stage are estimates, and the
+    /// Central Dictionary parser may allocate more than modelled; this is not
+    /// exact accounting.  Default: 2 GiB.
     pub max_repair_working_set: u64,
 
     // ── CDC ───────────────────────────────────────────────────────────────────

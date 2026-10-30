@@ -16,7 +16,10 @@
 //! Callers must enforce [`ResourceLimits`] before passing untrusted archives or
 //! erasure inputs to these APIs.  In particular, `max_archive_size`,
 //! `max_recovery_protected_range`, and `max_repair_working_set` bound the
-//! supported repair working set.
+//! supported repair working set.  `max_repair_working_set` is a staged,
+//! conservative model enforced by [`repair_archive`] (see its documentation);
+//! it is not an exact measurement of allocator or codec-internal memory, and
+//! it does not bound codec CPU time (which is O(groups x erasures)).
 //!
 //! These APIs are suitable for bounded repair workflows, conformance tests, and
 //! controlled archive sizes.  They are not streaming repair APIs and do not yet
@@ -140,9 +143,15 @@ struct ArchiveLayout {
     recovery_tlvs: Vec<(u8, Vec<u8>)>, // (type_id, value)
 }
 
+/// Parses the layout.  When `enforce_working_set` is set, the stage-1 repair
+/// working set (input archive plus a `2 × cd_len` estimate for Central
+/// Dictionary parse structures and cloned RECOVERY TLVs; the estimate can be
+/// exceeded by the shared parser, see [`repair_archive`]) is checked
+/// against `max_repair_working_set` before the CD is parsed.
 fn parse_archive_layout(
     archive_bytes: &[u8],
     limits: &ResourceLimits,
+    enforce_working_set: bool,
 ) -> Result<ArchiveLayout, SarError> {
     limits.check_archive_size(
         u64::try_from(archive_bytes.len()).map_err(|_| SarError::Overflow("archive size"))?,
@@ -177,7 +186,16 @@ fn parse_archive_layout(
     let cd_len = archive_end
         .checked_sub(cd_start)
         .ok_or(SarError::Bounds("CD offset outside archive"))?;
-    limits.check_cd_bytes(u64::try_from(cd_len).map_err(|_| SarError::Overflow("CD length"))?)?;
+    let cd_len_u64 = u64::try_from(cd_len).map_err(|_| SarError::Overflow("CD length"))?;
+    limits.check_cd_bytes(cd_len_u64)?;
+    if enforce_working_set {
+        let archive_len = u64::try_from(archive_bytes.len())
+            .map_err(|_| SarError::Overflow("archive repair working set"))?;
+        let cd_estimate = cd_len_u64
+            .checked_mul(2)
+            .ok_or(SarError::Overflow("archive repair working set"))?;
+        check_working_set(limits, &[archive_len, cd_estimate])?;
+    }
     let cd_bytes = &archive_bytes[cd_start..cd_start + cd_len];
     let (cd, _) = parse_central_dictionary(cd_bytes, flags, limits)?;
 
@@ -211,7 +229,14 @@ pub fn inspect_recovery_metadata(
     archive_bytes: &[u8],
     limits: &ResourceLimits,
 ) -> Result<RecoveryMetadata, SarError> {
-    let layout = parse_archive_layout(archive_bytes, limits)?;
+    let layout = parse_archive_layout(archive_bytes, limits, false)?;
+    inspect_layout(&layout, limits)
+}
+
+fn inspect_layout(
+    layout: &ArchiveLayout,
+    limits: &ResourceLimits,
+) -> Result<RecoveryMetadata, SarError> {
     let has_global_ec = layout.global_flags.contains(GlobalFlags::HAS_GLOBAL_EC);
 
     // Compute protected range when CD exists
@@ -283,7 +308,9 @@ pub fn plan_archive_repair(
     erasures: ErasureInput,
     limits: &ResourceLimits,
 ) -> Result<RecoveryPlan, SarError> {
-    let meta = inspect_recovery_metadata(archive_bytes, limits)?;
+    let layout = parse_archive_layout(archive_bytes, limits, false)?;
+    let meta = inspect_layout(&layout, limits)?;
+    drop(layout);
 
     if !meta.repair_possible {
         return Err(SarError::RecoveryUnavailable(
@@ -296,39 +323,21 @@ pub fn plan_archive_repair(
         "protected range could not be determined",
     ))?;
 
-    // Determine block/symbol size from the first valid TLV
-    let (algo_id, block_size_bytes) = block_size_from_tlv(archive_bytes, &protected_range, limits)?;
+    // Determine block/symbol size from the first (validated) RECOVERY TLV
+    let first_summary = meta
+        .recovery_tlvs
+        .first()
+        .ok_or(SarError::RecoveryUnavailable(
+            "no usable RECOVERY TLV found for block-size derivation",
+        ))?;
+    let (algo_id, block_size_bytes) = block_size_from_summary(first_summary)?;
 
-    let prot_end = protected_range
-        .offset
-        .checked_add(protected_range.length)
-        .ok_or(SarError::Overflow("protected range end"))?;
-
-    for er in &erasures.archive_ranges {
-        let er_end = er
-            .offset
-            .checked_add(er.length)
-            .ok_or(SarError::Overflow("erasure range end"))?;
-
-        // Erasure must lie within protected range
-        if er.offset < protected_range.offset || er_end > prot_end {
-            return Err(SarError::RecoveryUnavailable(
-                "erasure range lies outside the protected byte range",
-            ));
-        }
-
-        // Relative offset within protected range
-        let rel_off = er.offset - protected_range.offset;
-
-        // Block-alignment check (conservative: spec does not define arbitrary
-        // sub-block erasure handling — see docs/SPEC_QUESTIONS.md)
-        if rel_off % block_size_bytes != 0 || er.length % block_size_bytes != 0 {
-            return Err(SarError::RecoveryUnavailable(
-                "archive-level repair orchestration requires explicit block-aligned erasure \
-                 mapping; see docs/SPEC_QUESTIONS.md",
-            ));
-        }
-    }
+    validate_erasure_ranges(
+        &erasures.archive_ranges,
+        protected_range.offset,
+        protected_range.length,
+        block_size_bytes,
+    )?;
 
     Ok(RecoveryPlan {
         erasures,
@@ -341,34 +350,186 @@ pub fn plan_archive_repair(
     })
 }
 
-/// Extracts `(algo_id, block_size)` from the first valid RECOVERY TLV in the
-/// archive.
-fn block_size_from_tlv(
-    archive_bytes: &[u8],
-    _protected_range: &ProtectedRange,
-    limits: &ResourceLimits,
-) -> Result<(u8, u64), SarError> {
-    let layout = parse_archive_layout(archive_bytes, limits)?;
-    for (type_id, value) in &layout.recovery_tlvs {
-        if let Ok(summary) = validate_recovery_tlv(*type_id, value, limits) {
-            let block_size: u64 = match &summary {
-                FecSummary::Xor { block_size, .. } => u64::from(*block_size),
-                FecSummary::ReedSolomon { symbol_size, .. } => u64::from(*symbol_size),
-            };
-            if block_size == 0 {
-                continue;
-            }
-            let algo = match &summary {
-                FecSummary::Xor { algo_id, .. } | FecSummary::ReedSolomon { algo_id, .. } => {
-                    *algo_id
-                }
-            };
-            return Ok((algo, block_size));
+/// Returns `(algo_id, block_size)` of the first RECOVERY TLV summary.
+fn block_size_from_summary(summary: &FecSummary) -> Result<(u8, u64), SarError> {
+    let (algo_id, block_size) = match summary {
+        FecSummary::Xor {
+            algo_id,
+            block_size,
+            ..
+        } => (*algo_id, u64::from(*block_size)),
+        FecSummary::ReedSolomon {
+            algo_id,
+            symbol_size,
+            ..
+        } => (*algo_id, u64::from(*symbol_size)),
+    };
+    if block_size == 0 {
+        return Err(SarError::InvalidLength("recovery block size is zero"));
+    }
+    Ok((algo_id, block_size))
+}
+
+/// Validates erasure ranges against the protected range and block size without
+/// allocating.  Every range must lie inside `[prot_offset, prot_offset +
+/// prot_length)` and be block-aligned relative to `prot_offset`.
+fn validate_erasure_ranges(
+    ranges: &[ErasureRange],
+    prot_offset: u64,
+    prot_length: u64,
+    block_size: u64,
+) -> Result<(), SarError> {
+    if block_size == 0 {
+        return Err(SarError::InvalidLength("recovery block size is zero"));
+    }
+    let prot_end = prot_offset
+        .checked_add(prot_length)
+        .ok_or(SarError::Overflow("protected range end"))?;
+    for er in ranges {
+        let er_end = er
+            .offset
+            .checked_add(er.length)
+            .ok_or(SarError::Overflow("erasure range end"))?;
+        if er.offset < prot_offset || er_end > prot_end {
+            return Err(SarError::RecoveryUnavailable(
+                "erasure range lies outside the protected byte range",
+            ));
+        }
+        let rel_off = er.offset - prot_offset;
+        if !rel_off.is_multiple_of(block_size) || !er.length.is_multiple_of(block_size) {
+            return Err(SarError::RecoveryUnavailable(
+                "archive-level repair orchestration requires explicit block-aligned erasure \
+                 mapping; see docs/SPEC_QUESTIONS.md",
+            ));
         }
     }
-    Err(SarError::RecoveryUnavailable(
-        "no usable RECOVERY TLV found for block-size derivation",
-    ))
+    Ok(())
+}
+
+/// Codec-derived sizes used for working-set accounting.
+struct CodecSizing {
+    block_size: u64,
+    /// Original protected length declared by the TLV.
+    original_len: u64,
+    /// Length of the buffer the codec allocates (stripe/group padded).
+    padded_len: u64,
+    /// Conservative estimate of codec scratch memory besides the padded output.
+    scratch: u64,
+    /// Maximum number of distinct erasures the parity can possibly cover.
+    max_erasures: u64,
+}
+
+fn codec_sizing(summary: &FecSummary) -> Result<CodecSizing, SarError> {
+    let overflow = SarError::Overflow("recovery codec sizing");
+    match summary {
+        FecSummary::Xor {
+            stripe_size,
+            block_size,
+            original_protected_len,
+            stripe_count,
+            ..
+        } => {
+            let bs = u64::from(*block_size);
+            let ss = u64::from(*stripe_size);
+            let padded_len = u64::from(*stripe_count)
+                .checked_mul(ss)
+                .and_then(|v| v.checked_mul(bs))
+                .ok_or(overflow)?;
+            // block buffer + recovered block + per-stripe erasure list
+            let scratch = bs
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(ss.checked_mul(8)?))
+                .ok_or(SarError::Overflow("recovery codec sizing"))?;
+            Ok(CodecSizing {
+                block_size: bs,
+                original_len: *original_protected_len,
+                padded_len,
+                scratch,
+                max_erasures: u64::from(*stripe_count),
+            })
+        }
+        FecSummary::ReedSolomon {
+            k,
+            parity_count,
+            symbol_size,
+            original_protected_len,
+            group_count,
+            ..
+        } => {
+            let ss = u64::from(*symbol_size);
+            let pc = u64::from(*parity_count);
+            let padded_len = u64::from(*group_count)
+                .checked_mul(u64::from(*k))
+                .and_then(|v| v.checked_mul(ss))
+                .ok_or(overflow)?;
+            let ov = || SarError::Overflow("recovery codec sizing");
+            // Erased symbols per group are `t <= min(k, parity_count)`.
+            let t_max = u64::from(*k).min(pc);
+            // symbol buffer + RHS rows + recovered rows (each up to `pc` symbols)
+            let symbol_buffers = pc
+                .checked_mul(2)
+                .and_then(|v| v.checked_add(1))
+                .and_then(|v| v.checked_mul(ss))
+                .ok_or_else(ov)?;
+            // GF matrices live together during inversion: the t x t system,
+            // the t x 2t augmented matrix and the t x t inverse (4 t^2 bytes).
+            let matrices = t_max
+                .checked_mul(t_max)
+                .and_then(|v| v.checked_mul(4))
+                .ok_or_else(ov)?;
+            // Vandermonde generator (`parity_count x k`).
+            let vandermonde = pc.checked_mul(u64::from(*k)).ok_or_else(ov)?;
+            // Per-group index vectors (erased list up to k usize with growth
+            // slack, parity selection) and `Vec<Vec<u8>>` row headers.
+            let index_vectors = u64::from(*k)
+                .checked_mul(16)
+                .and_then(|v| v.checked_add(t_max.checked_mul(64)?))
+                .ok_or_else(ov)?;
+            let scratch = [symbol_buffers, matrices, vandermonde, index_vectors]
+                .into_iter()
+                .try_fold(0u64, u64::checked_add)
+                .ok_or_else(ov)?;
+            let max_erasures = u64::from(*group_count)
+                .checked_mul(pc)
+                .ok_or(SarError::Overflow("recovery codec sizing"))?;
+            Ok(CodecSizing {
+                block_size: ss,
+                original_len: *original_protected_len,
+                padded_len,
+                scratch,
+                max_erasures,
+            })
+        }
+    }
+}
+
+/// Sums `parts` with checked arithmetic and enforces `max_repair_working_set`.
+fn check_working_set(limits: &ResourceLimits, parts: &[u64]) -> Result<(), SarError> {
+    let mut total: u64 = 0;
+    for part in parts {
+        total = total
+            .checked_add(*part)
+            .ok_or(SarError::Overflow("archive repair working set"))?;
+    }
+    limits.check_repair_working_set(total)
+}
+
+/// Allocates an empty `Vec` with exactly `len` capacity, reporting allocation
+/// failure as a limit error rather than aborting.
+fn alloc_vec<T>(len: u64) -> Result<Vec<T>, SarError> {
+    let len = usize::try_from(len).map_err(|_| SarError::Overflow("repair allocation length"))?;
+    let mut v = Vec::new();
+    v.try_reserve_exact(len)
+        .map_err(|_| SarError::LimitExceeded("repair allocation failed"))?;
+    Ok(v)
+}
+
+fn bytes_of<T>(count: u64) -> Result<u64, SarError> {
+    let size = u64::try_from(std::mem::size_of::<T>())
+        .map_err(|_| SarError::Overflow("repair allocation size"))?;
+    count
+        .checked_mul(size)
+        .ok_or(SarError::Overflow("archive repair working set"))
 }
 
 /// Executes a repair plan and returns the repaired archive bytes and a report.
@@ -376,13 +537,43 @@ fn block_size_from_tlv(
 /// Applies XOR or RS erasure recovery on the protected range of `archive_bytes`
 /// using explicit erasure positions from `plan`.
 ///
+/// `plan` is treated as untrusted: its protected range, algorithm IDs and
+/// erasure ranges are re-validated against the archive and the RECOVERY TLV
+/// with checked arithmetic before any allocation that scales with them.
+///
+/// # Working-set accounting
+///
+/// `max_repair_working_set` is enforced before each allocation stage against a
+/// conservative peak-live-memory model that includes the borrowed input
+/// archive (`A`), the cloned selected RECOVERY TLV, the merged-range and
+/// erasure-index buffers, the codec's padded output plus estimated scratch
+/// memory, and finally the recovered buffer plus the repaired output (`2A`-ish)
+/// and report ranges.  Temporary buffers are dropped before the repaired
+/// output is built.  Codec scratch is a dimension-dependent conservative
+/// estimate (for Reed-Solomon: symbol buffers, `4 * min(k, parity)^2` bytes of
+/// GF matrices, the `parity * k` Vandermonde matrix and per-group index
+/// vectors), not a measurement.
+///
+/// The Central Dictionary stage is only an estimate (`2 * cd_len`).  The shared
+/// Central Dictionary parser may allocate more than that: per-TLV `Vec<Tlv>`
+/// overhead (up to about `4 * cd_len` for minimal TLVs, plus growth slack) and
+/// an offsets table sized from the declared file count (bounded by
+/// `max_entry_count`, not by the CD length) can exceed the modelled amount.
+/// This is a recorded limitation for later parser hardening.  The model also
+/// does not cover the plan, the caller's own copies, or allocator overhead.
+///
 /// The caller is responsible for writing the returned bytes to a temporary file
 /// and renaming to the final destination only after structural verification.
 ///
 /// # Errors
 ///
 /// * [`SarError::EcFailed`] — erasures exceed parity capacity.
-/// * [`SarError::RecoveryUnavailable`] — repair not supported or TLV not found.
+/// * [`SarError::RecoveryUnavailable`] — repair not supported, TLV not found,
+///   or an erasure lies outside the protected range or is unaligned.
+/// * [`SarError::LimitExceeded`] — a configured limit would be exceeded.
+/// * [`SarError::Overflow`] / [`SarError::Bounds`] /
+///   [`SarError::InvalidLength`] / [`SarError::Malformed`] — the plan is
+///   inconsistent with the archive or contains overflowing values.
 pub fn repair_archive(
     archive_bytes: &[u8],
     plan: &RecoveryPlan,
@@ -390,92 +581,196 @@ pub fn repair_archive(
 ) -> Result<(Vec<u8>, RepairReport), SarError> {
     use sar_fec::{Erasure, FecCodec, FecRecoverInput, RsCodec, XorCodec};
 
-    // Re-parse to find the TLV value bytes
-    let layout = parse_archive_layout(archive_bytes, limits)?;
+    let archive_len = u64::try_from(archive_bytes.len())
+        .map_err(|_| SarError::Overflow("archive repair working set"))?;
 
-    let (tlv_value, tlv_algo_id) = layout
-        .recovery_tlvs
+    // Stage 1: layout parse.  The CD-size estimate is checked inside.
+    let layout = parse_archive_layout(archive_bytes, limits, true)?;
+    let cd_offset = layout.cd_offset.ok_or(SarError::RecoveryUnavailable(
+        "RECOVERY TLV with matching algo ID not found in archive",
+    ))?;
+
+    // Keep only the selected TLV; drop the rest.
+    let mut tlvs = layout.recovery_tlvs;
+    let tlv_pos = tlvs
         .iter()
-        .find(|(type_id, _)| *type_id == plan.algo_id)
-        .map(|(tid, val)| (val.as_slice(), *tid))
+        .position(|(type_id, _)| *type_id == plan.algo_id)
         .ok_or(SarError::RecoveryUnavailable(
             "RECOVERY TLV with matching algo ID not found in archive",
         ))?;
+    let (tlv_algo_id, tlv_value) = tlvs.swap_remove(tlv_pos);
+    drop(tlvs);
 
-    // Extract protected range bytes
-    let prot_start = usize::try_from(plan.protected_range.offset)
-        .map_err(|_| SarError::Overflow("prot start"))?;
-    let prot_len =
-        usize::try_from(plan.protected_range.length).map_err(|_| SarError::Overflow("prot len"))?;
-    if prot_start + prot_len > archive_bytes.len() {
+    // The plan is untrusted: it must match the archive exactly.
+    if plan.protected_range.algo_id != plan.algo_id {
+        return Err(SarError::Malformed(
+            "recovery plan algorithm IDs are inconsistent",
+        ));
+    }
+    let expected_len = cd_offset
+        .checked_sub(GLOBAL_HEADER_FLAGS_OFFSET)
+        .ok_or(SarError::Bounds("CD offset lies before Global Flags"))?;
+    if plan.protected_range.offset != GLOBAL_HEADER_FLAGS_OFFSET
+        || plan.protected_range.length != expected_len
+    {
+        return Err(SarError::Bounds(
+            "recovery plan protected range does not match archive",
+        ));
+    }
+    limits.check_recovery_protected_range(plan.protected_range.length)?;
+    let prot_end = plan
+        .protected_range
+        .offset
+        .checked_add(plan.protected_range.length)
+        .ok_or(SarError::Overflow("protected range end"))?;
+    if prot_end > archive_len {
         return Err(SarError::Bounds("protected range exceeds archive length"));
     }
-    let protected_bytes = &archive_bytes[prot_start..prot_start + prot_len];
-    limits.check_recovery_protected_range(plan.protected_range.length)?;
-    let repair_working_set = u64::try_from(archive_bytes.len())
-        .map_err(|_| SarError::Overflow("archive repair working set"))?
-        .checked_add(plan.protected_range.length)
-        .and_then(|value| value.checked_add(u64::try_from(tlv_value.len()).ok()?))
-        .and_then(|value| value.checked_add(plan.protected_range.length))
-        .ok_or(SarError::Overflow("archive repair working set"))?;
-    limits.check_repair_working_set(repair_working_set)?;
+    let prot_start = usize::try_from(plan.protected_range.offset)
+        .map_err(|_| SarError::Overflow("prot start"))?;
+    let prot_end_idx = usize::try_from(prot_end).map_err(|_| SarError::Overflow("prot end"))?;
+    let protected_bytes = &archive_bytes[prot_start..prot_end_idx];
 
-    // Build erasure list (block indices)
-    let block_size = block_size_from_algo(tlv_algo_id, tlv_value)?;
-    let mut erasure_indices: Vec<Erasure> = Vec::new();
-    for er in &plan.erasures.archive_ranges {
-        let rel_off = er.offset - plan.protected_range.offset;
-        let first_block = rel_off / block_size;
-        let last_block = (rel_off + er.length) / block_size;
-        for idx in first_block..last_block {
-            erasure_indices.push(Erasure { index: idx });
+    let summary = validate_recovery_tlv(tlv_algo_id, &tlv_value, limits)?;
+    let sizing = codec_sizing(&summary)?;
+    if sizing.original_len != plan.protected_range.length {
+        return Err(SarError::InvalidLength(
+            "RECOVERY TLV protected length does not match plan protected range",
+        ));
+    }
+    let ranges = &plan.erasures.archive_ranges;
+    validate_erasure_ranges(
+        ranges,
+        plan.protected_range.offset,
+        plan.protected_range.length,
+        sizing.block_size,
+    )?;
+
+    let tlv_len =
+        u64::try_from(tlv_value.len()).map_err(|_| SarError::Overflow("recovery TLV length"))?;
+    let report_bytes = bytes_of::<ErasureRange>(
+        u64::try_from(ranges.len()).map_err(|_| SarError::Overflow("erasure range count"))?,
+    )?;
+
+    // Stage 2: merged, sorted copy of the non-empty ranges (relative offsets).
+    let non_empty = u64::try_from(ranges.iter().filter(|r| r.length != 0).count())
+        .map_err(|_| SarError::Overflow("erasure range count"))?;
+    let merge_bytes = bytes_of::<(u64, u64)>(non_empty)?;
+    check_working_set(limits, &[archive_len, tlv_len, merge_bytes])?;
+    let mut merged: Vec<(u64, u64)> = alloc_vec(non_empty)?;
+    for er in ranges.iter().filter(|r| r.length != 0) {
+        let start = er.offset - plan.protected_range.offset;
+        let end = start
+            .checked_add(er.length)
+            .ok_or(SarError::Overflow("erasure range end"))?;
+        merged.push((start, end));
+    }
+    merged.sort_unstable();
+    let mut write = 0usize;
+    for read in 0..merged.len() {
+        let current = merged[read];
+        if write > 0 && current.0 <= merged[write - 1].1 {
+            merged[write - 1].1 = merged[write - 1].1.max(current.1);
+        } else {
+            merged[write] = current;
+            write += 1;
         }
     }
-    // Deduplicate and sort
-    erasure_indices.sort_unstable_by_key(|e| e.index);
-    erasure_indices.dedup_by_key(|e| e.index);
+    merged.truncate(write);
 
-    // Perform FEC recovery
-    let recovered = match tlv_algo_id {
-        0x14 => {
-            let codec = XorCodec::from_fec_value(tlv_value).map_err(SarError::from)?;
-            codec
-                .recover(FecRecoverInput {
-                    original_protected_len: plan.protected_range.length,
-                    available_data: protected_bytes,
-                    fec_value_data: tlv_value,
-                    erasures: &erasure_indices,
-                })
-                .map_err(SarError::from)?
+    // Ranges are block-aligned, so each merged span is a whole number of blocks.
+    let mut unique_blocks: u64 = 0;
+    for (start, end) in &merged {
+        let blocks = (end - start) / sizing.block_size;
+        unique_blocks = unique_blocks
+            .checked_add(blocks)
+            .ok_or(SarError::Overflow("erasure block count"))?;
+    }
+    if unique_blocks > sizing.max_erasures {
+        return Err(SarError::EcFailed(
+            "erasure count exceeds the parity capacity of the RECOVERY TLV",
+        ));
+    }
+
+    // Enforce every remaining peak before allocating the index list or running
+    // the codec.
+    let index_bytes = bytes_of::<Erasure>(unique_blocks)?;
+    check_working_set(limits, &[archive_len, tlv_len, merge_bytes, index_bytes])?;
+    if unique_blocks == 0 {
+        // No recovery needed: output is a copy of the input.
+        check_working_set(limits, &[archive_len, archive_len, report_bytes])?;
+    } else {
+        check_working_set(
+            limits,
+            &[
+                archive_len,
+                tlv_len,
+                index_bytes,
+                sizing.padded_len,
+                sizing.scratch,
+            ],
+        )?;
+        check_working_set(
+            limits,
+            &[archive_len, sizing.padded_len, archive_len, report_bytes],
+        )?;
+    }
+
+    let recovered: Option<Vec<u8>> = if unique_blocks == 0 {
+        drop(merged);
+        drop(tlv_value);
+        None
+    } else {
+        let mut erasure_indices: Vec<Erasure> = alloc_vec(unique_blocks)?;
+        for (start, end) in &merged {
+            for idx in (start / sizing.block_size)..(end / sizing.block_size) {
+                erasure_indices.push(Erasure { index: idx });
+            }
         }
-        0x11 => {
-            let codec = RsCodec::from_fec_value(tlv_value).map_err(SarError::from)?;
-            codec
-                .recover(FecRecoverInput {
-                    original_protected_len: plan.protected_range.length,
-                    available_data: protected_bytes,
-                    fec_value_data: tlv_value,
-                    erasures: &erasure_indices,
-                })
+        drop(merged);
+
+        let input = FecRecoverInput {
+            original_protected_len: plan.protected_range.length,
+            available_data: protected_bytes,
+            fec_value_data: &tlv_value,
+            erasures: &erasure_indices,
+        };
+        let recovered = match tlv_algo_id {
+            0x14 => XorCodec::from_fec_value(&tlv_value)
                 .map_err(SarError::from)?
-        }
-        _ => {
-            return Err(SarError::RecoveryUnavailable(
-                "unsupported FEC algorithm for archive repair",
+                .recover(input)
+                .map_err(SarError::from)?,
+            0x11 => RsCodec::from_fec_value(&tlv_value)
+                .map_err(SarError::from)?
+                .recover(input)
+                .map_err(SarError::from)?,
+            _ => {
+                return Err(SarError::RecoveryUnavailable(
+                    "unsupported FEC algorithm for archive repair",
+                ));
+            }
+        };
+        drop(erasure_indices);
+        drop(tlv_value);
+        if recovered.len() != protected_bytes.len() {
+            return Err(SarError::InvalidLength(
+                "recovered protected range has unexpected length",
             ));
         }
+        Some(recovered)
     };
 
     // Rebuild archive bytes: prefix + recovered_protected + remainder (CD + footer)
-    let cd_start = prot_start + prot_len;
-    limits.check_repair_working_set(
-        u64::try_from(archive_bytes.len())
-            .map_err(|_| SarError::Overflow("repaired archive size"))?,
-    )?;
-    let mut repaired = Vec::with_capacity(archive_bytes.len());
-    repaired.extend_from_slice(&archive_bytes[..prot_start]);
-    repaired.extend_from_slice(&recovered[..prot_len.min(recovered.len())]);
-    repaired.extend_from_slice(&archive_bytes[cd_start..]);
+    let mut repaired: Vec<u8> = alloc_vec(archive_len)?;
+    match recovered {
+        Some(recovered) => {
+            repaired.extend_from_slice(&archive_bytes[..prot_start]);
+            repaired.extend_from_slice(&recovered);
+            drop(recovered);
+            repaired.extend_from_slice(&archive_bytes[prot_end_idx..]);
+        }
+        None => repaired.extend_from_slice(archive_bytes),
+    }
 
     let repaired_ranges = plan.erasures.archive_ranges.clone();
     let report = RepairReport {
@@ -486,51 +781,4 @@ pub fn repair_archive(
     };
 
     Ok((repaired, report))
-}
-
-/// Returns the block/symbol size for a given FEC algorithm TLV value.
-fn block_size_from_algo(algo_id: u8, tlv_value: &[u8]) -> Result<u64, SarError> {
-    match algo_id {
-        0x14 => {
-            // XOR: block_size is at bytes [1] (block_size_index), resolved from table
-            if tlv_value.len() < 2 {
-                return Err(SarError::Truncated("XOR TLV too short for block size"));
-            }
-            let index = tlv_value[1];
-            xor_block_size(index)
-        }
-        0x11 => {
-            // RS: symbol_size is at bytes [2..6] (u32 LE)
-            if tlv_value.len() < 6 {
-                return Err(SarError::Truncated("RS TLV too short for symbol size"));
-            }
-            let ss = u32::from_le_bytes([tlv_value[2], tlv_value[3], tlv_value[4], tlv_value[5]]);
-            if ss == 0 {
-                return Err(SarError::InvalidLength("RS symbol size is zero"));
-            }
-            Ok(u64::from(ss))
-        }
-        _ => Err(SarError::RecoveryUnavailable("unsupported FEC algorithm")),
-    }
-}
-
-/// Resolves an XOR block-size-index to its byte size.
-fn xor_block_size(index: u8) -> Result<u64, SarError> {
-    let sizes: [(u8, u32); 9] = [
-        (0x00, 256),
-        (0x01, 512),
-        (0x02, 1_024),
-        (0x03, 2_048),
-        (0x04, 4_096),
-        (0x05, 8_192),
-        (0x06, 16_384),
-        (0x07, 32_768),
-        (0x08, 65_536),
-    ];
-    for (idx, size) in sizes {
-        if idx == index {
-            return Ok(u64::from(size));
-        }
-    }
-    Err(SarError::ReservedValue("XOR block size index is reserved"))
 }

@@ -621,6 +621,7 @@ dependencies = [
  "sar-core",
  "sar-crypto",
  "sar-delta",
+ "sar-fec",
  "sar-sparse",
  "sar-stream",
  "sar-transport",

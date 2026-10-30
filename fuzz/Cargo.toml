@@ -32,6 +32,9 @@ path = "../crates/sar-crypto"
 [dependencies.sar-delta]
 path = "../crates/sar-delta"
 
+[dependencies.sar-fec]
+path = "../crates/sar-fec"
+
 [[bin]]
 name = "smoke_core"
 path = "fuzz_targets/smoke_core.rs"
@@ -196,6 +199,13 @@ bench = false
 [[bin]]
 name = "delta_vcdiff_apply"
 path = "fuzz_targets/delta_vcdiff_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_repair"
+path = "fuzz_targets/archive_repair.rs"
 test = false
 doc = false
 bench = false
