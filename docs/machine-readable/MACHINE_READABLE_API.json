@@ -3394,7 +3394,7 @@
           },
           {
             "name": "ArchiveReader::read_global_header",
-            "description": "Parse the archive global header and, for indexed archives, the CD/footer.",
+            "description": "Parse the archive global header and, for indexed archives, the CD/footer. A KMS_TLS_EXPORTER payload is validated with the canonical TLS_EXPORTER parser; malformed, reserved or unsupported values are rejected here.",
             "metadata": {
               "since_milestone": "3",
               "returns": "Result<GlobalHeader, SarError>",
@@ -9358,7 +9358,7 @@
               },
               {
                 "name": "--password",
-                "description": "Explicit archive password; only valid when `--encrypt` is set."
+                "description": "Explicit archive password; only valid when `--encrypt` is set. Insecure: visible in process listings and shell history; prefer the interactive prompt."
               },
               {
                 "name": "--fec",
@@ -9400,7 +9400,7 @@
             ],
             "related_spec_sections": [],
             "ffi_equivalent_candidate": true,
-            "notes": "Passwords fall back to `SAR_PASSWORD` and then an interactive prompt when encryption is enabled. Directory entries are emitted explicitly below the input root. `--symlinks follow` refuses targets that resolve outside the requested input root and rejects recursive directory-symlink cycles. `sar create --cdc ...` is not implemented in M9a."
+            "notes": "Password sources are `--password`, then `SAR_PASSWORD`, then an interactive prompt when encryption is enabled; prefer the prompt because argv is visible in process listings and shell history, and `SAR_PASSWORD` is inherited by child processes and should be limited to noninteractive automation. Without a terminal or `SAR_PASSWORD` the command fails with `SAR_ERR_KEY_MISSING`. Directory entries are emitted explicitly below the input root. `--symlinks follow` refuses targets that resolve outside the requested input root and rejects recursive directory-symlink cycles. `sar create --cdc ...` is not implemented in M9a."
           },
           {
             "name": "extract",
@@ -9410,7 +9410,7 @@
             "options": [
               {
                 "name": "--password",
-                "description": "Explicit archive password for encrypted archives."
+                "description": "Explicit archive password for encrypted archives. Insecure: visible in process listings and shell history; prefer the interactive prompt."
               },
               {
                 "name": "--allow-lossy",
@@ -9555,7 +9555,7 @@
             "options": [
               {
                 "name": "--password",
-                "description": "Explicit archive password for encrypted archives."
+                "description": "Explicit archive password for encrypted archives. Insecure: visible in process listings and shell history; prefer the interactive prompt."
               },
               {
                 "name": "--recovery",

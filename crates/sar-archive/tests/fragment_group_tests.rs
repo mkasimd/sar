@@ -389,6 +389,104 @@ fn sha256_hash_algo_id_selects_the_digest() {
     ));
 }
 
+fn three_fragments() -> [Frag; 3] {
+    [
+        frag(1, 0, false, "f.bin", b"AAAA"),
+        frag(1, 1, false, "", b"BBBB"),
+        frag(1, 2, true, "", b"CCCC"),
+    ]
+}
+
+#[test]
+fn fragmented_entry_terminal_content_hash_regression() {
+    let dedup = GlobalFlags::DEDUPLICATION;
+    let [a, b, mut c] = three_fragments();
+
+    // Correct terminal hash over the full reassembled logical content.
+    c.hash = blake3_of(b"AAAABBBBCCCC");
+    let files = read(build_with(dedup, &[a.clone(), b.clone(), c.clone()]), false)
+        .expect("matching terminal hash");
+    assert_eq!(files[0].data, b"AAAABBBBCCCC");
+
+    // An incorrect terminal hash is a mismatch, including hashes that cover
+    // only a subset of the contributions.
+    for wrong in [[0x5A; 32], blake3_of(b"CCCC"), blake3_of(b"AAAABBBB")] {
+        let mut bad = c.clone();
+        bad.hash = wrong;
+        assert!(matches!(
+            read(build_with(dedup, &[a.clone(), b.clone(), bad]), false),
+            Err(SarError::HashMismatch(_))
+        ));
+    }
+
+    // Fragment completeness is checked before the hash: an incorrect hash
+    // never masks a missing fragment or a missing terminal fragment.
+    let mut bad = c.clone();
+    bad.hash = [0x5A; 32];
+    assert!(matches!(
+        read(build_with(dedup, &[a.clone(), bad.clone()]), false),
+        Err(SarError::FragmentGap(_))
+    ));
+    assert!(matches!(
+        read(build_with(dedup, &[a.clone(), b.clone()]), false),
+        Err(SarError::FragmentGap(_))
+    ));
+
+    // Degraded LOSS_TOLERANT output is incomplete and is not hash-verified.
+    let (mut la, mut lc) = (a.clone(), bad);
+    la.mode_extra |= LOSS;
+    lc.mode_extra |= LOSS;
+    let files = read(build_with(dedup, &[la, lc]), true).expect("degraded output");
+    assert!(files[0].is_degraded);
+
+    // A non-zero hash on a non-terminal fragment is a metadata conflict.
+    let mut early = a;
+    early.hash = blake3_of(b"AAAABBBBCCCC");
+    assert!(matches!(
+        read(build_with(dedup, &[early, b, c]), false),
+        Err(SarError::MetadataConflict(_))
+    ));
+}
+
+#[test]
+fn fragmented_sparse_terminal_content_hash_covers_holes() {
+    use sar_core::sparse::{SparseExtent, SparseMap, write_sparse_map};
+
+    let map = write_sparse_map(
+        &SparseMap {
+            logical_size: 12,
+            extents: vec![
+                SparseExtent {
+                    offset: 0,
+                    length: 4,
+                },
+                SparseExtent {
+                    offset: 8,
+                    length: 4,
+                },
+            ],
+        },
+        false,
+    )
+    .expect("sparse map");
+    let logical: &[u8] = b"AAAA\0\0\0\0BBBB";
+    let flags = GlobalFlags::DEDUPLICATION | GlobalFlags::SPARSE_FILES;
+    let build_sparse = |hash: [u8; 32]| {
+        let (mut a, mut b) = pair();
+        a.sparse_map = map.clone();
+        b.hash = hash;
+        build_with(flags, &[a, b])
+    };
+
+    let files = read(build_sparse(blake3_of(logical)), false).expect("hash over logical bytes");
+    assert_eq!(files[0].data, logical);
+    // A hash over the stored (hole-free) payload bytes must not verify.
+    assert!(matches!(
+        read(build_sparse(blake3_of(b"AAAABBBB")), false),
+        Err(SarError::HashMismatch(_))
+    ));
+}
+
 #[test]
 fn degraded_output_is_not_crc_verified() {
     let (mut a, mut b) = pair();

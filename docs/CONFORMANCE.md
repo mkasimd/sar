@@ -261,6 +261,19 @@ by M12b fuzzing infrastructure without changing the M12a schema.
 - KMS parsing/validation for implemented modes.
 - Password-based encryption/decryption flows in CLI create/extract/verify.
 - AEAD authentication enforced before plaintext release.
+- TLS_EXPORTER KMS payloads are validated with the canonical
+  `parse_tls_exporter_kms_payload` when an archive Global Header is read
+  (`ArchiveReader`) and on header receipt in the non-TCP `sar-transport` path;
+  malformed, reserved and unsupported combinations are rejected before any
+  Entry is processed (M13b WP-7C). Directional session bootstrap and exporter
+  acquisition remain M13b.4.
+- ASYMMETRIC_WRAP: payload parsing/validation and a caller-supplied unwrap
+  callback only. SAR ships no RSA-OAEP, X25519-HPKE or ML-KEM construction, so
+  the Wrap Algo IDs are unsupported unless a `KeyProvider` supplies them. A
+  claim of KMS Mode 0x03 would require RSA-OAEP-2048 (Section 5.3.4), which is
+  not provided.
+- CLI passwords: `--password` > `SAR_PASSWORD` > interactive prompt. Argument
+  and environment sources are discouraged (visible to other processes).
 
 ### FEC and recovery
 - Selective FEC metadata handling and validation.

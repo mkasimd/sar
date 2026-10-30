@@ -973,10 +973,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
         // A (re)read header starts a new KMS scope.
         self.master_secret = Mutex::new(MasterSecretScope::new());
         if let Some(kms) = &header.kms {
-            // Mode 0x04 TLS_EXPORTER: structural validation is deferred to the
-            // transport layer (requires an active TLS session).  Skip generic
-            // parse_kms_payload which always returns Unsupported for that mode.
-            if kms.mode_id != KMS_TLS_EXPORTER {
+            // Mode 0x04 TLS_EXPORTER payloads are validated structurally here with
+            // the canonical parser; exporter acquisition remains a transport concern.
+            if kms.mode_id == KMS_TLS_EXPORTER {
+                parse_tls_exporter_kms_payload(&kms.payload).map_err(SarError::from)?;
+            } else {
                 let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
             }
         }

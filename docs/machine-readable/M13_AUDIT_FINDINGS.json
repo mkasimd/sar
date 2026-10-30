@@ -1636,7 +1636,7 @@
         "authentication",
         "conformance"
       ],
-      "status": "confirmed",
+      "status": "resolved",
       "severity": "low",
       "priority": "high",
       "confidence": "confirmed",
@@ -1701,14 +1701,6 @@
         }
       ],
       "resolution_owner": "M13b.2",
-      "remediation": {
-        "owner": "M13b.2",
-        "requirements": [
-          "Enforce end-to-end validation for TLS_EXPORTER AEAD/hash registry values and derived-length/AEAD consistency before those parameters can reach operational key use.",
-          "Return fail-closed statuses consistent with unsupported/reserved/invalid-length semantics for rejected TLS_EXPORTER parameter combinations.",
-          "Add deterministic negative tests covering unsupported AEAD IDs, unsupported/reserved hash IDs, and derived-length mismatches for TLS_EXPORTER contexts exercised by in-repo consumers."
-        ]
-      },
       "compatibility_impact": "rejects_previously_accepted_nonconforming_input",
       "verification": {
         "test_requirement": "required",
@@ -1718,7 +1710,23 @@
           "Verify fail-closed status mapping for malformed/reserved/unsupported/invalid-length TLS_EXPORTER parameter failures remains explicit and stable."
         ],
         "owner_milestone": "M13b.2"
-      }
+      },
+      "resolution": {
+        "decision_type": "implementation_change",
+        "milestone": "M13b.2",
+        "summary": "TLS_EXPORTER KMS payloads are parsed with the canonical parse_tls_exporter_kms_payload when an archive Global Header is read and on header receipt in the non-TCP transport path; malformed, reserved and unsupported combinations fail closed with the canonical status mapping.",
+        "references": [
+          "crates/sar-archive/src/archive.rs",
+          "crates/sar-transport/src/lib.rs",
+          "crates/sar-archive/tests/tls_exporter_header_tests.rs",
+          "crates/sar-transport/tests/tls_exporter_header_validation_tests.rs"
+        ],
+        "resolved_date": "2026-10-30",
+        "rationale": "The current specification (Section 5.3.3) defines the TLS_EXPORTER payload without an AEAD ID and with a fixed 32-byte derived length, so the AEAD-ID and derived-length/AEAD-mismatch requirements are superseded; the Entry Encr Algo ID is validated per LFH. Hash ID (reserved vs unsupported SHA3-256), version, KDF, derived length, label and salt validation now run at the archive-header boundary and on transport header receipt, with deterministic negative tests. Directional TLS_EXPORTER session bootstrap, exporter acquisition and the TCP binding remain M13b.4 and are not part of this finding's requirements."
+      },
+      "notes": [
+        "Closure (SAR-M13b-WP7C-IMPLEMENTATION-001): The current specification (Section 5.3.3) defines the TLS_EXPORTER payload without an AEAD ID and with a fixed 32-byte derived length, so the AEAD-ID and derived-length/AEAD-mismatch requirements are superseded; the Entry Encr Algo ID is validated per LFH. Hash ID (reserved vs unsupported SHA3-256), version, KDF, derived length, label and salt validation now run at the archive-header boundary and on transport header receipt, with deterministic negative tests. Directional TLS_EXPORTER session bootstrap, exporter acquisition and the TCP binding remain M13b.4 and are not part of this finding's requirements."
+      ]
     },
     {
       "id": "M13-CRYPTO-002",
@@ -1728,7 +1736,7 @@
       "areas": [
         "secret_handling"
       ],
-      "status": "open",
+      "status": "resolved",
       "severity": "low",
       "priority": "medium",
       "confidence": "confirmed",
@@ -1762,17 +1770,10 @@
         }
       ],
       "resolution_owner": "M13b.2",
-      "remediation": {
-        "owner": "M13b.2",
-        "requirements": [
-          "Document password-source precedence (`--password` -> `SAR_PASSWORD` -> interactive prompt) in CLI-facing docs and help surfaces.",
-          "Add clear warnings that argv and inherited environment variables can be exposed by host/shell/process tooling, and recommend safer prompt-based or managed-secret workflows.",
-          "Update encrypted-workflow examples so they do not imply `--password` is the preferred default path."
-        ]
-      },
       "notes": [
         "The interactive prompt path already satisfies the requirement for a non-argv/non-environment password channel.",
-        "Risk and warning scope is platform- and tooling-dependent; this finding does not claim identical argv/environment exposure semantics everywhere."
+        "Risk and warning scope is platform- and tooling-dependent; this finding does not claim identical argv/environment exposure semantics everywhere.",
+        "Closure (SAR-M13b-WP7C-IMPLEMENTATION-001): Help for create/extract/verify and the README encryption example no longer present --password as the default path; warnings distinguish argv/process-listing exposure, shell history, and environment inheritance/telemetry without claiming identical platform behavior. Tests pin the help text and the existing precedence. Noninteractive automation keeps working via --password or SAR_PASSWORD; no managed-secret-file option exists and none was added."
       ],
       "compatibility_impact": "clarification_only",
       "verification": {
@@ -1783,6 +1784,20 @@
           "Warnings distinguish argv exposure, shell history risk, and environment inheritance/telemetry risk without asserting identical behavior across all platforms."
         ],
         "owner_milestone": "M13b.2"
+      },
+      "resolution": {
+        "decision_type": "documentation_change",
+        "milestone": "M13b.2",
+        "summary": "CLI help, README and CONFORMANCE state the password-source precedence (--password, SAR_PASSWORD, interactive prompt), warn about argv, shell-history and environment exposure, and recommend the prompt; precedence is unchanged.",
+        "references": [
+          "crates/sar-cli/src/args.rs",
+          "README.md",
+          "docs/CONFORMANCE.md",
+          "docs/machine-readable/MACHINE_READABLE_API.json",
+          "crates/sar-cli/tests/cli_crypto_tests.rs"
+        ],
+        "resolved_date": "2026-10-30",
+        "rationale": "Help for create/extract/verify and the README encryption example no longer present --password as the default path; warnings distinguish argv/process-listing exposure, shell history, and environment inheritance/telemetry without claiming identical platform behavior. Tests pin the help text and the existing precedence. Noninteractive automation keeps working via --password or SAR_PASSWORD; no managed-secret-file option exists and none was added."
       }
     },
     {
@@ -2370,7 +2385,7 @@
         "recovery",
         "resource_limits"
       ],
-      "status": "open",
+      "status": "resolved",
       "severity": "medium",
       "priority": "medium",
       "confidence": "confirmed",
@@ -2421,16 +2436,6 @@
       ],
       "compatibility_impact": "preserves_compliant_inputs",
       "resolution_owner": "M13b.2",
-      "remediation": {
-        "owner": "M13b.2",
-        "requirements": [
-          "Calculate the repair working-set bound from the intended working-set semantics and source-visible concurrent lifetimes at each checked phase: at the repaired-output peak the unavoidable concurrent allocations are the caller-owned input archive (`X`), the recovered protected-range output (`P`), and the repaired full-archive output (`X`); the minimum proven bound is therefore `2X + P`.",
-          "The source-visible peak also includes `layout.recovery_tlvs` (`R` bytes) and `erasure_indices` (`E` bytes), which remain live unless explicitly dropped before output allocation; the implementation may choose to bound `R + E` explicitly, drop them before `Vec::with_capacity`, or account for them in the checked formula.",
-          "Avoid relying on optimizer-driven early deallocation: a merely unused owned variable does not guarantee audit-visible deallocation before the next phase.",
-          "Remove or justify any checked terms that do not correspond to source-visible live allocations at the bounded phase (for example, the second `protected_range.length` term in the current formula), so the enforced formula does not undercount simultaneous retained memory.",
-          "Add a deterministic test that demonstrates a configuration where the current estimate `X + 2P + T` passes but the corrected minimum repaired-output peak `2X + P` exceeds `max_repair_working_set`, causing `check_repair_working_set` to reject repair before allocating the repaired archive output."
-        ]
-      },
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [
@@ -2440,8 +2445,20 @@
         "owner_milestone": "M13b.2"
       },
       "notes": [
-        "Remediation evidence (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): repair_archive now enforces max_repair_working_set before each allocation stage against a staged peak-live-memory model derived from actual buffer lifetimes (input archive A, cloned selected TLV, merged ranges, erasure index, codec padded output plus estimated scratch, recovered buffer plus repaired output); temporaries are dropped before output construction and the cloned TLV set is reduced to the selected TLV. The previously undercounted configuration (XOR stripe 255, 64 KiB blocks) is now rejected. Tests: crates/sar-archive/tests/recovery_resource_tests.rs (exact L / L-1 boundaries for XOR, RS, no-erasure and merge paths; repaired output compared byte-for-byte with the pristine archive). Residual limits: RS codec scratch is derived from k, parity count and symbol size (symbol buffers + 4*min(k,parity)^2 matrix bytes + parity*k Vandermonde + index vectors; corrective pass SAR-M13b-WP7B-IMPLEMENTATION-REVIEW-001) and, like the Central Dictionary parse estimate (2*cd_len), is an estimate, not a measurement; the shared Central Dictionary parser can allocate more than modelled (Vec<Tlv> overhead up to ~4*cd_len for minimal TLVs; offsets table sized from the declared file count, bounded only by max_entry_count) and is recorded for later parser hardening; allocator overhead is not modelled; codec CPU is O(groups x erasures). Status intentionally left for reviewer disposition."
-      ]
+        "Remediation evidence (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): repair_archive now enforces max_repair_working_set before each allocation stage against a staged peak-live-memory model derived from actual buffer lifetimes (input archive A, cloned selected TLV, merged ranges, erasure index, codec padded output plus estimated scratch, recovered buffer plus repaired output); temporaries are dropped before output construction and the cloned TLV set is reduced to the selected TLV. The previously undercounted configuration (XOR stripe 255, 64 KiB blocks) is now rejected. Tests: crates/sar-archive/tests/recovery_resource_tests.rs (exact L / L-1 boundaries for XOR, RS, no-erasure and merge paths; repaired output compared byte-for-byte with the pristine archive). Residual limits: RS codec scratch is derived from k, parity count and symbol size (symbol buffers + 4*min(k,parity)^2 matrix bytes + parity*k Vandermonde + index vectors; corrective pass SAR-M13b-WP7B-IMPLEMENTATION-REVIEW-001) and, like the Central Dictionary parse estimate (2*cd_len), is an estimate, not a measurement; the shared Central Dictionary parser can allocate more than modelled (Vec<Tlv> overhead up to ~4*cd_len for minimal TLVs; offsets table sized from the declared file count, bounded only by max_entry_count) and is recorded for later parser hardening; allocator overhead is not modelled; codec CPU is O(groups x erasures). Status intentionally left for reviewer disposition.",
+        "Closure (SAR-M13b-WP7C-IMPLEMENTATION-001): WP-7B implemented the staged model and exact boundary tests; WP-7C added repaired_output_peak_is_not_undercounted_below_two_archives_plus_protected_range, which shows the former X + 2P + T estimate and limit 2X + P - 1 are both rejected with LimitExceeded for XOR and RS, while an unbounded repair is byte-identical to the pristine archive. Residual estimates (RS scratch, Central Dictionary parse, allocator overhead) remain documented estimates and are not open requirements of this finding."
+      ],
+      "resolution": {
+        "decision_type": "implementation_change",
+        "milestone": "M13b.2",
+        "summary": "repair_archive enforces max_repair_working_set against a staged peak-live-memory model; the repaired-output peak is never below 2X + P.",
+        "references": [
+          "crates/sar-archive/src/recovery.rs",
+          "crates/sar-archive/tests/recovery_resource_tests.rs"
+        ],
+        "resolved_date": "2026-10-30",
+        "rationale": "WP-7B implemented the staged model and exact boundary tests; WP-7C added repaired_output_peak_is_not_undercounted_below_two_archives_plus_protected_range, which shows the former X + 2P + T estimate and limit 2X + P - 1 are both rejected with LimitExceeded for XOR and RS, while an unbounded repair is byte-identical to the pristine archive. Residual estimates (RS scratch, Central Dictionary parse, allocator overhead) remain documented estimates and are not open requirements of this finding."
+      }
     },
     {
       "id": "M13-TRANSFORM-001",
@@ -2789,7 +2806,7 @@
         "delta",
         "recovery"
       ],
-      "status": "open",
+      "status": "resolved",
       "severity": "low",
       "priority": "low",
       "confidence": "confirmed",
@@ -2852,21 +2869,28 @@
       ],
       "compatibility_impact": "none",
       "resolution_owner": "M13b.2",
-      "remediation": {
-        "owner": "M13b.2",
-        "requirements": [
-          "Add dedicated fuzz coverage for BSDIFF patch application with attacker-controlled base bytes and patch bytes under bounded `BsdiffLimits`.",
-          "Add dedicated fuzz coverage for VCDIFF patch application with attacker-controlled base bytes and patch bytes under bounded `VcdiffLimits`.",
-          "Add a separate archive-repair fuzz target that exercises `inspect_recovery_metadata`, `plan_archive_repair`, and `repair_archive` with bounded `ResourceLimits` and an input model that can vary both archive bytes and erasure descriptions."
-        ]
-      },
       "verification": {
         "test_requirement": "not_required"
       },
       "notes": [
         "Progress (WP-7, SAR-M13b-WP7-IMPLEMENTATION-001): the delta_bsdiff_apply and delta_vcdiff_apply fuzz targets execute real apply_bsdiff/apply_vcdiff under bounded limits with valid and malformed seeds (fuzz/seeds/delta_apply). Evidence: both targets compiled, seeds replayed, and one 30-second bounded run each with no crash; this is not a sustained campaign. Remaining (not closed): the archive-level repair fuzz target (WP-7B).",
-        "Progress (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): the archive_repair fuzz target (fuzz/fuzz_targets/archive_repair.rs) exercises inspect_recovery_metadata, plan_archive_repair and repair_archive with real XOR/RS parity, varied erasure ranges, tampered RecoveryPlan values and varied limits; 22 deterministic seeds in fuzz/seeds/archive_repair (valid and malformed). Evidence: target built, all seeds replayed (-runs=0) and one 30-second bounded run (130,132 executions) with no crash; this is not a sustained campaign. The repair-fuzz obligation is satisfied at this evidence level together with the WP-7 delta targets, but the combined finding is not closed here pending reviewer disposition and any sustained-fuzzing expectation."
-      ]
+        "Progress (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): the archive_repair fuzz target (fuzz/fuzz_targets/archive_repair.rs) exercises inspect_recovery_metadata, plan_archive_repair and repair_archive with real XOR/RS parity, varied erasure ranges, tampered RecoveryPlan values and varied limits; 22 deterministic seeds in fuzz/seeds/archive_repair (valid and malformed). Evidence: target built, all seeds replayed (-runs=0) and one 30-second bounded run (130,132 executions) with no crash; this is not a sustained campaign. The repair-fuzz obligation is satisfied at this evidence level together with the WP-7 delta targets, but the combined finding is not closed here pending reviewer disposition and any sustained-fuzzing expectation.",
+        "Closure (SAR-M13b-WP7C-IMPLEMENTATION-001): All three stated requirements are met by existing targets; WP-7C re-verified compilation and seed replay. No sustained fuzzing campaign was run; bounded runs only."
+      ],
+      "resolution": {
+        "decision_type": "fuzzing_change",
+        "milestone": "M13b.2",
+        "summary": "Dedicated fuzz targets exist for BSDIFF apply, VCDIFF apply and archive repair with seeds and bounded limits.",
+        "references": [
+          "fuzz/fuzz_targets/delta_bsdiff_apply.rs",
+          "fuzz/fuzz_targets/delta_vcdiff_apply.rs",
+          "fuzz/fuzz_targets/archive_repair.rs",
+          "fuzz/seeds/delta_apply",
+          "fuzz/seeds/archive_repair"
+        ],
+        "resolved_date": "2026-10-30",
+        "rationale": "All three stated requirements are met by existing targets; WP-7C re-verified compilation and seed replay. No sustained fuzzing campaign was run; bounded runs only."
+      }
     },
     {
       "id": "M13-TRANSFORM-008",
@@ -2878,7 +2902,7 @@
         "resource_limits",
         "documentation"
       ],
-      "status": "open",
+      "status": "resolved",
       "severity": "informational",
       "priority": "low",
       "confidence": "confirmed",
@@ -2913,17 +2937,24 @@
       "verification": {
         "test_requirement": "not_required"
       },
-      "remediation": {
-        "owner": "M13b.2",
-        "requirements": [
-          "Document in the public compression and resource-limit API documentation that `max_output_size` bounds decoded output bytes only.",
-          "Document that DEFLATE/ZSTD decoder library-internal working memory is not currently represented by a dedicated SAR `ResourceLimits` field.",
-          "If a future SAR-specific decoder-memory control is added, document which field governs it and how it interacts with decoded-output limits."
-        ]
-      },
       "notes": [
-        "Remediation evidence (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): DecompressionOptions rustdoc, docs/CRATE_RESPONSIBILITIES.md, docs/CONFORMANCE.md and the API inventory now state that max_output_size bounds decoded output bytes only and does not bound decoder-internal memory (DEFLATE history window; ZSTD context, frame window and tables) or process memory. The zstd decoder now pins window_log_max to ZSTD_MAX_WINDOW_LOG = 27 (128 MiB, equal to the libzstd default) and frames declaring a larger window are rejected; tests: crates/sar-compression/tests/compression_tests.rs. No SAR ResourceLimits field governs decoder-internal memory; DEFLATE and ZSTD internal allocations remain unmeasured by SAR. Status intentionally left for reviewer disposition."
-      ]
+        "Remediation evidence (WP-7B, SAR-M13b-WP7B-IMPLEMENTATION-001): DecompressionOptions rustdoc, docs/CRATE_RESPONSIBILITIES.md, docs/CONFORMANCE.md and the API inventory now state that max_output_size bounds decoded output bytes only and does not bound decoder-internal memory (DEFLATE history window; ZSTD context, frame window and tables) or process memory. The zstd decoder now pins window_log_max to ZSTD_MAX_WINDOW_LOG = 27 (128 MiB, equal to the libzstd default) and frames declaring a larger window are rejected; tests: crates/sar-compression/tests/compression_tests.rs. No SAR ResourceLimits field governs decoder-internal memory; DEFLATE and ZSTD internal allocations remain unmeasured by SAR. Status intentionally left for reviewer disposition.",
+        "Closure (SAR-M13b-WP7C-IMPLEMENTATION-001): All three documentation requirements were implemented in WP-7B and re-inspected in WP-7C. Decoder-internal memory remains intentionally unmeasured by SAR except the pinned ZSTD window_log_max; this is a documented resource limitation, not an open obligation."
+      ],
+      "resolution": {
+        "decision_type": "documentation_change",
+        "milestone": "M13b.2",
+        "summary": "Public compression, resource-limit and conformance documentation states that max_output_size bounds decoded output only and that DEFLATE/ZSTD decoder-internal memory has no dedicated ResourceLimits field.",
+        "references": [
+          "crates/sar-compression/src/lib.rs",
+          "docs/CRATE_RESPONSIBILITIES.md",
+          "docs/CONFORMANCE.md",
+          "docs/machine-readable/MACHINE_READABLE_API.json",
+          "crates/sar-compression/tests/compression_tests.rs"
+        ],
+        "resolved_date": "2026-10-30",
+        "rationale": "All three documentation requirements were implemented in WP-7B and re-inspected in WP-7C. Decoder-internal memory remains intentionally unmeasured by SAR except the pinned ZSTD window_log_max; this is a documented resource limitation, not an open obligation."
+      }
     },
     {
       "id": "M13-RECOVERY-002",
@@ -4299,7 +4330,8 @@
         "Progress (WP-4 integration corrections, SAR-M13b-WP4-INTEGRATION-REVIEW-001): the collector is now streaming-safe and crate-private. ArchiveReader::next_logical_entry yields validated logical Entries in canonical order: an ordinary Entry is released as soon as no earlier incomplete fragment group blocks it, a group is released when Fragment Indices 0..=LAST_FRAGMENT are present, and Entries behind an incomplete group are retained in canonical order. Retained decoded payload bytes (ordinary Entries behind an incomplete group, fragment contributions of incomplete groups, and complete groups pending emission) are accounted with checked arithmetic and bounded by max_total_pipeline_memory (documented as cumulative bytes held across pipeline stages, best effort); exceeding it returns SAR_ERR_LIMIT_EXCEEDED, never evicting a fragment or emitting out of order. CLI extract consumes the same iterator instead of buffering the whole archive; destination, staging, permission, symlink and materialization policy are unchanged. Cross-crate surface is limited to ArchiveReader::next_logical_entry, CollectedEntry and FragmentGroup (FragmentGroupCollector is no longer public). A fragment following a completed group's LAST_FRAGMENT is SAR_ERR_METADATA_CONFLICT. The terminal LAST_FRAGMENT Content Hash (an all-zero value stays authoritative) is retained on FragmentGroup but not verified; final Content Hash verification remains WP-6. No new resource limit was added. Remaining (not closed): group-count and group-metadata bookkeeping is not separately capped, and group reconstruction transiently needs the concatenated output alongside the contributions (bounded by max_decoded_entry_size and the fragment allocation limit).",
         "Progress (SAR-M13b-WP5-SPARSE-LOGICAL-SIZE-IMPLEMENTATION-001, M13b.2, WP-5): incomplete fragmented sparse groups return SAR_ERR_FRAGMENT_GAP even under allow_lossy and LOSS_TOLERANT; no degraded sparse output is produced (spec 19.4.5). The two WP-3 degraded-sparse success tests were replaced by active FragmentGap tests. max_loss_tolerant_gap remains unchanged and tracked as separate compatibility debt.",
         "Progress (WP-7, SAR-M13b-WP7-IMPLEMENTATION-001): the delta stage now follows the canonical pipeline. Fragment-local decoding is checked against each LFH Uncompressed Size (SAR_ERR_INVALID_LENGTH); FragmentGroup::reconstruct concatenates contributions, applies VCDIFF/BSDIFF/STORE_PATCH exactly once to the complete patch representation, then fails closed with SAR_ERR_UNSUPPORTED for a non-literal CDC recipe, then checks the sparse gathered length. A group that needs a group-wide stage (patch, non-literal CDC, sparse) and is incomplete returns SAR_ERR_FRAGMENT_GAP even with LOSS_TOLERANT. Unfragmented delta Entries are patched in the reader and the stream parser; the patch output is never compared with an LFH Uncompressed Size, and the writer emits the decoded patch representation size. Covered by crates/sar-archive/tests/delta_pipeline_tests.rs.",
-        "Remaining (not closed): max_loss_tolerant_gap stays present and semantically inactive pending its separate disposition; full CDC resolution (CDC_MAP, external CAS) is not implemented; the stream parser emits physical Entries and does not reassemble fragment groups; closure is reserved for registry reconciliation (WP-7C)."
+        "Remaining (not closed): max_loss_tolerant_gap stays present and semantically inactive pending its separate disposition; full CDC resolution (CDC_MAP, external CAS) is not implemented; the stream parser emits physical Entries and does not reassemble fragment groups; closure is reserved for registry reconciliation (WP-7C).",
+        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): re-inspected and retained open. Outstanding obligations: (1) Section 13.1 fragment-local versus group-wide pipeline split is only partially implemented; (2) mandatory Compliance Profile CDC support (CDC_MAP resolution, external CAS) is not implemented, so any profile requiring CDC must not be claimed (non-literal CDC returns SAR_ERR_UNSUPPORTED); (3) the stream parser does not reassemble fragment groups (M13b.4); (4) max_loss_tolerant_gap is unenforced pending disposition; (5) group bookkeeping is uncapped. Owner: M13b.2 remainder, with streaming items at M13b.4."
       ]
     },
     {
@@ -4313,7 +4345,7 @@
         "wire_format",
         "error_handling"
       ],
-      "status": "confirmed",
+      "status": "resolved",
       "severity": "high",
       "priority": "high",
       "confidence": "high",
@@ -4349,14 +4381,6 @@
       ],
       "compatibility_impact": "wire_incompatible",
       "resolution_owner": "M13b.2",
-      "remediation": {
-        "owner": "M13b.2",
-        "requirements": [
-          "Encode and decode Sparse Logical Size inside the Sparse Map and validate extents against it.",
-          "Reconstruct to Sparse Logical Size, including all-hole files.",
-          "Return SAR_ERR_METADATA_CONFLICT for a Sparse Map on Fragment Index > 0."
-        ]
-      },
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [
@@ -4378,8 +4402,22 @@
         "Implementation-impact record (SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001): (1) Normative support: fragmented sparse Entries are valid (specification.md Sections 6.1.3, 17.2, 19.4.5, 19.6); the Sparse Map on Fragment Index 0 applies to the reassembled group and its Sparse Logical Size defines the final size. (2) Temporary incomplete runtime support: Sparse Logical Size is not implemented and LFH Uncompressed Size is only the fragment-local contribution length, so read_all_logical_files fails closed for any complete fragmented sparse group with SAR_ERR_UNSUPPORTED (an incomplete group returns SAR_ERR_FRAGMENT_GAP; a non-canonical contribution length returns SAR_ERR_INVALID_LENGTH). No truncated, over-extended or zero-filled output is produced. A minimal guard in archive.rs was required because an active test showed a canonical group with an empty final fragment otherwise reconstructed successfully with a size derived from fragment 0. (3) Exactly seven regression tests are #[ignore]d (six in crates/sar-archive/tests/sparse_fragment_tests.rs, one in sparse_conformance_tests.rs); active replacement coverage is sparse_fragment_tests::canonical_fragmented_sparse_group_fails_closed_without_sparse_logical_size. (4) WP-5/M13b.2 owns restoring successful fragmented sparse reconstruction and re-enabling or redefining the seven tests. (5) ResourceLimits/FragmentLimits::max_loss_tolerant_gap is retained but currently unenforced. (6) M13b.2 owns the eventual semantics or API disposition of max_loss_tolerant_gap.",
         "Progress (WP-4, SAR-M13b-WP4-FRAGMENT-GROUP-IMPLEMENTATION-001): a Sparse Map (non-zero Sparse Map Size) on a Fragment Index > 0 LFH now returns SAR_ERR_METADATA_CONFLICT (role prohibition, checked before the map is parsed, in the archive decoder, the streaming decoder and the collector); SAR_ERR_INVALID_MAP remains for malformed maps where a map is permitted. The WP-3 fail-closed SAR_ERR_UNSUPPORTED guard and the seven WP-5 ignores are unchanged; Sparse Logical Size remains WP-5/M13b.2. The CLI extract command still derives sparse size handling from its pre-existing path and is a WP-5 dependency.",
         "Progress (SAR-M13b-WP5-SPARSE-LOGICAL-SIZE-IMPLEMENTATION-001, M13b.2, WP-5): the canonical Sparse Map (Sparse Logical Size followed by extents; u32 LE, or u64 LE under 64BIT_SIZE) is implemented in sar-sparse::SparseMap, sar_core::sparse::{parse_sparse_map, write_sparse_map}, the reader, writer, stream decoder and CLI extract/verify. LFH Uncompressed Size is the gathered length (unfragmented) or contribution length (fragments), never the logical size. Complete fragmented sparse groups reconstruct to the Sparse Logical Size after full group assembly; the gathered length must equal the extent-length sum (SAR_ERR_INVALID_LENGTH); a later-fragment Sparse Map returns SAR_ERR_METADATA_CONFLICT (WP-4). The WP-3 SAR_ERR_UNSUPPORTED guard and the seven WP-3 #[ignore] markers were removed; the active fail-closed regression named in the evidence above was replaced by positive reconstruction tests (canonical_fragmented_sparse_group_reconstructs_with_sparse_logical_size and related tests in sparse_fragment_tests.rs). Historical evidence above is retained unchanged. Status is left for controller disposition.",
-        "A fragmented sparse group that still requires a non-STORE_PATCH group-wide stage fails closed (SAR_ERR_UNSUPPORTED); general delta/CDC remediation remains outside WP-5."
-      ]
+        "A fragmented sparse group that still requires a non-STORE_PATCH group-wide stage fails closed (SAR_ERR_UNSUPPORTED); general delta/CDC remediation remains outside WP-5.",
+        "Closure (SAR-M13b-WP7C-IMPLEMENTATION-001): Implemented in WP-4/WP-5 and re-verified in WP-7C, including the new fragmented sparse terminal Content Hash regression covering hole bytes. Fragmented sparse groups needing a non-STORE_PATCH group-wide stage remain tracked under M13-TRANSFORM-009; max_loss_tolerant_gap disposition is also tracked there."
+      ],
+      "resolution": {
+        "decision_type": "implementation_change",
+        "milestone": "M13b.2",
+        "summary": "Sparse Logical Size is encoded, decoded and validated; fragmented sparse groups reconstruct to Sparse Logical Size including all-hole files; a later-fragment Sparse Map is SAR_ERR_METADATA_CONFLICT.",
+        "references": [
+          "crates/sar-archive/tests/sparse_conformance_tests.rs",
+          "crates/sar-archive/tests/sparse_fragment_tests.rs",
+          "crates/sar-archive/tests/fragment_group_tests.rs",
+          "crates/sar-archive/tests/sparse_hash_crc_tests.rs"
+        ],
+        "resolved_date": "2026-10-30",
+        "rationale": "Implemented in WP-4/WP-5 and re-verified in WP-7C, including the new fragmented sparse terminal Content Hash regression covering hole bytes. Fragmented sparse groups needing a non-STORE_PATCH group-wide stage remain tracked under M13-TRANSFORM-009; max_loss_tolerant_gap disposition is also tracked there."
+      }
     },
     {
       "id": "M13-BOUNDARY-003",
@@ -4648,7 +4686,10 @@
           "M13-BOUNDARY-004",
           "M13-CRYPTO-001"
         ]
-      }
+      },
+      "notes": [
+        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): TLS_EXPORTER header validation and CLI password documentation re-reviewed. Status retained: outstanding obligations are (1) optional ASYMMETRIC_WRAP Wrap Algo IDs (RSA-OAEP-2048/4096, X25519-HPKE, ML-KEM) are unsupported; SAR only parses payloads and delegates unwrap to a caller KeyProvider, so a claim of KMS Mode 0x03 additionally requires RSA-OAEP-2048 (owner: future optional-algorithm work or KeyProvider integrators); (2) directional TLS_EXPORTER derivation/bootstrap (M13b.4); (3) cross-Partition key behavior (M13b.3); (4) cross-implementation Guaranteed Interoperability Baseline decrypt and KAT evidence (M13b.2 closure/conformance vectors)."
+      ]
     },
     {
       "id": "M13-CRYPTO-008",
@@ -4716,7 +4757,8 @@
       },
       "notes": [
         "Decision record: SAR-M13b-COORD-HASH-001 (adopted for M13b; controller review deferred to M13b closure).",
-        "Progress (LFH Hash Algo ID prerequisite): specification.md, sar-core LFH parser/writer, metadata, writer defaults (BLAKE3-256), fragment-group Class G validation and tests are implemented. Legacy LFHs without Hash Algo ID are unsupported: the parser uses only the updated canonical layout, with no automatic legacy detection, fallback or reinterpretation, and malformed inputs return the applicable normative errors (typically SAR_ERR_INVALID_LENGTH or SAR_ERR_RESERVED_VALUE). Because legacy and current layouts share the same Global Header version and the first byte of a legacy Content Hash may coincide with an assigned Hash Algo ID, universal rejection of every structurally ambiguous legacy byte sequence is not guaranteed. No repository fixture or test vector encoded DEDUPLICATION. Final Content Hash verification remains WP-6."
+        "Progress (LFH Hash Algo ID prerequisite): specification.md, sar-core LFH parser/writer, metadata, writer defaults (BLAKE3-256), fragment-group Class G validation and tests are implemented. Legacy LFHs without Hash Algo ID are unsupported: the parser uses only the updated canonical layout, with no automatic legacy detection, fallback or reinterpretation, and malformed inputs return the applicable normative errors (typically SAR_ERR_INVALID_LENGTH or SAR_ERR_RESERVED_VALUE). Because legacy and current layouts share the same Global Header version and the first byte of a legacy Content Hash may coincide with an assigned Hash Algo ID, universal rejection of every structurally ambiguous legacy byte sequence is not guaranteed. No repository fixture or test vector encoded DEDUPLICATION. Final Content Hash verification remains WP-6.",
+        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): added fragmented_entry_terminal_content_hash_regression (correct hash over three fragments, HashMismatch, FRAGMENT_GAP ordering before hash, lossy degraded output unverified, non-terminal non-zero hash MetadataConflict) and fragmented_sparse_terminal_content_hash_covers_holes. Status retained: remaining obligations are (1) Content Hash verification in the stateful stream parser/transport/session path, which currently has none (proposed owner M13b.4 with the streaming work); (2) controller review of SAR-M13b-COORD-HASH-001 and the legacy-LFH ambiguity limitation at M13b closure."
       ]
     },
     {
@@ -4861,7 +4903,7 @@
     }
   ],
   "metadata": {
-    "last_updated": "2026-10-25",
+    "last_updated": "2026-10-30",
     "branch": "copilot/m13a1-audit-milestone",
     "notes": [
       "M13a.1 findings were structurally migrated from schema v1 and then reviewed under schema v2.",
@@ -4878,7 +4920,8 @@
       "SAR-M13b-WP3-SPARSE-FRAGMENT-INTEGRATION-001: fragmented sparse Entries are normatively supported; runtime support is temporarily incomplete and fails closed with SAR_ERR_UNSUPPORTED. Seven ignored tests and one active replacement test are recorded under M13-TRANSFORM-010; WP-5/M13b.2 owns restoration and the max_loss_tolerant_gap disposition.",
       "SAR-M13b-COORD-HASH-001: LFH Hash Algo ID prerequisite recorded under M13-CRYPTO-008 (wire-incompatible correction); no existing finding status was changed.",
       "SAR-M13b-WP6-IMPLEMENTATION-001: WP-6 local implementation addresses M13-CRYPTO-007 (32-byte KMS Master Secret, HKDF-SHA256 Entry keys, complete raw Global Header AAD, canonical PBKDF2/ARGON2 payloads, KDF ResourceLimits), M13-CRYPTO-001 (TLS_EXPORTER KMS payload validation only) and M13-CRYPTO-008 (final Content Hash generation/verification, SAR_ERR_HASH_MISMATCH, terminal authority, sparse holes). No new finding was added because missing Content Hash verification is already recorded in M13-CRYPTO-008. Finding statuses are unchanged pending review. Compatibility: corrected KMS encoding, HKDF key hierarchy and full-header AAD are deliberately wire-incompatible with prior encrypted output, in addition to the LFH Hash Algo ID change. Deferred: standard ASYMMETRIC_WRAP constructions (RSA-OAEP/HPKE) remain a KeyProvider dependency for M13b.2; directional TLS_EXPORTER derivation and session bootstrap remain M13b.4.",
-      "SAR-M13b-WP6-IMPLEMENTATION-REVIEW-001/002: corrective passes. Additional-control-stream decryption preserves normative statuses (missing LFH encryption fields MALFORMED, reserved/unsupported/flag-conflicting algorithm IDs, invalid TLS_EXPORTER payloads, KEY_MISSING, KEY_REJECTED, LIMIT_EXCEEDED); only AEAD failures are AUTH_FAILED. KDF defaults narrowed (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) while still admitting the mandatory interoperable ranges; callers may raise them. The KMS Master Secret is now retained in a context-owned MasterSecretScope per archive reader, stream parser (reset on each Global Header) and transport session (dropped at session close), so PBKDF2/Argon2 run once per scope while Entry keys are still HKDF-derived per Entry. No finding statuses changed and no new finding was added."
+      "SAR-M13b-WP6-IMPLEMENTATION-REVIEW-001/002: corrective passes. Additional-control-stream decryption preserves normative statuses (missing LFH encryption fields MALFORMED, reserved/unsupported/flag-conflicting algorithm IDs, invalid TLS_EXPORTER payloads, KEY_MISSING, KEY_REJECTED, LIMIT_EXCEEDED); only AEAD failures are AUTH_FAILED. KDF defaults narrowed (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) while still admitting the mandatory interoperable ranges; callers may raise them. The KMS Master Secret is now retained in a context-owned MasterSecretScope per archive reader, stream parser (reset on each Global Header) and transport session (dropped at session close), so PBKDF2/Argon2 run once per scope while Entry keys are still HKDF-derived per Entry. No finding statuses changed and no new finding was added.",
+      "SAR-M13b-WP7C-IMPLEMENTATION-001: WP-7C reconciliation. Closed (resolved) with tests/evidence: M13-CRYPTO-001, M13-CRYPTO-002, M13-TRANSFORM-007, M13-TRANSFORM-008, M13-RECOVERY-001, M13-TRANSFORM-010. Retained open with specific outstanding obligations: M13-CRYPTO-007, M13-CRYPTO-008, M13-TRANSFORM-009. M13b.2 is not fully closed; M13b.3 and M13b.4 scope is unchanged."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }
