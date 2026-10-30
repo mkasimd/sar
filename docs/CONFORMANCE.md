@@ -288,6 +288,27 @@ Writer-side generated VCDIFF/SAR BSDIFF v1 fixtures are now present after
 `M12a-M9b-cp: Delta patch generation corrective pass`, alongside the original
 `STORE_PATCH` fixture coverage.
 
+M13b WP-7 delta pipeline (spec §6.1.2, §8.4, §13.1):
+- LFH `Uncompressed Size` of an unfragmented delta Entry is the decoded patch
+  representation size; for a fragment it is that fragment's decoded
+  contribution. The patch output length is determined by the patch and is never
+  compared with an LFH size. This is a deliberate wire-compatibility change:
+  archives written with the superseded semantics (LFH size = patch output size)
+  are unsupported and there is no fallback. The `valid/delta/{vcdiff,bsdiff}`
+  and `invalid/delta/*` fixtures were regenerated accordingly.
+- The patch is applied once to the complete patch representation, after
+  fragment concatenation and before CDC and sparse reconstruction.
+- A non-literal CDC Algo ID returns `SAR_ERR_UNSUPPORTED`; recipe bytes are
+  never returned as a logical Entry. Mandatory CDC resolution (CDC_MAP,
+  external CAS) remains a deferred Compliance Profile obligation.
+- An incomplete fragment group that needs a group-wide stage returns
+  `SAR_ERR_FRAGMENT_GAP`, including under `LOSS_TOLERANT`.
+- Memory: patch input plus patch output are bounded by
+  `max_total_pipeline_memory`, and patch output by `max_decoded_entry_size`,
+  checked before the output buffer is allocated.
+- Tests: `crates/sar-archive/tests/delta_pipeline_tests.rs`; fuzzing:
+  `delta_bsdiff_apply` and `delta_vcdiff_apply` (bounded local runs only).
+
 ### Streaming/session and transport
 - Streaming parser/state model and session semantics (`sar-stream`).
 - SAR-over-TCP and SAR-over-QUIC transport bindings (`sar-transport`) in current implemented profile.

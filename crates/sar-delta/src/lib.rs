@@ -41,9 +41,10 @@
 //! No base reads are performed.  No copy/insert instruction stream exists.
 //! No external dictionary is used.  No external base object is required.
 //!
-//! The reconstructed output size MUST equal LFH `Uncompressed Size`.  If the
-//! decoded patch payload length differs from `Uncompressed Size`,
-//! [`apply_store_patch`] returns [`PatchError::PatchFailed`].
+//! The output is the complete decoded patch representation; its length is
+//! not compared with an LFH `Uncompressed Size`.  For every patch algorithm the
+//! output length is determined by the patch construction (specification
+//! Section 8.4), and the apply functions take no expected-size parameter.
 //!
 //! All-zero `Delta Base Hash` is treated as "no base required" for
 //! `STORE_PATCH` and is valid.

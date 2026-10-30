@@ -470,7 +470,6 @@ fn write_manual_delta_archive(
     name: &str,
     patch_algo_id: u8,
     delta_base_hash: [u8; 32],
-    declared_uncompressed_size: u64,
     patch_payload: &[u8],
 ) -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
@@ -480,8 +479,10 @@ fn write_manual_delta_archive(
         kms: None,
     };
     let mut archive = write_global_header(&gh).expect("write global header");
-    let mut lfh =
-        LocalFileHeader::minimal_store(name.as_bytes().to_vec(), declared_uncompressed_size);
+    let mut lfh = LocalFileHeader::minimal_store(
+        name.as_bytes().to_vec(),
+        u64::try_from(patch_payload.len()).expect("patch payload len"),
+    );
     lfh.patch_algo_id = Some(patch_algo_id);
     lfh.delta_base_hash = Some(delta_base_hash);
     lfh.payload_size = u64::try_from(patch_payload.len()).expect("patch payload len");
@@ -1987,7 +1988,6 @@ fn main() {
             "vcdiff_invalid.bin",
             PATCH_ALGO_VCDIFF,
             base_hash,
-            u64::try_from(target.len()).expect("target len"),
             &vcdiff_patch,
         );
         write_fixture(
@@ -2038,7 +2038,6 @@ fn main() {
             "bsdiff_invalid.bin",
             PATCH_ALGO_BSDIFF,
             base_hash,
-            u64::try_from(target.len()).expect("target len"),
             &bsdiff_patch,
         );
         write_fixture(

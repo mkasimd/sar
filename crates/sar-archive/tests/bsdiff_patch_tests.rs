@@ -54,7 +54,6 @@ const NON_ZERO_HASH: [u8; 32] = {
 
 fn build_bsdiff_archive(
     patch_payload: &[u8],
-    declared_uncompressed_size: u64,
     delta_base_hash: [u8; 32],
     compression: Option<u8>,
 ) -> Vec<u8> {
@@ -82,7 +81,10 @@ fn build_bsdiff_archive(
     })
     .expect("write global header");
 
-    let mut lfh = LocalFileHeader::minimal_store(b"file.bin".to_vec(), declared_uncompressed_size);
+    let mut lfh = LocalFileHeader::minimal_store(
+        b"file.bin".to_vec(),
+        u64::try_from(patch_payload.len()).expect("patch len"),
+    );
     lfh.patch_algo_id = Some(0x02);
     lfh.delta_base_hash = Some(delta_base_hash);
     lfh.payload_size = u64::try_from(payload.len()).expect("payload len");
@@ -129,7 +131,7 @@ fn bsdiff_store_pipeline_reconstructs_target() {
         .map(|(b, t)| t.wrapping_sub(*b))
         .collect();
     let patch = build_patch(&[(5, 6, 0)], &diff, &target[5..], target.len() as i64);
-    let archive = build_bsdiff_archive(&patch, target.len() as u64, NON_ZERO_HASH, None);
+    let archive = build_bsdiff_archive(&patch, NON_ZERO_HASH, None);
     let entry = read_entry_with_opts(archive, opts_with_base(base.to_vec())).expect("decode");
     assert_eq!(entry.payload, target);
 }
@@ -150,12 +152,7 @@ fn bsdiff_deflate_pipeline_reconstructs_target() {
         b"",
         target.len() as i64,
     );
-    let archive = build_bsdiff_archive(
-        &patch,
-        target.len() as u64,
-        NON_ZERO_HASH,
-        Some(COMP_ALGO_DEFLATE),
-    );
+    let archive = build_bsdiff_archive(&patch, NON_ZERO_HASH, Some(COMP_ALGO_DEFLATE));
     let entry = read_entry_with_opts(archive, opts_with_base(base.to_vec())).expect("decode");
     assert_eq!(entry.payload, target);
 }
@@ -176,12 +173,7 @@ fn bsdiff_zstd_pipeline_reconstructs_target() {
         b"",
         target.len() as i64,
     );
-    let archive = build_bsdiff_archive(
-        &patch,
-        target.len() as u64,
-        NON_ZERO_HASH,
-        Some(COMP_ALGO_ZSTD),
-    );
+    let archive = build_bsdiff_archive(&patch, NON_ZERO_HASH, Some(COMP_ALGO_ZSTD));
     let entry = read_entry_with_opts(archive, opts_with_base(base.to_vec())).expect("decode");
     assert_eq!(entry.payload, target);
 }
@@ -189,7 +181,7 @@ fn bsdiff_zstd_pipeline_reconstructs_target() {
 #[test]
 fn bsdiff_all_zero_delta_base_hash_returns_base_missing() {
     let patch = build_patch(&[(1, 0, 0)], &[0], b"", 1);
-    let archive = build_bsdiff_archive(&patch, 1, [0u8; 32], None);
+    let archive = build_bsdiff_archive(&patch, [0u8; 32], None);
     let err = read_entry_with_opts(archive, opts_no_base()).expect_err("must fail");
     assert!(matches!(err, SarError::BaseMissing(_)));
 }
@@ -197,7 +189,7 @@ fn bsdiff_all_zero_delta_base_hash_returns_base_missing() {
 #[test]
 fn bsdiff_missing_base_returns_base_missing() {
     let patch = build_patch(&[(1, 0, 0)], &[0], b"", 1);
-    let archive = build_bsdiff_archive(&patch, 1, NON_ZERO_HASH, None);
+    let archive = build_bsdiff_archive(&patch, NON_ZERO_HASH, None);
     let err = read_entry_with_opts(archive, opts_no_base()).expect_err("must fail");
     assert!(matches!(err, SarError::BaseMissing(_)));
 }
@@ -206,7 +198,7 @@ fn bsdiff_missing_base_returns_base_missing() {
 fn bsdiff40_magic_in_payload_is_rejected() {
     let mut patch = build_patch(&[(0, 0, 0)], b"", b"", 0);
     patch[0..8].copy_from_slice(b"BSDIFF40");
-    let archive = build_bsdiff_archive(&patch, 0, NON_ZERO_HASH, None);
+    let archive = build_bsdiff_archive(&patch, NON_ZERO_HASH, None);
     let err = read_entry_with_opts(archive, opts_with_base(Vec::new())).expect_err("must fail");
     assert!(matches!(err, SarError::PatchFailed(_)));
 }
@@ -224,7 +216,7 @@ fn bsdiff_target_above_resource_limit_returns_limit_exceeded() {
         b"",
         target.len() as i64,
     );
-    let archive = build_bsdiff_archive(&patch, target.len() as u64, NON_ZERO_HASH, None);
+    let archive = build_bsdiff_archive(&patch, NON_ZERO_HASH, None);
     let opts = sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits {
             max_decoded_entry_size: (target.len() as u64) - 1,

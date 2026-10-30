@@ -23,10 +23,11 @@ use sar_core::{
 use sar_fragmentation::{FragmentEntry, reconstruct_fragments};
 
 use sar_cdc::CDC_ALGO_LITERAL;
-use sar_delta::PATCH_ALGO_STORE_PATCH;
 use sar_sparse::{check_gathered_length, validate_sparse_extents};
 
-use crate::archive::{EntryMetadata, EntryReader};
+use crate::archive::{
+    ArchiveReaderOptions, EntryMetadata, EntryReader, apply_patch_stage, require_literal_cdc,
+};
 
 /// Entry Mode bits that are Class G (group invariant) for fragmented LFHs:
 /// `IS_ENCRYPTED`, `IS_COMPRESSED`, `HIDDEN_ATTR`, `IS_FRAGMENT`,
@@ -129,6 +130,25 @@ pub struct FragmentGroup {
 }
 
 impl FragmentGroup {
+    /// Returns true when Fragment Indices `0..=LAST_FRAGMENT` are all present.
+    fn is_complete(&self) -> bool {
+        self.entries
+            .iter()
+            .find(|e| e.metadata.is_last_fragment)
+            .is_some_and(|t| {
+                t.metadata
+                    .fragment_index
+                    .is_some_and(|i| u64::from(i) + 1 == self.entries.len() as u64)
+            })
+    }
+
+    /// Patch Algo ID and Delta Base Hash of the group (Class G), when the
+    /// group carries a patch.
+    fn patch(&self) -> Option<(u8, [u8; 32])> {
+        let m = &self.entries.first()?.metadata;
+        Some((m.patch_algo_id?, m.delta_base_hash.unwrap_or([0u8; 32])))
+    }
+
     /// Validates the Sparse Map retained from Fragment Index 0 against the group
     /// before any contribution is concatenated.
     ///
@@ -138,14 +158,14 @@ impl FragmentGroup {
     /// 1. The group must be complete (Fragment Index 0 through `LAST_FRAGMENT`).
     ///    An incomplete sparse group is [`SarError::FragmentGap`] even when
     ///    `LOSS_TOLERANT` is set (specification Section 19.4.5).
-    /// 2. A group-wide patch other than `STORE_PATCH` is not implemented and
-    ///    fails closed with [`SarError::Unsupported`].  A non-literal CDC Algo ID
-    ///    (an unresolved Hash Recipe) also fails closed with
-    ///    [`SarError::Unsupported`].
-    /// 3. The Sparse Logical Size must not exceed `max_decoded_entry_size`.
-    /// 4. The checked sum of contribution lengths (the gathered length) must
-    ///    equal the checked sum of Sparse Extent lengths
-    ///    ([`SarError::InvalidLength`]).
+    /// 2. The Sparse Logical Size must not exceed `max_decoded_entry_size`.
+    /// 3. Without a group-wide patch: a non-literal CDC Algo ID (an unresolved
+    ///    Hash Recipe) fails closed with [`SarError::Unsupported`], and the
+    ///    checked sum of contribution lengths (the gathered length) must equal
+    ///    the checked sum of Sparse Extent lengths ([`SarError::InvalidLength`]).
+    ///    With a group-wide patch the gathered data is the patch output, so
+    ///    both checks run in [`Self::reconstruct`] after the patch and CDC
+    ///    stages.
     ///
     /// # Errors
     ///
@@ -158,37 +178,9 @@ impl FragmentGroup {
         let Some(sparse) = self.index0.as_ref().and_then(|m| m.sparse.as_ref()) else {
             return Ok(None);
         };
-        let terminal = self.entries.iter().find(|e| e.metadata.is_last_fragment);
-        let complete = terminal.is_some_and(|t| {
-            t.metadata
-                .fragment_index
-                .is_some_and(|i| u64::from(i) + 1 == self.entries.len() as u64)
-        });
-        if !complete {
+        if !self.is_complete() {
             return Err(SarError::FragmentGap(
                 "sparse reconstruction requires a complete fragment group",
-            ));
-        }
-        if self
-            .index0
-            .as_ref()
-            .and_then(|m| m.patch_algo_id)
-            .is_some_and(|id| id != PATCH_ALGO_STORE_PATCH)
-        {
-            return Err(SarError::Unsupported(
-                "fragmented sparse reconstruction with a group-wide patch is not supported",
-            ));
-        }
-        // The reader performs no CDC recipe resolution; a non-literal CDC Algo ID
-        // means the reassembled bytes are an unresolved Hash Recipe, not gathered data.
-        if self
-            .index0
-            .as_ref()
-            .and_then(|m| m.cdc_algo_id)
-            .is_some_and(|id| id != CDC_ALGO_LITERAL)
-        {
-            return Err(SarError::Unsupported(
-                "fragmented sparse reconstruction after CDC recipe resolution is not supported",
             ));
         }
         limits.check_decoded_entry_size(sparse.logical_size)?;
@@ -197,27 +189,67 @@ impl FragmentGroup {
             sparse.logical_size,
             &limits.sparse_limits(),
         )?;
+        if self.patch().is_none() {
+            require_literal_cdc(self.entries.first().and_then(|e| e.metadata.cdc_algo_id))?;
+            check_gathered_length(self.contribution_total()?, extent_total)?;
+        }
+        Ok(Some(sparse))
+    }
+
+    fn contribution_total(&self) -> Result<u64, SarError> {
         let mut gathered: u64 = 0;
         for entry in &self.entries {
             gathered = gathered
                 .checked_add(entry.metadata.uncompressed_size)
                 .ok_or(SarError::Overflow("fragment contribution length sum"))?;
         }
-        check_gathered_length(gathered, extent_total)?;
-        Ok(Some(sparse))
+        Ok(gathered)
     }
 
-    /// Reconstructs the group by ascending Fragment Index concatenation.
+    /// Reconstructs the group's logical byte sequence.
     ///
-    /// Returns `(bytes, is_degraded)`.  Incomplete groups fail with
-    /// [`SarError::FragmentGap`] unless every fragment sets `LOSS_TOLERANT`,
-    /// in which case only the longest contiguous prefix from Fragment Index 0
-    /// is returned.
+    /// Fragment-local stages have already completed for every contribution.
+    /// Then, in order: ascending Fragment Index concatenation; the group-wide
+    /// patch, applied **once** to the complete Fragment Reassembly Sequence
+    /// (see [`crate::apply_patch_stage`] semantics: output length comes from
+    /// the patch construction, bounded before allocation); CDC resolution,
+    /// which fails closed with [`SarError::Unsupported`] for a non-literal CDC
+    /// Algo ID; and the sparse gathered-length check.  Sparse scattering and
+    /// final integrity verification are performed by the caller.
+    ///
+    /// Returns `(bytes, is_degraded)`.  A group requiring a group-wide stage
+    /// (patch, non-literal CDC or sparse reconstruction) must be complete: an
+    /// incomplete one is [`SarError::FragmentGap`] even under `LOSS_TOLERANT`,
+    /// and no patch is applied to a partial representation.  Any other
+    /// incomplete group fails with [`SarError::FragmentGap`] unless every
+    /// fragment sets `LOSS_TOLERANT`, in which case only the longest
+    /// contiguous prefix from Fragment Index 0 is returned (`is_degraded`).
     ///
     /// # Errors
     ///
-    /// Any error from [`sar_fragmentation::reconstruct_fragments`].
-    pub fn reconstruct(self, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError> {
+    /// Any error from [`sar_fragmentation::reconstruct_fragments`], and
+    /// `PATCH_FAILED`, `BASE_MISSING`, `LIMIT_EXCEEDED` or `UNSUPPORTED` from
+    /// the group-wide stages.
+    pub fn reconstruct(self, options: &ArchiveReaderOptions) -> Result<(Vec<u8>, bool), SarError> {
+        let limits = &options.limits;
+        let patch = self.patch();
+        let cdc_algo_id = self.entries.first().and_then(|e| e.metadata.cdc_algo_id);
+        let sparse_total = match self.index0.as_ref().and_then(|m| m.sparse.as_ref()) {
+            Some(sparse) => Some(validate_sparse_extents(
+                &sparse.extents,
+                sparse.logical_size,
+                &limits.sparse_limits(),
+            )?),
+            None => None,
+        };
+        let needs_group_stage = patch.is_some()
+            || cdc_algo_id.is_some_and(|id| id != CDC_ALGO_LITERAL)
+            || sparse_total.is_some();
+        if needs_group_stage && !self.is_complete() {
+            return Err(SarError::FragmentGap(
+                "a group-wide stage requires a complete fragment group",
+            ));
+        }
         let fragments = self
             .entries
             .into_iter()
@@ -229,7 +261,20 @@ impl FragmentGroup {
                 payload: e.payload,
             })
             .collect();
-        Ok(reconstruct_fragments(fragments, &limits.fragment_limits())?)
+        let (mut bytes, degraded) = reconstruct_fragments(fragments, &limits.fragment_limits())?;
+        if degraded {
+            return Ok((bytes, true));
+        }
+        if let Some((algo_id, base_hash)) = patch {
+            bytes = apply_patch_stage(options, algo_id, base_hash, bytes)?;
+        }
+        require_literal_cdc(cdc_algo_id)?;
+        if let Some(extent_total) = sparse_total {
+            let gathered =
+                u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("gathered length"))?;
+            check_gathered_length(gathered, extent_total)?;
+        }
+        Ok((bytes, false))
     }
 }
 

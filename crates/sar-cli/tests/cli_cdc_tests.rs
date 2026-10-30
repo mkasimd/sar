@@ -112,7 +112,7 @@ fn inspect_json_reports_cdc_support_true() {
 fn inspect_json_entry_includes_cdc_algo_id() {
     let td = tempdir().expect("tmp");
     // FASTCDC algo id = 0x02
-    let archive = build_cdc_archive_file(td.path(), 0x02, b"fastcdc data");
+    let archive = build_cdc_archive_file(td.path(), 0x00, b"literal data");
 
     let out = Command::cargo_bin("sar-cli")
         .expect("bin")
@@ -129,9 +129,22 @@ fn inspect_json_entry_includes_cdc_algo_id() {
     let algo_id = &entries[0]["cdc_algo_id"];
     assert_eq!(
         algo_id,
-        &Value::Number(2.into()),
-        "cdc_algo_id must be 2 (FASTCDC)"
+        &Value::Number(0.into()),
+        "cdc_algo_id must be 0 (LITERAL_MODE)"
     );
+}
+
+// ---------------------------------------------------------------------------
+#[test]
+fn inspect_non_literal_cdc_fails_closed() {
+    let td = tempdir().expect("tmp");
+    let archive = build_cdc_archive_file(td.path(), 0x02, b"fastcdc data");
+
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args(["inspect", archive.to_str().expect("str"), "--json"])
+        .assert()
+        .failure();
 }
 
 // ---------------------------------------------------------------------------
@@ -190,7 +203,7 @@ fn verify_cdc_succeeds_on_valid_cdc_archive() {
 }
 
 #[test]
-fn verify_cdc_reports_recipe_hash_verification_unavailable() {
+fn verify_cdc_non_literal_recipe_fails_closed() {
     let td = tempdir().expect("tmp");
     let archive = build_cdc_archive_file(td.path(), 0x02, b"valid cdc payload");
 
@@ -198,8 +211,7 @@ fn verify_cdc_reports_recipe_hash_verification_unavailable() {
         .expect("bin")
         .args(["verify", archive.to_str().expect("str"), "--cdc"])
         .assert()
-        .success()
-        .stdout(contains("recipe_hash_verification=unavailable"));
+        .failure();
 }
 
 // ---------------------------------------------------------------------------

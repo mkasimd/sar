@@ -18,63 +18,35 @@ use sar_delta::{PatchError, apply_store_patch};
 
 #[test]
 fn apply_store_patch_empty_payload_succeeds() {
-    let result = apply_store_patch(b"", 0).expect("empty payload with expected_len=0");
+    let result = apply_store_patch(b"").expect("empty payload");
     assert!(result.is_empty());
 }
 
 #[test]
 fn apply_store_patch_nonempty_payload_succeeds() {
     let data = b"hello world";
-    let result = apply_store_patch(data, data.len() as u64).expect("matching payload/expected_len");
+    let result = apply_store_patch(data).expect("matching payload/expected_len");
     assert_eq!(result, data);
 }
 
 #[test]
 fn apply_store_patch_returns_owned_vec() {
     let data = b"copy me";
-    let result = apply_store_patch(data, data.len() as u64).expect("success");
+    let result = apply_store_patch(data).expect("success");
     // Confirm the returned Vec is independent of the input slice.
     assert_eq!(result.as_slice(), data);
 }
 
 // ---------------------------------------------------------------------------
-// Length mismatch → PatchFailed
+// Output length is the payload length
 // ---------------------------------------------------------------------------
 
 #[test]
-fn apply_store_patch_shorter_payload_returns_patch_failed() {
-    // Payload is shorter than expected_len.
-    let data = b"short";
-    let err =
-        apply_store_patch(data, (data.len() as u64) + 1).expect_err("shorter payload must fail");
-    assert!(
-        matches!(err, PatchError::PatchFailed(_)),
-        "expected PatchFailed, got {err:?}"
-    );
-}
-
-#[test]
-fn apply_store_patch_longer_payload_returns_patch_failed() {
-    // Payload is longer than expected_len.
-    let data = b"too long payload";
-    let expected_len = (data.len() as u64) - 1;
-    let err = apply_store_patch(data, expected_len).expect_err("longer payload must fail");
-    assert!(
-        matches!(err, PatchError::PatchFailed(_)),
-        "expected PatchFailed, got {err:?}"
-    );
-}
-
-#[test]
-fn apply_store_patch_zero_expected_nonzero_actual_returns_patch_failed() {
-    let err = apply_store_patch(b"x", 0).expect_err("non-empty payload with expected_len=0");
-    assert!(matches!(err, PatchError::PatchFailed(_)));
-}
-
-#[test]
-fn apply_store_patch_nonzero_expected_zero_actual_returns_patch_failed() {
-    let err = apply_store_patch(b"", 1).expect_err("empty payload with expected_len=1");
-    assert!(matches!(err, PatchError::PatchFailed(_)));
+fn apply_store_patch_output_length_is_payload_length() {
+    for data in [&b""[..], b"x", b"a longer decoded patch representation"] {
+        let out = apply_store_patch(data).expect("STORE_PATCH is identity");
+        assert_eq!(out.len(), data.len());
+    }
 }
 
 // ---------------------------------------------------------------------------

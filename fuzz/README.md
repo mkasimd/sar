@@ -44,6 +44,8 @@ completeness is claimed.
 | `archive_audit_wide` | Archive audit walking with wider resource limits |
 | `archive_logical_files` | Logical-file reconstruction, fragment-group reassembly, sparse ordering |
 | `transform_pipeline_fuzz` | Transform read/decode with any declared compression algorithm ID |
+| `delta_bsdiff_apply` | Bounded `sar_delta::apply_bsdiff` patch execution (WP-7) |
+| `delta_vcdiff_apply` | Bounded `sar_delta::apply_vcdiff` patch execution (WP-7) |
 
 ### Stream transcript/stateful targets
 
@@ -575,8 +577,25 @@ before expansion, and reserved or unsupported algorithm ID rejection.
 
 Seeds live in `fuzz/seeds/transform_pipeline/`.
 
-Does not cover: encryption, key providers, delta patches, filesystem
-extraction, stream/session semantics.
+Does not cover: encryption, key providers, delta patches (see
+`delta_bsdiff_apply` / `delta_vcdiff_apply`), filesystem extraction,
+stream/session semantics.
+
+### `delta_bsdiff_apply` and `delta_vcdiff_apply`
+
+M13b WP-7 patch-application targets. Input layout: `u16` little-endian base
+length, base bytes, patch bytes. Each target executes the real
+`apply_bsdiff` / `apply_vcdiff` implementation under small limits (64 KiB
+output, bounded patch/instruction/window counts) and asserts the output never
+exceeds the bound. Patch output length is determined by the patch itself;
+there is no expected-size input.
+
+Seeds live in `fuzz/seeds/delta_apply/` and are generated deterministically by
+`python tools/generate_delta_fuzz_seeds.py` (`--check` verifies them). They
+include valid and malformed patches (truncation, bad magic, size mismatch,
+oversized declared output, negative seeks). Archive-level delta reconstruction
+is covered by deterministic tests, not by these targets. The archive repair
+fuzz target belongs to WP-7B.
 
 ### `crypto_auth_tls_exporter_negative`
 
