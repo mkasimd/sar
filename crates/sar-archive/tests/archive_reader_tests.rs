@@ -45,13 +45,7 @@ fn global_encrypted_with_plaintext_entry_passes_through() {
         flags: GlobalFlags::ENCRYPTED | GlobalFlags::NO_INDEX,
         kms: Some(KmsData {
             mode_id: 0x01,
-            payload: {
-                let mut payload = vec![1, 16];
-                payload.extend_from_slice(&[0x11; 16]);
-                payload.extend_from_slice(&100_000u32.to_le_bytes());
-                payload.extend_from_slice(&32u16.to_le_bytes());
-                payload
-            },
+            payload: pbkdf2_payload(),
         }),
     };
     let mut bytes = write_global_header(&header).expect("header");
@@ -331,6 +325,7 @@ fn pbkdf2_payload() -> Vec<u8> {
         iterations: 100_000,
         derived_key_length: 32,
     }))
+    .expect("serialize KMS payload")
 }
 
 fn encrypted_partitioned_header(mode_id: u8, payload: &[u8]) -> Vec<u8> {
@@ -385,7 +380,10 @@ fn encrypted_partitioned_header_kms_errors_are_not_masked_by_unsupported() {
     assert!(matches!(err, SarError::ReservedValue(_)));
 
     // Structurally complete KMS extension whose PBKDF2 payload is malformed.
-    let bad_payload = encrypted_partitioned_header(sar_crypto::KMS_PBKDF2, &[0xFF]);
+    let bad_payload = encrypted_partitioned_header(
+        sar_crypto::KMS_PBKDF2,
+        &[sar_crypto::PBKDF2_PRF_HMAC_SHA256],
+    );
     let core_ok = sar_core::format::parse_global_header(&bad_payload, &limits).is_ok();
     assert!(core_ok, "core parser only checks KMS structure");
     let reader = reader_error(&bad_payload);

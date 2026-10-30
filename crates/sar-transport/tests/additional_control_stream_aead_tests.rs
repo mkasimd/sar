@@ -35,8 +35,8 @@ use sar_transport::{
 };
 
 use common::{
-    MockTlsExporterKeyProvider, TEST_KEY, tls_exporter_encrypted_control_entry_bad_tag,
-    tls_exporter_encrypted_control_entry_bytes,
+    MockTlsExporterKeyProvider, TEST_KEY, tls_exporter_control_entry_with_algo_id,
+    tls_exporter_encrypted_control_entry_bad_tag, tls_exporter_encrypted_control_entry_bytes,
     tls_exporter_encrypted_control_entry_random_payload,
     tls_exporter_encrypted_control_entry_wrong_gh_aad,
     tls_exporter_encrypted_control_entry_wrong_lfh_aad, tls_exporter_plaintext_control_entry_bytes,
@@ -349,14 +349,14 @@ fn ciphertext_encrypted_with_wrong_global_header_aad_is_rejected_with_auth_faile
     let mut t = setup_tls_exporter_session(15, [0x0F; 16]);
     open_control_stream(&mut t, TransportStreamId(2));
 
-    // Encrypt with NO_INDEX-only flags (0x01) instead of NO_INDEX|ENCRYPTED (0x03).
+    // Encrypt against a header whose flags differ (extra PER_FILE_CRC bit).
     let entry = tls_exporter_encrypted_control_entry_wrong_gh_aad(
         15,
         0,
         SessionOpCode::Ack as u8,
         ack_payload(0),
         &TEST_KEY,
-        0x0000_0001, // wrong: only NO_INDEX, not ENCRYPTED
+        sar_core::GlobalFlags::PER_FILE_CRC.bits(), // wrong header flags
     );
     let actions = t
         .feed_bytes(TransportStreamId(2), &entry, Some(2))
@@ -433,4 +433,255 @@ fn ctl_magic_remains_rejected_in_tls_exporter_context() {
         }),
         "CTL! must be rejected with ErrInvalidMagic; actions: {actions:?}"
     );
+}
+
+// ── KMS resolution statuses are preserved (SAR-M13b-WP6-IMPLEMENTATION-REVIEW-001) ──
+
+#[derive(Clone, Copy)]
+enum Behavior {
+    Missing,
+    ShortKey,
+    LimitExceeded,
+}
+
+struct FaultyProvider(Behavior);
+
+impl sar_crypto::KeyProvider for FaultyProvider {
+    fn password_for(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+    ) -> Result<Option<sar_crypto::SecretString>, sar_crypto::SarCryptoError> {
+        Ok(None)
+    }
+
+    fn unwrap_key(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+        _wrapped: &[u8],
+    ) -> Result<Option<sar_crypto::SecretBytes>, sar_crypto::SarCryptoError> {
+        Ok(None)
+    }
+
+    fn external_key(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+    ) -> Result<Option<sar_crypto::SecretBytes>, sar_crypto::SarCryptoError> {
+        match self.0 {
+            Behavior::Missing => Ok(None),
+            Behavior::ShortKey => Ok(Some(zeroize::Zeroizing::new(vec![7u8; 31]))),
+            Behavior::LimitExceeded => Err(sar_crypto::SarCryptoError::LimitExceeded(
+                "KDF parameter exceeds configured limit",
+            )),
+        }
+    }
+}
+
+fn control_status_with(behavior: Behavior) -> Vec<SarStatus> {
+    let mut t = InMemoryTransport::new_quic(TransportConfig {
+        bidirectional_control: true,
+        ..TransportConfig::default()
+    })
+    .with_key_provider(Arc::new(MockTlsExporterKeyProvider { key: TEST_KEY }));
+    t.open_transport_stream(TransportStreamId(1)).expect("open");
+    t.feed_bytes(
+        TransportStreamId(1),
+        &tls_exporter_session_archive_init_bytes(21, [0x15; 16]),
+        Some(1),
+    )
+    .expect("init");
+    // Swap the provider only for the additional control stream decryption.
+    let mut t = t.with_key_provider(Arc::new(FaultyProvider(behavior)));
+    open_control_stream(&mut t, TransportStreamId(2));
+    let entry = tls_exporter_encrypted_control_entry_bytes(
+        21,
+        0,
+        SessionOpCode::Ack as u8,
+        ack_payload(0),
+        &TEST_KEY,
+    );
+    t.feed_bytes(TransportStreamId(2), &entry, Some(2))
+        .expect("feed")
+        .iter()
+        .filter_map(|a| match a {
+            TransportAction::RejectSarStream { error, .. }
+            | TransportAction::ResetTransportStream { error, .. }
+            | TransportAction::CloseConnection { error } => Some(error.status()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn missing_key_material_is_key_missing_not_auth_failed() {
+    let statuses = control_status_with(Behavior::Missing);
+    assert!(statuses.contains(&SarStatus::ErrKeyMissing), "{statuses:?}");
+    assert!(
+        !statuses.contains(&SarStatus::ErrAuthFailed),
+        "{statuses:?}"
+    );
+}
+
+#[test]
+fn rejected_key_material_is_key_rejected_not_auth_failed() {
+    let statuses = control_status_with(Behavior::ShortKey);
+    assert!(
+        statuses.contains(&SarStatus::ErrKeyRejected),
+        "{statuses:?}"
+    );
+    assert!(
+        !statuses.contains(&SarStatus::ErrAuthFailed),
+        "{statuses:?}"
+    );
+}
+
+#[test]
+fn kdf_limit_violation_is_limit_exceeded_not_auth_failed() {
+    let statuses = control_status_with(Behavior::LimitExceeded);
+    assert!(
+        statuses.contains(&SarStatus::ErrLimitExceeded),
+        "{statuses:?}"
+    );
+    assert!(
+        !statuses.contains(&SarStatus::ErrAuthFailed),
+        "{statuses:?}"
+    );
+}
+
+fn statuses(actions: &[TransportAction]) -> Vec<SarStatus> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            TransportAction::RejectSarStream { error, .. }
+            | TransportAction::ResetTransportStream { error, .. }
+            | TransportAction::CloseConnection { error } => Some(error.status()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn reserved_and_plaintext_algorithm_ids_keep_registry_statuses() {
+    for (algo, expected) in [
+        (0x02u8, SarStatus::ErrReservedValue),
+        (0x00u8, SarStatus::ErrFlagConflict),
+        (0x05u8, SarStatus::ErrUnsupported),
+    ] {
+        let mut t = setup_tls_exporter_session(31, [0x1F; 16]);
+        open_control_stream(&mut t, TransportStreamId(2));
+        let actions = t
+            .feed_bytes(
+                TransportStreamId(2),
+                &tls_exporter_control_entry_with_algo_id(31, 0, algo),
+                Some(2),
+            )
+            .expect("feed");
+        let got = statuses(&actions);
+        assert!(got.contains(&expected), "algo {algo:#x}: {got:?}");
+        assert!(!got.contains(&SarStatus::ErrAuthFailed), "{got:?}");
+    }
+}
+
+#[test]
+fn missing_key_provider_is_key_missing() {
+    let mut t = InMemoryTransport::new_quic(TransportConfig {
+        bidirectional_control: true,
+        ..TransportConfig::default()
+    });
+    t.open_transport_stream(TransportStreamId(1)).expect("open");
+    t.feed_bytes(
+        TransportStreamId(1),
+        &tls_exporter_session_archive_init_bytes(32, [0x20; 16]),
+        Some(1),
+    )
+    .expect("init");
+    assert!(t.is_tls_exporter_bound(32));
+    open_control_stream(&mut t, TransportStreamId(2));
+    let entry = tls_exporter_encrypted_control_entry_bytes(
+        32,
+        0,
+        SessionOpCode::Ack as u8,
+        ack_payload(0),
+        &TEST_KEY,
+    );
+    let got = statuses(
+        &t.feed_bytes(TransportStreamId(2), &entry, Some(2))
+            .expect("feed"),
+    );
+    assert!(got.contains(&SarStatus::ErrKeyMissing), "{got:?}");
+}
+
+// ── KMS Master Secret is retained per session ────────────────────────────────
+
+struct CountingProvider(Arc<std::sync::atomic::AtomicUsize>);
+
+impl sar_crypto::KeyProvider for CountingProvider {
+    fn password_for(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+    ) -> Result<Option<sar_crypto::SecretString>, sar_crypto::SarCryptoError> {
+        Ok(None)
+    }
+
+    fn unwrap_key(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+        _wrapped: &[u8],
+    ) -> Result<Option<sar_crypto::SecretBytes>, sar_crypto::SarCryptoError> {
+        Ok(None)
+    }
+
+    fn external_key(
+        &self,
+        _ctx: &sar_crypto::KmsContext,
+    ) -> Result<Option<sar_crypto::SecretBytes>, sar_crypto::SarCryptoError> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Some(zeroize::Zeroizing::new(TEST_KEY.to_vec())))
+    }
+}
+
+fn bind_session(t: &mut InMemoryTransport, tsid: u32, stream_id: u16, uuid: u8) {
+    t.open_transport_stream(TransportStreamId(u64::from(tsid)))
+        .expect("open primary");
+    t.feed_bytes(
+        TransportStreamId(u64::from(tsid)),
+        &tls_exporter_session_archive_init_bytes(stream_id, [uuid; 16]),
+        Some(1),
+    )
+    .expect("init");
+    assert!(t.is_tls_exporter_bound(stream_id));
+}
+
+#[test]
+fn master_secret_is_resolved_once_per_session_and_not_shared_across_sessions() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let mut t = InMemoryTransport::new_quic(TransportConfig {
+        bidirectional_control: true,
+        ..TransportConfig::default()
+    })
+    .with_key_provider(Arc::new(CountingProvider(calls.clone())));
+    bind_session(&mut t, 1, 41, 0x41);
+    bind_session(&mut t, 10, 42, 0x42);
+    let baseline = calls.load(Ordering::SeqCst);
+
+    open_control_stream(&mut t, TransportStreamId(2));
+    open_control_stream(&mut t, TransportStreamId(3));
+    for (tsid, sid) in [(2, 41u16), (3, 42u16)] {
+        for seq in 0..3u16 {
+            let entry = tls_exporter_encrypted_control_entry_bytes(
+                sid,
+                seq,
+                SessionOpCode::Capabilities as u8,
+                capabilities_payload(),
+                &TEST_KEY,
+            );
+            let actions = t
+                .feed_bytes(TransportStreamId(tsid), &entry, Some(2))
+                .expect("feed");
+            assert!(!has_any_reject_or_reset(&actions), "{actions:?}");
+        }
+        // Each session resolved exactly once, however many Entries it carried.
+        let used = calls.load(Ordering::SeqCst) - baseline;
+        assert_eq!(used, if sid == 41 { 1 } else { 2 });
+    }
 }

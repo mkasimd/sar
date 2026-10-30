@@ -13,11 +13,14 @@ use sar_core::{
     flags::GlobalFlags,
     format::{
         GLOBAL_HEADER_FIXED_LEN, GlobalHeader, LocalFileHeader, decode_global_flags,
-        global_header_flags_bytes, lfh_bytes_for_aad, parse_global_header, parse_lfh,
-        require_unpartitioned_processing, validate_global_header_prefix,
+        lfh_bytes_for_aad, parse_global_header, parse_lfh, require_unpartitioned_processing,
+        validate_global_header_prefix,
     },
 };
-use sar_crypto::{KeyProvider, aad::build_aead_aad, provider::resolve_cek, validate_encr_algo_id};
+use sar_crypto::{
+    KeyProvider, MasterSecretScope, aad::build_aead_aad, derive_entry_key,
+    validate_entry_encr_algo_id,
+};
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
     PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
@@ -93,7 +96,8 @@ struct PendingEntry {
 #[derive(Debug, Clone)]
 struct ActiveArchive {
     header: GlobalHeader,
-    global_flags_section: Vec<u8>,
+    /// Raw encoded Global Header bytes retained for AEAD AAD.
+    global_header_bytes: Vec<u8>,
     entry_count: u64,
 }
 
@@ -101,6 +105,8 @@ struct ActiveArchive {
 pub struct StreamArchiveParser {
     options: ArchiveReaderOptions,
     key_provider: Option<Box<dyn KeyProvider>>,
+    /// KMS Master Secret for the current archive stream; the KDF runs once.
+    master_secret: MasterSecretScope,
     state: StreamParseState,
     buffer: Vec<u8>,
     consumed: usize,
@@ -123,6 +129,7 @@ impl StreamArchiveParser {
         Self {
             options,
             key_provider: None,
+            master_secret: MasterSecretScope::new(),
             state: StreamParseState::NeedGlobalHeader,
             buffer: Vec::new(),
             consumed: 0,
@@ -137,6 +144,7 @@ impl StreamArchiveParser {
     #[must_use]
     pub fn with_key_provider(mut self, key_provider: Box<dyn KeyProvider>) -> Self {
         self.key_provider = Some(key_provider);
+        self.master_secret.invalidate();
         self
     }
 
@@ -159,6 +167,15 @@ impl StreamArchiveParser {
         self.options.limits.check_archive_size(total)?;
         self.buffer.extend_from_slice(chunk);
         Ok(())
+    }
+
+    /// Returns the exact encoded Global Header bytes of the active archive,
+    /// as received (the AEAD AAD prefix), once the header has been parsed.
+    #[must_use]
+    pub fn global_header_bytes(&self) -> Option<&[u8]> {
+        self.archive
+            .as_ref()
+            .map(|archive| archive.global_header_bytes.as_slice())
     }
 
     /// Declares that no further bytes will be provided.
@@ -207,9 +224,15 @@ impl StreamArchiveParser {
                     }
                     require_unpartitioned_processing(header.flags)?;
 
+                    let raw_header_bytes = input
+                        .get(..consumed)
+                        .ok_or(SarError::Internal("global header length exceeds input"))?
+                        .to_vec();
                     self.consume(consumed)?;
+                    // A new Global Header starts a new KMS scope.
+                    self.master_secret.invalidate();
                     self.archive = Some(ActiveArchive {
-                        global_flags_section: global_header_flags_bytes(&header)?,
+                        global_header_bytes: raw_header_bytes,
                         header: header.clone(),
                         entry_count: 0,
                     });
@@ -442,15 +465,19 @@ impl StreamArchiveParser {
             let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
                 "encrypted entry missing encryption algorithm ID",
             ))?;
-            validate_encr_algo_id(algo_id).map_err(SarError::from)?;
+            validate_entry_encr_algo_id(algo_id).map_err(SarError::from)?;
             let provider = self.key_provider.as_deref().ok_or(SarError::KeyMissing(
                 "no key provider configured for encrypted archive",
             ))?;
             let context = build_kms_context(&archive.header)?;
-            let key = resolve_cek(provider, &context).map_err(SarError::from)?;
             let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
                 "encrypted entry missing IV/nonce field",
             ))?;
+            let master = self
+                .master_secret
+                .get_or_resolve(provider, &context, &self.options.limits.kdf_limits())
+                .map_err(SarError::from)?;
+            let key = derive_entry_key(master, algo_id, &iv_nonce).map_err(SarError::from)?;
             let fec_algo_id = lfh.fec_algo_id.unwrap_or(0);
             let aad_lfh_bytes = lfh_bytes_for_aad(
                 archive.header.flags,
@@ -458,7 +485,7 @@ impl StreamArchiveParser {
                 fec_algo_id,
                 lfh.fec_value.len(),
             )?;
-            let aad = build_aead_aad(&archive.global_flags_section, &aad_lfh_bytes);
+            let aad = build_aead_aad(&archive.global_header_bytes, &aad_lfh_bytes);
             Some(EntryCryptoContext {
                 algo_id,
                 iv_nonce,

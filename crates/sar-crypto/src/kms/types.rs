@@ -4,9 +4,9 @@
 #![allow(clippy::module_name_repetitions)]
 
 use crate::algorithm::{
-    ARGON2_VARIANT_D, ARGON2_VARIANT_I, ARGON2_VARIANT_ID, KMS_ARGON2, KMS_ASYMMETRIC_WRAP,
-    KMS_PBKDF2, KMS_TLS_EXPORTER, PBKDF2_PRF_HMAC_SHA3_256, PBKDF2_PRF_HMAC_SHA256,
-    PBKDF2_PRF_HMAC_SHA512,
+    ARGON2_VARIANT_ID, ARGON2_VERSION_0X13, KMS_ARGON2, KMS_ASYMMETRIC_WRAP,
+    KMS_MASTER_SECRET_SIZE, KMS_PBKDF2, KMS_TLS_EXPORTER, PBKDF2_PRF_HMAC_SHA3_256,
+    PBKDF2_PRF_HMAC_SHA256, PBKDF2_PRF_HMAC_SHA512,
 };
 use crate::error::SarCryptoError;
 use crate::kms::tls_exporter::{TlsExporterParams, serialize_tls_exporter_kms_payload};
@@ -48,7 +48,7 @@ pub struct Argon2Params {
 pub struct AsymmetricRecipient {
     /// Recipient identifier bytes.
     pub recipient_id: Vec<u8>,
-    /// Wrapped CEK bytes.
+    /// Wrapped KMS Master Secret bytes.
     pub wrapped_key: Vec<u8>,
 }
 
@@ -87,48 +87,96 @@ pub struct KmsContext {
     pub params: KmsParams,
 }
 
-/// Serialize `params` into the on-wire KMS payload bytes.
-pub fn serialize_kms_payload(params: &KmsParams) -> Vec<u8> {
+/// Wrap Algo ID `0x01`: RSA-OAEP-2048.
+pub const WRAP_RSA_OAEP_2048: u8 = 0x01;
+/// Wrap Algo ID `0x02`: RSA-OAEP-4096.
+pub const WRAP_RSA_OAEP_4096: u8 = 0x02;
+/// Wrap Algo ID `0x03`: X25519 HPKE.
+pub const WRAP_X25519_HPKE: u8 = 0x03;
+/// Wrap Algo ID `0x04`: ML-KEM-768 (assigned, unsupported).
+pub const WRAP_ML_KEM_768: u8 = 0x04;
+/// Wrap Algo ID `0x05`: ML-KEM-1024 (assigned, unsupported).
+pub const WRAP_ML_KEM_1024: u8 = 0x05;
+
+/// Returns the required Wrapped Key Blob length for an implemented wrap algorithm.
+///
+/// Assigned-but-unsupported identifiers return `Unsupported`; everything else
+/// is `ReservedValue`.
+///
+/// # Errors
+///
+/// See above.
+pub fn wrapped_key_len_for(wrap_algo_id: u8) -> Result<usize, SarCryptoError> {
+    match wrap_algo_id {
+        WRAP_RSA_OAEP_2048 => Ok(256),
+        WRAP_RSA_OAEP_4096 => Ok(512),
+        WRAP_X25519_HPKE => Ok(80),
+        WRAP_ML_KEM_768 | WRAP_ML_KEM_1024 => Err(SarCryptoError::Unsupported(
+            "ML-KEM wrap algorithm not implemented",
+        )),
+        _ => Err(SarCryptoError::ReservedValue("reserved Wrap Algo ID")),
+    }
+}
+
+fn len_u8(len: usize, what: &'static str) -> Result<u8, SarCryptoError> {
+    u8::try_from(len).map_err(|_| SarCryptoError::InvalidLength(what))
+}
+
+/// Serialize `params` into the canonical on-wire KMS payload bytes (Section 5.3.3).
+///
+/// # Errors
+///
+/// Returns [`SarCryptoError::InvalidLength`] when a length does not fit its
+/// wire field.
+pub fn serialize_kms_payload(params: &KmsParams) -> Result<Vec<u8>, SarCryptoError> {
     match params {
         KmsParams::Pbkdf2(p) => {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(9 + p.salt.len());
             out.push(p.prf_algo_id);
-            out.push(p.salt.len() as u8);
-            out.extend_from_slice(&p.salt);
             out.extend_from_slice(&p.iterations.to_le_bytes());
             out.extend_from_slice(&p.derived_key_length.to_le_bytes());
-            out
+            out.push(len_u8(p.salt.len(), "PBKDF2 salt length exceeds 255")?);
+            out.extend_from_slice(&p.salt);
+            Ok(out)
         }
         KmsParams::Argon2(p) => {
-            let mut out = Vec::new();
+            let mut out = Vec::with_capacity(15 + p.salt.len());
             out.push(p.variant);
             out.push(p.version);
-            out.push(p.salt.len() as u8);
-            out.extend_from_slice(&p.salt);
             out.extend_from_slice(&p.memory_cost_kib.to_le_bytes());
             out.extend_from_slice(&p.time_cost.to_le_bytes());
             out.extend_from_slice(&p.parallelism.to_le_bytes());
             out.extend_from_slice(&p.derived_key_length.to_le_bytes());
-            out
+            out.push(len_u8(p.salt.len(), "Argon2 salt length exceeds 255")?);
+            out.extend_from_slice(&p.salt);
+            Ok(out)
         }
         KmsParams::AsymmetricWrap(p) => {
             let mut out = Vec::new();
             out.push(p.wrap_algo_id);
-            out.push(p.recipients.len() as u8);
+            out.push(len_u8(p.recipients.len(), "recipient count exceeds 255")?);
             for recipient in &p.recipients {
-                out.push(recipient.recipient_id.len() as u8);
+                out.push(len_u8(
+                    recipient.recipient_id.len(),
+                    "Recipient ID length exceeds 255",
+                )?);
                 out.extend_from_slice(&recipient.recipient_id);
-                let wrapped_key_len = recipient.wrapped_key.len() as u16;
-                out.extend_from_slice(&wrapped_key_len.to_le_bytes());
+                let wrapped_len = u16::try_from(recipient.wrapped_key.len())
+                    .map_err(|_| SarCryptoError::InvalidLength("wrapped key length exceeds u16"))?;
+                out.extend_from_slice(&wrapped_len.to_le_bytes());
                 out.extend_from_slice(&recipient.wrapped_key);
             }
-            out
+            Ok(out)
         }
         KmsParams::TlsExporter(p) => serialize_tls_exporter_kms_payload(p),
     }
 }
 
 /// Parse a KMS payload using its `mode_id`.
+///
+/// Parsing validates structure, registry values and the Section 5.3.3 /
+/// 5.3.4 minimums only.  Local resource limits are applied separately by
+/// [`crate::kms::limits::KdfLimits`] before derivation.
 ///
 /// Returns [`SarCryptoError::Unsupported`] for Mode `0x04 TLS_EXPORTER`,
 /// which requires a transport-layer TLS session.  To parse TLS_EXPORTER
@@ -147,11 +195,68 @@ pub fn parse_kms_payload(mode_id: u8, payload: &[u8]) -> Result<KmsParams, SarCr
     }
 }
 
-fn parse_pbkdf2(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
-    if payload.len() < 2 {
-        return Err(SarCryptoError::Malformed("PBKDF2 payload too short"));
+/// Bounds-checked little-endian cursor over a KMS payload.
+pub(crate) struct Cursor<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
     }
-    let prf_algo_id = payload[0];
+
+    pub(crate) fn take(
+        &mut self,
+        len: usize,
+        what: &'static str,
+    ) -> Result<&'a [u8], SarCryptoError> {
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(SarCryptoError::Malformed(what))?;
+        let slice = self
+            .data
+            .get(self.pos..end)
+            .ok_or(SarCryptoError::Malformed(what))?;
+        self.pos = end;
+        Ok(slice)
+    }
+
+    pub(crate) fn u8(&mut self, what: &'static str) -> Result<u8, SarCryptoError> {
+        Ok(self.take(1, what)?[0])
+    }
+
+    pub(crate) fn u16(&mut self, what: &'static str) -> Result<u16, SarCryptoError> {
+        let b = self.take(2, what)?;
+        Ok(u16::from_le_bytes([b[0], b[1]]))
+    }
+
+    pub(crate) fn u32(&mut self, what: &'static str) -> Result<u32, SarCryptoError> {
+        let b = self.take(4, what)?;
+        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    }
+
+    pub(crate) fn finish(&self, what: &'static str) -> Result<(), SarCryptoError> {
+        if self.pos == self.data.len() {
+            Ok(())
+        } else {
+            Err(SarCryptoError::Malformed(what))
+        }
+    }
+}
+
+fn check_derived_key_length(value: u16, what: &'static str) -> Result<(), SarCryptoError> {
+    if usize::from(value) == KMS_MASTER_SECRET_SIZE {
+        Ok(())
+    } else {
+        Err(SarCryptoError::InvalidLength(what))
+    }
+}
+
+fn parse_pbkdf2(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
+    let mut cur = Cursor::new(payload);
+    let prf_algo_id = cur.u8("PBKDF2 payload truncated")?;
     match prf_algo_id {
         PBKDF2_PRF_HMAC_SHA256 => {}
         PBKDF2_PRF_HMAC_SHA512 | PBKDF2_PRF_HMAC_SHA3_256 => {
@@ -165,37 +270,20 @@ fn parse_pbkdf2(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
             ));
         }
     }
-    let salt_len = usize::from(payload[1]);
+    let iterations = cur.u32("PBKDF2 payload truncated")?;
+    let derived_key_length = cur.u16("PBKDF2 payload truncated")?;
+    let salt_len = usize::from(cur.u8("PBKDF2 payload truncated")?);
+    let salt = cur.take(salt_len, "PBKDF2 salt truncated")?.to_vec();
+    cur.finish("PBKDF2 payload has trailing bytes")?;
+    check_derived_key_length(derived_key_length, "PBKDF2 Derived Key Length must be 32")?;
     if salt_len < 16 {
-        return Err(SarCryptoError::Malformed(
+        return Err(SarCryptoError::InvalidLength(
             "PBKDF2 salt length must be >= 16",
         ));
     }
-    let salt_end = 2 + salt_len;
-    if payload.len() < salt_end + 6 {
-        return Err(SarCryptoError::Malformed("PBKDF2 payload truncated"));
-    }
-    let salt = payload[2..salt_end].to_vec();
-    let iterations = u32::from_le_bytes([
-        payload[salt_end],
-        payload[salt_end + 1],
-        payload[salt_end + 2],
-        payload[salt_end + 3],
-    ]);
     if iterations < 100_000 {
-        return Err(SarCryptoError::Malformed(
-            "PBKDF2 iterations must be >= 100,000",
-        ));
-    }
-    if iterations > 10_000_000 {
-        return Err(SarCryptoError::Malformed(
-            "PBKDF2 iterations exceeds DoS limit",
-        ));
-    }
-    let derived_key_length = u16::from_le_bytes([payload[salt_end + 4], payload[salt_end + 5]]);
-    if derived_key_length != 32 {
-        return Err(SarCryptoError::Malformed(
-            "PBKDF2 derived_key_length must be 32",
+        return Err(SarCryptoError::InvalidLength(
+            "PBKDF2 iterations must be >= 100000",
         ));
     }
     Ok(KmsParams::Pbkdf2(Pbkdf2Params {
@@ -207,77 +295,33 @@ fn parse_pbkdf2(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
 }
 
 fn parse_argon2(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
-    if payload.len() < 3 {
-        return Err(SarCryptoError::Malformed("Argon2 payload too short"));
+    let mut cur = Cursor::new(payload);
+    let variant = cur.u8("Argon2 payload truncated")?;
+    if variant != ARGON2_VARIANT_ID {
+        return Err(SarCryptoError::ReservedValue("reserved Argon2 variant"));
     }
-    let variant = payload[0];
-    match variant {
-        ARGON2_VARIANT_D | ARGON2_VARIANT_I => {
-            return Err(SarCryptoError::Unsupported(
-                "only Argon2id (0x03) is supported",
-            ));
-        }
-        ARGON2_VARIANT_ID => {}
-        _ => return Err(SarCryptoError::ReservedValue("unknown Argon2 variant")),
+    let version = cur.u8("Argon2 payload truncated")?;
+    if version != ARGON2_VERSION_0X13 {
+        return Err(SarCryptoError::Unsupported(
+            "only Argon2 version 0x13 is supported",
+        ));
     }
-    let version = payload[1];
-    if version == 0 {
-        return Err(SarCryptoError::Malformed("Argon2 version must be non-zero"));
+    let memory_cost_kib = cur.u32("Argon2 payload truncated")?;
+    let time_cost = cur.u32("Argon2 payload truncated")?;
+    let parallelism = cur.u16("Argon2 payload truncated")?;
+    let derived_key_length = cur.u16("Argon2 payload truncated")?;
+    let salt_len = usize::from(cur.u8("Argon2 payload truncated")?);
+    let salt = cur.take(salt_len, "Argon2 salt truncated")?.to_vec();
+    cur.finish("Argon2 payload has trailing bytes")?;
+    check_derived_key_length(derived_key_length, "Argon2 Derived Key Length must be 32")?;
+    if memory_cost_kib == 0 || time_cost == 0 || parallelism == 0 {
+        return Err(SarCryptoError::InvalidLength(
+            "Argon2 memory, time and parallelism must be > 0",
+        ));
     }
-    let salt_len = usize::from(payload[2]);
     if salt_len < 16 {
-        return Err(SarCryptoError::Malformed(
+        return Err(SarCryptoError::InvalidLength(
             "Argon2 salt length must be >= 16",
-        ));
-    }
-    let salt_end = 3 + salt_len;
-    if payload.len() < salt_end + 12 {
-        return Err(SarCryptoError::Malformed("Argon2 payload truncated"));
-    }
-    let salt = payload[3..salt_end].to_vec();
-    let memory_cost_kib = u32::from_le_bytes([
-        payload[salt_end],
-        payload[salt_end + 1],
-        payload[salt_end + 2],
-        payload[salt_end + 3],
-    ]);
-    if memory_cost_kib < 65_536 {
-        return Err(SarCryptoError::Malformed(
-            "Argon2 memory_cost_kib must be >= 65536 (64 MiB)",
-        ));
-    }
-    if memory_cost_kib > 2_097_152 {
-        return Err(SarCryptoError::Malformed(
-            "Argon2 memory_cost_kib exceeds DoS limit (2 GiB)",
-        ));
-    }
-    let time_cost = u32::from_le_bytes([
-        payload[salt_end + 4],
-        payload[salt_end + 5],
-        payload[salt_end + 6],
-        payload[salt_end + 7],
-    ]);
-    if time_cost < 1 {
-        return Err(SarCryptoError::Malformed("Argon2 time_cost must be >= 1"));
-    }
-    if time_cost > 100 {
-        return Err(SarCryptoError::Malformed(
-            "Argon2 time_cost exceeds DoS limit",
-        ));
-    }
-    let parallelism = u16::from_le_bytes([payload[salt_end + 8], payload[salt_end + 9]]);
-    if parallelism < 1 {
-        return Err(SarCryptoError::Malformed("Argon2 parallelism must be >= 1"));
-    }
-    if parallelism > 256 {
-        return Err(SarCryptoError::Malformed(
-            "Argon2 parallelism exceeds limit",
-        ));
-    }
-    let derived_key_length = u16::from_le_bytes([payload[salt_end + 10], payload[salt_end + 11]]);
-    if derived_key_length != 32 {
-        return Err(SarCryptoError::Malformed(
-            "Argon2 derived_key_length must be 32",
         ));
     }
     Ok(KmsParams::Argon2(Argon2Params {
@@ -292,59 +336,46 @@ fn parse_argon2(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
 }
 
 fn parse_asymmetric_wrap(payload: &[u8]) -> Result<KmsParams, SarCryptoError> {
-    if payload.len() < 2 {
-        return Err(SarCryptoError::Malformed(
-            "ASYMMETRIC_WRAP payload too short",
-        ));
-    }
-    let wrap_algo_id = payload[0];
-    let recipient_count = usize::from(payload[1]);
+    let mut cur = Cursor::new(payload);
+    let wrap_algo_id = cur.u8("ASYMMETRIC_WRAP payload truncated")?;
+    let expected_wrapped_len = wrapped_key_len_for(wrap_algo_id)?;
+    let recipient_count = usize::from(cur.u8("ASYMMETRIC_WRAP payload truncated")?);
     if recipient_count < 1 {
         return Err(SarCryptoError::Malformed(
             "ASYMMETRIC_WRAP must have at least 1 recipient",
         ));
     }
-    let mut pos = 2;
     let mut recipients = Vec::with_capacity(recipient_count);
     for _ in 0..recipient_count {
-        if pos >= payload.len() {
-            return Err(SarCryptoError::Malformed(
-                "ASYMMETRIC_WRAP recipient data truncated",
+        let id_len = usize::from(cur.u8("ASYMMETRIC_WRAP recipient truncated")?);
+        if id_len == 0 {
+            return Err(SarCryptoError::InvalidLength(
+                "ASYMMETRIC_WRAP Recipient ID Len must be > 0",
             ));
         }
-        let recipient_id_len = usize::from(payload[pos]);
-        pos += 1;
-        if pos + recipient_id_len > payload.len() {
-            return Err(SarCryptoError::Malformed(
-                "ASYMMETRIC_WRAP recipient_id truncated",
+        let recipient_id = cur
+            .take(id_len, "ASYMMETRIC_WRAP Recipient ID truncated")?
+            .to_vec();
+        let wrapped_len = usize::from(cur.u16("ASYMMETRIC_WRAP wrapped key length truncated")?);
+        if wrapped_len == 0 {
+            return Err(SarCryptoError::InvalidLength(
+                "ASYMMETRIC_WRAP Wrapped Key Len must be > 0",
             ));
         }
-        let recipient_id = payload[pos..pos + recipient_id_len].to_vec();
-        pos += recipient_id_len;
-        if pos + 2 > payload.len() {
-            return Err(SarCryptoError::Malformed(
-                "ASYMMETRIC_WRAP wrapped_key_len truncated",
+        let wrapped_key = cur
+            .take(wrapped_len, "ASYMMETRIC_WRAP wrapped key truncated")?
+            .to_vec();
+        if wrapped_len != expected_wrapped_len {
+            return Err(SarCryptoError::InvalidLength(
+                "ASYMMETRIC_WRAP Wrapped Key Len does not match the Wrap Algo ID",
             ));
         }
-        let wrapped_key_len = usize::from(u16::from_le_bytes([payload[pos], payload[pos + 1]]));
-        pos += 2;
-        if wrapped_key_len == 0 {
-            return Err(SarCryptoError::Malformed(
-                "ASYMMETRIC_WRAP wrapped_key must not be empty (would expose plaintext CEK)",
-            ));
-        }
-        if pos + wrapped_key_len > payload.len() {
-            return Err(SarCryptoError::Malformed(
-                "ASYMMETRIC_WRAP wrapped_key truncated",
-            ));
-        }
-        let wrapped_key = payload[pos..pos + wrapped_key_len].to_vec();
-        pos += wrapped_key_len;
         recipients.push(AsymmetricRecipient {
             recipient_id,
             wrapped_key,
         });
     }
+    cur.finish("ASYMMETRIC_WRAP payload has trailing bytes")?;
     Ok(KmsParams::AsymmetricWrap(AsymmetricWrapParams {
         wrap_algo_id,
         recipients,

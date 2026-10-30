@@ -220,17 +220,19 @@ pub fn decode_payload_v2(
     encoded_payload: &[u8],
     plan: DecodingPlanV2,
 ) -> Result<Vec<u8>, SarError> {
-    let decrypted = if let Some(context) = plan.crypto {
-        aead_decrypt(
-            context.algo_id,
-            &context.key,
-            &context.iv_nonce,
-            &context.aad,
-            encoded_payload,
+    let decrypted: std::borrow::Cow<'_, [u8]> = if let Some(context) = plan.crypto {
+        std::borrow::Cow::Owned(
+            aead_decrypt(
+                context.algo_id,
+                &context.key,
+                &context.iv_nonce,
+                &context.aad,
+                encoded_payload,
+            )
+            .map_err(SarError::from)?,
         )
-        .map_err(SarError::from)?
     } else {
-        encoded_payload.to_vec()
+        std::borrow::Cow::Borrowed(encoded_payload)
     };
 
     decode_payload(

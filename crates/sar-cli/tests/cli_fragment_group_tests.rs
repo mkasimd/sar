@@ -101,3 +101,52 @@ fn cli_gap_without_allow_lossy_fails_without_zero_fill_warning() {
     let (assert, _out, _td) = extract(&bytes);
     assert.failure().stderr(contains("zero bytes").not());
 }
+
+fn hashed_archive(explicit_hash: Option<[u8; 32]>) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut writer = sar_archive::ArchiveWriter::new(
+        std::io::Cursor::new(&mut out),
+        sar_archive::ArchiveWriterOptions {
+            sparse: true,
+            with_content_hash: true,
+            ..Default::default()
+        },
+    )
+    .expect("writer");
+    let mut input = sar_archive::EntryInput::file("plain.bin", b"hello".to_vec());
+    input.content_hash = explicit_hash;
+    writer.add_entry(input).expect("entry");
+    writer
+        .write_sparse_entry(
+            "sparse.bin",
+            b"DATA",
+            sar_archive::SparseWriteOptions {
+                logical_size: 100_000,
+                extents: vec![sar_core::sparse::SparseExtent {
+                    offset: 50_000,
+                    length: 4,
+                }],
+            },
+        )
+        .expect("sparse");
+    writer.finish().expect("finish");
+    out
+}
+
+#[test]
+fn cli_verifies_content_hash_including_sparse_holes() {
+    let (assert, out, _td) = extract(&hashed_archive(None));
+    assert.success();
+    assert_eq!(fs::read(out.join("plain.bin")).expect("read"), b"hello");
+    assert_eq!(
+        fs::metadata(out.join("sparse.bin")).expect("meta").len(),
+        100_000
+    );
+}
+
+#[test]
+fn cli_rejects_content_hash_mismatch() {
+    let (assert, out, _td) = extract(&hashed_archive(Some([0u8; 32])));
+    assert.failure().stderr(contains("hash"));
+    assert!(!out.join("plain.bin").exists());
+}

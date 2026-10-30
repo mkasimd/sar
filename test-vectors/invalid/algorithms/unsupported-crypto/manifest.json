@@ -17,7 +17,8 @@
   },
   "limits": {},
   "notes": [
-    "Hand-crafted: encryption algo ID set to a reserved value."
+    "Hand-crafted: encryption algo ID set to a reserved value.",
+    "Regenerated in M13b WP-6 (SAR-M13b-WP6-IMPLEMENTATION-001) with `cargo run -p sar-archive --example generate_crypto_vectors` for the Section 5.3.3 KMS payload layout, HKDF-SHA256 Entry keys and complete Global Header AAD. Entry nonces are random per run, so the bytes are not reproducible."
   ],
   "generated_by": "hand-crafted",
   "compression": false,

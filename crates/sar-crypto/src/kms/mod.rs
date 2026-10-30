@@ -5,6 +5,8 @@
 pub mod argon2;
 /// Asymmetric key wrapping hooks.
 pub mod asymmetric;
+/// KDF resource limits.
+pub mod limits;
 /// PBKDF2 key derivation.
 pub mod pbkdf2;
 /// TLS_EXPORTER KMS mode types, context encoding, and constants.

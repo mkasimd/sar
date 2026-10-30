@@ -201,10 +201,11 @@ fn parser_handles_multiple_concatenated_archives() {
 fn unset_is_encrypted_treats_payload_as_plaintext_with_physical_fields_present() {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::ENCRYPTED;
     let kms_payload = {
-        let mut payload = vec![1, 16];
-        payload.extend_from_slice(&[0x11; 16]);
+        let mut payload = vec![1];
         payload.extend_from_slice(&100_000u32.to_le_bytes());
         payload.extend_from_slice(&32u16.to_le_bytes());
+        payload.push(16);
+        payload.extend_from_slice(&[0x11; 16]);
         payload
     };
 

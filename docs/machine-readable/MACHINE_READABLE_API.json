@@ -1463,7 +1463,7 @@
           },
           {
             "name": "global_header_flags_bytes",
-            "description": "Validate the Global Header version and Global Flags, then return the exact 12-byte magic/version/reserved/Flags-Size/flags prefix used by AEAD/AAD integration.",
+            "description": "Validate the Global Header version and Global Flags, then return the exact 12-byte magic/version/reserved/Flags-Size/flags prefix used by AEAD/AAD integration. No longer the AEAD AAD prefix: WP-6 authenticates the complete raw encoded Global Header.",
             "metadata": {
               "since_milestone": "5",
               "returns": "Result<Vec<u8>, SarError>",
@@ -2255,6 +2255,24 @@
             "errors": [
               "SarError::Overflow if 32-bit mode and the logical size, an offset or a length exceeds u32::MAX"
             ]
+          },
+          {
+            "name": "ResourceLimits::kdf_limits",
+            "description": "Projects the KDF fields into sar_crypto::KdfLimits for the crypto layer.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "limits",
+              "path": "src/limits.rs",
+              "returns": "sar_crypto::KdfLimits"
+            },
+            "signature": "pub fn kdf_limits(&self) -> sar_crypto::KdfLimits"
           }
         ],
         "types": [
@@ -2806,7 +2824,7 @@
           },
           {
             "name": "ResourceLimits",
-            "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS.",
+            "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. M13b WP-6 adds max_pbkdf2_iterations, max_kdf_salt_bytes, max_argon2_memory_kib, max_argon2_time_cost and max_argon2_parallelism; defaults (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) admit the mandatory interoperable KDF ranges with a 2-4x margin and unlimited() disables them.",
             "metadata": {
               "safety_notes": [
                 "All archive-declared sizes and counts are attacker-controlled; ResourceLimits enforces checked preflight before any dangerous allocation.",
@@ -4118,6 +4136,42 @@
               "returns": "Result<Option<&EntrySparseMetadata>, SarError>"
             },
             "signature": "pub fn FragmentGroup::validate_sparse(&self, limits: &ResourceLimits) -> Result<Option<&EntrySparseMetadata>, SarError>"
+          },
+          {
+            "name": "StreamArchiveParser::global_header_bytes",
+            "description": "Returns the exact encoded Global Header bytes of the active archive for AEAD AAD use, once the header has been parsed.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "stream",
+              "path": "src/stream.rs",
+              "returns": "Option<&[u8]>"
+            },
+            "signature": "pub fn global_header_bytes(&self) -> Option<&[u8]>"
+          },
+          {
+            "name": "verify_content_hash",
+            "description": "Verifies an authoritative LFH Content Hash over the final logical Entry, hashing sparse holes as zero runs without materialization. An all-zero expected value is an ordinary digest.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "content_hash",
+              "path": "src/content_hash.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn verify_content_hash(algo_id: Option<u8>, expected: Option<[u8; 32]>, gathered: &[u8], sparse: Option<(&[SparseExtent], u64)>) -> Result<(), SarError>"
           }
         ],
         "types": [
@@ -4218,7 +4272,7 @@
           },
           {
             "name": "ArchiveWriterOptions",
-            "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`).",
+            "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`). WP-6 adds limits (ResourceLimits, default ResourceLimits::default()) applied to KDF work; Content Hash is generated for every DEDUPLICATION Entry (BLAKE3-256, holes included for sparse Entries).",
             "metadata": {
               "since_milestone": "3",
               "stability": "stable",
@@ -4338,7 +4392,7 @@
           },
           {
             "name": "EntryInput",
-            "description": "Input payload for archive writing. Use EntryInput::file(name, payload) for simple regular file entries. All metadata fields are optional and default to absent. Metadata fields are validated fail-closed against enabled GlobalFlags at add_entry time; missing flag causes SarError::FlagConflict. Symlink entries require HAS_SYMLINKS and a UTF-8 payload target.",
+            "description": "Input payload for archive writing. Use EntryInput::file(name, payload) for simple regular file entries. All metadata fields are optional and default to absent. Metadata fields are validated fail-closed against enabled GlobalFlags at add_entry time; missing flag causes SarError::FlagConflict. Symlink entries require HAS_SYMLINKS and a UTF-8 payload target. content_hash: None lets the writer generate the digest of the final logical Entry; Some(value) is written verbatim (never validated by the writer, all-zero included) and a wrong value is reported by the reader as SAR_ERR_HASH_MISMATCH.",
             "metadata": {
               "since_milestone": "3",
               "stability": "stable",
@@ -5024,7 +5078,7 @@
           },
           {
             "name": "FragmentGroup",
-            "description": "A structurally validated fragment group yielded by ArchiveReader::next_logical_entry. name/index0 come only from Fragment Index 0 (authoritative Name, Path, metadata); terminal_crc32 and terminal_content_hash come from the LAST_FRAGMENT LFH and an all-zero terminal value is still authoritative. terminal_content_hash is retained but not verified (final Content Hash verification is WP-6). index0 is None when Index 0 is missing (reconstruct then reports FragmentGap or an empty degraded prefix per LOSS_TOLERANT).",
+            "description": "A structurally validated fragment group yielded by ArchiveReader::next_logical_entry. name/index0 come only from Fragment Index 0 (authoritative Name, Path, metadata); terminal_crc32 and terminal_content_hash come from the LAST_FRAGMENT LFH and an all-zero terminal value is still authoritative. terminal_content_hash and terminal_hash_algo_id are the authoritative digest inputs; the reader verifies them over the reconstructed logical Entry (SAR_ERR_HASH_MISMATCH) only for complete groups. index0 is None when Index 0 is missing (reconstruct then reports FragmentGap or an empty degraded prefix per LOSS_TOLERANT).",
             "metadata": {
               "module": "fragment_group",
               "path": "src/fragment_group.rs",
@@ -5039,7 +5093,7 @@
               ]
             },
             "kind": "struct",
-            "signature": "pub struct FragmentGroup { pub fragment_id: u32, pub name: String, pub index0: Option<EntryMetadata>, pub terminal_crc32: Option<u32>, pub terminal_content_hash: Option<[u8; 32]> /* + private fragment entries */ }"
+            "signature": "pub struct FragmentGroup { pub fragment_id: u32, pub name: String, pub index0: Option<EntryMetadata>, pub terminal_crc32: Option<u32>, pub terminal_content_hash: Option<[u8; 32]>, pub terminal_hash_algo_id: Option<u8> /* + private fragment entries */ }"
           }
         ],
         "constants": [
@@ -5108,7 +5162,7 @@
         "functions": [
           {
             "name": "build_aead_aad",
-            "description": "Build AAD bytes from the global-flag section and LFH bytes.",
+            "description": "Builds the AEAD AAD: the complete encoded Global Header (byte zero to immediately before the first LFH, including any KMS Extension) followed by the exact encoded LFH bytes (Section 13.2.1).",
             "metadata": {
               "since_milestone": "5",
               "returns": "Vec<u8>",
@@ -5123,7 +5177,7 @@
               "module": "aad",
               "path": "src/aad.rs"
             },
-            "signature": "pub fn build_aead_aad(global_flags_section: &[u8], lfh_bytes: &[u8]) -> Vec<u8>"
+            "signature": "pub fn build_aead_aad(encoded_global_header: &[u8], lfh_bytes: &[u8]) -> Vec<u8>"
           },
           {
             "name": "global_header_aad_bytes",
@@ -5379,7 +5433,7 @@
           },
           {
             "name": "derive_key",
-            "description": "Derive a key from Argon2 parameters and password bytes.",
+            "description": "Derives the 32-byte KMS Master Secret. Structural validation first, then KdfLimits checks (SAR_ERR_LIMIT_EXCEEDED), then the KDF.",
             "metadata": {
               "since_milestone": "5",
               "returns": "Result<SecretBytes, SarCryptoError>",
@@ -5394,14 +5448,14 @@
               "module": "kms::argon2",
               "path": "src/kms/argon2.rs"
             },
-            "signature": "pub fn derive_key(params: &Argon2Params, password: &[u8]) -> Result<SecretBytes, SarCryptoError>",
+            "signature": "pub fn derive_key(params: &<Params>, password: &[u8], limits: &KdfLimits) -> Result<SecretBytes, SarCryptoError>",
             "errors": [
               "SarCryptoError"
             ]
           },
           {
             "name": "unwrap_cek",
-            "description": "Callback-driven helper for asymmetric wrapped-key unwrapping.",
+            "description": "Validates the Section 5.3.3 ASYMMETRIC_WRAP structure and obtains the exactly 32-byte KMS Master Secret through the external unwrap callback. SAR performs no RSA-OAEP or HPKE itself.",
             "metadata": {
               "since_milestone": "5",
               "returns": "Result<SecretBytes, SarCryptoError>",
@@ -5423,7 +5477,7 @@
           },
           {
             "name": "derive_key",
-            "description": "Derive a key from PBKDF2 parameters and password bytes.",
+            "description": "Derives the 32-byte KMS Master Secret. Structural validation first, then KdfLimits checks (SAR_ERR_LIMIT_EXCEEDED), then the KDF.",
             "metadata": {
               "since_milestone": "5",
               "returns": "Result<SecretBytes, SarCryptoError>",
@@ -5438,7 +5492,7 @@
               "module": "kms::pbkdf2",
               "path": "src/kms/pbkdf2.rs"
             },
-            "signature": "pub fn derive_key(params: &Pbkdf2Params, password: &[u8]) -> Result<SecretBytes, SarCryptoError>",
+            "signature": "pub fn derive_key(params: &<Params>, password: &[u8], limits: &KdfLimits) -> Result<SecretBytes, SarCryptoError>",
             "errors": [
               "SarCryptoError"
             ]
@@ -5467,10 +5521,10 @@
           },
           {
             "name": "serialize_kms_payload",
-            "description": "Serialize KMS parameters into on-wire payload bytes.",
+            "description": "Serializes the Section 5.3.3 KMS payload for PBKDF2, ARGON2 or ASYMMETRIC_WRAP; rejects non-canonical parameters.",
             "metadata": {
               "since_milestone": "5",
-              "returns": "Vec<u8>",
+              "returns": "Result<Vec<u8>, SarCryptoError>",
               "stability": "stable",
               "implemented": true,
               "visibility": "public",
@@ -5482,35 +5536,103 @@
               "module": "kms::types",
               "path": "src/kms/types.rs"
             },
-            "signature": "pub fn serialize_kms_payload(params: &KmsParams) -> Vec<u8>"
+            "signature": "pub fn serialize_kms_payload(params: &KmsParams) -> Result<Vec<u8>, SarCryptoError>"
           },
           {
-            "name": "resolve_cek",
-            "description": "Resolve a content-encryption key from a KeyProvider and KMS context.",
+            "name": "derive_entry_key",
+            "description": "Derives a standard Entry encryption key with HKDF-SHA256 (empty salt, info = 'SAR-v1-entry-key' || Encr Algo ID || 24-byte IV/Nonce field) from the 32-byte KMS Master Secret (Section 5.3.4).",
             "metadata": {
-              "since_milestone": "5",
-              "returns": "Result<SecretBytes, SarCryptoError>",
-              "stability": "experimental",
+              "since_milestone": "13b",
+              "stability": "stable",
               "implemented": true,
               "visibility": "public",
               "ffi": {
-                "candidate": true,
-                "readiness": "candidate",
-                "notes": "Useful logic, but FFI callback rules must be settled first."
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "entry_key",
+              "path": "src/entry_key.rs",
+              "returns": "Result<SecretBytes, SarCryptoError>"
+            },
+            "signature": "pub fn derive_entry_key(master_secret: &SecretBytes, encr_algo_id: u8, iv_nonce_field: &[u8; 24]) -> Result<SecretBytes, SarCryptoError>"
+          },
+          {
+            "name": "hkdf_sha256_empty_salt",
+            "description": "HKDF-SHA256 (RFC 5869) with an empty salt.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "entry_key",
+              "path": "src/entry_key.rs",
+              "returns": "Result<SecretBytes, SarCryptoError>"
+            },
+            "signature": "pub fn hkdf_sha256_empty_salt(ikm: &[u8], info: &[u8], len: usize) -> Result<SecretBytes, SarCryptoError>"
+          },
+          {
+            "name": "resolve_master_secret",
+            "description": "Resolves the 32-byte KMS Master Secret for the Global Header KMS mode through the KeyProvider, enforcing KdfLimits before any KDF work. Replaces resolve_cek; the result is never an Entry key.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
               },
               "module": "provider",
-              "path": "src/provider.rs"
+              "path": "src/provider.rs",
+              "returns": "Result<SecretBytes, SarCryptoError>"
             },
-            "signature": "pub fn resolve_cek(provider: &dyn KeyProvider, context: &KmsContext) -> Result<SecretBytes, SarCryptoError>",
-            "errors": [
-              "SarCryptoError"
-            ]
+            "signature": "pub fn resolve_master_secret(provider: &dyn KeyProvider, ctx: &KmsContext, limits: &KdfLimits) -> Result<SecretBytes, SarCryptoError>"
+          },
+          {
+            "name": "native_key_len",
+            "description": "Returns the native key length of an implemented AEAD algorithm.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "algorithm",
+              "path": "src/algorithm.rs",
+              "returns": "Result<usize, SarCryptoError>"
+            },
+            "signature": "pub fn native_key_len(id: u8) -> Result<usize, SarCryptoError>"
+          },
+          {
+            "name": "validate_entry_encr_algo_id",
+            "description": "Validates an Encr Algo ID for an encrypted Entry; PLAINTEXT with IS_ENCRYPTED is a flag conflict.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "algorithm",
+              "path": "src/algorithm.rs",
+              "returns": "Result<(), SarCryptoError>"
+            },
+            "signature": "pub fn validate_entry_encr_algo_id(id: u8) -> Result<(), SarCryptoError>"
           }
         ],
         "types": [
           {
             "name": "SarCryptoError",
-            "description": "Error type for crypto primitives and KMS helpers.",
+            "description": "Error type for crypto primitives and KMS helpers. WP-6 adds KeyRejected (SAR_ERR_KEY_REJECTED) and LimitExceeded (SAR_ERR_LIMIT_EXCEEDED); reserved nonce bytes map to ReservedValue and PLAINTEXT+IS_ENCRYPTED to FlagConflict.",
             "metadata": {
               "since_milestone": "5",
               "stability": "stable",
@@ -5548,7 +5670,7 @@
           },
           {
             "name": "Argon2Params",
-            "description": "Parsed Argon2 KMS payload.",
+            "description": "Parsed Argon2 KMS payload. Wire order follows Section 5.3.3; only Argon2id version 0x13 is accepted.",
             "metadata": {
               "since_milestone": "5",
               "stability": "stable",
@@ -5643,7 +5765,7 @@
           },
           {
             "name": "Pbkdf2Params",
-            "description": "Parsed PBKDF2 KMS payload.",
+            "description": "Parsed PBKDF2 KMS payload. Wire order follows Section 5.3.3 (PRF, iterations, Derived Key Length, salt length, salt).",
             "metadata": {
               "since_milestone": "5",
               "stability": "stable",
@@ -5716,6 +5838,42 @@
             },
             "kind": "type_alias",
             "signature": "pub type SecretString = Zeroizing<String>"
+          },
+          {
+            "name": "KdfLimits",
+            "description": "Finite KDF resource limits (PBKDF2 iterations, KDF salt bytes, Argon2 memory/time/parallelism) checked after structural validation and before derivation. Defaults (finite, DoS-resistant, 2-4x the mandatory interoperable baseline): PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB memory, time cost 6, parallelism 8. Callers may raise them explicitly; unlimited() disables them.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "kms::limits",
+              "path": "src/kms/limits.rs"
+            },
+            "signature": "pub struct KdfLimits { pub max_pbkdf2_iterations: u32, pub max_kdf_salt_bytes: usize, pub max_argon2_memory_kib: u32, pub max_argon2_time_cost: u32, pub max_argon2_parallelism: u16 }",
+            "kind": "struct"
+          },
+          {
+            "name": "MasterSecretScope",
+            "description": "Context-owned retention of one KMS Master Secret. get_or_resolve(provider, ctx, limits) runs resolve_master_secret (limits enforced before any KDF) once per scope owner and reuses the secret only for an identical KmsContext; invalidate() zeroizes it. Owned by one archive reader, stream parser or session; never global or shared. Entry keys are still derived per Entry. Debug output never includes secret material.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "master_secret_scope",
+              "path": "src/master_secret_scope.rs"
+            },
+            "signature": "pub struct MasterSecretScope { /* private */ }",
+            "kind": "struct"
           }
         ],
         "constants": [
@@ -5777,44 +5935,6 @@
             "signature": "pub const AEAD_TAG_SIZE: usize = 16"
           },
           {
-            "name": "ARGON2_VARIANT_D",
-            "description": "Argon2d variant identifier.",
-            "metadata": {
-              "since_milestone": "5",
-              "returns": "u8",
-              "stability": "stable",
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": true,
-                "readiness": "ready",
-                "notes": "Simple numeric constant."
-              },
-              "module": "algorithm",
-              "path": "src/algorithm.rs"
-            },
-            "signature": "pub const ARGON2_VARIANT_D: u8 = 0x01"
-          },
-          {
-            "name": "ARGON2_VARIANT_I",
-            "description": "Argon2i variant identifier.",
-            "metadata": {
-              "since_milestone": "5",
-              "returns": "u8",
-              "stability": "stable",
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": true,
-                "readiness": "ready",
-                "notes": "Simple numeric constant."
-              },
-              "module": "algorithm",
-              "path": "src/algorithm.rs"
-            },
-            "signature": "pub const ARGON2_VARIANT_I: u8 = 0x02"
-          },
-          {
             "name": "ARGON2_VARIANT_ID",
             "description": "Argon2id variant identifier.",
             "metadata": {
@@ -5834,25 +5954,6 @@
             "signature": "pub const ARGON2_VARIANT_ID: u8 = 0x03"
           },
           {
-            "name": "ENCR_AES256_CBC",
-            "description": "Assigned AES-256-CBC encryption identifier (not implemented in archive flows).",
-            "metadata": {
-              "since_milestone": "5",
-              "returns": "u8",
-              "stability": "stable",
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": true,
-                "readiness": "ready",
-                "notes": "Numeric constant only; algorithm unsupported in current archive integration."
-              },
-              "module": "algorithm",
-              "path": "src/algorithm.rs"
-            },
-            "signature": "pub const ENCR_AES256_CBC: u8 = 0x03"
-          },
-          {
             "name": "ENCR_AES256_GCM",
             "description": "AES-256-GCM encryption identifier.",
             "metadata": {
@@ -5870,25 +5971,6 @@
               "path": "src/algorithm.rs"
             },
             "signature": "pub const ENCR_AES256_GCM: u8 = 0x01"
-          },
-          {
-            "name": "ENCR_CHACHA20",
-            "description": "Assigned ChaCha20 identifier (not implemented in archive flows).",
-            "metadata": {
-              "since_milestone": "5",
-              "returns": "u8",
-              "stability": "stable",
-              "implemented": true,
-              "visibility": "public",
-              "ffi": {
-                "candidate": true,
-                "readiness": "ready",
-                "notes": "Numeric constant only; algorithm unsupported in current archive integration."
-              },
-              "module": "algorithm",
-              "path": "src/algorithm.rs"
-            },
-            "signature": "pub const ENCR_CHACHA20: u8 = 0x02"
           },
           {
             "name": "ENCR_CHACHA20_POLY1305",
@@ -6136,6 +6218,186 @@
               "path": "src/hash.rs"
             },
             "signature": "pub const AEAD_TAG_SIZE: usize = 16"
+          },
+          {
+            "name": "ENTRY_KEY_INFO_LABEL",
+            "description": "HKDF info label for Entry-key derivation.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "entry_key",
+              "path": "src/entry_key.rs",
+              "returns": "&[u8; 16]"
+            },
+            "signature": "pub const ENTRY_KEY_INFO_LABEL: &[u8; 16] = b\"SAR-v1-entry-key\""
+          },
+          {
+            "name": "KMS_MASTER_SECRET_SIZE",
+            "description": "KMS Master Secret size in bytes.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "algorithm",
+              "path": "src/algorithm.rs",
+              "returns": "usize"
+            },
+            "signature": "pub const KMS_MASTER_SECRET_SIZE: usize = 32"
+          },
+          {
+            "name": "ENCR_ASCON_AEAD128",
+            "description": "Assigned, optional ASCON_AEAD128 identifier (unsupported by this implementation).",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "algorithm",
+              "path": "src/algorithm.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const ENCR_ASCON_AEAD128: u8 = 0x06"
+          },
+          {
+            "name": "ARGON2_VERSION_0X13",
+            "description": "Argon2 version 0x13.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "algorithm",
+              "path": "src/algorithm.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const ARGON2_VERSION_0X13: u8 = 0x13"
+          },
+          {
+            "name": "KMS_TLS_EXPORTER",
+            "description": "KMS mode identifier for TLS_EXPORTER.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "algorithm",
+              "path": "src/algorithm.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const KMS_TLS_EXPORTER: u8 = 0x04"
+          },
+          {
+            "name": "WRAP_RSA_OAEP_2048",
+            "description": "ASYMMETRIC_WRAP identifier RSA-OAEP-2048.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "kms::types",
+              "path": "src/kms/types.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const WRAP_RSA_OAEP_2048: u8 = 0x01"
+          },
+          {
+            "name": "WRAP_RSA_OAEP_4096",
+            "description": "ASYMMETRIC_WRAP identifier RSA-OAEP-4096.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "kms::types",
+              "path": "src/kms/types.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const WRAP_RSA_OAEP_4096: u8 = 0x02"
+          },
+          {
+            "name": "WRAP_X25519_HPKE",
+            "description": "ASYMMETRIC_WRAP identifier X25519-HPKE.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "kms::types",
+              "path": "src/kms/types.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const WRAP_X25519_HPKE: u8 = 0x03"
+          },
+          {
+            "name": "WRAP_ML_KEM_768",
+            "description": "ASYMMETRIC_WRAP identifier ML-KEM-768.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "kms::types",
+              "path": "src/kms/types.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const WRAP_ML_KEM_768: u8 = 0x04"
+          },
+          {
+            "name": "WRAP_ML_KEM_1024",
+            "description": "ASYMMETRIC_WRAP identifier ML-KEM-1024.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready"
+              },
+              "module": "kms::types",
+              "path": "src/kms/types.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const WRAP_ML_KEM_1024: u8 = 0x05"
           }
         ]
       },

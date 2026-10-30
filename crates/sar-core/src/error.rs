@@ -384,6 +384,8 @@ impl From<sar_crypto::SarCryptoError> for SarError {
             sar_crypto::SarCryptoError::Internal(msg) => Self::Internal(msg),
             sar_crypto::SarCryptoError::NonceReuse => Self::NonceReuse("nonce reuse detected"),
             sar_crypto::SarCryptoError::FlagConflict(msg) => Self::FlagConflict(msg),
+            sar_crypto::SarCryptoError::KeyRejected(msg) => Self::KeyRejected(msg),
+            sar_crypto::SarCryptoError::LimitExceeded(msg) => Self::LimitExceeded(msg),
         }
     }
 }

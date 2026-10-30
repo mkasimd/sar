@@ -10,6 +10,8 @@
 pub mod archive;
 /// Conformance vector manifest types and schema validator (M12a).
 pub mod conformance;
+pub(crate) mod content_hash;
+pub use content_hash::verify_content_hash;
 /// Fragment-group collection and cross-fragment consistency validation.
 pub mod fragment_group;
 /// Archive profile validation APIs.

@@ -10,6 +10,7 @@ use std::{
 
 use sar_archive::{
     ArchiveReader, ArchiveReaderOptions, EntryReader, fragment_group::CollectedEntry,
+    verify_content_hash,
 };
 use sar_core::{EntryKind, GlobalFlags, ResourceLimits, SarError};
 
@@ -75,6 +76,8 @@ pub(crate) fn extract_archive(
 
         let name = group.name.clone();
         let terminal_crc32 = group.terminal_crc32;
+        let terminal_content_hash = group.terminal_content_hash;
+        let terminal_hash_algo_id = group.terminal_hash_algo_id;
         let index0 = group.index0.clone();
         // Incomplete sparse groups fail with FRAGMENT_GAP, and the Index-0 Sparse
         // Map is checked against the contributions before any concatenation.
@@ -93,6 +96,20 @@ pub(crate) fn extract_archive(
                  This output MUST NOT be used for integrity-critical purposes.",
                 name
             );
+        }
+
+        // The terminal Content Hash is authoritative over the complete logical
+        // Entry (holes included) and is never checked on degraded output, nor
+        // masked by LOSS_TOLERANT.
+        if !is_degraded {
+            verify_content_hash(
+                terminal_hash_algo_id,
+                terminal_content_hash,
+                &raw,
+                sparse
+                    .as_ref()
+                    .map(|sparse| (sparse.extents.as_slice(), sparse.logical_size)),
+            )?;
         }
 
         let rel = validate_relative_archive_path(&name)?;
@@ -161,6 +178,16 @@ fn extract_non_fragment_entry(
         }
         EntryKind::Symlink => extract_symlink_entry(output_dir, &rel, entry, metadata),
         EntryKind::RegularFile => {
+            verify_content_hash(
+                entry.metadata.hash_algo_id,
+                entry.metadata.content_hash,
+                &entry.payload,
+                entry
+                    .metadata
+                    .sparse
+                    .as_ref()
+                    .map(|sparse| (sparse.extents.as_slice(), sparse.logical_size)),
+            )?;
             let out_path = prepare_output_file_path(output_dir, &rel)?;
             if let Some(sparse) = entry.metadata.sparse.as_ref() {
                 let extents = &sparse.extents;

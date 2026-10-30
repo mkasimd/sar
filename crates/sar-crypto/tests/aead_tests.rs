@@ -93,7 +93,7 @@ fn nonce_validation_and_generation_rules() {
     let mut invalid_aes = aes_nonce;
     invalid_aes[23] = 1;
     let err = validate_nonce_field(ENCR_AES256_GCM, &invalid_aes, true).expect_err("invalid aes");
-    assert!(matches!(err, SarCryptoError::Malformed(_)));
+    assert!(matches!(err, SarCryptoError::ReservedValue(_)));
 
     let mut xnonce = [0u8; 24];
     generate_nonce(ENCR_XCHACHA20_POLY, &mut xnonce).expect("xnonce");

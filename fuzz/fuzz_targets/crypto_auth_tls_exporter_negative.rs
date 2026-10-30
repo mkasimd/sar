@@ -144,16 +144,16 @@ fn exercise_tls_exporter_negative(seed: &[u8]) {
     let _ = parse_tls_exporter_kms_payload(seed);
 
     let params = TlsExporterParams {
-        exporter_label: "EXPORTER-SAR-v1-QUIC-AEAD".to_string(),
+        exporter_label: "EXPORTER-SAR-v1".to_string(),
         context_version: TLS_EXPORTER_CONTEXT_VERSION_1,
-        aead_algo_id: ENCR_AES256_GCM,
         kdf_algo_id: TLS_EXPORTER_KDF_DIRECT,
         global_header_hash_algo_id: HASH_SHA256,
         salt: seed.iter().copied().take(8).collect(),
         derived_key_length: 32,
-        flags: 0,
     };
-    let payload = serialize_tls_exporter_kms_payload(&params);
+    let Ok(payload) = serialize_tls_exporter_kms_payload(&params) else {
+        return;
+    };
     let Ok(parsed) = parse_tls_exporter_kms_payload(&payload) else {
         return;
     };
@@ -172,7 +172,7 @@ fn exercise_tls_exporter_negative(seed: &[u8]) {
         sar_minor_version: 0,
         global_header_hash_algo_id: parsed.global_header_hash_algo_id,
         global_header_hash: vec![0xAA; 32],
-        aead_algo_id: parsed.aead_algo_id,
+        aead_algo_id: ENCR_AES256_GCM,
         stream_id: 7,
         session_uuid: session_a,
         key_usage_id: TLS_EXPORTER_KEY_USAGE_CLIENT_TO_SERVER,

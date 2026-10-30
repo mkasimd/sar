@@ -21,12 +21,12 @@ use std::sync::Arc;
 use sar_archive::{ArchiveReaderOptions, StreamArchiveParser, StreamEvent, StreamStep};
 use sar_core::{
     EntryMode, GlobalHeader, KmsData, LocalFileHeader, ResourceLimits, SarError, SarStatus,
-    global_header_flags_bytes, parse_lfh,
+    parse_lfh,
 };
 use sar_crypto::{
-    KMS_TLS_EXPORTER, KeyProvider, KmsContext, KmsParams, SarCryptoError, SecretBytes,
-    SecretString, aad::build_aead_aad, aead::aead_decrypt, parse_tls_exporter_kms_payload,
-    resolve_cek,
+    KMS_TLS_EXPORTER, KeyProvider, KmsContext, KmsParams, MasterSecretScope, SarCryptoError,
+    SecretBytes, SecretString, aad::build_aead_aad, aead::aead_decrypt, derive_entry_key,
+    parse_tls_exporter_kms_payload, validate_entry_encr_algo_id,
 };
 
 /// Wraps an `Arc<dyn KeyProvider>` so it can be placed in a `Box<dyn KeyProvider>`
@@ -300,6 +300,8 @@ struct TransportStreamContext {
     last_valid_activity_ms: Option<u64>,
     last_heartbeat_emit_ms: Option<u64>,
     current_global_header: Option<GlobalHeader>,
+    /// Exact encoded Global Header bytes (AEAD AAD prefix).
+    current_global_header_bytes: Vec<u8>,
     quic_pending_bytes: Vec<u8>,
 }
 
@@ -339,6 +341,7 @@ impl TransportStreamContext {
             last_valid_activity_ms: None,
             last_heartbeat_emit_ms: None,
             current_global_header: None,
+            current_global_header_bytes: Vec::new(),
             quic_pending_bytes: Vec::new(),
         }
     }
@@ -354,6 +357,11 @@ pub struct InMemoryTransport {
     active_session_uuids: BTreeMap<u16, [u8; 16]>,
     /// Canonical global headers for active SAR stream IDs.
     active_global_headers: BTreeMap<u16, GlobalHeader>,
+    /// Exact encoded Global Header bytes for active SAR stream IDs.
+    active_global_header_bytes: BTreeMap<u16, Vec<u8>>,
+    /// KMS Master Secret retained per active SAR stream (session) for additional
+    /// control-stream decryption; created at bind, dropped when the session closes.
+    additional_control_secrets: BTreeMap<u16, MasterSecretScope>,
     /// Control stream attachments (QUIC only): transport stream ID → SAR stream ID.
     control_stream_attachments: BTreeMap<TransportStreamId, u16>,
     rejected_sar_stream_ids: BTreeSet<u16>,
@@ -368,7 +376,7 @@ pub struct InMemoryTransport {
     tls_exporter_bound: BTreeSet<u16>,
     /// Optional key provider supplied to new `StreamArchiveParser` instances.
     ///
-    /// In production this holds the TLS-exporter-derived CEK for the session.
+    /// In production this holds the TLS-exporter-derived KMS Master Secret for the session.
     /// In tests a fixed-key mock is injected so that AEAD-encrypted entries can
     /// be processed without real TLS session material.
     key_provider: Option<Arc<dyn KeyProvider>>,
@@ -385,6 +393,8 @@ impl InMemoryTransport {
             active_sar_streams: BTreeMap::new(),
             active_session_uuids: BTreeMap::new(),
             active_global_headers: BTreeMap::new(),
+            active_global_header_bytes: BTreeMap::new(),
+            additional_control_secrets: BTreeMap::new(),
             control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
@@ -403,6 +413,8 @@ impl InMemoryTransport {
             active_sar_streams: BTreeMap::new(),
             active_session_uuids: BTreeMap::new(),
             active_global_headers: BTreeMap::new(),
+            active_global_header_bytes: BTreeMap::new(),
+            additional_control_secrets: BTreeMap::new(),
             control_stream_attachments: BTreeMap::new(),
             rejected_sar_stream_ids: BTreeSet::new(),
             connection_last_activity_ms: None,
@@ -415,7 +427,7 @@ impl InMemoryTransport {
     ///
     /// This is intended for testing with a fixed-key mock (so that AEAD-encrypted
     /// entries can be processed without real TLS session material) and for
-    /// production implementations that supply a TLS-exporter-derived CEK.
+    /// production implementations that supply a TLS-exporter-derived KMS Master Secret.
     #[must_use]
     pub fn with_key_provider(mut self, key_provider: Arc<dyn KeyProvider>) -> Self {
         self.key_provider = Some(key_provider);
@@ -793,6 +805,21 @@ impl InMemoryTransport {
                         "additional control stream missing active global header",
                     ));
                 };
+                let Some(active_header_bytes) =
+                    self.active_global_header_bytes.get(&attached_sar_stream_id)
+                else {
+                    return Err(SarError::Internal(
+                        "additional control stream missing active global header bytes",
+                    ));
+                };
+                let Some(master_scope) = self
+                    .additional_control_secrets
+                    .get_mut(&attached_sar_stream_id)
+                else {
+                    return Err(SarError::Internal(
+                        "additional control stream missing master secret scope",
+                    ));
+                };
                 let active_flags = active_header.flags;
                 let bidirectional_control = self.config.bidirectional_control;
                 let context = self
@@ -892,7 +919,7 @@ impl InMemoryTransport {
                                                                             .as_ref()
                                                                         {
                                                                             None => {
-                                                                                Err(SarError::AuthFailed(
+                                                                                Err(SarError::KeyMissing(
                                                                                     "no key provider \
                                                                                      for additional \
                                                                                      control stream \
@@ -901,8 +928,13 @@ impl InMemoryTransport {
                                                                             }
                                                                             Some(kp) => {
                                                                                 decrypt_additional_control_payload(
-                                                                                    kp,
+                                                                                    ControlKeyScope {
+                                                                                        provider: kp,
+                                                                                        master_scope,
+                                                                                        limits: &context.limits,
+                                                                                    },
                                                                                     active_header,
+                                                                                    active_header_bytes,
                                                                                     &entry.header,
                                                                                     &lfh_bytes_for_aad,
                                                                                     &entry.payload,
@@ -1124,6 +1156,15 @@ impl InMemoryTransport {
                         {
                             self.tls_exporter_bound.insert(stream_id);
                         }
+                        if let Some(raw) = self
+                            .streams
+                            .get(&transport_stream_id)
+                            .map(|context| context.current_global_header_bytes.clone())
+                        {
+                            self.active_global_header_bytes.insert(stream_id, raw);
+                        }
+                        self.additional_control_secrets
+                            .insert(stream_id, MasterSecretScope::new());
                         self.active_global_headers.insert(stream_id, header);
                     }
                     // Clear pending state regardless of whether TLS_EXPORTER
@@ -1150,6 +1191,8 @@ impl InMemoryTransport {
                     self.active_sar_streams.remove(&stream_id);
                     self.active_session_uuids.remove(&stream_id);
                     self.active_global_headers.remove(&stream_id);
+                    self.active_global_header_bytes.remove(&stream_id);
+                    self.additional_control_secrets.remove(&stream_id);
                     self.tls_exporter_bound.remove(&stream_id);
                     // Detach any control streams for this session.
                     self.control_stream_attachments
@@ -1265,6 +1308,11 @@ impl InMemoryTransport {
                     Ok(StreamStep::Complete) => LoopEvent::Complete,
                     Ok(StreamStep::Ready(StreamEvent::GlobalHeader(header))) => {
                         context.current_global_header = Some((*header).clone());
+                        context.current_global_header_bytes = context
+                            .parser
+                            .global_header_bytes()
+                            .map(<[u8]>::to_vec)
+                            .unwrap_or_default();
                         // TCP does not support TLS_EXPORTER KMS mode.  Reject
                         // immediately on global header to prevent partial
                         // session setup before the failure would otherwise
@@ -1389,12 +1437,20 @@ impl InMemoryTransport {
 // AEAD helpers for additional-control-stream decryption (M10i)
 // ──────────────────────────────────────────────────────────────────────────────
 
+/// Key-resolution inputs for additional-control-stream decryption.
+struct ControlKeyScope<'a> {
+    provider: &'a Arc<dyn KeyProvider>,
+    /// KMS Master Secret retained for the owning session.
+    master_scope: &'a mut MasterSecretScope,
+    limits: &'a ResourceLimits,
+}
+
 /// Authenticate and decrypt a ciphertext payload from an additional QUIC
 /// control stream entry.
 ///
 /// # AAD construction
 ///
-/// `AAD = global_header_flags_bytes(active_header) || lfh_bytes`
+/// `AAD = encoded primary-stream Global Header bytes || lfh_bytes`
 ///
 /// where `active_header` is the canonical Global Header of the SAR session
 /// identified by the LFH Stream ID, and `lfh_bytes` are the raw LFH bytes
@@ -1402,37 +1458,50 @@ impl InMemoryTransport {
 ///
 /// # Errors
 ///
-/// Returns [`SarError::AuthFailed`] on any failure: missing LFH fields,
-/// CEK resolution failure, or AEAD tag mismatch.  Partially decrypted
-/// buffers are never exposed on failure.
+/// Statuses follow the normative classification: missing LFH encryption fields
+/// are [`SarError::Malformed`]; reserved/unsupported algorithm IDs and invalid
+/// TLS_EXPORTER payloads keep their registry/structural statuses; missing,
+/// rejected or over-limit master-secret material is `KeyMissing`, `KeyRejected`
+/// or `LimitExceeded`; only an actual AEAD failure is
+/// [`SarError::AuthFailed`].  Partially decrypted buffers are never exposed on
+/// failure.
 fn decrypt_additional_control_payload(
-    key_provider: &Arc<dyn KeyProvider>,
+    keys: ControlKeyScope<'_>,
     active_header: &GlobalHeader,
+    active_header_bytes: &[u8],
     lfh: &LocalFileHeader,
     lfh_bytes: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, SarError> {
-    let encr_algo_id = lfh.encr_algo_id.ok_or(SarError::AuthFailed(
+    let encr_algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
         "ENCRYPTED additional control entry missing encr_algo_id",
     ))?;
-    let iv_nonce = lfh.iv_nonce.ok_or(SarError::AuthFailed(
+    validate_entry_encr_algo_id(encr_algo_id).map_err(SarError::from)?;
+    let iv_nonce = lfh.iv_nonce.ok_or(SarError::Malformed(
         "ENCRYPTED additional control entry missing iv_nonce",
     ))?;
 
-    // Derive CEK from key provider using active session's KMS context.
+    // Resolve the KMS Master Secret from key provider using active session's KMS context.
     let kms_context = build_kms_context_for_additional_control(active_header)?;
-    let cek = resolve_cek(key_provider.as_ref(), &kms_context).map_err(|_| {
-        SarError::AuthFailed("CEK resolution failed for additional control stream AEAD")
-    })?;
+    // Normative KMS/KDF statuses (LIMIT_EXCEEDED, KEY_MISSING, KEY_REJECTED,
+    // reserved/unsupported IDs) are preserved; only AEAD failures are AUTH_FAILED.
+    // The KMS Master Secret is retained per session; only the Entry key is
+    // derived per Entry (HKDF over algorithm ID and the full IV/Nonce field).
+    let master = keys
+        .master_scope
+        .get_or_resolve(
+            keys.provider.as_ref(),
+            &kms_context,
+            &keys.limits.kdf_limits(),
+        )
+        .map_err(SarError::from)?;
+    let key = derive_entry_key(master, encr_algo_id, &iv_nonce).map_err(SarError::from)?;
 
-    // Build AAD: global-flags section || LFH bytes.
-    let global_flags_section = global_header_flags_bytes(active_header)?;
-    let aad = build_aead_aad(&global_flags_section, lfh_bytes);
+    // AAD: exact encoded primary-stream Global Header || LFH bytes.
+    let aad = build_aead_aad(active_header_bytes, lfh_bytes);
 
     // Authenticate and decrypt; never expose plaintext on failure.
-    aead_decrypt(encr_algo_id, &cek, &iv_nonce, &aad, ciphertext).map_err(|_| {
-        SarError::AuthFailed("AEAD authentication failed on additional control stream")
-    })
+    aead_decrypt(encr_algo_id, &key, &iv_nonce, &aad, ciphertext).map_err(SarError::from)
 }
 
 /// Build a [`KmsContext`] for AEAD key derivation on an additional control
@@ -1448,8 +1517,7 @@ fn build_kms_context_for_additional_control(
             "unexpected KMS mode in tls_exporter_bound session",
         ));
     }
-    let tls_params = parse_tls_exporter_kms_payload(&kms.payload)
-        .map_err(|_| SarError::AuthFailed("failed to parse TLS_EXPORTER KMS payload for AEAD"))?;
+    let tls_params = parse_tls_exporter_kms_payload(&kms.payload).map_err(SarError::from)?;
     Ok(KmsContext {
         mode_id: kms.mode_id,
         params: KmsParams::TlsExporter(tls_params),
