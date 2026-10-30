@@ -634,3 +634,19 @@ ordinary regression tests.
 This milestone completion does not claim exhaustive fuzzing, complete malicious
 corpus coverage, production hardening completion, independent security audit
 completion, certification, compliance, or stable API/ABI guarantees.
+
+## M13b WP-7: delta patch application targets
+
+Targets: `delta_bsdiff_apply`, `delta_vcdiff_apply` (seeds in
+`fuzz/seeds/delta_apply/`, 12 files).
+
+Evidence recorded locally (nightly `cargo fuzz`, Linux):
+
+* Compiled: `cargo +nightly fuzz build delta_bsdiff_apply` and
+  `delta_vcdiff_apply`.
+* Seed replay: `-runs=0` over the 11 non-empty seeds per target, no crash.
+* Bounded campaign: `-max_total_time=30 -max_len=4096` per target
+  (about 32.4M and 20.5M executions respectively), no crash or timeout.
+
+These are short bounded runs, not sustained fuzz campaigns; no exhaustive
+coverage is claimed. The generated libFuzzer corpus is not committed.

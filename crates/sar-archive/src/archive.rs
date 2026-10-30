@@ -19,9 +19,8 @@ use sar_crypto::{
 };
 use sar_delta::{
     PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
-    PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, apply_bsdiff, apply_store_patch, apply_vcdiff,
-    bsdiff::BsdiffLimits, generate_bsdiff_patch, generate_store_patch, generate_vcdiff_patch,
-    vcdiff::VcdiffLimits,
+    PATCH_ALGO_ZSTD_PATCH, PatchAlgoId, apply_bsdiff, apply_vcdiff, bsdiff::BsdiffLimits,
+    generate_bsdiff_patch, generate_store_patch, generate_vcdiff_patch, vcdiff::VcdiffLimits,
 };
 use sar_fec::{FEC_ALGO_REED_SOLOMON, FEC_ALGO_XOR, FecOptions, types::FecCodec};
 use sar_sparse::{
@@ -77,7 +76,11 @@ pub struct EntryMetadata {
     pub symlink_target: Option<String>,
     /// Encoded payload size.
     pub payload_size: u64,
-    /// Logical uncompressed size.
+    /// LFH `Uncompressed Size`: the decoded size of this physical Entry's
+    /// stored representation (spec Section 6.1.2).  For a fragment it is the
+    /// decoded contribution; for a delta Entry it is the decoded patch
+    /// representation size, **not** the patched output length, so it is not
+    /// the length of [`EntryReader::payload`] after patch application.
     pub uncompressed_size: u64,
     /// Effective compression algorithm ID used for decoding.
     pub compression_algo_id: u8,
@@ -126,12 +129,11 @@ pub struct EntryMetadata {
     /// is not set.  Present as a validated registry byte when `HAS_DELTA` is
     /// set.
     ///
-    /// `STORE_PATCH` (`0x00`) is implemented: the decoded patch payload is the
-    /// complete reconstructed target logical byte sequence.
-    ///
-    /// `VCDIFF` (`0x01`), `BSDIFF` (`0x02`), and `ZSTD_PATCH` (`0x03`) are
-    /// assigned but not yet implemented; reading an entry with any of these
-    /// algorithms returns `SAR_ERR_UNSUPPORTED`.
+    /// `STORE_PATCH` (`0x00`), `VCDIFF` (`0x01`) and `BSDIFF` (`0x02`) are
+    /// applied once to the complete decoded patch representation; `ZSTD_PATCH`
+    /// (`0x03`) is not implemented and returns `SAR_ERR_UNSUPPORTED`.  For a
+    /// delta Entry, [`EntryMetadata::uncompressed_size`] is the decoded patch
+    /// representation (or fragment contribution) size, not the patched length.
     ///
     /// See `docs/SPEC_QUESTIONS.md` for remaining spec gaps (Delta Base Hash
     /// algorithm and base object resolution model).
@@ -1465,31 +1467,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
         let is_has_delta = header.flags.contains(GlobalFlags::HAS_DELTA);
         let patch_raw_id = lfh.patch_algo_id.unwrap_or(0);
 
-        if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
-            self.options
-                .limits
-                .check_decoded_entry_size(lfh.uncompressed_size)?;
-        }
-
-        if is_has_delta
-            && patch_raw_id == PATCH_ALGO_STORE_PATCH
-            && !is_effectively_compressed
-            && !is_encrypted
-            && lfh.payload_size != lfh.uncompressed_size
-        {
-            return Err(SarError::PatchFailed(
-                "STORE_PATCH: raw payload length does not match LFH Uncompressed Size",
-            ));
-        }
-
-        // LFH `Uncompressed Size` is the transform-boundary length (the gathered
-        // data for an unfragmented sparse Entry, the contribution for a
-        // fragment), never the Sparse Logical Size.
-        let decode_expected = if is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH {
-            self.options.max_decoded_entry_size()
-        } else {
-            lfh.uncompressed_size
-        };
+        // LFH `Uncompressed Size` is the fragment-local transform-boundary
+        // length: the decoded contribution of a fragment, or the decoded patch
+        // representation of an unfragmented delta Entry.  It is never the
+        // patch output length or the Sparse Logical Size (spec Sections 6.1.2
+        // and 8.4).
+        let decode_expected = lfh.uncompressed_size;
 
         let effective_comp_algo_id = if is_effectively_compressed {
             lfh.comp_algo_id.unwrap_or(COMP_ALGO_STORE)
@@ -1544,75 +1527,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
             },
         )?;
 
-        let decoded = if is_has_delta {
-            match patch_raw_id {
-                PATCH_ALGO_STORE_PATCH => {
-                    apply_store_patch(&decoded, lfh.uncompressed_size).map_err(map_patch_error)?
-                }
-                PATCH_ALGO_VCDIFF => {
-                    validate_delta_pre_dispatch(
-                        decoded.len(),
-                        lfh.uncompressed_size,
-                        &self.options.limits,
-                    )?;
-
-                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
-                    if hash == ZERO_DELTA_BASE_HASH {
-                        return Err(SarError::BaseMissing(
-                            "VCDIFF: all-zero Delta Base Hash indicates missing base",
-                        ));
-                    }
-                    let base = self
-                        .options
-                        .delta_base
-                        .as_deref()
-                        .ok_or(SarError::BaseMissing(
-                            "VCDIFF: no base bytes supplied in reader options",
-                        ))?;
-                    let vcdiff_limits = vcdiff_limits_from_resource_limits(&self.options.limits);
-                    apply_vcdiff(base, &decoded, lfh.uncompressed_size, &vcdiff_limits)
-                        .map_err(map_patch_error)?
-                }
-                PATCH_ALGO_BSDIFF => {
-                    validate_delta_pre_dispatch(
-                        decoded.len(),
-                        lfh.uncompressed_size,
-                        &self.options.limits,
-                    )?;
-
-                    let hash = lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH);
-                    if hash == ZERO_DELTA_BASE_HASH {
-                        return Err(SarError::BaseMissing(
-                            "BSDIFF: all-zero Delta Base Hash indicates missing base",
-                        ));
-                    }
-                    let base = self
-                        .options
-                        .delta_base
-                        .as_deref()
-                        .ok_or(SarError::BaseMissing(
-                            "BSDIFF: no base bytes supplied in reader options",
-                        ))?;
-                    let bsdiff_limits = bsdiff_limits_from_resource_limits(&self.options.limits);
-                    apply_bsdiff(base, &decoded, lfh.uncompressed_size, &bsdiff_limits)
-                        .map_err(map_patch_error)?
-                }
-                PATCH_ALGO_ZSTD_PATCH => {
-                    return Err(SarError::Unsupported(
-                        "ZSTD_PATCH: dictionary protocol not specified; not implemented",
-                    ));
-                }
-                id if id >= PATCH_ALGO_CUSTOM_MIN => {
-                    return Err(SarError::Unsupported(
-                        "CUSTOM patch algorithm not supported",
-                    ));
-                }
-                _ => return Err(SarError::ReservedValue("reserved patch algorithm ID")),
-            }
-        } else {
-            decoded
-        };
-
         if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
             != lfh.uncompressed_size
         {
@@ -1620,15 +1534,26 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 "decoded payload size does not match LFH Uncompressed Size",
             ));
         }
-        if !is_effectively_compressed
-            && !is_encrypted
-            && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
-            && lfh.payload_size != lfh.uncompressed_size
+        if !is_effectively_compressed && !is_encrypted && lfh.payload_size != lfh.uncompressed_size
         {
             return Err(SarError::InvalidLength(
                 "STORE mode requires Payload Size == Uncompressed Size",
             ));
         }
+
+        // The patch is a group-wide stage.  An unfragmented Entry's single
+        // contribution is the complete patch representation; a fragment's
+        // contribution is patched once, after reassembly, by the group stage.
+        let decoded = if is_has_delta && !lfh.entry_mode.is_fragment() {
+            apply_patch_stage(
+                &self.options,
+                patch_raw_id,
+                lfh.delta_base_hash.unwrap_or(ZERO_DELTA_BASE_HASH),
+                decoded,
+            )?
+        } else {
+            decoded
+        };
 
         let fec = if header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
             let algo_id = lfh.fec_algo_id.unwrap_or(0);
@@ -1653,7 +1578,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // gathered data; a fragment is only a contribution, checked when the
             // group is assembled.
             if !lfh.entry_mode.is_fragment() {
-                check_gathered_length(lfh.uncompressed_size, extent_total)?;
+                check_gathered_length(
+                    u64::try_from(decoded.len())
+                        .map_err(|_| SarError::Overflow("gathered length"))?,
+                    extent_total,
+                )?;
             }
             Some(map)
         } else {
@@ -1669,16 +1598,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
         } else {
             None
         };
-        // The reader performs no CDC recipe resolution, so a non-literal
-        // CDC Algo ID means the decoded payload is an unresolved Hash Recipe,
-        // which must not be consumed as gathered sparse data (spec §13.1.3).
-        if sparse_map.is_some()
-            && !lfh.entry_mode.is_fragment()
-            && cdc_algo_id_opt.is_some_and(|id| id != sar_core::cdc::CDC_ALGO_LITERAL)
-        {
-            return Err(SarError::Unsupported(
-                "sparse reconstruction after CDC recipe resolution is not supported",
-            ));
+        // CDC recipe resolution follows patch application and is not
+        // implemented; an unresolved Hash Recipe is never a logical Entry.
+        // A fragment is a contribution whose group is checked on assembly.
+        if !lfh.entry_mode.is_fragment() {
+            require_literal_cdc(cdc_algo_id_opt)?;
         }
 
         let name = String::from_utf8(lfh.name.clone())
@@ -2117,7 +2041,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     let terminal_content_hash = group.terminal_content_hash;
                     let terminal_hash_algo_id = group.terminal_hash_algo_id;
 
-                    let (raw, is_degraded) = group.reconstruct(&self.options.limits)?;
+                    let (raw, is_degraded) = group.reconstruct(&self.options)?;
 
                     // When the caller does not allow lossy and degraded output was
                     // produced by a LOSS_TOLERANT group, surface it as an error.
@@ -2692,18 +2616,18 @@ impl<W: Write> ArchiveWriter<W> {
         // Validate metadata vs global flags before encoding anything.
         self.validate_entry_input_metadata(&entry)?;
 
-        // `uncompressed_size` is always the logical target size (entry.payload.len()).
-        // When delta is active, the stored payload bytes are the *patch* bytes, not
-        // the target bytes; `uncompressed_size` still reflects the target size.
-        let uncompressed_len =
-            u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
-
         // Generate the wire payload: patch bytes for VCDIFF/BSDIFF, target bytes otherwise.
         let wire_payload: Vec<u8> = if let Some(ref delta_opts) = entry.delta {
             generate_entry_patch(delta_opts, &entry.payload)?
         } else {
             entry.payload.clone()
         };
+
+        // `uncompressed_size` is the decoded size of the stored representation
+        // (spec Sections 6.1.2 and 8.4): the patch length for a delta Entry,
+        // never the patch output (target) length.
+        let uncompressed_len =
+            u64::try_from(wire_payload.len()).map_err(|_| SarError::Overflow("payload len"))?;
 
         let is_compressed = self.compression.algo_id != COMP_ALGO_STORE;
         let mut encoded_payload = encode_payload_v2(
@@ -3574,20 +3498,104 @@ pub(crate) fn map_patch_error(e: sar_delta::PatchError) -> SarError {
     }
 }
 
+/// Fails closed on a non-literal CDC Algo ID.
+///
+/// The reader performs no CDC recipe resolution, so a non-literal algorithm
+/// means the reconstructed bytes are an unresolved Hash Recipe, which must not
+/// be returned as a logical Entry (specification Sections 13.1.3 and 20.3).
+pub(crate) fn require_literal_cdc(cdc_algo_id: Option<u8>) -> Result<(), SarError> {
+    if cdc_algo_id.is_some_and(|id| id != sar_core::cdc::CDC_ALGO_LITERAL) {
+        return Err(SarError::Unsupported(
+            "CDC recipe resolution is not implemented; a non-literal CDC Algo ID cannot be reconstructed",
+        ));
+    }
+    Ok(())
+}
+
+/// Applies the group-wide patch stage once to a complete patch representation.
+///
+/// `patch_representation` is the decoded contribution of an unfragmented Entry,
+/// or the complete Fragment Reassembly Sequence of a fragment group.  The output
+/// length is determined by the patch construction and is never compared with
+/// an LFH `Uncompressed Size`.  Patch input and output are bounded by
+/// `max_total_pipeline_memory` while both are live, and the output by
+/// `max_decoded_entry_size`, before the output is allocated.
+pub(crate) fn apply_patch_stage(
+    options: &ArchiveReaderOptions,
+    patch_algo_id: u8,
+    delta_base_hash: [u8; 32],
+    patch_representation: Vec<u8>,
+) -> Result<Vec<u8>, SarError> {
+    let limits = &options.limits;
+    let require_base = |zero_hash: &'static str, no_base: &'static str| {
+        if delta_base_hash == ZERO_DELTA_BASE_HASH {
+            return Err(SarError::BaseMissing(zero_hash));
+        }
+        options
+            .delta_base
+            .as_deref()
+            .ok_or(SarError::BaseMissing(no_base))
+    };
+    match patch_algo_id {
+        PATCH_ALGO_STORE_PATCH => {
+            let len = u64::try_from(patch_representation.len())
+                .map_err(|_| SarError::Overflow("patch representation length"))?;
+            limits.check_decoded_entry_size(len)?;
+            Ok(patch_representation)
+        }
+        PATCH_ALGO_VCDIFF => {
+            validate_delta_pre_dispatch(patch_representation.len(), limits)?;
+            let base = require_base(
+                "VCDIFF: all-zero Delta Base Hash indicates missing base",
+                "VCDIFF: no base bytes supplied in reader options",
+            )?;
+            let vcdiff_limits =
+                vcdiff_limits_from_resource_limits(limits, patch_representation.len())?;
+            apply_vcdiff(base, &patch_representation, &vcdiff_limits).map_err(map_patch_error)
+        }
+        PATCH_ALGO_BSDIFF => {
+            validate_delta_pre_dispatch(patch_representation.len(), limits)?;
+            let base = require_base(
+                "BSDIFF: all-zero Delta Base Hash indicates missing base",
+                "BSDIFF: no base bytes supplied in reader options",
+            )?;
+            let bsdiff_limits =
+                bsdiff_limits_from_resource_limits(limits, patch_representation.len())?;
+            apply_bsdiff(base, &patch_representation, &bsdiff_limits).map_err(map_patch_error)
+        }
+        PATCH_ALGO_ZSTD_PATCH => Err(SarError::Unsupported(
+            "ZSTD_PATCH: dictionary protocol not specified; not implemented",
+        )),
+        id if id >= PATCH_ALGO_CUSTOM_MIN => Err(SarError::Unsupported(
+            "CUSTOM patch algorithm not supported",
+        )),
+        _ => Err(SarError::ReservedValue("reserved patch algorithm ID")),
+    }
+}
+
+/// Returns the output budget for a patch whose representation is
+/// `patch_len` bytes: `max_decoded_entry_size`, reduced so that the
+/// representation and the output together stay within
+/// `max_total_pipeline_memory`.
+fn patch_output_budget(limits: &ResourceLimits, patch_len: usize) -> Result<u64, SarError> {
+    let patch_len =
+        u64::try_from(patch_len).map_err(|_| SarError::Overflow("patch representation length"))?;
+    let remaining = limits
+        .max_total_pipeline_memory
+        .checked_sub(patch_len)
+        .ok_or(SarError::LimitExceeded(
+            "delta patch representation exceeds max_total_pipeline_memory",
+        ))?;
+    Ok(limits.max_decoded_entry_size.min(remaining))
+}
+
 /// Performs cheap reader-side delta checks before dispatching to a patch decoder.
-/// This catches obviously excessive target sizes and patch payload sizes before
+/// This catches obviously excessive patch payload sizes before
 /// VCDIFF/BSDIFF-specific parsing begins.
 pub(crate) fn validate_delta_pre_dispatch(
     patch_payload_len: usize,
-    expected_target_size: u64,
     limits: &ResourceLimits,
 ) -> Result<(), SarError> {
-    if expected_target_size > limits.max_decoded_entry_size {
-        return Err(SarError::LimitExceeded(
-            "delta target size exceeds max_decoded_entry_size",
-        ));
-    }
-
     let patch_payload_len = u64::try_from(patch_payload_len)
         .map_err(|_| SarError::Overflow("delta patch payload length exceeds u64"))?;
 
@@ -3601,28 +3609,36 @@ pub(crate) fn validate_delta_pre_dispatch(
 }
 
 /// Builds a [`BsdiffLimits`] from the unified [`ResourceLimits`].
-pub(crate) fn bsdiff_limits_from_resource_limits(r: &ResourceLimits) -> BsdiffLimits {
-    BsdiffLimits {
+pub(crate) fn bsdiff_limits_from_resource_limits(
+    r: &ResourceLimits,
+    patch_len: usize,
+) -> Result<BsdiffLimits, SarError> {
+    let max_target_size = patch_output_budget(r, patch_len)?;
+    Ok(BsdiffLimits {
         max_patch_size: r.max_in_memory_buffer,
         max_control_bytes: r.max_bsdiff_control_bytes,
         max_diff_bytes: r.max_bsdiff_diff_bytes,
         max_extra_bytes: r.max_bsdiff_extra_bytes,
         max_control_triples: r.max_bsdiff_control_triples,
-        max_target_size: r.max_decoded_entry_size,
-    }
+        max_target_size,
+    })
 }
 
 /// Builds a [`VcdiffLimits`] from the unified [`ResourceLimits`].
-pub(crate) fn vcdiff_limits_from_resource_limits(r: &ResourceLimits) -> VcdiffLimits {
+pub(crate) fn vcdiff_limits_from_resource_limits(
+    r: &ResourceLimits,
+    patch_len: usize,
+) -> Result<VcdiffLimits, SarError> {
+    let budget = patch_output_budget(r, patch_len)?;
     let max_output = if r.max_vcdiff_output_size == 0 {
-        r.max_decoded_entry_size
+        budget
     } else {
-        r.max_vcdiff_output_size.min(r.max_decoded_entry_size)
+        r.max_vcdiff_output_size.min(budget)
     };
-    VcdiffLimits {
+    Ok(VcdiffLimits {
         max_patch_size: r.max_in_memory_buffer,
         max_window_count: r.max_vcdiff_window_count,
         max_instruction_count: r.max_vcdiff_instruction_count,
         max_output_size: max_output,
-    }
+    })
 }

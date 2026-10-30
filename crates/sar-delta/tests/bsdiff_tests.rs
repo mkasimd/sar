@@ -73,8 +73,7 @@ fn apply_bsdiff_sarbsd01_magic_is_accepted() {
     let base = b"hello world";
     let diff: Vec<u8> = base.iter().map(|_| 0u8).collect();
     let patch = build_patch(&[(base.len() as i64, 0, 0)], &diff, b"", base.len() as i64);
-    let out =
-        apply_bsdiff(base, &patch, base.len() as u64, &BsdiffLimits::unlimited()).expect("ok");
+    let out = apply_bsdiff(base, &patch, &BsdiffLimits::unlimited()).expect("ok");
     assert_eq!(out, base);
 }
 
@@ -82,7 +81,7 @@ fn apply_bsdiff_sarbsd01_magic_is_accepted() {
 fn apply_bsdiff40_magic_is_rejected_in_option_a() {
     let mut patch = build_patch(&[(0, 0, 0)], b"", b"", 0);
     patch[0..8].copy_from_slice(b"BSDIFF40");
-    let err = apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -93,13 +92,7 @@ fn apply_bsdiff_control_diff_extra_blocks_are_uncompressed() {
     let diff: Vec<u8> = vec![0, b'B'.wrapping_sub(b'b'), b'Z'.wrapping_sub(b'c')];
     let extra = b"h9";
     let patch = build_patch(&[(3, 2, 0)], &diff, extra, target.len() as i64);
-    let out = apply_bsdiff(
-        base,
-        &patch,
-        target.len() as u64,
-        &BsdiffLimits::unlimited(),
-    )
-    .expect("ok");
+    let out = apply_bsdiff(base, &patch, &BsdiffLimits::unlimited()).expect("ok");
     assert_eq!(out, target);
 }
 
@@ -107,7 +100,7 @@ fn apply_bsdiff_control_diff_extra_blocks_are_uncompressed() {
 fn apply_bsdiff_invalid_magic_returns_patch_failed() {
     let mut patch = build_patch(&[(0, 0, 0)], b"", b"", 0);
     patch[0..8].copy_from_slice(b"WRONGMAG");
-    let err = apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -116,21 +109,21 @@ fn apply_bsdiff_negative_header_lengths_return_patch_failed() {
     let mut patch = build_patch(&[], b"", b"", 0);
     patch[8..16].copy_from_slice(&encode_bsdiff_int(-1));
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 
     let mut patch = build_patch(&[], b"", b"", 0);
     patch[16..24].copy_from_slice(&encode_bsdiff_int(-1));
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 
     let mut patch = build_patch(&[], b"", b"", 0);
     patch[24..32].copy_from_slice(&encode_bsdiff_int(-1));
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 }
@@ -138,7 +131,7 @@ fn apply_bsdiff_negative_header_lengths_return_patch_failed() {
 #[test]
 fn apply_bsdiff_control_block_not_divisible_by_24_returns_patch_failed() {
     let patch = build_sar_bsdiff_patch(&[0u8; 23], b"", b"", 0);
-    let err = apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -146,7 +139,7 @@ fn apply_bsdiff_control_block_not_divisible_by_24_returns_patch_failed() {
 fn apply_bsdiff_truncated_control_block_returns_patch_failed() {
     let mut patch = build_patch(&[(0, 0, 0)], b"", b"", 0);
     patch.truncate(32 + 23);
-    let err = apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -154,13 +147,13 @@ fn apply_bsdiff_truncated_control_block_returns_patch_failed() {
 fn apply_bsdiff_negative_diff_or_extra_len_returns_patch_failed() {
     let patch = build_patch(&[(-1, 0, 0)], b"", b"", 0);
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 
     let patch = build_patch(&[(0, -1, 0)], b"", b"", 0);
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 0, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 }
@@ -169,13 +162,13 @@ fn apply_bsdiff_negative_diff_or_extra_len_returns_patch_failed() {
 fn apply_bsdiff_output_over_or_under_target_returns_patch_failed() {
     let patch = build_patch(&[(10, 0, 0)], &[0u8; 10], b"", 5);
     assert!(matches!(
-        apply_bsdiff(&[0u8; 10], &patch, 5, &BsdiffLimits::unlimited()),
+        apply_bsdiff(&[0u8; 10], &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 
     let patch = build_patch(&[(3, 0, 0)], &[0u8; 3], b"", 5);
     assert!(matches!(
-        apply_bsdiff(&[0u8; 10], &patch, 5, &BsdiffLimits::unlimited()),
+        apply_bsdiff(&[0u8; 10], &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 }
@@ -184,13 +177,13 @@ fn apply_bsdiff_output_over_or_under_target_returns_patch_failed() {
 fn apply_bsdiff_diff_and_extra_overread_return_patch_failed() {
     let patch = build_patch(&[(10, 0, 0)], &[0u8; 5], b"", 10);
     assert!(matches!(
-        apply_bsdiff(&[0u8; 10], &patch, 10, &BsdiffLimits::unlimited()),
+        apply_bsdiff(&[0u8; 10], &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 
     let patch = build_patch(&[(0, 10, 0)], b"", b"abc", 10);
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 10, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 }
@@ -199,13 +192,13 @@ fn apply_bsdiff_diff_and_extra_overread_return_patch_failed() {
 fn apply_bsdiff_trailing_unused_diff_or_extra_returns_patch_failed() {
     let patch = build_patch(&[(2, 0, 0)], &[0, 0, 0], b"", 2);
     assert!(matches!(
-        apply_bsdiff(b"ab", &patch, 2, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"ab", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 
     let patch = build_patch(&[(0, 2, 0)], b"", b"abc", 2);
     assert!(matches!(
-        apply_bsdiff(b"", &patch, 2, &BsdiffLimits::unlimited()),
+        apply_bsdiff(b"", &patch, &BsdiffLimits::unlimited()),
         Err(PatchError::PatchFailed(_))
     ));
 }
@@ -213,7 +206,7 @@ fn apply_bsdiff_trailing_unused_diff_or_extra_returns_patch_failed() {
 #[test]
 fn apply_bsdiff_base_seek_before_zero_returns_patch_failed() {
     let patch = build_patch(&[(0, 0, -1)], b"", b"", 0);
-    let err = apply_bsdiff(b"abc", &patch, 0, &BsdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_bsdiff(b"abc", &patch, &BsdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -223,7 +216,7 @@ fn apply_bsdiff_base_read_beyond_end_uses_zero() {
     let diff = b"\x00\x00AB";
     let target = b"hiAB";
     let patch = build_patch(&[(4, 0, 0)], diff, b"", 4);
-    let out = apply_bsdiff(base, &patch, 4, &BsdiffLimits::unlimited()).expect("ok");
+    let out = apply_bsdiff(base, &patch, &BsdiffLimits::unlimited()).expect("ok");
     assert_eq!(out, target);
 }
 
@@ -234,7 +227,6 @@ fn apply_bsdiff_limits_are_enforced_before_allocation() {
     let err = apply_bsdiff(
         b"a",
         &patch,
-        1,
         &BsdiffLimits {
             max_patch_size: 1,
             ..BsdiffLimits::unlimited()
@@ -246,7 +238,6 @@ fn apply_bsdiff_limits_are_enforced_before_allocation() {
     let err = apply_bsdiff(
         b"a",
         &patch,
-        1,
         &BsdiffLimits {
             max_target_size: 0,
             ..BsdiffLimits::unlimited()
@@ -258,7 +249,6 @@ fn apply_bsdiff_limits_are_enforced_before_allocation() {
     let err = apply_bsdiff(
         b"a",
         &patch,
-        1,
         &BsdiffLimits {
             max_control_triples: 0,
             ..BsdiffLimits::unlimited()
@@ -266,4 +256,14 @@ fn apply_bsdiff_limits_are_enforced_before_allocation() {
     )
     .expect_err("must fail");
     assert!(matches!(err, PatchError::LimitExceeded(_)));
+}
+
+#[test]
+fn apply_bsdiff_declared_size_is_checked_against_controls_before_allocation() {
+    // A tiny patch declaring a huge New_File_Size must fail without allocating it.
+    let patch = build_patch(&[(1, 0, 0)], &[0u8; 1], b"", i64::MAX);
+    assert!(matches!(
+        apply_bsdiff(&[0u8; 1], &patch, &BsdiffLimits::unlimited()),
+        Err(PatchError::PatchFailed(_))
+    ));
 }

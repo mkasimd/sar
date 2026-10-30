@@ -282,6 +282,9 @@ M12a intentionally prefers a smaller honest fixture set over inflated coverage c
 - archive-level Recovery TLV (`valid/recovery/archive-xor/recovery_tlv_archive_xor.sar`, `valid/recovery/archive-rs/recovery_tlv_archive_rs.sar`)
 - deterministic invalid recovery fixtures under `invalid/recovery/`
 - deterministic invalid delta fixtures under `invalid/delta/`
+  (WP-7: delta fixtures encode the canonical LFH `Uncompressed Size`, i.e. the
+  decoded patch representation size, not the patch output size; superseded
+  encodings are unsupported)
 - serialized SAR stream transcript fixtures under `valid/stream-session/` and `invalid/stream-session/` (M12a-stream-cp)
 
 ### Deferred/reference-only manifests in this tree

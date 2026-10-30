@@ -29,6 +29,9 @@ path = "../crates/sar-sparse"
 [dependencies.sar-crypto]
 path = "../crates/sar-crypto"
 
+[dependencies.sar-delta]
+path = "../crates/sar-delta"
+
 [[bin]]
 name = "smoke_core"
 path = "fuzz_targets/smoke_core.rs"
@@ -179,6 +182,20 @@ bench = false
 [[bin]]
 name = "pr4_tlv_metadata_edges"
 path = "fuzz_targets/pr4_tlv_metadata_edges.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "delta_bsdiff_apply"
+path = "fuzz_targets/delta_bsdiff_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "delta_vcdiff_apply"
+path = "fuzz_targets/delta_vcdiff_apply.rs"
 test = false
 doc = false
 bench = false

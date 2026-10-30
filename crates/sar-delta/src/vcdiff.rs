@@ -409,7 +409,7 @@ fn encode_varint(v: u64) -> Vec<u8> {
 /// Generates a minimal RFC 3284 VCDIFF patch from `base` and `target`.
 ///
 /// The produced stream is accepted by
-/// [`apply_vcdiff`]`(base, patch, target.len() as u64, limits)` and
+/// [`apply_vcdiff`]`(base, patch, limits)` and
 /// reconstructs `target` exactly.
 ///
 /// # Strategy
@@ -554,8 +554,13 @@ pub fn generate_vcdiff_patch(
 ///
 /// * `base` – base object bytes (explicit; no automatic discovery).
 /// * `patch` – decoded VCDIFF patch bytes.
-/// * `expected_target_size` – LFH `Uncompressed Size`; output MUST equal this exactly.
 /// * `limits` – resource limits for this operation.
+///
+/// The output is the concatenation of the patch's target windows.  Its length
+/// is determined by the patch and is never compared with an LFH
+/// `Uncompressed Size` (specification Section 8.4).  Each window's declared
+/// target length is checked against `max_output_size` before the window is
+/// allocated.
 ///
 /// # Errors
 ///
@@ -566,7 +571,6 @@ pub fn generate_vcdiff_patch(
 pub fn apply_vcdiff(
     base: &[u8],
     patch: &[u8],
-    expected_target_size: u64,
     limits: &VcdiffLimits,
 ) -> Result<Vec<u8>, PatchError> {
     // Limit: patch size
@@ -614,14 +618,7 @@ pub fn apply_vcdiff(
         }
         window_count += 1;
 
-        decode_window(
-            base,
-            &output.clone(),
-            &mut reader,
-            &code_table,
-            limits,
-            &mut output,
-        )?;
+        decode_window(base, &mut reader, &code_table, limits, &mut output)?;
 
         if output.len() as u64 > limits.max_output_size {
             return Err(PatchError::LimitExceeded(
@@ -630,20 +627,12 @@ pub fn apply_vcdiff(
         }
     }
 
-    // Verify final output size
-    if output.len() as u64 != expected_target_size {
-        return Err(PatchError::PatchFailed(
-            "VCDIFF: reconstructed output size does not match expected target size",
-        ));
-    }
-
     Ok(output)
 }
 
 /// Decodes one VCDIFF window and appends its output to `output`.
 fn decode_window(
     base: &[u8],
-    previous_output: &[u8],
     reader: &mut ByteReader<'_>,
     code_table: &[CodeEntry; 256],
     limits: &VcdiffLimits,
@@ -688,7 +677,7 @@ fn decode_window(
         let end = ss_pos
             .checked_add(ss_size)
             .ok_or(PatchError::PatchFailed("VCDIFF: target segment overflow"))?;
-        if end > previous_output.len() {
+        if end > output.len() {
             return Err(PatchError::PatchFailed(
                 "VCDIFF: VCD_TARGET segment references bytes beyond decoded output",
             ));
@@ -751,10 +740,14 @@ fn decode_window(
     }
 
     // Decode source segment bytes for virtual addressing
+    // A VCD_TARGET segment is copied so the window can append to `output`
+    // while reading it; only that segment is duplicated.
+    let target_segment: Vec<u8>;
     let source_bytes: &[u8] = if win_indicator & VCD_SOURCE != 0 {
         &base[ss_pos..ss_pos + ss_size]
     } else if win_indicator & VCD_TARGET != 0 {
-        &previous_output[ss_pos..ss_pos + ss_size]
+        target_segment = output[ss_pos..ss_pos + ss_size].to_vec();
+        &target_segment
     } else {
         b""
     };

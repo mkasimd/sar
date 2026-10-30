@@ -92,11 +92,7 @@ const NON_ZERO_HASH: [u8; 32] = {
 };
 
 /// Builds a minimal `HAS_DELTA` archive with a single VCDIFF entry.
-fn build_vcdiff_archive(
-    patch_payload: &[u8],
-    declared_uncompressed_size: u64,
-    delta_base_hash: [u8; 32],
-) -> Vec<u8> {
+fn build_vcdiff_archive(patch_payload: &[u8], delta_base_hash: [u8; 32]) -> Vec<u8> {
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA;
     let mut archive = write_global_header(&GlobalHeader {
         version: 1,
@@ -105,7 +101,10 @@ fn build_vcdiff_archive(
     })
     .expect("write global header");
 
-    let mut lfh = LocalFileHeader::minimal_store(b"file.bin".to_vec(), declared_uncompressed_size);
+    let mut lfh = LocalFileHeader::minimal_store(
+        b"file.bin".to_vec(),
+        u64::try_from(patch_payload.len()).expect("patch len"),
+    );
     lfh.patch_algo_id = Some(0x01); // VCDIFF
     lfh.delta_base_hash = Some(delta_base_hash);
     lfh.payload_size = patch_payload.len() as u64;
@@ -149,7 +148,7 @@ fn vcdiff_add_only_patch_reconstructs_target() {
     let window = vcdiff_add_window(target);
     let patch = vcdiff_patch(&window);
     // Use a non-zero hash but supply the base bytes (base is not used in ADD-only).
-    let archive = build_vcdiff_archive(&patch, target.len() as u64, NON_ZERO_HASH);
+    let archive = build_vcdiff_archive(&patch, NON_ZERO_HASH);
     let entry = read_entry_with_opts(archive, opts_with_base(b"any base".to_vec()))
         .expect("ADD-only VCDIFF must succeed");
     assert_eq!(entry.payload, target);
@@ -163,7 +162,7 @@ fn vcdiff_add_only_patch_reconstructs_target() {
 fn vcdiff_all_zero_delta_base_hash_returns_base_missing() {
     let window = vcdiff_add_window(b"x");
     let patch = vcdiff_patch(&window);
-    let archive = build_vcdiff_archive(&patch, 1, [0u8; 32]);
+    let archive = build_vcdiff_archive(&patch, [0u8; 32]);
     let err = read_entry_with_opts(archive, opts_no_base()).expect_err("must fail");
     assert!(
         matches!(err, SarError::BaseMissing(_)),
@@ -175,7 +174,7 @@ fn vcdiff_all_zero_delta_base_hash_returns_base_missing() {
 fn vcdiff_no_base_bytes_supplied_returns_base_missing() {
     let window = vcdiff_add_window(b"hello");
     let patch = vcdiff_patch(&window);
-    let archive = build_vcdiff_archive(&patch, 5, NON_ZERO_HASH);
+    let archive = build_vcdiff_archive(&patch, NON_ZERO_HASH);
     let err = read_entry_with_opts(archive, opts_no_base()).expect_err("must fail");
     assert!(
         matches!(err, SarError::BaseMissing(_)),
@@ -216,7 +215,7 @@ fn vcdiff_with_compression_decodes_correctly() {
     })
     .expect("header");
 
-    let mut lfh = LocalFileHeader::minimal_store(b"c.bin".to_vec(), target.len() as u64);
+    let mut lfh = LocalFileHeader::minimal_store(b"c.bin".to_vec(), patch.len() as u64);
     lfh.entry_mode = EntryMode::from_bits(EntryMode::COMPRESSED);
     lfh.comp_algo_id = Some(COMP_ALGO_DEFLATE);
     lfh.payload_size = compressed_patch.len() as u64;
@@ -287,13 +286,8 @@ fn vcdiff_with_encryption_decodes_correctly() {
     .expect("decrypt patch");
 
     use sar_delta::{apply_vcdiff, vcdiff::VcdiffLimits};
-    let result = apply_vcdiff(
-        b"base",
-        &decrypted,
-        target.len() as u64,
-        &VcdiffLimits::unlimited(),
-    )
-    .expect("apply_vcdiff after decrypt must succeed");
+    let result = apply_vcdiff(b"base", &decrypted, &VcdiffLimits::unlimited())
+        .expect("apply_vcdiff after decrypt must succeed");
     assert_eq!(result, target);
 }
 
@@ -306,7 +300,7 @@ fn vcdiff_target_above_resource_limit_returns_limit_exceeded() {
     let target = b"some vcdiff output content";
     let window = vcdiff_add_window(target);
     let patch = vcdiff_patch(&window);
-    let archive = build_vcdiff_archive(&patch, target.len() as u64, NON_ZERO_HASH);
+    let archive = build_vcdiff_archive(&patch, NON_ZERO_HASH);
     let opts = sar_archive::ArchiveReaderOptions {
         limits: ResourceLimits {
             max_decoded_entry_size: (target.len() as u64) - 1,
@@ -375,7 +369,7 @@ fn vcdiff_secondary_compressor_returns_unsupported() {
     patch.push(0x01u8); // unsupported compressor id
     patch.extend_from_slice(&vcdiff_add_window(b"x"));
 
-    let archive = build_vcdiff_archive(&patch, 1, NON_ZERO_HASH);
+    let archive = build_vcdiff_archive(&patch, NON_ZERO_HASH);
     let err =
         read_entry_with_opts(archive, opts_with_base(b"base".to_vec())).expect_err("must fail");
     assert!(matches!(err, SarError::Unsupported(_)));

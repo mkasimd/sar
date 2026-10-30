@@ -83,7 +83,11 @@ pub(crate) fn extract_archive(
         // Map is checked against the contributions before any concatenation.
         let sparse = group.validate_sparse(&limits)?.cloned();
 
-        let (raw, is_degraded) = group.reconstruct(&limits)?;
+        let options = ArchiveReaderOptions {
+            limits,
+            delta_base: None,
+        };
+        let (raw, is_degraded) = group.reconstruct(&options)?;
         if is_degraded && !allow_lossy {
             return Err(SarError::FragmentGap(
                 "fragment group has gaps; use allow_lossy to permit degraded output",

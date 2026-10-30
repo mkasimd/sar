@@ -3441,7 +3441,7 @@
           },
           {
             "name": "ArchiveReader::read_all_logical_files",
-            "description": "High-level bounded extraction: reads all logical Entries through ArchiveReader::next_logical_entry, which validates fragment groups (physical Fragment Index order, Class G invariants, Index-0 Name/Path authority, neutral non-terminal integrity fields), returns logical files in canonical order (a group at its Fragment Index 0 position), assembles groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Restarts logical iteration at the first Entry so it can be called even after prior next_entry calls. Entries retained behind an incomplete fragment group are bounded by max_total_pipeline_memory (SAR_ERR_LIMIT_EXCEEDED). When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns MetadataConflict immediately (never suppressed by allow_lossy); metadata conflicts are never downgraded to gaps. For fragment groups CRC32 is the LAST_FRAGMENT value; non-zero non-terminal File CRC32 or Content Hash returns MetadataConflict. Content Hash is not verified. Sparse entries are reconstructed to the Sparse Logical Size carried by the Sparse Map (never an LFH Uncompressed Size, which is the gathered length for unfragmented entries and the contribution length for fragments); holes are filled with 0x00. A complete fragmented sparse group is reconstructed only after full group assembly, after validating that the summed contribution lengths equal the summed extent lengths (SAR_ERR_INVALID_LENGTH); an incomplete sparse group returns SAR_ERR_FRAGMENT_GAP even with allow_lossy and LOSS_TOLERANT; a fragmented sparse group that still requires a non-STORE_PATCH group-wide stage returns SAR_ERR_UNSUPPORTED. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Sparse Logical Size and a sparse extent near the end (e.g. Sparse Logical Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
+            "description": "High-level bounded extraction: reads all logical Entries through ArchiveReader::next_logical_entry, which validates fragment groups (physical Fragment Index order, Class G invariants, Index-0 Name/Path authority, neutral non-terminal integrity fields), returns logical files in canonical order (a group at its Fragment Index 0 position), assembles groups via reconstruct_fragments (canonical Fragment Index order; no absolute offsets), applies sparse zero-fill via apply_sparse_reconstruction, and returns LogicalFile values. Restarts logical iteration at the first Entry so it can be called even after prior next_entry calls. Entries retained behind an incomplete fragment group are bounded by max_total_pipeline_memory (SAR_ERR_LIMIT_EXCEEDED). When allow_lossy is false (default), a missing fragment returns FragmentGap. When allow_lossy is true and LOSS_TOLERANT is set, degraded output (longest contiguous prefix from Fragment Index 0) is returned with LogicalFile::is_degraded = true and is never CRC-verified; a degraded sparse group returns FragmentGap. AEAD and format errors are never suppressed. Sparse Map on a non-zero fragment index returns MetadataConflict immediately (never suppressed by allow_lossy); metadata conflicts are never downgraded to gaps. For fragment groups CRC32 is the LAST_FRAGMENT value; non-zero non-terminal File CRC32 or Content Hash returns MetadataConflict. The Content Hash (unfragmented Entry value or the LAST_FRAGMENT value) is verified over the final reconstructed logical Entry (sparse holes included) when the Entry carries one, via content_hash::verify_logical, and a mismatch is never suppressed by LOSS_TOLERANT; it is not verified on degraded output. Sparse entries are reconstructed to the Sparse Logical Size carried by the Sparse Map (never an LFH Uncompressed Size, which is the gathered length for unfragmented entries and the contribution length for fragments); holes are filled with 0x00. A complete fragmented sparse group is reconstructed only after full group assembly, after validating that the summed contribution lengths equal the summed extent lengths (SAR_ERR_INVALID_LENGTH); an incomplete sparse group returns SAR_ERR_FRAGMENT_GAP even with allow_lossy and LOSS_TOLERANT; a fragmented delta group is patched exactly once after concatenation (a missing fragment returns SAR_ERR_FRAGMENT_GAP even with allow_lossy and LOSS_TOLERANT), and a non-literal CDC recipe returns SAR_ERR_UNSUPPORTED. CRC32 is verified over fully reconstructed bytes (including holes) when PER_FILE_CRC is set; CrcMismatch is returned on failure. Empty Areas (Name Length == 0, IS_FRAGMENT == 0) are excluded from the returned list. EXPANSION-BOMB PROTECTION: a tiny stored payload combined with a huge Sparse Logical Size and a sparse extent near the end (e.g. Sparse Logical Size=1025, max_decoded_entry_size=1024, sparse map {offset=1024, length=1}, one stored byte) is rejected with SAR_ERR_LIMIT_EXCEEDED before any large allocation is attempted — not SAR_ERR_INVALID_MAP, because the sparse map is structurally valid.",
             "metadata": {
               "since_milestone": "8",
               "parameters": [
@@ -4100,7 +4100,7 @@
           },
           {
             "name": "FragmentGroup::reconstruct",
-            "description": "Concatenates fragment contributions in ascending Fragment Index order via sar_fragmentation::reconstruct_fragments. Returns (bytes, is_degraded). Does not verify File CRC32 and performs no sparse reconstruction.",
+            "description": "Applies the group-wide stages in canonical order: concatenates fragment contributions in ascending Fragment Index order via sar_fragmentation::reconstruct_fragments, then applies the patch exactly once to the complete Fragment Reassembly Sequence (using options.limits and options.delta_base), then fails closed with SAR_ERR_UNSUPPORTED for a non-literal CDC recipe, then checks the sparse gathered length. A group that needs a group-wide stage (patch, non-literal CDC or sparse) and is incomplete returns SAR_ERR_FRAGMENT_GAP regardless of LOSS_TOLERANT. Returns (bytes, is_degraded); degraded output is possible only for groups without a group-wide stage. Does not verify File CRC32 and performs no sparse zero-fill.",
             "metadata": {
               "module": "fragment_group",
               "path": "src/fragment_group.rs",
@@ -4115,7 +4115,7 @@
               ],
               "returns": "Result<(Vec<u8>, bool), SarError>"
             },
-            "signature": "pub fn FragmentGroup::reconstruct(self, limits: &ResourceLimits) -> Result<(Vec<u8>, bool), SarError>"
+            "signature": "pub fn FragmentGroup::reconstruct(self, options: &ArchiveReaderOptions) -> Result<(Vec<u8>, bool), SarError>"
           },
           {
             "name": "FragmentGroup::validate_sparse",
@@ -4411,7 +4411,7 @@
           },
           {
             "name": "EntryMetadata",
-            "description": "Complete metadata for a parsed archive entry. Includes all LFH fields, M11a presence-model fields, and M11b filesystem metadata FieldPresence fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but semantically inactive), PresentActive(T) (global flag set and active). New in M11b: path_presence (HAS_PATH), permissions_presence (HAS_PERMS), owner_presence (EXT_UID_GID), timestamps_presence (EXT_TIME), and symlink_target decoded from symlink payload bytes. Symlink target payload is validated as strict UTF-8; invalid UTF-8 is rejected (not lossy). Zero values are preserved and never collapsed to Absent. kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value.",
+            "description": "Complete metadata for a parsed archive entry. Includes all LFH fields, M11a presence-model fields, and M11b filesystem metadata FieldPresence fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but semantically inactive), PresentActive(T) (global flag set and active). New in M11b: path_presence (HAS_PATH), permissions_presence (HAS_PERMS), owner_presence (EXT_UID_GID), timestamps_presence (EXT_TIME), and symlink_target decoded from symlink payload bytes. Symlink target payload is validated as strict UTF-8; invalid UTF-8 is rejected (not lossy). Zero values are preserved and never collapsed to Absent. kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value. uncompressed_size is the decoded contribution length of this physical Entry (spec 6.1.2): for an unfragmented delta Entry it is the decoded patch representation size, never the patch output size.",
             "metadata": {
               "since_milestone": "9a",
               "stability": "stable",
@@ -6539,7 +6539,7 @@
           },
           {
             "name": "apply_store_patch",
-            "description": "Applies STORE_PATCH (identity transform): returns the patch payload as the reconstructed target if its length equals expected_len, otherwise returns PatchFailed. No base reads, no instruction stream, no external dictionary.",
+            "description": "Applies STORE_PATCH (identity transform): returns the decoded patch representation unchanged as the patch output. The output length is determined by the patch construction (here the payload length) and is never compared with an LFH Uncompressed Size. No base reads, no instruction stream, no external dictionary.",
             "metadata": {
               "since_milestone": "9b",
               "parameters": [
@@ -6547,11 +6547,6 @@
                   "name": "patch_payload",
                   "type": "&[u8]",
                   "description": "Decoded patch payload bytes (already decompressed/decrypted)."
-                },
-                {
-                  "name": "expected_len",
-                  "type": "u64",
-                  "description": "LFH Uncompressed Size; the output length must equal this value."
                 }
               ],
               "returns": "Result<Vec<u8>, PatchError>",
@@ -6569,14 +6564,14 @@
               "module": "algo",
               "path": "src/algo.rs"
             },
-            "signature": "pub fn apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError>",
+            "signature": "pub fn apply_store_patch(patch_payload: &[u8]) -> Result<Vec<u8>, PatchError>",
             "errors": [
-              "PatchError::PatchFailed if patch_payload.len() != expected_len"
+              "None; the Result keeps the signature uniform with the other patch algorithms"
             ]
           },
           {
             "name": "apply_bsdiff",
-            "description": "Applies a SAR BSDIFF v1 patch (`SARBSD01`) to the supplied base bytes. Validates the 32-byte header (magic, block lengths, new file size), reads uncompressed Control/Diff/Extra blocks, applies control triples using sign-magnitude decoding, and returns the reconstructed target. Base reads beyond the end of base use 0x00. Caller supplies base explicitly; no lookup is performed.",
+            "description": "Applies a SAR BSDIFF v1 patch (`SARBSD01`) to the supplied base bytes. Validates the 32-byte header (magic, block lengths, new file size), reads uncompressed Control/Diff/Extra blocks, verifies, with checked arithmetic and before allocating the output, that the control triples sum to New_File_Size and that New_File_Size is within max_target_size, applies control triples using sign-magnitude decoding, and returns the reconstructed target. The output length is determined by the patch and is never compared with an LFH Uncompressed Size. Base reads beyond the end of base use 0x00. Caller supplies base explicitly; no lookup is performed.",
             "metadata": {
               "since_milestone": "9b",
               "parameters": [
@@ -6589,11 +6584,6 @@
                   "name": "patch",
                   "type": "&[u8]",
                   "description": "SAR BSDIFF v1 patch payload bytes (`SARBSD01`)."
-                },
-                {
-                  "name": "expected_target_size",
-                  "type": "u64",
-                  "description": "Expected reconstructed target size (must equal LFH Uncompressed Size); must match New_File_Size in the patch header."
                 },
                 {
                   "name": "limits",
@@ -6618,16 +6608,16 @@
               "module": "algo",
               "path": "src/algo.rs"
             },
-            "signature": "pub fn apply_bsdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>",
+            "signature": "pub fn apply_bsdiff(base: &[u8], patch: &[u8], limits: &BsdiffLimits) -> Result<Vec<u8>, PatchError>",
             "errors": [
-              "PatchError::PatchFailed for invalid magic, negative lengths, malformed or truncated control triples, block overread, trailing unused diff/extra bytes, seek-before-zero, output size mismatch",
+              "PatchError::PatchFailed for invalid magic, negative lengths, malformed or truncated control triples, block overread, trailing unused diff/extra bytes, seek-before-zero, control triples that do not sum to New_File_Size",
               "PatchError::LimitExceeded for ResourceLimits violations",
               "PatchError::BaseMissing when base is required but not supplied (checked by caller before this call)"
             ]
           },
           {
             "name": "apply_vcdiff",
-            "description": "Applies a VCDIFF (RFC 3284) patch to the supplied base bytes. Validates the 4-byte magic header, decodes windows and instruction tables, and reconstructs the target output. Supports VCD_SOURCE and VCD_TARGET address spaces; ADD, COPY, and RUN instructions; default code table. Caller supplies base explicitly; no lookup is performed.",
+            "description": "Applies a VCDIFF (RFC 3284) patch to the supplied base bytes. Validates the 4-byte magic header, decodes windows and instruction tables, and reconstructs the target output; the output length is determined by the patch windows (bounded by max_output_size) and is never compared with an LFH Uncompressed Size. Supports VCD_SOURCE and VCD_TARGET address spaces; ADD, COPY, and RUN instructions; default code table. Caller supplies base explicitly; no lookup is performed.",
             "metadata": {
               "since_milestone": "9b",
               "parameters": [
@@ -6640,11 +6630,6 @@
                   "name": "patch",
                   "type": "&[u8]",
                   "description": "VCDIFF patch stream bytes."
-                },
-                {
-                  "name": "expected_target_size",
-                  "type": "u64",
-                  "description": "Expected reconstructed target size (must equal LFH Uncompressed Size)."
                 },
                 {
                   "name": "limits",
@@ -6668,9 +6653,9 @@
               "module": "algo",
               "path": "src/algo.rs"
             },
-            "signature": "pub fn apply_vcdiff(base: &[u8], patch: &[u8], expected_target_size: u64, limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>",
+            "signature": "pub fn apply_vcdiff(base: &[u8], patch: &[u8], limits: &VcdiffLimits) -> Result<Vec<u8>, PatchError>",
             "errors": [
-              "PatchError::PatchFailed for invalid header, malformed varints, invalid instructions, copy out of range, output size mismatch, truncated stream",
+              "PatchError::PatchFailed for invalid header, malformed varints, invalid instructions, copy out of range, truncated stream",
               "PatchError::Unsupported for unsupported VCDIFF secondary compression flags/compressors",
               "PatchError::LimitExceeded for ResourceLimits violations",
               "PatchError::BaseMissing when base is required but not supplied (checked by caller before this call)"

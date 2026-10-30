@@ -11,8 +11,8 @@
 /// logical byte sequence.
 ///
 /// Assigned and **mandatory** per the spec.  Application is implemented:
-/// [`apply_store_patch`] validates that the payload length equals the declared
-/// `Uncompressed Size` and returns the payload as the reconstructed target.
+/// [`apply_store_patch`] returns the complete decoded patch representation as
+/// the reconstructed target.
 /// No base read, no copy/insert instruction stream, no external dictionary.
 pub const PATCH_ALGO_STORE_PATCH: u8 = 0x00;
 
@@ -195,16 +195,16 @@ pub fn generate_store_patch(target: &[u8], expected_len: u64) -> Result<Vec<u8>,
 ///
 /// # Arguments
 ///
-/// * `patch_payload` — decoded bytes produced by the decompression (and
-///   decryption) stage, representing the full target file content.
-/// * `expected_len` — the LFH `Uncompressed Size` field.  The caller is
-///   responsible for validating this value against any configured resource
-///   limits **before** calling this function.
+/// * `patch_payload` — the complete decoded patch representation: for a
+///   fragmented Entry, the Fragment Reassembly Sequence after fragment-local
+///   FEC, decryption and decompression.  The output length is the payload
+///   length and is never compared with an LFH `Uncompressed Size`.  The caller
+///   enforces resource limits before calling.
 ///
 /// # Errors
 ///
-/// Returns [`PatchError::PatchFailed`] when
-/// `patch_payload.len() as u64 != expected_len`.
+/// Currently infallible; the `Result` keeps the signature uniform with the
+/// other patch algorithms.
 ///
 /// # Notes
 ///
@@ -212,12 +212,6 @@ pub fn generate_store_patch(target: &[u8], expected_len: u64) -> Result<Vec<u8>,
 /// required".  The caller must not pass `Delta Base Hash` to this function;
 /// it is opaque metadata and plays no role in the application of this
 /// algorithm.
-pub fn apply_store_patch(patch_payload: &[u8], expected_len: u64) -> Result<Vec<u8>, PatchError> {
-    let actual_len = patch_payload.len() as u64;
-    if actual_len != expected_len {
-        return Err(PatchError::PatchFailed(
-            "STORE_PATCH: decoded payload length does not match LFH Uncompressed Size",
-        ));
-    }
+pub fn apply_store_patch(patch_payload: &[u8]) -> Result<Vec<u8>, PatchError> {
     Ok(patch_payload.to_vec())
 }

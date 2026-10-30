@@ -110,7 +110,9 @@ Owns delta/patch algorithm APIs.
 
 Includes:
 - delta metadata and algorithm registry handling.
-- implemented patch-application algorithms.
+- implemented patch-application algorithms. `apply_*` determine and bound the
+  patch output from the patch construction itself; LFH `Uncompressed Size`
+  semantics and fragment-group sequencing are owned by `sar-archive`.
 
 ## `sar-stream`
 

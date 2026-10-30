@@ -101,32 +101,32 @@ fn store_patch_output_length_exactly_equals_uncompressed_size() {
 }
 
 // ---------------------------------------------------------------------------
-// Length mismatch → SAR_ERR_PATCH_FAILED
+// Contribution length mismatch → SAR_ERR_INVALID_LENGTH
 // ---------------------------------------------------------------------------
 
 #[test]
-fn store_patch_payload_shorter_than_uncompressed_size_returns_patch_failed() {
+fn store_patch_payload_shorter_than_uncompressed_size_returns_invalid_length() {
     let payload = b"short";
     // Declare a larger uncompressed size than the actual payload.
     let declared = (payload.len() as u64) + 10;
     let archive = build_store_patch_archive(payload, declared, [0u8; 32]);
     let err = read_entry(archive).expect_err("must fail");
     assert!(
-        matches!(err, SarError::PatchFailed(_)),
-        "expected PatchFailed, got {err:?}"
+        matches!(err, SarError::InvalidLength(_)),
+        "expected InvalidLength, got {err:?}"
     );
 }
 
 #[test]
-fn store_patch_payload_longer_than_uncompressed_size_returns_patch_failed() {
+fn store_patch_payload_longer_than_uncompressed_size_returns_invalid_length() {
     let payload = b"longer than declared";
     // Declare a smaller uncompressed size than the actual payload.
     let declared = (payload.len() as u64) - 3;
     let archive = build_store_patch_archive(payload, declared, [0u8; 32]);
     let err = read_entry(archive).expect_err("must fail");
     assert!(
-        matches!(err, SarError::PatchFailed(_)),
-        "expected PatchFailed, got {err:?}"
+        matches!(err, SarError::InvalidLength(_) | SarError::LimitExceeded(_)),
+        "expected InvalidLength or LimitExceeded, got {err:?}"
     );
 }
 
@@ -263,7 +263,7 @@ fn store_patch_with_encryption_decodes_correctly() {
     .expect("decrypt");
 
     // STORE_PATCH: the decrypted payload IS the target.
-    let result = sar_delta::apply_store_patch(&decoded, target.len() as u64)
+    let result = sar_delta::apply_store_patch(&decoded)
         .expect("STORE_PATCH must succeed on decrypted payload");
     assert_eq!(result, target.as_slice());
 }
@@ -428,15 +428,15 @@ fn store_patch_output_above_resource_limits_returns_limit_exceeded() {
 }
 
 // ---------------------------------------------------------------------------
-// LOSS_TOLERANT does not suppress SAR_ERR_PATCH_FAILED
+// LOSS_TOLERANT does not suppress transformation failures
 // ---------------------------------------------------------------------------
 
 #[test]
-fn loss_tolerant_does_not_suppress_patch_failed() {
+fn loss_tolerant_does_not_suppress_contribution_length_mismatch() {
     // Build a fragment entry with LOSS_TOLERANT + IS_FRAGMENT mode bits.
     // LOSS_TOLERANT requires IS_FRAGMENT and FILE_FRAGMENTATION global flag.
     let payload = b"mismatch";
-    // Declare a larger uncompressed size so STORE_PATCH fails.
+    // Declare a larger uncompressed size than the contribution.
     let declared_uncompressed = (payload.len() as u64) + 5;
 
     let flags = GlobalFlags::NO_INDEX | GlobalFlags::HAS_DELTA | GlobalFlags::FILE_FRAGMENTATION;
@@ -462,11 +462,11 @@ fn loss_tolerant_does_not_suppress_patch_failed() {
     archive.extend_from_slice(&lfh_bytes);
     archive.extend_from_slice(payload);
 
-    // LOSS_TOLERANT must NOT suppress PatchFailed.
+    // LOSS_TOLERANT must NOT suppress the contribution length check.
     let err = read_entry(archive).expect_err("must fail");
     assert!(
-        matches!(err, SarError::PatchFailed(_)),
-        "expected PatchFailed (not suppressed by LOSS_TOLERANT), got {err:?}"
+        matches!(err, SarError::InvalidLength(_)),
+        "expected InvalidLength (not suppressed by LOSS_TOLERANT), got {err:?}"
     );
 }
 

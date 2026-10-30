@@ -55,14 +55,12 @@ fn cdc_literal_mode_entry_parses() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cdc_fastcdc_entry_parses() {
+fn cdc_fastcdc_entry_is_unsupported() {
     let payload: Vec<u8> = (0..256).map(|i| i as u8).collect();
     let bytes = build_cdc_archive(0x02, &payload);
     let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
     reader.read_global_header().expect("header");
-    let entry = reader.next_entry().expect("entry").expect("some");
-    assert_eq!(entry.metadata.cdc_algo_id, Some(0x02));
-    assert_eq!(entry.payload, payload);
+    assert!(matches!(reader.next_entry(), Err(SarError::Unsupported(_))));
 }
 
 // ---------------------------------------------------------------------------
@@ -511,7 +509,7 @@ mod sparse_cdc_boundary {
     }
 
     #[test]
-    fn cdc_support_without_sparse_is_not_rejected() {
+    fn non_literal_cdc_without_sparse_is_unsupported() {
         let flags = GlobalFlags::NO_INDEX | GlobalFlags::CDC_SUPPORT;
         let mut out = write_global_header(&GlobalHeader {
             version: 1,
@@ -524,10 +522,10 @@ mod sparse_cdc_boundary {
         out.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
         out.extend_from_slice(&[7u8; 4]);
         let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
-        assert_eq!(
-            reader.read_all_logical_files(false).expect("ok")[0].data,
-            [7u8; 4]
-        );
+        assert!(matches!(
+            reader.read_all_logical_files(false),
+            Err(SarError::Unsupported(_))
+        ));
     }
 
     #[test]

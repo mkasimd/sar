@@ -144,8 +144,8 @@ fn apply_vcdiff_add_only_no_base_succeeds() {
     let target = b"hello world";
     let window = vcdiff_add_window(target);
     let patch = vcdiff_patch(&window);
-    let result = apply_vcdiff(b"", &patch, target.len() as u64, &VcdiffLimits::unlimited())
-        .expect("ADD-only must succeed");
+    let result =
+        apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect("ADD-only must succeed");
     assert_eq!(result, target);
 }
 
@@ -173,8 +173,8 @@ fn apply_vcdiff_add_empty_target_succeeds() {
     window.extend_from_slice(&delta_body);
 
     let patch = vcdiff_patch(&window);
-    let result = apply_vcdiff(b"", &patch, 0, &VcdiffLimits::unlimited())
-        .expect("empty target must succeed");
+    let result =
+        apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect("empty target must succeed");
     assert!(result.is_empty());
 }
 
@@ -187,7 +187,7 @@ fn apply_vcdiff_copy_from_source_succeeds() {
     let base = b"hello world";
     let window = vcdiff_copy_source_window(base.len(), base.len());
     let patch = vcdiff_patch(&window);
-    let result = apply_vcdiff(base, &patch, base.len() as u64, &VcdiffLimits::unlimited())
+    let result = apply_vcdiff(base, &patch, &VcdiffLimits::unlimited())
         .expect("COPY-from-source must succeed");
     assert_eq!(result, base);
 }
@@ -231,8 +231,7 @@ fn apply_vcdiff_run_instruction_succeeds() {
     window.extend_from_slice(&delta_body);
 
     let patch = vcdiff_patch(&window);
-    let result =
-        apply_vcdiff(b"", &patch, 8, &VcdiffLimits::unlimited()).expect("RUN must succeed");
+    let result = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect("RUN must succeed");
     assert_eq!(result, target);
 }
 
@@ -249,13 +248,8 @@ fn apply_vcdiff_two_windows_concatenated_succeeds() {
     windows.extend_from_slice(&vcdiff_add_window(part2));
     let patch = vcdiff_patch(&windows);
     let expected = b"hello world";
-    let result = apply_vcdiff(
-        b"",
-        &patch,
-        expected.len() as u64,
-        &VcdiffLimits::unlimited(),
-    )
-    .expect("two-window patch must succeed");
+    let result = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited())
+        .expect("two-window patch must succeed");
     assert_eq!(result, expected);
 }
 
@@ -267,14 +261,14 @@ fn apply_vcdiff_two_windows_concatenated_succeeds() {
 fn apply_vcdiff_wrong_magic_returns_patch_failed() {
     let mut patch = vcdiff_patch(&vcdiff_add_window(b"test"));
     patch[0] = 0x00; // corrupt first magic byte
-    let err = apply_vcdiff(b"", &patch, 4, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)), "got {err:?}");
 }
 
 #[test]
 fn apply_vcdiff_truncated_magic_returns_patch_failed() {
     let patch = b"\xD6\xC3"; // only 2 bytes
-    let err = apply_vcdiff(b"", patch, 0, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -285,7 +279,7 @@ fn apply_vcdiff_custom_codetable_flag_returns_patch_failed() {
     patch.extend_from_slice(b"\xD6\xC3\xC4\x00");
     patch.push(0x02u8); // VCD_CODETABLE set
     patch.extend_from_slice(&window);
-    let err = apply_vcdiff(b"", &patch, 1, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -297,7 +291,7 @@ fn apply_vcdiff_header_secondary_compressor_returns_unsupported() {
     patch.push(0x01u8); // VCD_DECOMPRESS
     patch.push(0x01u8); // compressor id
     patch.extend_from_slice(&window);
-    let err = apply_vcdiff(b"", &patch, 1, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::Unsupported(_)));
 }
 
@@ -319,7 +313,7 @@ fn apply_vcdiff_delta_section_secondary_compression_returns_unsupported() {
     window.extend_from_slice(&encode_varint(delta_body.len() as u64));
     window.extend_from_slice(&delta_body);
     let patch = vcdiff_patch(&window);
-    let err = apply_vcdiff(b"", &patch, 1, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::Unsupported(_)));
 }
 
@@ -335,7 +329,7 @@ fn apply_vcdiff_truncated_varint_returns_patch_failed() {
     patch.push(0x00u8); // hdr_indicator
     patch.push(0x00u8); // win_indicator
     patch.push(0x80u8); // varint with MSB=1 (continuation) but no following byte
-    let err = apply_vcdiff(b"", &patch, 0, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -349,7 +343,7 @@ fn apply_vcdiff_copy_beyond_base_returns_patch_failed() {
     let base = b"abc";
     let window = vcdiff_copy_source_window(5, 5); // requests 5 bytes from 3-byte base
     let patch = vcdiff_patch(&window);
-    let err = apply_vcdiff(base, &patch, 5, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(base, &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -358,23 +352,12 @@ fn apply_vcdiff_copy_beyond_base_returns_patch_failed() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn apply_vcdiff_output_exceeds_expected_size_returns_patch_failed() {
-    let target = b"hello world"; // 11 bytes
-    let window = vcdiff_add_window(target);
-    let patch = vcdiff_patch(&window);
-    // Claim expected size is 5, but patch produces 11 bytes.
-    let err = apply_vcdiff(b"", &patch, 5, &VcdiffLimits::unlimited()).expect_err("must fail");
-    assert!(matches!(err, PatchError::PatchFailed(_)));
-}
-
-#[test]
-fn apply_vcdiff_output_shorter_than_expected_size_returns_patch_failed() {
-    let target = b"hi"; // 2 bytes
-    let window = vcdiff_add_window(target);
-    let patch = vcdiff_patch(&window);
-    // Claim expected size is 10, but patch produces 2 bytes.
-    let err = apply_vcdiff(b"", &patch, 10, &VcdiffLimits::unlimited()).expect_err("must fail");
-    assert!(matches!(err, PatchError::PatchFailed(_)));
+fn apply_vcdiff_output_length_is_determined_by_patch() {
+    for target in [&b"hello world"[..], b"hi"] {
+        let patch = vcdiff_patch(&vcdiff_add_window(target));
+        let out = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect("apply");
+        assert_eq!(out, target);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +371,7 @@ fn apply_vcdiff_truncated_window_returns_patch_failed() {
     // Truncate the patch by removing the last few bytes.
     let new_len = patch.len() - 3;
     patch.truncate(new_len);
-    let err = apply_vcdiff(b"", &patch, 11, &VcdiffLimits::unlimited()).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &VcdiffLimits::unlimited()).expect_err("must fail");
     assert!(matches!(err, PatchError::PatchFailed(_)));
 }
 
@@ -405,7 +388,7 @@ fn apply_vcdiff_output_above_max_output_size_returns_limit_exceeded() {
         max_output_size: 5, // target is 11 bytes → exceeds limit
         ..VcdiffLimits::unlimited()
     };
-    let err = apply_vcdiff(b"", &patch, 11, &limits).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &limits).expect_err("must fail");
     assert!(matches!(err, PatchError::LimitExceeded(_)), "got {err:?}");
 }
 
@@ -421,7 +404,7 @@ fn apply_vcdiff_window_count_above_limit_returns_limit_exceeded() {
         max_window_count: 2,
         ..VcdiffLimits::unlimited()
     };
-    let err = apply_vcdiff(b"", &patch, 3, &limits).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &limits).expect_err("must fail");
     assert!(matches!(err, PatchError::LimitExceeded(_)));
 }
 
@@ -462,7 +445,7 @@ fn apply_vcdiff_instruction_count_above_limit_returns_limit_exceeded() {
         max_instruction_count: 1, // only 1 instruction allowed
         ..VcdiffLimits::unlimited()
     };
-    let err = apply_vcdiff(b"", &patch, 10, &limits).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &limits).expect_err("must fail");
     assert!(matches!(err, PatchError::LimitExceeded(_)));
 }
 
@@ -475,6 +458,6 @@ fn apply_vcdiff_patch_size_above_limit_returns_limit_exceeded() {
         max_patch_size: (patch.len() as u64) - 1,
         ..VcdiffLimits::unlimited()
     };
-    let err = apply_vcdiff(b"", &patch, target.len() as u64, &limits).expect_err("must fail");
+    let err = apply_vcdiff(b"", &patch, &limits).expect_err("must fail");
     assert!(matches!(err, PatchError::LimitExceeded(_)));
 }

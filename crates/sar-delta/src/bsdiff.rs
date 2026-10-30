@@ -99,9 +99,14 @@ impl BsdiffLimits {
 ///
 /// * `base` – base object bytes (caller must supply; no automatic discovery).
 /// * `patch` – decoded patch payload (after SAR decryption/decompression stages).
-/// * `expected_target_size` – value of LFH `Uncompressed Size`; the reconstructed
-///   target MUST equal this exactly.
 /// * `limits` – resource limits for this operation.
+///
+/// The output length is the patch's own `New_File_Size` header field, which
+/// must equal the total length produced by the control triples.  It is never
+/// compared with an LFH `Uncompressed Size` (specification Section 8.4).
+/// `New_File_Size` is checked against `max_target_size`, and the control
+/// triples are checked to produce exactly that many bytes, before the output
+/// buffer is allocated.
 ///
 /// # Errors
 ///
@@ -111,7 +116,6 @@ impl BsdiffLimits {
 pub fn apply_bsdiff(
     base: &[u8],
     patch: &[u8],
-    expected_target_size: u64,
     limits: &BsdiffLimits,
 ) -> Result<Vec<u8>, PatchError> {
     let patch_len = u64::try_from(patch.len())
@@ -163,11 +167,6 @@ pub fn apply_bsdiff(
     let new_size = u64::try_from(new_size_raw)
         .map_err(|_| PatchError::PatchFailed("BSDIFF: invalid New_File_Size"))?;
 
-    if new_size != expected_target_size {
-        return Err(PatchError::PatchFailed(
-            "BSDIFF: New_File_Size does not match LFH Uncompressed Size",
-        ));
-    }
     if new_size > limits.max_target_size {
         return Err(PatchError::LimitExceeded(
             "BSDIFF: target size exceeds max_target_size limit",
@@ -234,6 +233,38 @@ pub fn apply_bsdiff(
     let ctrl_data = &patch[ctrl_start_usize..diff_start_usize];
     let diff_data = &patch[diff_start_usize..extra_start_usize];
     let extra_data = &patch[extra_start_usize..];
+
+    // The construction itself must produce New_File_Size bytes; checking this
+    // before allocation keeps a tiny patch from reserving a large buffer.
+    let mut produced: u64 = 0;
+    for triple in ctrl_data
+        .as_chunks::<BSDIFF_SINGLE_TRIPLE_CONTROL_BYTES_USIZE>()
+        .0
+    {
+        let d = decode_bsdiff_int(&triple[..BSDIFF_CONTROL_VALUE_SIZE_USIZE])?;
+        let e = decode_bsdiff_int(
+            &triple[BSDIFF_CONTROL_VALUE_SIZE_USIZE..2 * BSDIFF_CONTROL_VALUE_SIZE_USIZE],
+        )?;
+        let (Ok(d), Ok(e)) = (u64::try_from(d), u64::try_from(e)) else {
+            return Err(PatchError::PatchFailed(
+                "BSDIFF: negative length in control triple",
+            ));
+        };
+        produced = produced
+            .checked_add(d)
+            .and_then(|v| v.checked_add(e))
+            .ok_or(PatchError::PatchFailed("BSDIFF: output position overflow"))?;
+        if produced > new_size {
+            return Err(PatchError::PatchFailed(
+                "BSDIFF: control triples exceed New_File_Size",
+            ));
+        }
+    }
+    if produced != new_size {
+        return Err(PatchError::PatchFailed(
+            "BSDIFF: control triples shorter than New_File_Size",
+        ));
+    }
 
     let target_len = usize::try_from(new_size)
         .map_err(|_| PatchError::LimitExceeded("BSDIFF: target size exceeds platform limits"))?;
@@ -424,7 +455,7 @@ fn encode_bsdiff_int(v: i64) -> [u8; 8] {
 /// Generates a minimal SAR BSDIFF v1 (`SARBSD01`) patch from `base` and `target`.
 ///
 /// The produced patch is accepted by
-/// [`apply_bsdiff`]`(base, patch, target.len() as u64, limits)` and
+/// [`apply_bsdiff`]`(base, patch, limits)` and
 /// reconstructs `target` exactly.
 ///
 /// # Strategy

@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::archive::{
-    ArchiveReaderOptions, EntryMetadata, EntryReader, bsdiff_limits_from_resource_limits,
-    build_kms_context, compression_algorithm_name, map_patch_error, validate_delta_pre_dispatch,
-    vcdiff_limits_from_resource_limits,
+    ArchiveReaderOptions, EntryMetadata, EntryReader, apply_patch_stage, build_kms_context,
+    compression_algorithm_name, require_literal_cdc,
 };
 use crate::transform::{DecodingPlanV2, EntryCryptoContext, decode_payload_v2};
 use sar_compression::COMP_ALGO_STORE;
@@ -20,10 +19,6 @@ use sar_core::{
 use sar_crypto::{
     KeyProvider, MasterSecretScope, aad::build_aead_aad, derive_entry_key,
     validate_entry_encr_algo_id,
-};
-use sar_delta::{
-    PATCH_ALGO_BSDIFF, PATCH_ALGO_CUSTOM_MIN, PATCH_ALGO_STORE_PATCH, PATCH_ALGO_VCDIFF,
-    PATCH_ALGO_ZSTD_PATCH, apply_bsdiff, apply_store_patch, apply_vcdiff,
 };
 
 const SAR_MAGIC: [u8; 4] = [0x53, 0x41, 0x52, 0x21];
@@ -436,30 +431,9 @@ impl StreamArchiveParser {
             COMP_ALGO_STORE
         };
 
-        if is_has_delta && patch_raw_id == PATCH_ALGO_STORE_PATCH {
-            self.options
-                .limits
-                .check_decoded_entry_size(lfh.uncompressed_size)?;
-        }
-
-        if is_has_delta
-            && patch_raw_id == PATCH_ALGO_STORE_PATCH
-            && !is_effectively_compressed
-            && !is_encrypted
-            && lfh.payload_size != lfh.uncompressed_size
-        {
-            return Err(SarError::PatchFailed(
-                "STORE_PATCH: raw payload length does not match LFH Uncompressed Size",
-            ));
-        }
-
-        // LFH `Uncompressed Size` is the transform-boundary length, never the
-        // Sparse Logical Size.
-        let decode_expected = if is_has_delta && patch_raw_id != PATCH_ALGO_STORE_PATCH {
-            self.options.max_decoded_entry_size()
-        } else {
-            lfh.uncompressed_size
-        };
+        // LFH `Uncompressed Size` is the fragment-local transform-boundary
+        // length (spec Sections 6.1.2 and 8.4), never the patch output length.
+        let decode_expected = lfh.uncompressed_size;
 
         let crypto = if is_encrypted {
             let algo_id = lfh.encr_algo_id.ok_or(SarError::Malformed(
@@ -507,75 +481,6 @@ impl StreamArchiveParser {
             },
         )?;
 
-        let decoded = if is_has_delta {
-            match patch_raw_id {
-                PATCH_ALGO_STORE_PATCH => {
-                    apply_store_patch(&decoded, lfh.uncompressed_size).map_err(map_patch_error)?
-                }
-                PATCH_ALGO_VCDIFF => {
-                    validate_delta_pre_dispatch(
-                        decoded.len(),
-                        lfh.uncompressed_size,
-                        &self.options.limits,
-                    )?;
-                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
-                    if hash == [0u8; 32] {
-                        return Err(SarError::BaseMissing(
-                            "VCDIFF: all-zero Delta Base Hash indicates missing base",
-                        ));
-                    }
-                    let base = self
-                        .options
-                        .delta_base
-                        .as_deref()
-                        .ok_or(SarError::BaseMissing(
-                            "VCDIFF: no base bytes supplied in reader options",
-                        ))?;
-                    let limits = vcdiff_limits_from_resource_limits(&self.options.limits);
-                    apply_vcdiff(base, &decoded, lfh.uncompressed_size, &limits)
-                        .map_err(map_patch_error)?
-                }
-                PATCH_ALGO_BSDIFF => {
-                    validate_delta_pre_dispatch(
-                        decoded.len(),
-                        lfh.uncompressed_size,
-                        &self.options.limits,
-                    )?;
-                    let hash = lfh.delta_base_hash.unwrap_or([0u8; 32]);
-                    if hash == [0u8; 32] {
-                        return Err(SarError::BaseMissing(
-                            "BSDIFF: all-zero Delta Base Hash indicates missing base",
-                        ));
-                    }
-                    let base = self
-                        .options
-                        .delta_base
-                        .as_deref()
-                        .ok_or(SarError::BaseMissing(
-                            "BSDIFF: no base bytes supplied in reader options",
-                        ))?;
-                    let limits = bsdiff_limits_from_resource_limits(&self.options.limits);
-                    apply_bsdiff(base, &decoded, lfh.uncompressed_size, &limits)
-                        .map_err(map_patch_error)?
-                }
-                PATCH_ALGO_ZSTD_PATCH => {
-                    return Err(SarError::Unsupported(
-                        "ZSTD_PATCH: dictionary protocol not specified; not implemented",
-                    ));
-                }
-                id if id >= PATCH_ALGO_CUSTOM_MIN => {
-                    return Err(SarError::Unsupported(
-                        "CUSTOM patch algorithm not supported",
-                    ));
-                }
-                _ => {
-                    return Err(SarError::ReservedValue("reserved patch algorithm ID"));
-                }
-            }
-        } else {
-            decoded
-        };
-
         if u64::try_from(decoded.len()).map_err(|_| SarError::Overflow("decoded payload len"))?
             != lfh.uncompressed_size
         {
@@ -583,15 +488,27 @@ impl StreamArchiveParser {
                 "decoded payload size does not match LFH Uncompressed Size",
             ));
         }
-        if !is_effectively_compressed
-            && !is_encrypted
-            && (!is_has_delta || patch_raw_id == PATCH_ALGO_STORE_PATCH)
-            && lfh.payload_size != lfh.uncompressed_size
+        if !is_effectively_compressed && !is_encrypted && lfh.payload_size != lfh.uncompressed_size
         {
             return Err(SarError::InvalidLength(
                 "STORE mode requires Payload Size == Uncompressed Size",
             ));
         }
+
+        // The patch is applied once to a complete patch representation.  This
+        // parser emits physical Entries, so an unfragmented Entry is patched
+        // here, while a fragment is returned as its decoded contribution for
+        // group-wide reassembly and patching.
+        let decoded = if is_has_delta && !lfh.entry_mode.is_fragment() {
+            apply_patch_stage(
+                &self.options,
+                patch_raw_id,
+                lfh.delta_base_hash.unwrap_or([0u8; 32]),
+                decoded,
+            )?
+        } else {
+            decoded
+        };
 
         let fec = if archive.header.flags.contains(GlobalFlags::SELECTIVE_FEC) {
             let algo_id = lfh.fec_algo_id.unwrap_or(0);
@@ -614,7 +531,11 @@ impl StreamArchiveParser {
             )?;
             // A fragment is only a contribution; its group is checked on assembly.
             if !lfh.entry_mode.is_fragment() {
-                sar_sparse::check_gathered_length(lfh.uncompressed_size, extent_total)?;
+                sar_sparse::check_gathered_length(
+                    u64::try_from(decoded.len())
+                        .map_err(|_| SarError::Overflow("gathered length"))?,
+                    extent_total,
+                )?;
             }
             Some(map)
         } else {
@@ -631,16 +552,10 @@ impl StreamArchiveParser {
         } else {
             None
         };
-        // The reader performs no CDC recipe resolution, so a non-literal
-        // CDC Algo ID means the decoded payload is an unresolved Hash Recipe,
-        // which must not be consumed as gathered sparse data (spec §13.1.3).
-        if sparse_map.is_some()
-            && !lfh.entry_mode.is_fragment()
-            && cdc_algo_id_opt.is_some_and(|id| id != sar_core::cdc::CDC_ALGO_LITERAL)
-        {
-            return Err(SarError::Unsupported(
-                "sparse reconstruction after CDC recipe resolution is not supported",
-            ));
+        // CDC recipe resolution follows patch application and is not
+        // implemented; an unresolved Hash Recipe is never a logical Entry.
+        if !lfh.entry_mode.is_fragment() {
+            require_literal_cdc(cdc_algo_id_opt)?;
         }
 
         let name_str = String::from_utf8(lfh.name.clone())
