@@ -316,6 +316,54 @@ fn previously_undercounted_codec_padding_is_now_enforced() {
     assert_eq!(repaired, fx.archive);
 }
 
+/// Acceptance coverage for M13-RECOVERY-001: with erasures the
+/// repaired-output peak holds the input archive (X), the recovered protected
+/// range (P) and the repaired archive (X), so no limit below `2X + P` may be
+/// accepted even when the former `X + 2P + T` estimate would have passed.
+#[test]
+fn repaired_output_peak_is_not_undercounted_below_two_archives_plus_protected_range() {
+    let cases = [
+        (
+            build(
+                Codec::Xor {
+                    stripe: 4,
+                    index: 0,
+                },
+                256 * 16,
+            ),
+            vec![range(256, 256), range(256 * 6, 256)],
+        ),
+        (
+            build(
+                Codec::Rs {
+                    k: 4,
+                    parity: 2,
+                    symbol: 512,
+                },
+                512 * 12,
+            ),
+            vec![range(0, 1024), range(512 * 9, 512)],
+        ),
+    ];
+    for (fx, ranges) in cases {
+        let bad = corrupt(&fx.archive, &ranges);
+        let plan = plan_for(&bad, ranges);
+        let x = fx.archive.len() as u64;
+        let p = prot_len(&fx);
+        let old_estimate = x + 2 * p + fx.tlv_len;
+        let minimum_peak = 2 * x + p;
+        assert!(old_estimate < minimum_peak, "old estimate undercounts");
+        for rejected in [old_estimate, minimum_peak - 1] {
+            let err = repair_archive(&bad, &plan, &limit(rejected)).expect_err("undercounted");
+            assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        }
+        let (repaired, report) =
+            repair_archive(&bad, &plan, &ResourceLimits::unlimited()).expect("unbounded repair");
+        assert!(report.success);
+        assert_eq!(repaired, fx.archive);
+    }
+}
+
 #[test]
 fn repair_without_erasures_copies_archive_and_pins_boundary() {
     let fx = build(

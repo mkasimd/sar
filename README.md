@@ -440,12 +440,21 @@ sar create input-dir archive.sar --compression deflate
 sar create input-dir archive.sar --compression zstd --compression-level 9
 ```
 
-Encryption example:
+Encryption examples:
 
 ```bash
-sar create input-dir encrypted.sar --encrypt aes256-gcm --password "test-password"
-sar extract encrypted.sar output-dir --password "test-password"
+# Recommended: omit --password and enter it at the interactive prompt.
+sar create input-dir encrypted.sar --encrypt aes256-gcm
+sar extract encrypted.sar output-dir
 ```
+
+Password sources are resolved in this order: `--password`, then the `SAR_PASSWORD` environment variable, then an interactive prompt (not echoed, read from the controlling terminal). Existing precedence is unchanged.
+
+* **Avoid `--password` where possible.** Command-line arguments are visible to other local users in process listings, are usually recorded in shell history, and may be captured by process-inspection or telemetry tooling.
+* **Use `SAR_PASSWORD` only for noninteractive automation.** It is not shown in process listings, but it is inherited by child processes, readable by the same user and administrators, and may be captured by environment-dumping diagnostics. Set it for a single command from a secret store rather than exporting it in a long-lived shell, for example `SAR_PASSWORD="$(secret-tool lookup sar archive)" sar extract encrypted.sar output-dir`.
+* **Without a terminal or `SAR_PASSWORD`**, encrypted operations fail closed with `SAR_ERR_KEY_MISSING`; the CLI has no password-file or stdin option.
+* `sar create` rejects `--password` or `SAR_PASSWORD` unless `--encrypt` is given, and prompts once without confirmation. `extract` and `verify` only request a password for encrypted archives.
+* Test-only passwords in `docs/CONFORMANCE.md` and the test suite are not a model for real use.
 
 Resource limits can be configured for extraction, verification, and repair. These limits are part of the implementation's fail-closed resource model and help bound allocation, decompression, sparse reconstruction, fragment handling, and repair behavior.
 

@@ -13,8 +13,9 @@
 //! CRC32 verification of the reconstructed output **is** implemented in
 //! `read_all_logical_files` as of M8.  Verification is triggered when the
 //! global `PER_FILE_CRC` flag is set and the LFH carries a non-None CRC32
-//! field.  Content-hash verification is not implemented because the archive
-//! format does not encode the hash algorithm; see docs/CONFORMANCE.md.
+//! field.  Content Hash verification over the reconstructed logical file is
+//! implemented through the LFH Hash Algo ID; sparse-hole coverage lives in
+//! `wp6_crypto_integrity_tests.rs` and `fragment_group_tests.rs`.
 //!
 //! # Tests
 //!

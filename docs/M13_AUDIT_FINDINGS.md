@@ -147,8 +147,8 @@ Registry status: `in_progress`
 | `M13-PARSER-012` | `test_gap` | `superseded` | `informational` | `deferred` | `none` | No deterministic regression test for `audit()` entry-count limit enforcement |
 | `M13-PARSER-014` | `test_gap` | `open` | `informational` | `low` | `M13b.1` | No sparse-map seeds or deterministic tests at near-limit byte and descriptor counts |
 | `M13-PARSER-015` | `documentation_gap` | `closed_no_action` | `informational` | `deferred` | `none` | Fuzz campaign records do not preserve sufficient configuration metadata |
-| `M13-CRYPTO-001` | `implementation_spec_mismatch` | `confirmed` | `low` | `high` | `M13b.2` | TLS_EXPORTER KMS unsupported and mismatched parameters are not validated end-to-end |
-| `M13-CRYPTO-002` | `documentation_gap` | `open` | `low` | `medium` | `M13b.2` | CLI password input warnings and guidance do not clearly steer operators away from argv/environment exposure |
+| `M13-CRYPTO-001` | `implementation_spec_mismatch` | `resolved` | `low` | `high` | `M13b.2` | TLS_EXPORTER KMS unsupported and mismatched parameters are not validated end-to-end |
+| `M13-CRYPTO-002` | `documentation_gap` | `resolved` | `low` | `medium` | `M13b.2` | CLI password input warnings and guidance do not clearly steer operators away from argv/environment exposure |
 | `M13-CRYPTO-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret containers and authentication-failure buffers are zeroized in audited crypto paths |
 | `M13-CRYPTO-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Authentication and AEAD tag failures are handled as hard fail-closed errors before downstream processing |
 | `M13-CRYPTO-005` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret-dependent comparisons are limited and use constant-time or library-internal verification paths |
@@ -159,15 +159,15 @@ Registry status: `in_progress`
 | `M13-EXTRACT-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Current extractor exposes no hardlink creation path |
 | `M13-EXTRACT-005` | `specification_gap` | `resolved` | `not_applicable` | `medium` | `M13a.7` | Symlink target conformance and extraction-safety requirements are not normatively resolved |
 | `M13-EXTRACT-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | Non-Unix builds fail closed for unsupported symlink and metadata restoration requests |
-| `M13-RECOVERY-001` | `resource_risk` | `open` | `medium` | `medium` | `M13b.2` | `repair_archive` undercounts total live memory against `max_repair_working_set` at the repaired-output peak |
+| `M13-RECOVERY-001` | `resource_risk` | `resolved` | `medium` | `medium` | `M13b.2` | `repair_archive` undercounts total live memory against `max_repair_working_set` at the repaired-output peak |
 | `M13-TRANSFORM-001` | `specification_gap` | `resolved` | `not_applicable` | `medium` | `M13a.7` | Per-profile normative algorithm restriction tables are not defined in the specification |
 | `M13-TRANSFORM-002` | `positive_observation` | `verified` | `informational` | `low` | `none` | Decompressor decoded output is bounded by `max_output_size` before any output reaches the caller |
 | `M13-TRANSFORM-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | BSDIFF and VCDIFF resource limits are correctly derived from unified `ResourceLimits` and enforced before allocation |
 | `M13-TRANSFORM-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Sparse reconstruction allocates output bounded by `max_decoded_entry_size` and `max_allocation_bytes` before any allocation |
 | `M13-TRANSFORM-005` | `positive_observation` | `verified` | `informational` | `low` | `none` | Fragment group validation enforces count, span, and loss-tolerant gap limits before reassembly allocation |
 | `M13-TRANSFORM-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | All audited transform and recovery crates forbid unsafe code at the crate level |
-| `M13-TRANSFORM-007` | `fuzzing_gap` | `open` | `low` | `low` | `M13b.2` | No fuzz target meaningfully reaches BSDIFF/VCDIFF patch application or the archive-level repair APIs |
-| `M13-TRANSFORM-008` | `documentation_gap` | `open` | `informational` | `low` | `M13b.2` | SAR documentation does not state that decompressor internal memory is outside `ResourceLimits` |
+| `M13-TRANSFORM-007` | `fuzzing_gap` | `resolved` | `low` | `low` | `M13b.2` | No fuzz target meaningfully reaches BSDIFF/VCDIFF patch application or the archive-level repair APIs |
+| `M13-TRANSFORM-008` | `documentation_gap` | `resolved` | `informational` | `low` | `M13b.2` | SAR documentation does not state that decompressor internal memory is outside `ResourceLimits` |
 | `M13-RECOVERY-002` | `positive_observation` | `verified` | `informational` | `low` | `none` | FEC value byte length and parity allocation are bounded before codec construction |
 | `M13-RECOVERY-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | In-memory recovery API documents limitations and applies archive-size, protected-range, and partial working-set bounds |
 | `M13-BOUNDARY-001` | `documentation_gap` | `open` | `low` | `medium` | `M13b.4` | `TransportConfig` propagates only `max_active_streams` to the `ResourceLimits` used by `StreamArchiveParser` and `SessionManager` |
@@ -190,7 +190,7 @@ Registry status: `in_progress`
 | `M13-PARSER-016` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.1` | Fragment LFH layout still encodes Absolute Offset and Fragment Size |
 | `M13-PARSER-017` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.1` | Global Flags still accepts variable extension bytes instead of a fixed four-byte field |
 | `M13-TRANSFORM-009` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | Fragment reassembly uses absolute-offset scattering and zero-fill instead of dense Fragment Index concatenation |
-| `M13-TRANSFORM-010` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | Sparse reconstruction ignores Sparse Logical Size and maps a later-fragment Sparse Map to InvalidMap |
+| `M13-TRANSFORM-010` | `implementation_spec_mismatch` | `resolved` | `high` | `high` | `M13b.2` | Sparse reconstruction ignores Sparse Logical Size and maps a later-fragment Sparse Map to InvalidMap |
 | `M13-BOUNDARY-003` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.3` | Partition Set support is a stub and does not implement the terminal Partition Manifest architecture |
 | `M13-BOUNDARY-004` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.2` | Compliance Profile implementation and naming do not reflect the finalized profile model |
 | `M13-BOUNDARY-005` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.1` | Test vectors, fuzz seeds, conformance lists, and API inventory encode the superseded contract |
@@ -631,7 +631,7 @@ Closed with no action in M13a.1. The record is retained only as an audit-evidenc
 | --- | --- |
 | Type | implementation_spec_mismatch |
 | Source milestone | M13a.2 |
-| Status | confirmed |
+| Status | resolved |
 | Severity | low |
 | Priority | high |
 | Owner | M13b.2 |
@@ -667,12 +667,6 @@ Unsupported AEAD/hash IDs can currently be accepted as operational KMS metadata 
 * `specification.md` (Section 18.6.2 `TLS_EXPORTER KMS Requirements`, requirement `unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed`): Unsupported exporter, KDF, hash, AEAD, or KMS parameters MUST fail closed.
 * `specification.md` (Section 18.6.3 `Exporter Label and Context`, `Global Header Hash Algo ID` fail-closed requirement): Unsupported or reserved Global Header hash and unsupported AEAD/context/KDF values MUST fail closed.
 
-#### Remediation
-
-* Enforce end-to-end validation for TLS_EXPORTER AEAD/hash registry values and derived-length/AEAD consistency before those parameters can reach operational key use.
-* Return fail-closed statuses consistent with unsupported/reserved/invalid-length semantics for rejected TLS_EXPORTER parameter combinations.
-* Add deterministic negative tests covering unsupported AEAD IDs, unsupported/reserved hash IDs, and derived-length mismatches for TLS_EXPORTER contexts exercised by in-repo consumers.
-
 #### Verification
 
 Requirement: `required`
@@ -681,13 +675,21 @@ Requirement: `required`
 * Demonstrate that TLS_EXPORTER derived-length/AEAD mismatches are rejected before operational cryptographic use on in-repo consumer paths.
 * Verify fail-closed status mapping for malformed/reserved/unsupported/invalid-length TLS_EXPORTER parameter failures remains explicit and stable.
 
+#### Resolution
+
+`implementation_change` - `2026-10-30`
+
+TLS_EXPORTER KMS payloads are parsed with the canonical parse_tls_exporter_kms_payload when an archive Global Header is read and on header receipt in the non-TCP transport path; malformed, reserved and unsupported combinations fail closed with the canonical status mapping.
+
+Rationale: The current specification (Section 5.3.3) defines the TLS_EXPORTER payload without an AEAD ID and with a fixed 32-byte derived length, so the AEAD-ID and derived-length/AEAD-mismatch requirements are superseded; the Entry Encr Algo ID is validated per LFH. Hash ID (reserved vs unsupported SHA3-256), version, KDF, derived length, label and salt validation now run at the archive-header boundary and on transport header receipt, with deterministic negative tests. Directional TLS_EXPORTER session bootstrap, exporter acquisition and the TCP binding remain M13b.4 and are not part of this finding's requirements.
+
 ### M13-CRYPTO-002: CLI password input warnings and guidance do not clearly steer operators away from argv/environment exposure
 
 | Field | Value |
 | --- | --- |
 | Type | documentation_gap |
 | Source milestone | M13a.2 |
-| Status | open |
+| Status | resolved |
 | Severity | low |
 | Priority | medium |
 | Owner | M13b.2 |
@@ -715,12 +717,6 @@ Operators can reasonably treat argv/environment password input as standard usage
 * `crates/sar-cli/src/password.rs` (function `load_password()`, explicit argument then `SAR_PASSWORD` environment variable then prompt precedence): `PASSWORD_ENV` is defined as `SAR_PASSWORD`, and `load_password()` prefers the explicit CLI value and then the inherited environment variable before prompting.
 * `README.md` (heading path `CLI` -&gt; `Encryption example`): The encryption example uses `--password "test-password"` for both `sar create` and `sar extract` without warning text or guidance that interactive prompting is the safer default.
 
-#### Remediation
-
-* Document password-source precedence (`--password` -&gt; `SAR_PASSWORD` -&gt; interactive prompt) in CLI-facing docs and help surfaces.
-* Add clear warnings that argv and inherited environment variables can be exposed by host/shell/process tooling, and recommend safer prompt-based or managed-secret workflows.
-* Update encrypted-workflow examples so they do not imply `--password` is the preferred default path.
-
 #### Verification
 
 Requirement: `required`
@@ -728,6 +724,14 @@ Requirement: `required`
 * CLI-facing documentation and help surfaces explicitly describe password-source precedence and safer recommended usage.
 * Encrypted-workflow examples no longer imply argv or inherited environment input is the default recommended path.
 * Warnings distinguish argv exposure, shell history risk, and environment inheritance/telemetry risk without asserting identical behavior across all platforms.
+
+#### Resolution
+
+`documentation_change` - `2026-10-30`
+
+CLI help, README and CONFORMANCE state the password-source precedence (--password, SAR_PASSWORD, interactive prompt), warn about argv, shell-history and environment exposure, and recommend the prompt; precedence is unchanged.
+
+Rationale: Help for create/extract/verify and the README encryption example no longer present --password as the default path; warnings distinguish argv/process-listing exposure, shell history, and environment inheritance/telemetry without claiming identical platform behavior. Tests pin the help text and the existing precedence. Noninteractive automation keeps working via --password or SAR_PASSWORD; no managed-secret-file option exists and none was added.
 
 ### M13-CRYPTO-003: Secret containers and authentication-failure buffers are zeroized in audited crypto paths
 
@@ -1048,7 +1052,7 @@ Verified during M13a.4: non-Unix builds fail closed for unsupported permission, 
 | --- | --- |
 | Type | resource_risk |
 | Source milestone | M13a.3 |
-| Status | open |
+| Status | resolved |
 | Severity | medium |
 | Priority | medium |
 | Owner | M13b.2 |
@@ -1077,20 +1081,20 @@ Concrete example: `max_archive_size = 100 MiB`, `max_recovery_protected_range = 
 * `crates/sar-fec/src/rs/matrix.rs` (function `invert()` used by Reed-Solomon recovery): RS matrix inversion/materialization allocates the augmented inversion matrix and result vectors inside recovery. These allocations are local to `recover` and are released before `repair_archive` allocates the repaired full-archive output.
 * `crates/sar-core/src/limits.rs` (struct `ResourceLimits`, field `max_repair_working_set`, and method `check_repair_working_set()`): `max_repair_working_set` is documented as the maximum working-set byte size for archive-level repair operations, and `check_repair_working_set` rejects values only when the supplied byte estimate exceeds that configured limit.
 
-#### Remediation
-
-* Calculate the repair working-set bound from the intended working-set semantics and source-visible concurrent lifetimes at each checked phase: at the repaired-output peak the unavoidable concurrent allocations are the caller-owned input archive (`X`), the recovered protected-range output (`P`), and the repaired full-archive output (`X`); the minimum proven bound is therefore `2X + P`.
-* The source-visible peak also includes `layout.recovery_tlvs` (`R` bytes) and `erasure_indices` (`E` bytes), which remain live unless explicitly dropped before output allocation; the implementation may choose to bound `R + E` explicitly, drop them before `Vec::with_capacity`, or account for them in the checked formula.
-* Avoid relying on optimizer-driven early deallocation: a merely unused owned variable does not guarantee audit-visible deallocation before the next phase.
-* Remove or justify any checked terms that do not correspond to source-visible live allocations at the bounded phase (for example, the second `protected_range.length` term in the current formula), so the enforced formula does not undercount simultaneous retained memory.
-* Add a deterministic test that demonstrates a configuration where the current estimate `X + 2P + T` passes but the corrected minimum repaired-output peak `2X + P` exceeds `max_repair_working_set`, causing `check_repair_working_set` to reject repair before allocating the repaired archive output.
-
 #### Verification
 
 Requirement: `required`
 
 * Deterministic test verifies `repair_archive` returns `LimitExceeded` for a case where the old estimate `X + 2P + T` would pass but the corrected minimum repaired-output peak `2X + P` exceeds `max_repair_working_set`.
 * Successful repair still completes when the corrected estimate remains within the configured limit.
+
+#### Resolution
+
+`implementation_change` - `2026-10-30`
+
+repair_archive enforces max_repair_working_set against a staged peak-live-memory model; the repaired-output peak is never below 2X + P.
+
+Rationale: WP-7B implemented the staged model and exact boundary tests; WP-7C added repaired_output_peak_is_not_undercounted_below_two_archives_plus_protected_range, which shows the former X + 2P + T estimate and limit 2X + P - 1 are both rejected with LimitExceeded for XOR and RS, while an unbounded repair is byte-identical to the pristine archive. Residual estimates (RS scratch, Central Dictionary parse, allocator overhead) remain documented estimates and are not open requirements of this finding.
 
 ### M13-TRANSFORM-001: Per-profile normative algorithm restriction tables are not defined in the specification
 
@@ -1276,7 +1280,7 @@ Verified during M13a.3: all six audited transform and recovery crates forbid uns
 | --- | --- |
 | Type | fuzzing_gap |
 | Source milestone | M13a.3 |
-| Status | open |
+| Status | resolved |
 | Severity | low |
 | Priority | low |
 | Owner | M13b.2 |
@@ -1299,11 +1303,13 @@ Patch-engine edge cases in `apply_bsdiff` and `apply_vcdiff` and recovery-orches
 * `crates/sar-archive/src/archive.rs` (struct `ArchiveReaderOptions`, field `delta_base`, and method `ArchiveReader::next_entry()` BSDIFF/VCDIFF base preconditions): `ArchiveReaderOptions` defaults `delta_base` to `None`. In `ArchiveReader::next_entry`, the VCDIFF and BSDIFF branches return `SarError::BaseMissing` when `delta_base_hash` is all-zero or `self.options.delta_base` is absent, before `apply_vcdiff` or `apply_bsdiff` is called.
 * `crates/sar-archive/src/recovery.rs` (functions `inspect_recovery_metadata()`, `plan_archive_repair()`, and `repair_archive()`): The archive-level recovery API surface (`inspect_recovery_metadata`, `plan_archive_repair`, `repair_archive`) is implemented here as standalone functions rather than through `ArchiveReader`; no current fuzz target calls these functions directly or indirectly.
 
-#### Remediation
+#### Resolution
 
-* Add dedicated fuzz coverage for BSDIFF patch application with attacker-controlled base bytes and patch bytes under bounded `BsdiffLimits`.
-* Add dedicated fuzz coverage for VCDIFF patch application with attacker-controlled base bytes and patch bytes under bounded `VcdiffLimits`.
-* Add a separate archive-repair fuzz target that exercises `inspect_recovery_metadata`, `plan_archive_repair`, and `repair_archive` with bounded `ResourceLimits` and an input model that can vary both archive bytes and erasure descriptions.
+`fuzzing_change` - `2026-10-30`
+
+Dedicated fuzz targets exist for BSDIFF apply, VCDIFF apply and archive repair with seeds and bounded limits.
+
+Rationale: All three stated requirements are met by existing targets; WP-7C re-verified compilation and seed replay. No sustained fuzzing campaign was run; bounded runs only.
 
 ### M13-TRANSFORM-008: SAR documentation does not state that decompressor internal memory is outside `ResourceLimits`
 
@@ -1311,7 +1317,7 @@ Patch-engine edge cases in `apply_bsdiff` and `apply_vcdiff` and recovery-orches
 | --- | --- |
 | Type | documentation_gap |
 | Source milestone | M13a.3 |
-| Status | open |
+| Status | resolved |
 | Severity | informational |
 | Priority | low |
 | Owner | M13b.2 |
@@ -1331,11 +1337,13 @@ Operators and integrators reading the SAR limit surface can tell how decoded out
 * `crates/sar-compression/src/lib.rs` (function `decode_stream()`, bounded decoded-output flow): The DEFLATE path constructs `DeflateDecoder::new(input)` and the ZSTD path constructs `zstd::stream::Decoder::new(input)` without passing a SAR-defined decoder-memory limit parameter.
 * `crates/sar-core/src/limits.rs` (struct `ResourceLimits`, `max_decoded_entry_size`, `max_in_memory_buffer`, and `max_total_pipeline_memory` field documentation): `ResourceLimits` documents decoded-entry, per-buffer, and total-pipeline bounds, but it does not define a decoder-library-memory-specific field or document such memory as covered by an existing field.
 
-#### Remediation
+#### Resolution
 
-* Document in the public compression and resource-limit API documentation that `max_output_size` bounds decoded output bytes only.
-* Document that DEFLATE/ZSTD decoder library-internal working memory is not currently represented by a dedicated SAR `ResourceLimits` field.
-* If a future SAR-specific decoder-memory control is added, document which field governs it and how it interacts with decoded-output limits.
+`documentation_change` - `2026-10-30`
+
+Public compression, resource-limit and conformance documentation states that max_output_size bounds decoded output only and that DEFLATE/ZSTD decoder-internal memory has no dedicated ResourceLimits field.
+
+Rationale: All three documentation requirements were implemented in WP-7B and re-inspected in WP-7C. Decoder-internal memory remains intentionally unmeasured by SAR except the pinned ZSTD window_log_max; this is a documented resource limitation, not an open obligation.
 
 ### M13-RECOVERY-002: FEC value byte length and parity allocation are bounded before codec construction
 
@@ -2217,7 +2225,7 @@ Requirement: `required`
 | --- | --- |
 | Type | implementation_spec_mismatch |
 | Source milestone | M13a.7 |
-| Status | confirmed |
+| Status | resolved |
 | Severity | high |
 | Priority | high |
 | Owner | M13b.2 |
@@ -2248,12 +2256,6 @@ Sparse files reconstruct to the wrong size and the wire format of the Sparse Map
 
 * `specification.md` (Sections 6.1.2, 6.1.3, 17.2, 19.6): The Sparse Map includes the authoritative Sparse Logical Size; a later-fragment Sparse Map returns SAR_ERR_METADATA_CONFLICT.
 
-#### Remediation
-
-* Encode and decode Sparse Logical Size inside the Sparse Map and validate extents against it.
-* Reconstruct to Sparse Logical Size, including all-hole files.
-* Return SAR_ERR_METADATA_CONFLICT for a Sparse Map on Fragment Index &gt; 0.
-
 #### Verification
 
 Requirement: `required`
@@ -2264,6 +2266,14 @@ Requirement: `required`
 #### Relationships
 
 * **Related findings:** `M13-SPEC-005`, `M13-TRANSFORM-004`, `M13-TRANSFORM-009`
+
+#### Resolution
+
+`implementation_change` - `2026-10-30`
+
+Sparse Logical Size is encoded, decoded and validated; fragmented sparse groups reconstruct to Sparse Logical Size including all-hole files; a later-fragment Sparse Map is SAR_ERR_METADATA_CONFLICT.
+
+Rationale: Implemented in WP-4/WP-5 and re-verified in WP-7C, including the new fragmented sparse terminal Content Hash regression covering hole bytes. Fragmented sparse groups needing a non-STORE_PATCH group-wide stage remain tracked under M13-TRANSFORM-009; max_loss_tolerant_gap disposition is also tracked there.
 
 ### M13-BOUNDARY-003: Partition Set support is a stub and does not implement the terminal Partition Manifest architecture
 

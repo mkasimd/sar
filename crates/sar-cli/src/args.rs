@@ -112,6 +112,22 @@ pub(crate) enum SymlinkCreatePolicy {
     Archive,
 }
 
+const PASSWORD_LONG_HELP: &str = "Archive password.\n\nInsecure: command-line arguments are visible to other local users \
+in process listings and are commonly recorded in shell history. Prefer omitting this option and \
+entering the password at the interactive prompt.\n\nPassword sources, in precedence order: \
+--password, then the SAR_PASSWORD environment variable, then an interactive prompt (read from the \
+terminal, not echoed). SAR_PASSWORD is not shown in process listings but is inherited by child \
+processes and readable by the same user and administrators; use it only for automation where an \
+interactive prompt is unavailable. A prompt is only issued when the archive is encrypted.";
+
+const CREATE_PASSWORD_LONG_HELP: &str = "Archive password; only valid with --encrypt.\n\nInsecure: command-line arguments are visible to other local users \
+in process listings and are commonly recorded in shell history. Prefer omitting this option and \
+entering the password at the interactive prompt (asked once, without confirmation).\n\nPassword sources, in precedence order: \
+--password, then the SAR_PASSWORD environment variable, then an interactive prompt (read from the \
+terminal, not echoed). SAR_PASSWORD is not shown in process listings but is inherited by child \
+processes and readable by the same user and administrators; use it only for automation where an \
+interactive prompt is unavailable. Setting SAR_PASSWORD without --encrypt is rejected.";
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct CreateCompression {
     pub(crate) algo_id: u8,
@@ -157,7 +173,12 @@ pub(crate) enum Command {
         compression_level: Option<u8>,
         #[arg(long, value_enum)]
         encrypt: Option<EncryptionChoice>,
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "PASSWORD",
+            help = "Archive password (insecure: visible in process listings and shell history)",
+            long_help = CREATE_PASSWORD_LONG_HELP
+        )]
         password: Option<String>,
         #[arg(long, value_enum)]
         fec: Option<FecChoice>,
@@ -173,7 +194,12 @@ pub(crate) enum Command {
     Extract {
         archive: PathBuf,
         output_dir: PathBuf,
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "PASSWORD",
+            help = "Archive password (insecure: visible in process listings and shell history)",
+            long_help = PASSWORD_LONG_HELP
+        )]
         password: Option<String>,
         #[arg(long, action = ArgAction::SetTrue)]
         allow_lossy: bool,
@@ -195,7 +221,12 @@ pub(crate) enum Command {
     },
     Verify {
         archive: PathBuf,
-        #[arg(long)]
+        #[arg(
+            long,
+            value_name = "PASSWORD",
+            help = "Archive password (insecure: visible in process listings and shell history)",
+            long_help = PASSWORD_LONG_HELP
+        )]
         password: Option<String>,
         #[arg(long, action = ArgAction::SetTrue)]
         recovery: bool,

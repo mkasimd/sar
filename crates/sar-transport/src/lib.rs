@@ -1340,6 +1340,17 @@ impl InMemoryTransport {
                                 context.awaiting_session_init = true;
                                 LoopEvent::Continue
                             }
+                        } else if let Err(err) = header
+                            .kms
+                            .as_ref()
+                            .filter(|kms| kms.mode_id == KMS_TLS_EXPORTER)
+                            .map_or(Ok(()), |kms| {
+                                parse_tls_exporter_kms_payload(&kms.payload)
+                                    .map(|_| ())
+                                    .map_err(SarError::from)
+                            })
+                        {
+                            LoopEvent::ParserError(err)
                         } else if let Err(err) = context.manager.observe_global_header(&header) {
                             LoopEvent::ParserError(err)
                         } else {
