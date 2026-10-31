@@ -2886,7 +2886,7 @@ Assigned values are permanent. A retired value (Section 10.3) MUST NOT be reassi
 |---------|----------|---------|
 | 400 | `SAR_ERR_FRAGMENT_GAP` | One or more required Fragment Indices are missing. Under `LOSS_TOLERANT`, only the degraded prefix output permitted by Section 19.4.5 may be produced, and it is reported with `SAR_WARN_INCOMPLETE`. Incomplete input to a mandatory group-wide stage always returns this error. |
 | 401 | `SAR_ERR_FRAGMENT_TIMEOUT` | The fragment-group timeout of Section 19.4.1 expired for a live or incremental context. |
-| 402 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the CDC catalog. |
+| 402 | `SAR_ERR_RECIPE_UNRESOLVABLE` | One or more hashes referenced by a CDC recipe could not be resolved from the applicable CDC catalog or configured resolver. |
 | 403 | `SAR_ERR_EC_FAILED` | Error-correction decoding failed or recovery was unsuccessful. |
 | 404 | `SAR_ERR_RECOVERY_UNAVAILABLE` | Recovery data is required but unavailable. |
 | 405 | `SAR_ERR_RECOVERY_CORRUPTED` | Recovery metadata or parity data is corrupted or unusable. |
@@ -5263,7 +5263,9 @@ If `CDC_SUPPORT` (Bit 5) is active globally, every LFH MUST be evaluated based o
 ### 20.2 The Hash Recipe Structure
 In Recipe Mode, the representation supplied to CDC resolution MUST be parsed as a contiguous array of binary hashes. That representation is the decoded `Payload Data` of an unfragmented Entry, or the Fragment Reassembly Sequence of a fragmented Entry, after any preceding group-wide stage (for example patch application) per Section 13.1.3.
 
-* **Hash Algorithm**: The length and type of hashes in the recipe are determined by the `DEDUPLICATION` (Bit 29) setting.
+* **Hash Algorithm**: Recipe elements are interpreted using one registered SAR hash algorithm (Section 9.4) selected by the applicable Catalog: `CDC_MAP.Hash_Algorithm_ID` (Section 21.1) for a local Catalog, or the algorithm explicitly identified by the resolver contract (Section 21.2) for an external Catalog. The algorithm MUST be established before the Recipe is interpreted. It MUST NOT be inferred from hash bytes, from the Recipe length, or from the LFH `CDC Algo ID` (which identifies the chunking algorithm only), and no other algorithm may be silently substituted. SHA256 (`0x30`), BLAKE3-256 (`0x31`) and SHA3_256 (`0x32`) each produce a 32-byte digest, so each Recipe element is 32 bytes for those algorithms. No hash algorithm identifier is allocated by this Section. An assigned but unsupported algorithm MUST return `SAR_ERR_UNSUPPORTED`; a reserved or unassigned identifier MUST return `SAR_ERR_RESERVED_VALUE`.
+* **Recipe Length**: The Recipe length MUST be an exact multiple of the element size of the selected algorithm. Any other length MUST return `SAR_ERR_INVALID_LENGTH`.
+* **Independence from `DEDUPLICATION`**: Recipe Mode does not require the Global Flag `DEDUPLICATION` (Bit 29). Recipe element hashes and the LFH `Hash Algo ID` / `Content Hash` are different objects and MAY use different algorithms. When `DEDUPLICATION` is set, the LFH `Hash Algo ID` and `Content Hash` apply to the final reconstructed logical Entry after all applicable transformations, including CDC resolution and sparse reconstruction (Sections 6.1.3 and 13.1.3). The serialized Recipe MUST NOT be hashed as a substitute for final logical `Content Hash` verification. Fragment-group integrity ordering (Section 6.1.3) is unchanged. The archive-wide LFH `Content Hash` and individual chunk hashes remain separate.
 * **Logical Continuity**: The order of hashes in the recipe defines the exact byte-sequence of the reconstructed file.
 * **Completeness**: A Recipe MUST be complete. A fragmented Recipe Entry with a missing Fragment Index MUST return `SAR_ERR_FRAGMENT_GAP` even when `LOSS_TOLERANT` is set (Section 19.4.5), and a Recipe MUST NOT be parsed from a partial Fragment Reassembly Sequence.
 
@@ -5274,8 +5276,15 @@ CDC resolution is a group-wide stage whose position in the decoding pipeline is 
 2. **Recipe Interpretation**: The resulting representation is the Recipe.
 3. **Chunk Fetching**: The implementation SHALL iterate through the hashes in the Recipe, retrieving the corresponding bytes from either:
     * A local SAR **CDC_MAP** (Central Dictionary TLV).
-    * An external Content-Addressable Storage (CAS) database.
-4. **Final Reassembly**: Chunks are appended to the logical byte sequence, which is then supplied to sparse reconstruction, if applicable, and final logical integrity verification (Section 13.1.3).
+    * An external Content-Addressable Storage (CAS) database, only under the conditions of Section 21.2.
+4. **Chunk Verification**: Every resolved chunk MUST be hashed with the algorithm selected for the Recipe (Section 20.2) and MUST equal its expected Recipe hash before its bytes are accepted into logical reconstruction. A mismatch MUST return `SAR_ERR_HASH_MISMATCH`. A Recipe hash that cannot be resolved MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`402`).
+5. **Final Reassembly**: Verified chunks are appended to the logical byte sequence, which is then supplied to sparse reconstruction, if applicable, and final logical integrity verification (Section 13.1.3).
+
+**Structural validation versus resolution.** Structural validation (Recipe length, `CDC_MAP` layout, checked arithmetic, `Partition_Index` rules) concerns the stored metadata only. It does not read, resolve or hash the referenced chunk bytes. Resolving and verifying actual referenced bytes is a separate step that occurs only during CDC resolution or explicit logical-content verification.
+
+**Resource bounds.** An implementation that performs CDC resolution MUST enforce configured limits, before the corresponding allocation or expansion, on: the number of hashes in the Recipe; the size of each individual resolved chunk; the total reconstructed output size; and allocation and other resource consumption at each processing boundary (including the `CDC_MAP` record count and any resolver-returned data). A limit violation MUST return `SAR_ERR_LIMIT_EXCEEDED`, and checked-arithmetic failure `SAR_ERR_OVERFLOW`. Limits MUST NOT be derived solely from untrusted archive metadata.
+
+**Profile note.** The Standard Interoperable Profile requirement for CDC (Section 12.1) is satisfied by FASTCDC (`0x02`) with local `CDC_MAP` resolution. External resolution is an optional, explicitly configured capability and is not required by any Compliance Profile.
 
 ## 21. CDC Cataloging and Metadata
 
@@ -5294,7 +5303,9 @@ For self-contained archives, the Catalog is stored as a Metadata TLV block in th
 * **Requirement**: If `CDC_SUPPORT` is enabled and `NO_INDEX` is not set, a self-contained archive SHOULD provide sufficient `CDC_MAP` metadata in its Central Dictionary metadata to resolve its Recipe entries. In a Partitioned Archive, this metadata MAY be distributed across partition-local Central Dictionaries, and a `CDC_MAP` record MAY reference any Partition belonging to the same Partition Set.
 * **Verification Scope**: Structural validation of stored CDC metadata is always permitted. Hash verification over stored byte ranges is permitted when the hash algorithm is supported and archive bounds are available.
 
-`CDC_MAP` is **self-describing** via the `Hash_Algorithm_ID` field in its header.  Parsers MUST read `Hash_Algorithm_ID` from the header to determine which hash algorithm is used for record hashes.  Parsers MUST NOT hard-code an unnamed hash algorithm or treat the LFH `CDC Algo ID` (chunking algorithm) as the hash algorithm for CDC_MAP records.
+`CDC_MAP` is **self-describing** via the `Hash_Algorithm_ID` field in its header.  Parsers MUST read `Hash_Algorithm_ID` from the header to determine which hash algorithm is used for record hashes.  Parsers MUST NOT hard-code an unnamed hash algorithm or treat the LFH `CDC Algo ID` (chunking algorithm) as the hash algorithm for CDC_MAP records. For `CDC_MAP` v1, `Hash_Algorithm_ID` identifies the algorithm used both by its records and by the Recipes resolved against it (Section 20.2). The LFH `CDC Algo ID` identifies the chunking algorithm only.
+
+When more than one `CDC_MAP` (or other applicable Catalog) is present, the Catalog applicable to a Recipe MUST be selected unambiguously and deterministically by the reader's documented configuration or by an explicit rule of this specification. If the applicable Catalog cannot be selected unambiguously, or if applicable Catalogs declare different `Hash_Algorithm_ID` values for the same Recipe, the reader MUST reject resolution with `SAR_ERR_METADATA_CONFLICT`. A reader MUST NOT merge catalogs of differing algorithms or fall back to another catalog or algorithm silently.
 
 FASTCDC determines chunk *boundaries*.  `Hash_Algorithm_ID` determines how chunk *hashes* are computed.  These are independent.
 
@@ -5321,15 +5332,21 @@ TLV Length MUST equal `16 + Record_Count × Record_Size`.  Both the multiplicati
 
 | Field             |     Size | Description                                                                                                                                                                                          |
 | ----------------- | -------: | --------------- |
-| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID`. |
+| `Hash`            | 32 bytes | Hash of the referenced chunk bytes using `Hash_Algorithm_ID` (a 32-byte digest). |
 | `Partition_Index` |  4 bytes | Physical member selector. MUST be `0` for an unpartitioned archive. For a Partitioned Archive, MUST equal the Partition Manifest `Partition Index` of the Partition containing the referenced chunk. |
-| `Member_Offset`   |  8 bytes | Byte offset of the referenced chunk from physical byte zero of the archive member selected by `Partition_Index`. |
-| `Compressed_Size` |  4 bytes | Size in bytes of the referenced stored chunk payload. |
+| `Member_Offset`   |  8 bytes | Byte offset of the referenced chunk from physical byte zero of the archive member selected by `Partition_Index`. It identifies the beginning of the raw logical chunk bytes. |
+| `Compressed_Size` |  4 bytes | Stored byte length of the raw logical chunk bytes beginning at `Member_Offset`. The field name is historical and is retained for wire compatibility. |
+
+Record offsets within the 48-byte record are `Hash` at 0, `Partition_Index` at 32, `Member_Offset` at 36 and `Compressed_Size` at 44.
+
+#### CDC_MAP v1 stored chunk semantics
+
+In `CDC_MAP` v1 the bytes at `[Member_Offset, Member_Offset + Compressed_Size)` of the selected Physical Archive Member are the raw logical chunk bytes exactly as they appear in the reconstructed logical Entry. `CDC_MAP` v1 defines no per-chunk compression, no per-chunk encryption and no chunk header; the stored bytes are neither decoded nor decrypted by CDC resolution. A record `Hash` therefore covers the exact referenced stored bytes, which are also the logical chunk bytes. Every referenced range MUST undergo checked bounds validation before it is accessed. Any change to this representation requires a new `Map_Version`.
 
 
 #### CDC_MAP hash algorithm registry
 
-`Hash_Algorithm_ID` uses the SAR hash algorithm registry (Section 9.4).
+`Hash_Algorithm_ID` uses the SAR hash algorithm registry (Section 9.4): `0x30` (SHA256), `0x31` (BLAKE3-256) and `0x32` (SHA3_256), each a 32-byte digest, matching the fixed v1 `Record_Size` of 48. No new identifiers are allocated for CDC. An assigned but unsupported identifier MUST return `SAR_ERR_UNSUPPORTED`; a reserved or unassigned identifier MUST return `SAR_ERR_RESERVED_VALUE`.
 
 #### CDC_MAP structural validation
 
@@ -5342,7 +5359,8 @@ Structural validation MAY always be performed and includes:
 * `Record_Size` is correct;
 * TLV Length equals `16 + Record_Count × Record_Size`;
 * all arithmetic is checked;
-* `Hash_Algorithm_ID` is in the registry.
+* `Hash_Algorithm_ID` is in the registry;
+* records sharing the same `Hash` do not conflict: two records with equal `Hash` and identical `Partition_Index`, `Member_Offset` and `Compressed_Size` are identical duplicate mappings and MAY be tolerated, while two such records differing in any location field are conflicting and MUST be rejected deterministically with `SAR_ERR_METADATA_CONFLICT`.
 * for an unpartitioned archive, `Partition_Index` is zero for every record;
 * for a Partitioned Archive, each `Partition_Index` identifies a Partition belonging to the same Partition Set before the referenced location is used;
 * `Member_Offset + Compressed_Size` uses checked arithmetic.
@@ -5362,7 +5380,7 @@ For a Partitioned Archive, `Partition_Index` MUST identify the Partition whose P
 
 `Member_Offset + Compressed_Size` MUST use checked arithmetic and MUST be within the bounds of the selected Physical Archive Member when those bounds are available.
 
-CDC_MAP hash verification is over the exact stored byte range `[Member_Offset, Member_Offset + Compressed_Size)` of the selected Physical Archive Member. This is **not** the same as FASTCDC boundary-regeneration verification.
+A Recipe hash is resolved by exact match against the record `Hash`. CDC_MAP hash verification is over the exact stored byte range `[Member_Offset, Member_Offset + Compressed_Size)` of the selected Physical Archive Member. This is **not** the same as FASTCDC boundary-regeneration verification.
 
 ### 21.2 External Database Integration (`CDC_EXT_PROVIDER`)
 
@@ -5370,7 +5388,16 @@ In distributed environments, such as Edge-to-Cloud streaming, the Catalog MAY be
 
 * **TLV Type ID**: `0x41` (`CDC_EXT_PROVIDER`)
 * **Value**: A UTF-8 URI string pointing to the external chunk provider, for example `sarp+https://chunks.provider.net/v1`.
-* **Constraint**: If an external provider is used, the implementation MUST ensure its availability. If a hash in a Recipe cannot be resolved, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`402`).
+* **Constraint**: Provider availability is required only when external resolution is explicitly requested under the contract below; an implementation that performs such resolution MUST ensure the configured provider is available. If a hash in a Recipe cannot be resolved, including because the provider is unavailable, the implementation MUST return `SAR_ERR_RECIPE_UNRESOLVABLE` (`402`). Ordinary structural operations (parsing, listing and structural verification) MUST NOT require a provider.
+
+**Library-level resolver contract.** This Section defines no network protocol. The following applies to any external chunk resolution:
+
+* External resolution requires explicit application configuration and authorization. The `CDC_EXT_PROVIDER` URI is archive metadata only; it is not an instruction, and MUST NOT cause a request to be initiated automatically.
+* The resolver contract MUST identify the applicable registered hash algorithm (Section 9.4) unambiguously before Recipe interpretation. It MUST NOT be inferred from hash bytes, and no other algorithm may be silently substituted.
+* Where multiple catalogs or providers are available, the application MUST select exactly one. Ambiguous selection MUST be rejected with `SAR_ERR_METADATA_CONFLICT`; the implementation MUST NOT try alternatives silently.
+* The limits of Section 20.3 (Recipe hash count, individual chunk size, total reconstructed output, allocation and resource consumption) MUST be enforced and MUST bound resolver output.
+* Resolved bytes MUST be hash-verified against the Recipe hash (Section 20.3) before use. Bytes that are unavailable, unauthorized or not provided for a hash yield `SAR_ERR_RECIPE_UNRESOLVABLE`.
+* Structural parsing, listing and ordinary structural verification MUST NOT invoke external resolution. Explicit logical-content verification MAY invoke a specifically configured resolver.
 
 **Security Considerations**: The use of external provider URIs introduces potential security risks, including unauthorized data access, data exfiltration, or interaction with untrusted endpoints. Implementations SHOULD validate and sanitize all URIs before use. Implementations MAY restrict acceptable URI schemes, enforce allowlists of trusted domains, or apply other policy controls in an implementation-defined manner. Implementations SHOULD provide mechanisms to disable external provider resolution entirely or require explicit user consent before accessing external resources.
 

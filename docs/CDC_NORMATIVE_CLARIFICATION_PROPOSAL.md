@@ -6,10 +6,13 @@ SPDX-License-Identifier: Apache-2.0
 # CDC normative clarification proposal (decision support)
 
 **Reference:** `SAR-M13b2-EVIDENCE-IMPLEMENTATION-001`
-**Status:** PROPOSAL ONLY. This is not an implementation authorization and does
-not amend `specification.md`. No CDC resolver, `CDC_MAP` or Recipe wire change
-is made by this document. Controller approval is required before any
-normative edit or resolver work.
+**Status:** Superseded in part. The Controller approved
+`SAR-M13b2-CDC-NORMATIVE-CLARIFICATION-001` and
+`SAR-M13b2-CDC-NORMATIVE-IMPLEMENTATION-001` encoded it in `specification.md`
+Sections 20 and 21 (see the decision record below). Where this proposal differs
+from the approved decision or the specification, the specification governs. This
+document makes no CDC resolver, `CDC_MAP` or Recipe wire change, and resolver
+implementation remains unauthorized.
 
 Scope: Sections 20 and 21 of `specification.md`. Affected finding:
 `M13-TRANSFORM-009` (CDC recipe resolution, mandatory for a Standard Profile
@@ -108,5 +111,16 @@ claim).
   the archive layer using `sar-cdc` helpers, with FASTCDC (`0x02`) as the
   mandatory Standard Profile algorithm; `FRAGMENT_GAP` for incomplete
   fragmented Recipes is already implemented.
-- **Blocking:** CDC resolution work and Standard Profile CDC claims remain
-  blocked until the Controller decides A1 to A5.
+- **Gating:** The Controller has approved A1 to A5. CDC resolver
+  implementation and Standard Profile CDC claims remain gated on integration
+  (merge) of the normative alignment in `specification.md`.
+
+## 5. Decision record (`SAR-M13b2-CDC-NORMATIVE-CLARIFICATION-001`)
+
+| Item | Encoded in `specification.md` |
+| --- | --- |
+| A1 | §20.2, §21.1: Recipe hash algorithm comes from `CDC_MAP.Hash_Algorithm_ID` or the explicit resolver contract, using the existing Section 9.4 registry; no new identifiers; ambiguous catalog selection is `SAR_ERR_METADATA_CONFLICT`. |
+| A2 | §20.2: Recipe Mode does not require `DEDUPLICATION`; LFH `Hash Algo ID` / `Content Hash` cover the final logical Entry. |
+| A3 | §21.1: `Member_Offset` starts raw logical chunk bytes; `Compressed_Size` is their stored length; no per-chunk compression, encryption or header in v1. |
+| A4 | §20.3, §21.1: every resolved chunk is verified against its Recipe hash; conflicting duplicates are `SAR_ERR_METADATA_CONFLICT`; identical duplicates are tolerated. |
+| A5 | §20.3, §21.2: resolution is explicitly configured and bounded; the URI is metadata only; parsing, listing and structural verification never resolve externally. |
