@@ -45,7 +45,7 @@ For conformance status, see `docs/CONFORMANCE.md`.
 | `sar-fec` | `implemented` | Forward Error Correction codecs and metadata parsing for XOR and Reed-Solomon SAR FEC. |
 | `sar-fragmentation` | `implemented` | Fragment semantic validation and reassembly logic (moved from sar-core in M11c). |
 | `sar-loss-tolerant` | `implemented` | Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). No dependency on sar-core. |
-| `sar-partition` | `deferred` | Partition/multi-volume archive support. Deliberately deferred in M11c. GlobalFlags::PARTITIONED_ARCHIVE remains in sar-core; processing entry points return Unsupported until partition support is implemented. |
+| `sar-partition` | `partial` | Status vocabulary for one physical Partition (M13b.3 P1). Holds no constructor for validated results: the validated type lives in sar-archive. Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, KMS consistency and extraction remain deferred (M13-BOUNDARY-003 open). |
 | `sar-sparse` | `implemented` | Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core. |
 | `sar-stream` | `implemented` | Stateful Streaming Mode session layer, stream transcript semantic validation, and optional exact-byte transcript recording. |
 | `sar-transport` | `implemented` | Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, SAR-over-TCP binding (M10d), and SAR-over-QUIC binding (M10e, quic feature). |
@@ -189,6 +189,7 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `parse_global_header` | `pub fn parse_global_header(input: &[u8], limits: &ResourceLimits) -> Result<(GlobalHeader, usize), SarError>` | Parse a global header from bytes: exact Flags Size of 4, strict reserved-bit rejection, no partition descriptor, optional KMS extension. |
 | `parse_lfh` | `pub fn parse_lfh(input: &[u8], flags: &GlobalFlags, limits: &ResourceLimits) -> Result<(LocalFileHeader, usize), SarError>` | Parse an LFH from bytes. |
 | `parse_lfh_fec_value` | `pub fn parse_lfh_fec_value(algo_id: u8, fec_value: &[u8], limits: &ResourceLimits) -> Result<Option<FecSummary>, SarError>` | Parse and validate an LFH FEC value. |
+| `parse_partition_central_dictionary` | `pub fn parse_partition_central_dictionary(input: &[u8], flags: GlobalFlags, limits: &ResourceLimits) -> Result<(CentralDictionary, usize), SarError>` | Partition-aware Central Dictionary parse; requires PARTITIONED_ARCHIVE. parse_central_dictionary remains gated. |
 | `parse_sparse_map` | `pub fn parse_sparse_map(bytes: &[u8], is_64bit: bool, limits: &ResourceLimits) -> Result<SparseMap, SarError>` | Parses a canonical Sparse Map blob (Sparse Logical Size followed by Sparse Extent descriptors; u32 LE fields, or u64 LE when is_64bit) into a SparseMap. A blob shorter than the size field or with a misaligned descriptor remainder returns InvalidMap. Enforces max_sparse_map_bytes and max_sparse_descriptors before allocating. An absent map (Sparse Map Size = 0) must be treated as non-sparse by the caller. |
 | `parse_tlvs` | `pub fn parse_tlvs(input: &[u8], limits: &ResourceLimits) -> Result<Vec<Tlv>, SarError>` | Parse a sequence of TLV blocks with alignment checks. Type IDs are classified exhaustively per Section 9: reserved IDs return RESERVED_VALUE, assigned-but-unimplemented IDs return UNSUPPORTED. |
 | `recipe_hashes` | `pub fn recipe_hashes(payload: &[u8]) -> Vec<[u8; 32]>` | Extracts ordered 32-byte hashes from a validated recipe payload |
@@ -210,12 +211,15 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `validate_global_header_prefix` | `pub fn validate_global_header_prefix(prefix: &[u8]) -> Result<(), SarError>` | Validate the fixed 8-byte Global Header prefix: magic, version (unassigned is RESERVED_VALUE), reserved byte, and Flags Size == 4 (INVALID_LENGTH). Shared by the reader and incremental stream parser. |
 | `validate_lfh_fec_algo_id` | `pub fn validate_lfh_fec_algo_id(algo_id: u8) -> Result<(), SarError>` | Validate an LFH FEC algorithm ID. |
 | `validate_lfh_hash_algo_id` | `pub fn validate_lfh_hash_algo_id(id: u8) -> Result<(), SarError>` | Validate an LFH Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256, 0x32 SHA3-256). Reserved values return SAR_ERR_RESERVED_VALUE. |
+| `validate_manifest_hash_algorithm_id` | `pub fn validate_manifest_hash_algorithm_id(id: u8) -> Result<(), SarError>` | Accepts SHA256/BLAKE3-256, SHA3_256 is Unsupported, other IDs ReservedValue. |
+| `validate_partition_manifest_lfh` | `pub fn validate_partition_manifest_lfh(global_flags: GlobalFlags, lfh: &LocalFileHeader) -> Result<(), SarError>` | Validates the Partition Manifest LFH against Section 6.2.1 restrictions and the Global Flags. |
 | `validate_recipe_payload` | `pub fn validate_recipe_payload(payload: &[u8], limits: &ResourceLimits) -> Result<usize, SarError>` | Structural recipe validation only (32-byte alignment + limits); not recipe-content verification |
 | `validate_recovery_tlv` | `pub fn validate_recovery_tlv(type_id: u8, value: &[u8], limits: &ResourceLimits) -> Result<FecSummary, SarError>` | Validate a recovery TLV and summarize its metadata. |
 | `write_central_dictionary` | `pub fn write_central_dictionary(cd: &CentralDictionary, flags: GlobalFlags) -> Result<Vec<u8>, SarError>` | Serialize a central dictionary. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred). |
 | `write_footer` | `pub fn write_footer(footer: Footer) -> [u8; 8]` | Serialize a footer. |
 | `write_global_header` | `pub fn write_global_header(header: &GlobalHeader) -> Result<Vec<u8>, SarError>` | Serialize a global header with exactly four little-endian Global Flags bytes; rejects unassigned versions and reserved flag bits. |
 | `write_lfh` | `pub fn write_lfh(flags: &GlobalFlags, lfh: &LocalFileHeader) -> Result<Vec<u8>, SarError>` | Serialize an LFH. |
+| `write_partition_central_dictionary` | `pub fn write_partition_central_dictionary(cd: &CentralDictionary, flags: GlobalFlags) -> Result<Vec<u8>, SarError>` | Partition-aware Central Dictionary writer; requires PARTITIONED_ARCHIVE. write_central_dictionary remains gated. |
 | `write_sparse_map` | `pub fn write_sparse_map(map: &SparseMap, is_64bit: bool) -> Result<Vec<u8>, SarError>` | Serializes a SparseMap (Sparse Logical Size followed by extents) to the LFH wire format. In 32-bit mode (is_64bit=false), fails closed with SarError::Overflow if the logical size or any extent offset or length exceeds u32::MAX. In 64-bit mode, writes full u64 values. Never silently truncates. |
 | `write_tlvs` | `pub fn write_tlvs(tlvs: &[Tlv]) -> Result<Vec<u8>, SarError>` | Encode TLV blocks with alignment padding. Uses the same exhaustive Section 9 classification as parse_tlvs; reserved IDs are never emitted. |
 
@@ -246,6 +250,8 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `GlobalHeader` | `struct` | `pub struct GlobalHeader { pub version: u8, pub flags: GlobalFlags, pub kms: Option<KmsData> }` | Parsed SAR global header. Global Flags are always exactly four bytes on the wire; the typed `flags` field is authoritative. |
 | `KmsData` | `struct` | `pub struct KmsData { pub mode_id: u8, pub payload: Vec<u8> }` | Raw KMS extension bytes from the global header. |
 | `LocalFileHeader` | `struct` | `pub struct LocalFileHeader { ... }` | Parsed SAR local file header. |
+| `PartitionManifestFlags` | `struct` | `pub struct PartitionManifestFlags(u16)` | Manifest Flags (bit 0 FINAL_PARTITION; reserved bits rejected). |
+| `PartitionManifestV1` | `struct` | `pub struct PartitionManifestV1 { pub hash_algorithm_id: u8, pub flags: PartitionManifestFlags, pub partition_index: u32, pub total_partitions: u32, pub committed_content_length: u64, pub partition_set_uuid: [u8; 16], pub previous_partition_hash: [u8; 32], pub current_partition_hash: [u8; 32] }` | Exact 100-byte Partition Manifest Version 1 record with strict codec and local field validation. |
 | `ResourceLimits` | `struct` | `pub struct ResourceLimits { pub max_archive_size: u64, pub max_entry_count: u64, pub max_lfh_bytes: u64, pub max_path_bytes: u64, pub max_tlv_bytes: u64, pub max_tlv_count: u64, pub max_cd_bytes: u64, pub max_sparse_map_bytes: u64, pub max_sparse_descriptors: u64, pub max_fragment_count: u64, pub max_fragment_group_span: u64, pub max_loss_tolerant_gap: u64, pub max_fec_value_bytes: u64, pub max_recovery_protected_range: u64, pub max_repair_working_set: u64, pub max_decoded_entry_size: u64, pub max_in_memory_buffer: u64, pub max_total_pipeline_memory: u64, pub max_cdc_chunk_count: usize, pub max_cdc_metadata_bytes: usize, ... }` | Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. M13b WP-6 adds max_pbkdf2_iterations, max_kdf_salt_bytes, max_argon2_memory_kib, max_argon2_time_cost and max_argon2_parallelism; defaults (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) admit the mandatory interoperable KDF ranges with a 2-4x margin and unlimited() disables them. max_loss_tolerant_gap is retained but currently inactive: no reassembly path consults it and it never authorizes zero-filling fragment gaps. |
 | `SarError` | `enum` | `pub enum SarError { ... }` | Top-level SAR error type used across sar-core. |
 | `SarStatus` | `enum` | `pub enum SarStatus { ... }` | SAR status and error registry values (`#[repr(u16)]`). |
@@ -266,6 +272,12 @@ Canonical SAR wire-format, status/error, limits, and low-level parse/write helpe
 | `EntryMode::PARTITION_MANIFEST` | `pub const EntryMode::PARTITION_MANIFEST: u16 = 1 << 12` | Bit flag (bit 12) for the terminal Partition Manifest Entry. |
 | `GLOBAL_FLAGS_SIZE` | `pub const GLOBAL_FLAGS_SIZE: u16 = 4;` | Exact Global Flags size in bytes required by Section 5.2. |
 | `GLOBAL_HEADER_FIXED_LEN` | `pub const GLOBAL_HEADER_FIXED_LEN: usize = 12;` | Length of the fixed Global Header prefix plus four Global Flags bytes. |
+| `PARTITION_HASH_LEN` | `pub const PARTITION_HASH_LEN: usize = 32;` | Partition hash field length in bytes. |
+| `PARTITION_MANIFEST_V1_LEN` | `pub const PARTITION_MANIFEST_V1_LEN: usize = 100;` | Exact decoded Partition Manifest Version 1 payload size. |
+| `PARTITION_MANIFEST_VERSION_1` | `pub const PARTITION_MANIFEST_VERSION_1: u8 = 1;` | Partition Manifest Version 1 identifier (Section 19.1.2). |
+| `PARTITION_MAX_SUPPORTED_COUNT` | `pub const PARTITION_MAX_SUPPORTED_COUNT: u32 = 65535;` | Default implementation limit for Total Partitions. |
+| `PARTITION_SET_UUID_LEN` | `pub const PARTITION_SET_UUID_LEN: usize = 16;` | Opaque Partition Set UUID length in bytes. |
+| `PARTITION_TOTAL_UNKNOWN` | `pub const PARTITION_TOTAL_UNKNOWN: u32 = 0xFFFF_FFFF;` | Total Partitions sentinel (0xFFFFFFFF) meaning the total is not yet known. |
 | `SUPPORTED_CD_VERSION` | `pub const SUPPORTED_CD_VERSION: u8 = 0x01` | Central dictionary version supported by the current implementation. |
 | `TLV_CDC_CUSTOM` | `pub const TLV_CDC_CUSTOM: u8 = 0x4F;` | Implementation-defined CDC_CUSTOM metadata TLV ID |
 | `TLV_CDC_EXT_PROVIDER` | `pub const TLV_CDC_EXT_PROVIDER: u8 = 0x41;` | CDC_EXT_PROVIDER metadata TLV ID (parsed inertly) |
@@ -287,6 +299,8 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | Name | Signature | Description |
 | --- | --- | --- |
 | `ArchiveReader::audit` | `pub fn ArchiveReader<R>::audit(&mut self, options: ArchiveAuditOptions) -> Result<ArchiveAuditReport, SarError>` | Performs deterministic archive structural audit with explicit control-entry and payload policies. Default-safe mode rejects SESSION_CONTROL/nonzero OP_CODE; inert mode can preserve such entries as non-executed audit records. |
+| `ArchiveReader::inspect_partition` | `pub fn inspect_partition(self) -> Result<ValidatedPartition, SarError>` | Validates a source as exactly one physical Partition; consumes the reader. Generic reader paths still reject PARTITIONED_ARCHIVE. |
+| `ArchiveReader::inspect_partition_with_max_partitions` | `pub fn inspect_partition_with_max_partitions(self, max_partitions: u32) -> Result<ValidatedPartition, SarError>` | Same as inspect_partition with an explicit Total Partitions limit. |
 | `ArchiveReader::metadata` | `pub fn ArchiveReader<R>::metadata(&self) -> Option<ArchiveMetadata>` | Return parsed metadata after the header has been read. |
 | `ArchiveReader::new` | `pub fn ArchiveReader<R>::new(reader: R) -> Result<Self, SarError>` | Create an archive reader with default limits. |
 | `ArchiveReader::next_entry` | `pub fn ArchiveReader<R>::next_entry(&mut self) -> Result<Option<EntryReader>, SarError>` | Read the next physical archive entry sequentially, including AEAD authentication of an encrypted Entry. Does not reassemble fragment groups and does not verify the LFH Content Hash, which covers the final logical Entry; read_all_logical_files performs that verification. |
@@ -307,6 +321,7 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | `ArchiveWriter::new_with_compression_and_key_provider` | `pub fn ArchiveWriter<W>::new_with_compression_and_key_provider(writer: W, options: ArchiveWriterOptions, compression: CompressionSettings, key_provider: Option<Box<dyn KeyProvider>>) -> Result<Self, SarError>` | Create a writer with compression and an optional key provider. |
 | `ArchiveWriter::stream_state` | `pub fn ArchiveWriter<W>::stream_state(&self) -> StreamWriteState` | Returns current writer structural phase. |
 | `ArchiveWriter::with_data_area_crc32` | `pub fn ArchiveWriter<W>::with_data_area_crc32(self) -> Result<Self, SarError>` | Enable HAS_DATA_AREA_CRC32 (Global Flag bit 16; Rust GlobalFlags::HAS_GLOBAL_CRC32) before the Global Header is emitted. The CRC32 of the exact encoded Data Area bytes is computed incrementally and stored in the Central Dictionary (Section 7.2). Returns SAR_ERR_FLAG_CONFLICT for NO_INDEX writers and SAR_ERR_MALFORMED after header emission. |
+| `ArchiveWriter::with_partition_manifest` | `pub fn with_partition_manifest(self, params: PartitionManifestParams) -> Result<Self, SarError>` | Configures the writer as one physical Partition with a terminal Manifest and computed Current Partition Hash. |
 | `ArchiveWriter::write_sparse_entry` | `pub fn ArchiveWriter<W>::write_sparse_entry(&mut self, name: &str, gathered_payload: &[u8], sparse: SparseWriteOptions) -> Result<(), SarError>` | Write a sparse entry. gathered_payload must have exactly sum(extent.length) bytes. sparse.logical_size is written to LFH Uncompressed Size. Requires ArchiveWriterOptions::sparse=true; returns Malformed otherwise. Validates extents (overlap, bounds, payload length mismatch) before writing. Applies compression/encryption/FEC from writer options. |
 | `CompressionSettings::store` | `pub const fn CompressionSettings::store() -> Self` | Return STORE/default compression settings. |
 | `EntryInput::file` | `pub fn EntryInput::file(name: impl Into<String>, payload: Vec<u8>) -> Self` | Ergonomic constructor for a regular file entry with default metadata. Use this instead of struct literal construction. |
@@ -364,6 +379,7 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | `FragmentGroup` | `struct` | `pub struct FragmentGroup { pub fragment_id: u32, pub name: String, pub index0: Option<EntryMetadata>, pub terminal_crc32: Option<u32>, pub terminal_content_hash: Option<[u8; 32]>, pub terminal_hash_algo_id: Option<u8> /* + private fragment entries */ }` | A structurally validated fragment group yielded by ArchiveReader::next_logical_entry. name/index0 come only from Fragment Index 0 (authoritative Name, Path, metadata); terminal_crc32 and terminal_content_hash come from the LAST_FRAGMENT LFH and an all-zero terminal value is still authoritative. terminal_content_hash and terminal_hash_algo_id are the authoritative digest inputs; the reader verifies them over the reconstructed logical Entry (SAR_ERR_HASH_MISMATCH) only for complete groups. index0 is None when Index 0 is missing (reconstruct then reports FragmentGap or an empty degraded prefix per LOSS_TOLERANT). |
 | `LfhSizeFieldPolicy` | `enum` | `pub enum LfhSizeFieldPolicy { Auto, Force32, Force64 }` | Archive-writer LFH size-field policy: Auto (default 32-bit with promotion before header emission), Force32 (fail closed if any size exceeds u32::MAX), Force64 (always emit 64-bit fields and set global SIZE_64BIT). |
 | `LogicalFile` | `struct` | `pub struct LogicalFile { pub name: String, pub fragment_id: Option<u32>, pub data: Vec<u8>, pub is_degraded: bool }` | A fully reconstructed logical file returned by ArchiveReader::read_all_logical_files. For fragmented entries, fragment contributions have been concatenated in ascending Fragment Index order. For sparse entries, holes are zero-filled. is_degraded is true when the payload is incomplete due to LOSS_TOLERANT-permitted missing fragments. |
+| `PartitionManifestParams` | `struct` | `pub struct PartitionManifestParams { pub partition_set_uuid: [u8; 16], pub partition_index: u32, pub total_partitions: u32, pub final_partition: bool, pub hash_algorithm_id: u8, pub previous_partition_hash: [u8; 32] }` | Identity/ordering fields for the Partition Manifest written by ArchiveWriter::finish. |
 | `PayloadAuditPolicy` | `enum` | `pub enum PayloadAuditPolicy { MetadataOnly, DecodeWhenKeysAvailable, RequireDecode }` | Policy controlling whether archive audit validates only structure, decodes when keys/bases are available, or requires payload decoding. |
 | `ProfileReport` | `struct` | `pub struct ProfileReport { pub compliant: bool, pub findings: Vec<String> }` | Report returned by profile validation. |
 | `ProtectedRange` | `struct` |  | Returned by inspect_recovery_metadata to describe the protected range. |
@@ -377,6 +393,7 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | `StreamParseState` | `enum` | `pub enum StreamParseState { NeedGlobalHeader, NeedLocalFileHeader, NeedPayload, TransformingEntry, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }` | Explicit forward-only parser phases. |
 | `StreamStep` | `enum` | `pub enum StreamStep<T> { NeedMore { needed: Option<usize> }, Ready(T), Complete }` | Deterministic incremental parser step result. |
 | `StreamWriteState` | `enum` | `pub enum StreamWriteState { NeedLocalFileHeader, NeedPayload, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }` | Structural archive writer phases for stream-oriented emission. |
+| `ValidatedPartition` | `struct` | `pub struct ValidatedPartition { .. }` | Result of ArchiveReader::inspect_partition for one physically validated Partition. Private fields and no public constructor: it cannot be forged without inspection. Not a Partition Set: predecessor link is unverified and set status is NotEvaluated. |
 | `VerificationReport` | `struct` | `pub struct VerificationReport { pub valid: bool, pub entry_count: u64, pub indexed: bool, pub cdc_entry_count: u64, pub cdc_support: bool }` | Verification summary including CDC support and number of entries carrying cdc_algo_id |
 
 ### `sar-crypto`
@@ -598,11 +615,17 @@ Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). N
 
 Path: `crates/sar-partition`
 
-Status: `deferred`
+Status: `partial`
 
-Partition/multi-volume archive support. Deliberately deferred in M11c. GlobalFlags::PARTITIONED_ARCHIVE remains in sar-core; processing entry points return Unsupported until partition support is implemented.
+Status vocabulary for one physical Partition (M13b.3 P1). Holds no constructor for validated results: the validated type lives in sar-archive. Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, KMS consistency and extraction remain deferred (M13-BOUNDARY-003 open).
 
-No public-facing API items are listed for this crate.
+#### Public types
+
+| Name | Kind | Signature | Description |
+| --- | --- | --- | --- |
+| `ManifestAuthentication` | `enum` | `pub enum ManifestAuthentication { Unauthenticated, Aead }` | Whether the Manifest payload was AEAD-authenticated. |
+| `PartitionSetStatus` | `enum` | `pub enum PartitionSetStatus { NotEvaluated }` | Partition Set evaluation status; always NotEvaluated in P1. |
+| `PredecessorLink` | `enum` | `pub enum PredecessorLink { NotApplicable, Unverified([u8; 32]) }` | Declared predecessor link; never verified in P1. |
 
 ### `sar-sparse`
 

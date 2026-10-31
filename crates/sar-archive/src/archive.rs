@@ -36,12 +36,16 @@ use sar_core::{
         CentralDictionary, Footer, GLOBAL_HEADER_FIXED_LEN, GLOBAL_HEADER_FLAGS_OFFSET,
         GlobalHeader, KmsData, LocalFileHeader, SUPPORTED_CD_VERSION, decode_global_flags,
         lfh_bytes_for_aad, lfh_to_bytes, parse_central_dictionary, parse_footer,
-        parse_global_header, parse_lfh, require_unpartitioned_processing,
-        validate_global_header_prefix, write_central_dictionary, write_footer, write_global_header,
+        parse_global_header, parse_lfh, parse_partition_central_dictionary,
+        require_unpartitioned_processing, validate_global_header_prefix, write_central_dictionary,
+        write_footer, write_global_header, write_partition_central_dictionary,
     },
     limits::ResourceLimits,
     tlv::Tlv,
 };
+
+mod partition;
+pub use partition::{PartitionManifestParams, ValidatedPartition};
 
 use crate::transform::{
     DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
@@ -890,9 +894,12 @@ enum LogicalState {
 }
 
 /// True for an Empty Area LFH (empty name, not a fragment).
+///
+/// A Partition Manifest Entry is never an Empty Area (spec §6.2.1).
 fn is_empty_area(lfh: &LocalFileHeader) -> bool {
-    sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, lfh.name.is_empty())
-        == sar_core::metadata::EntryKind::EmptyArea
+    !lfh.entry_mode.is_partition_manifest()
+        && sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, lfh.name.is_empty())
+            == sar_core::metadata::EntryKind::EmptyArea
 }
 
 /// Checks the CD offset array against the physical LFH walk
@@ -1098,6 +1105,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
     /// Parses and returns the global header.
     pub fn read_global_header(&mut self) -> Result<GlobalHeader, SarError> {
+        self.read_global_header_inner(false)
+    }
+
+    /// Shared Global Header / Footer / Central Dictionary parse.
+    ///
+    /// `allow_partitioned` is set only by the explicit Partition inspection
+    /// entry point; every generic path keeps the fail-closed gate.
+    fn read_global_header_inner(
+        &mut self,
+        allow_partitioned: bool,
+    ) -> Result<GlobalHeader, SarError> {
         self.reader.seek(SeekFrom::Start(0))?;
 
         let mut fixed = [0u8; GLOBAL_HEADER_FIXED_LEN];
@@ -1140,7 +1158,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 let _ = parse_kms_payload(kms.mode_id, &kms.payload).map_err(SarError::from)?;
             }
         }
-        require_unpartitioned_processing(header.flags)?;
+        if !allow_partitioned {
+            require_unpartitioned_processing(header.flags)?;
+        }
         let header_len = u64::try_from(consumed).map_err(|_| SarError::Overflow("header len"))?;
 
         let (data_end, cd) = if header.flags.contains(GlobalFlags::NO_INDEX) {
@@ -1180,8 +1200,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             self.reader.seek(SeekFrom::Start(cd_offset))?;
             let mut cd_bytes = vec![0u8; cd_len_usize];
             read_required(&mut self.reader, &mut cd_bytes, "central dictionary")?;
-            let (cd, consumed_cd) =
-                parse_central_dictionary(&cd_bytes, header.flags, &self.options.limits)?;
+            let (cd, consumed_cd) = if allow_partitioned {
+                parse_partition_central_dictionary(&cd_bytes, header.flags, &self.options.limits)?
+            } else {
+                parse_central_dictionary(&cd_bytes, header.flags, &self.options.limits)?
+            };
             if consumed_cd > cd_bytes.len() {
                 return Err(SarError::Truncated("CD parse exceeded available bytes"));
             }
@@ -2417,6 +2440,7 @@ pub struct ArchiveWriter<W> {
     fec: Option<FecSettings>,
     archive_recovery: Option<ArchiveRecoveryState>,
     stream_state: StreamWriteState,
+    partition: Option<partition::PartitionWriterState>,
 }
 
 const RECOVERY_TLV_TYPE_MIN: u8 = 0x10;
@@ -2720,6 +2744,7 @@ impl<W: Write> ArchiveWriter<W> {
                 protected_bytes: Vec::new(),
             }),
             stream_state: StreamWriteState::NeedLocalFileHeader,
+            partition: None,
         })
     }
 
@@ -2820,7 +2845,9 @@ impl<W: Write> ArchiveWriter<W> {
             return Ok(());
         }
         validate_global_flags(self.flags)?;
-        require_unpartitioned_processing(self.flags)?;
+        if self.partition.is_none() {
+            require_unpartitioned_processing(self.flags)?;
+        }
         let header = GlobalHeader {
             version: 0x01,
             flags: self.flags,
@@ -2839,6 +2866,9 @@ impl<W: Write> ArchiveWriter<W> {
             self.track_archive_recovery_bytes(&bytes[recovery_start..])?;
         }
         self.writer.write_all(&bytes)?;
+        if let Some(state) = &mut self.partition {
+            state.commit(&bytes);
+        }
         self.position = self
             .position
             .checked_add(u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?)
@@ -3057,6 +3087,12 @@ impl<W: Write> ArchiveWriter<W> {
         self.track_archive_recovery_bytes(&encoded_payload)?;
         self.writer.write_all(&lfh_bytes)?;
         self.writer.write_all(&encoded_payload)?;
+        if !lfh.entry_mode.is_partition_manifest()
+            && let Some(state) = &mut self.partition
+        {
+            state.commit(&lfh_bytes);
+            state.commit(&encoded_payload);
+        }
         if let Some(crc) = &mut self.data_area_crc {
             crc.update(&lfh_bytes);
             crc.update(&encoded_payload);
@@ -3077,10 +3113,7 @@ impl<W: Write> ArchiveWriter<W> {
             .entry_count
             .checked_add(1)
             .ok_or(SarError::Overflow("entry count"))?;
-        let is_empty_area =
-            sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, lfh.name.is_empty())
-                == sar_core::metadata::EntryKind::EmptyArea;
-        if !is_empty_area {
+        if !is_empty_area(&lfh) {
             self.offsets.push(lfh_offset);
         }
         self.stream_state = StreamWriteState::EntryReady;
@@ -3540,6 +3573,9 @@ impl<W: Write> ArchiveWriter<W> {
             return Err(SarError::Malformed("archive writer already finished"));
         }
         self.emit_global_header_if_needed()?;
+        if self.partition.is_some() {
+            self.write_partition_manifest()?;
+        }
         self.stream_state = StreamWriteState::NeedCentralDictionaryOrFooter;
 
         if !self.flags.contains(GlobalFlags::NO_INDEX) {
@@ -3554,7 +3590,11 @@ impl<W: Write> ArchiveWriter<W> {
                 metadata: self.cd_metadata.clone(),
                 offsets: self.offsets.clone(),
             };
-            let cd_bytes = write_central_dictionary(&cd, self.flags)?;
+            let cd_bytes = if self.partition.is_some() {
+                write_partition_central_dictionary(&cd, self.flags)?
+            } else {
+                write_central_dictionary(&cd, self.flags)?
+            };
             self.writer.write_all(&cd_bytes)?;
             self.position = self
                 .position

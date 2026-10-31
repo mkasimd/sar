@@ -537,6 +537,7 @@ dependencies = [
  "sar-delta",
  "sar-fec",
  "sar-fragmentation",
+ "sar-partition",
  "sar-sparse",
  "serde",
  "serde_json",
@@ -629,6 +630,10 @@ dependencies = [
 
 [[package]]
 name = "sar-loss-tolerant"
+version = "0.1.0"
+
+[[package]]
+name = "sar-partition"
 version = "0.1.0"
 
 [[package]]

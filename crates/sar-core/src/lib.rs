@@ -22,6 +22,8 @@ pub mod io;
 pub mod limits;
 /// Expanded LFH metadata types (M11a).
 pub mod metadata;
+/// Partition Manifest Version 1 codec and local validation (spec §§6.2.1, 19.1).
+pub mod partition_manifest;
 /// Sparse-file map parsing/writing.
 ///
 /// Wire-format parse/write lives here (`parse_sparse_map`, `write_sparse_map`).
@@ -49,14 +51,21 @@ pub use format::{
     GLOBAL_HEADER_FLAGS_OFFSET, GlobalHeader, KmsData, LocalFileHeader, compute_lfh_size,
     decode_global_flags, fec_size_field_offset, global_header_flags_bytes, lfh_bytes_for_aad,
     lfh_to_bytes, parse_central_dictionary, parse_footer, parse_global_header, parse_lfh,
-    require_unpartitioned_processing, validate_global_header_prefix, validate_lfh_hash_algo_id,
-    write_central_dictionary, write_footer, write_global_header, write_lfh,
+    parse_partition_central_dictionary, require_unpartitioned_processing,
+    validate_global_header_prefix, validate_lfh_hash_algo_id, write_central_dictionary,
+    write_footer, write_global_header, write_lfh, write_partition_central_dictionary,
 };
 pub use limits::ResourceLimits;
 pub use metadata::{
     EntryCdcMetadata, EntryCompressionMetadata, EntryDeltaMetadata, EntryEncryptionMetadata,
     EntryFecMetadata, EntryFragmentMetadata, EntryHashMetadata, EntryKind, EntryOwnerMetadata,
     EntryPermissionMetadata, EntrySparseMetadata, EntryTimestampMetadata, FieldPresence,
+};
+pub use partition_manifest::{
+    PARTITION_HASH_LEN, PARTITION_MANIFEST_V1_LEN, PARTITION_MANIFEST_VERSION_1,
+    PARTITION_MAX_SUPPORTED_COUNT, PARTITION_SET_UUID_LEN, PARTITION_TOTAL_UNKNOWN,
+    PartitionManifestFlags, PartitionManifestV1, validate_manifest_hash_algorithm_id,
+    validate_partition_manifest_lfh,
 };
 pub use sar_cdc::CDC_MAP_RECORD_LEN;
 pub use sar_cdc::CdcMap;

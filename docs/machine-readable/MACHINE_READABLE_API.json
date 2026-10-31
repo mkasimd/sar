@@ -2350,6 +2350,94 @@
               "returns": "sar_crypto::KdfLimits"
             },
             "signature": "pub fn kdf_limits(&self) -> sar_crypto::KdfLimits"
+          },
+          {
+            "name": "validate_manifest_hash_algorithm_id",
+            "description": "Accepts SHA256/BLAKE3-256, SHA3_256 is Unsupported, other IDs ReservedValue.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn validate_manifest_hash_algorithm_id(id: u8) -> Result<(), SarError>",
+            "errors": [
+              "SarError::Unsupported",
+              "SarError::ReservedValue"
+            ]
+          },
+          {
+            "name": "validate_partition_manifest_lfh",
+            "description": "Validates the Partition Manifest LFH against Section 6.2.1 restrictions and the Global Flags.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn validate_partition_manifest_lfh(global_flags: GlobalFlags, lfh: &LocalFileHeader) -> Result<(), SarError>",
+            "errors": [
+              "SarError::FlagConflict",
+              "SarError::Malformed",
+              "SarError::InvalidLength"
+            ]
+          },
+          {
+            "name": "parse_partition_central_dictionary",
+            "description": "Partition-aware Central Dictionary parse; requires PARTITIONED_ARCHIVE. parse_central_dictionary remains gated.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "format",
+              "path": "src/format.rs",
+              "returns": "Result<(CentralDictionary, usize), SarError>"
+            },
+            "signature": "pub fn parse_partition_central_dictionary(input: &[u8], flags: GlobalFlags, limits: &ResourceLimits) -> Result<(CentralDictionary, usize), SarError>",
+            "errors": [
+              "SarError::FlagConflict",
+              "SarError::Malformed"
+            ]
+          },
+          {
+            "name": "write_partition_central_dictionary",
+            "description": "Partition-aware Central Dictionary writer; requires PARTITIONED_ARCHIVE. write_central_dictionary remains gated.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "format",
+              "path": "src/format.rs",
+              "returns": "Result<Vec<u8>, SarError>"
+            },
+            "signature": "pub fn write_partition_central_dictionary(cd: &CentralDictionary, flags: GlobalFlags) -> Result<Vec<u8>, SarError>",
+            "errors": [
+              "SarError::FlagConflict"
+            ]
           }
         ],
         "types": [
@@ -2959,6 +3047,42 @@
             },
             "kind": "struct",
             "signature": "pub struct SparseMap { pub logical_size: u64, pub extents: Vec<SparseExtent> }"
+          },
+          {
+            "name": "PartitionManifestFlags",
+            "description": "Manifest Flags (bit 0 FINAL_PARTITION; reserved bits rejected).",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionManifestFlags(u16)"
+          },
+          {
+            "name": "PartitionManifestV1",
+            "description": "Exact 100-byte Partition Manifest Version 1 record with strict codec and local field validation.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionManifestV1 { pub hash_algorithm_id: u8, pub flags: PartitionManifestFlags, pub partition_index: u32, pub total_partitions: u32, pub committed_content_length: u64, pub partition_set_uuid: [u8; 16], pub previous_partition_hash: [u8; 32], pub current_partition_hash: [u8; 32] }"
           }
         ],
         "constants": [
@@ -3238,6 +3362,114 @@
               "path": "src/format.rs"
             },
             "signature": "pub const SUPPORTED_CD_VERSION: u8 = 0x01"
+          },
+          {
+            "name": "PARTITION_MANIFEST_VERSION_1",
+            "description": "Partition Manifest Version 1 identifier (Section 19.1.2).",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "u8"
+            },
+            "signature": "pub const PARTITION_MANIFEST_VERSION_1: u8 = 1;"
+          },
+          {
+            "name": "PARTITION_MANIFEST_V1_LEN",
+            "description": "Exact decoded Partition Manifest Version 1 payload size.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "usize"
+            },
+            "signature": "pub const PARTITION_MANIFEST_V1_LEN: usize = 100;"
+          },
+          {
+            "name": "PARTITION_TOTAL_UNKNOWN",
+            "description": "Total Partitions sentinel (0xFFFFFFFF) meaning the total is not yet known.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "u32"
+            },
+            "signature": "pub const PARTITION_TOTAL_UNKNOWN: u32 = 0xFFFF_FFFF;"
+          },
+          {
+            "name": "PARTITION_HASH_LEN",
+            "description": "Partition hash field length in bytes.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "usize"
+            },
+            "signature": "pub const PARTITION_HASH_LEN: usize = 32;"
+          },
+          {
+            "name": "PARTITION_SET_UUID_LEN",
+            "description": "Opaque Partition Set UUID length in bytes.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "usize"
+            },
+            "signature": "pub const PARTITION_SET_UUID_LEN: usize = 16;"
+          },
+          {
+            "name": "PARTITION_MAX_SUPPORTED_COUNT",
+            "description": "Default implementation limit for Total Partitions.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "partition_manifest",
+              "path": "src/partition_manifest.rs",
+              "returns": "u32"
+            },
+            "signature": "pub const PARTITION_MAX_SUPPORTED_COUNT: u32 = 65535;"
           }
         ]
       },
@@ -4297,6 +4529,79 @@
               "returns": "Result<(), SarError>"
             },
             "signature": "pub fn verify_content_hash(algo_id: Option<u8>, expected: Option<[u8; 32]>, gathered: &[u8], sparse: Option<(&[SparseExtent], u64)>) -> Result<(), SarError>"
+          },
+          {
+            "name": "ArchiveWriter::with_partition_manifest",
+            "description": "Configures the writer as one physical Partition with a terminal Manifest and computed Current Partition Hash.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs",
+              "returns": "Result<Self, SarError>"
+            },
+            "signature": "pub fn with_partition_manifest(self, params: PartitionManifestParams) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::Unsupported",
+              "SarError::ReservedValue",
+              "SarError::LimitExceeded"
+            ]
+          },
+          {
+            "name": "ArchiveReader::inspect_partition",
+            "description": "Validates a source as exactly one physical Partition; consumes the reader. Generic reader paths still reject PARTITIONED_ARCHIVE.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs",
+              "returns": "Result<ValidatedPartition, SarError>"
+            },
+            "signature": "pub fn inspect_partition(self) -> Result<ValidatedPartition, SarError>",
+            "errors": [
+              "SarError::HashMismatch",
+              "SarError::MetadataMissing",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::Malformed",
+              "SarError::AuthFailed",
+              "SarError::KeyMissing"
+            ]
+          },
+          {
+            "name": "ArchiveReader::inspect_partition_with_max_partitions",
+            "description": "Same as inspect_partition with an explicit Total Partitions limit.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs",
+              "returns": "Result<ValidatedPartition, SarError>"
+            },
+            "signature": "pub fn inspect_partition_with_max_partitions(self, max_partitions: u32) -> Result<ValidatedPartition, SarError>",
+            "errors": [
+              "SarError::LimitExceeded",
+              "SarError::HashMismatch"
+            ]
           }
         ],
         "types": [
@@ -5238,6 +5543,42 @@
             },
             "kind": "struct",
             "signature": "pub struct FragmentGroup { pub fragment_id: u32, pub name: String, pub index0: Option<EntryMetadata>, pub terminal_crc32: Option<u32>, pub terminal_content_hash: Option<[u8; 32]>, pub terminal_hash_algo_id: Option<u8> /* + private fragment entries */ }"
+          },
+          {
+            "name": "PartitionManifestParams",
+            "description": "Identity/ordering fields for the Partition Manifest written by ArchiveWriter::finish.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionManifestParams { pub partition_set_uuid: [u8; 16], pub partition_index: u32, pub total_partitions: u32, pub final_partition: bool, pub hash_algorithm_id: u8, pub previous_partition_hash: [u8; 32] }"
+          },
+          {
+            "name": "ValidatedPartition",
+            "description": "Result of ArchiveReader::inspect_partition for one physically validated Partition. Private fields and no public constructor: it cannot be forged without inspection. Not a Partition Set: predecessor link is unverified and set status is NotEvaluated.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct ValidatedPartition { .. }"
           }
         ],
         "constants": [
@@ -7870,22 +8211,78 @@
     {
       "name": "sar-partition",
       "path": "crates/sar-partition",
-      "description": "Partition/multi-volume archive support. Deliberately deferred in M11c. GlobalFlags::PARTITIONED_ARCHIVE remains in sar-core; processing entry points return Unsupported until partition support is implemented.",
-      "status": "deferred",
+      "description": "Status vocabulary for one physical Partition (M13b.3 P1). Holds no constructor for validated results: the validated type lives in sar-archive. Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, KMS consistency and extraction remain deferred (M13-BOUNDARY-003 open).",
+      "status": "partial",
       "api": {
         "functions": [],
-        "types": [],
+        "types": [
+          {
+            "name": "ManifestAuthentication",
+            "description": "Whether the Manifest payload was AEAD-authenticated.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum ManifestAuthentication { Unauthenticated, Aead }"
+          },
+          {
+            "name": "PredecessorLink",
+            "description": "Declared predecessor link; never verified in P1.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum PredecessorLink { NotApplicable, Unverified([u8; 32]) }"
+          },
+          {
+            "name": "PartitionSetStatus",
+            "description": "Partition Set evaluation status; always NotEvaluated in P1.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "lib",
+              "path": "src/lib.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum PartitionSetStatus { NotEvaluated }"
+          }
+        ],
         "constants": []
       },
       "metadata": {
         "milestones": [
-          "M11c-deferred"
+          "M11c-deferred",
+          "M13b.3-P1"
         ],
         "modules": [
           {
             "name": "lib",
             "path": "src/lib.rs",
-            "item_count": 0
+            "item_count": 3
           }
         ]
       }

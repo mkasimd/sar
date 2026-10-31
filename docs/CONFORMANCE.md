@@ -529,7 +529,7 @@ Integration tests that depend on a successful CLI extraction are `#[cfg(unix)]`,
 - Profile validation helpers are useful but are not a complete standalone conformance oracle.
 - Platform-specific metadata restoration behavior remains policy-gated and best-effort where supported.
 - No stable C ABI/Python/mobile binding surface is implemented in M1-M12b (future milestones).
-- Partition Set conformance coverage is deferred; `sar-partition` is a placeholder. Partition Set semantics are specified in `specification.md` Section 19.1; no Partition Set implementation or test vectors exist.
+- Partition Set conformance coverage is deferred. P1 (SAR-M13b3-PARTITION-P1-IMPLEMENTATION-001) covers individual physical Partition validation only (Manifest Version 1 codec, terminal Manifest LFH, Current Partition Hash over `Partition[0..Committed Content Length)`, local CD/Footer, Data Area CRC32, AEAD-authenticated Manifest when `ENCRYPTED`) with deterministic codec and physical-Partition tests in `crates/sar-archive/tests/partition_p1_tests.rs`. Terminology: *decoded Manifest fields* (`PartitionManifestV1`, field-validated only) are distinct from a *locally validated physical Partition* (`sar_archive::ValidatedPartition`, produced only by `ArchiveReader::inspect_partition`); its predecessor link is reported as `Unverified` (never compared with any predecessor) and its set status is `NotEvaluated`; a plaintext Manifest is `Unauthenticated`. No Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, set-wide KMS or extraction exists, and no Partition Set test vectors exist.
 - Cold-storage and tape profile vectors remain deferred (see `test-vectors/profiles/README.md`).
 - Independent conformance certification is not claimed.
 

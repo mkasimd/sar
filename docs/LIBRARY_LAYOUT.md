@@ -24,7 +24,7 @@ Repository root crates:
 - `sar-loss-tolerant`
 - `sar-stream`
 - `sar-transport`
-- `sar-partition` (deferred placeholder)
+- `sar-partition` (single-Partition status enums; Partition Set logic deferred)
 
 Other top-level directories:
 - `fuzz/` — libFuzzer fuzz workspace (M12b). A separate Cargo workspace containing fuzz targets
