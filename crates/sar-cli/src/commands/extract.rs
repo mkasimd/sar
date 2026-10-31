@@ -30,7 +30,7 @@ pub(crate) fn extract_archive(
 ) -> Result<(), SarError> {
     validate_extract_metadata_support(metadata)?;
     // The root is resolved exactly once; every later mutation is relative to it.
-    let root = ExtractionRoot::open(&output_dir)?;
+    let root = ExtractionRoot::open(&output_dir, limits)?;
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
         ArchiveReaderOptions {
@@ -271,4 +271,90 @@ fn extract_symlink_entry(
     validate_symlink_target(rel, target)?;
 
     root.create_symlink(rel, target)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::{fs, path::Path};
+
+    use sar_archive::{ArchiveWriter, ArchiveWriterOptions, EntryInput};
+    use sar_core::{ResourceLimits, SarStatus};
+    use tempfile::tempdir;
+
+    use super::extract_archive;
+    use crate::extraction::{policy::ExtractMetadataOptions, root::test_hooks};
+
+    fn write_archive(path: &Path, entries: Vec<EntryInput>) {
+        let mut file = fs::File::create(path).expect("archive file");
+        let mut writer =
+            ArchiveWriter::new(&mut file, ArchiveWriterOptions::default()).expect("writer");
+        for entry in entries {
+            writer.add_entry(entry).expect("entry");
+        }
+        writer.finish().expect("finish");
+    }
+
+    fn extract(archive: &Path, out: &Path) -> Result<(), sar_core::SarError> {
+        extract_archive(
+            archive.to_path_buf(),
+            out.to_path_buf(),
+            None,
+            false,
+            ResourceLimits::default(),
+            ExtractMetadataOptions::default(),
+        )
+    }
+
+    struct ClearHook;
+    impl Drop for ClearHook {
+        fn drop(&mut self) {
+            test_hooks::clear();
+        }
+    }
+
+    /// Makes the second archive path reach the first one's object, as a
+    /// case-folding or normalizing destination filesystem would, so the full
+    /// extraction pipeline reports the collision on any host filesystem.
+    #[test]
+    fn colliding_destination_objects_fail_extraction_with_status_700() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        write_archive(
+            &archive,
+            vec![
+                EntryInput::file("Readme", b"owner".to_vec()),
+                EntryInput::file("README", b"intruder".to_vec()),
+            ],
+        );
+        let out = td.path().join("out");
+        let (first, alias) = (out.join("Readme"), out.join("README"));
+        test_hooks::install(move |point| {
+            if point == "before-publish" && first.exists() && !alias.exists() {
+                fs::hard_link(&first, &alias).expect("alias");
+            }
+        });
+        let _guard = ClearHook;
+
+        let err = extract(&archive, &out).expect_err("collision");
+
+        assert_eq!(err.status(), SarStatus::ErrPathCollision);
+        assert_eq!(fs::read(out.join("Readme")).expect("read"), b"owner");
+        assert_eq!(fs::read(out.join("README")).expect("read"), b"owner");
+    }
+
+    #[test]
+    fn repeated_identical_paths_still_extract_with_the_last_entry_winning() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        write_archive(
+            &archive,
+            vec![
+                EntryInput::file("dup", b"first".to_vec()),
+                EntryInput::file("dup", b"second".to_vec()),
+            ],
+        );
+        let out = td.path().join("out");
+        extract(&archive, &out).expect("repeated path is not a collision");
+        assert_eq!(fs::read(out.join("dup")).expect("read"), b"second");
+    }
 }

@@ -14,20 +14,22 @@
 //! was opened. Only portable POSIX primitives are used (no `openat2`).
 
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     fs::{self, File},
     io,
     path::Path,
+    rc::Rc,
 };
 
 use rustix::{
     fd::OwnedFd,
-    fs::{AtFlags, FileType, Mode, OFlags, RawMode},
+    fs::{AtFlags, FileType, Mode, OFlags, RawMode, Stat},
     io::Errno,
 };
-use sar_core::SarError;
+use sar_core::{ResourceLimits, SarError};
 
 use crate::extraction::{
+    collision::{CollisionLedger, NodeId, ObjectId, ROOT_NODE},
     metadata::apply_fd_metadata,
     paths::{SafeRelativePath, check_plain_components},
     policy::ExtractMetadataOptions,
@@ -45,6 +47,21 @@ fn directory_flags() -> OFlags {
 
 fn io_error(errno: Errno) -> SarError {
     SarError::Io(io::Error::from(errno))
+}
+
+fn widen<T: TryInto<u64>>(value: T) -> Result<u64, SarError> {
+    value
+        .try_into()
+        .map_err(|_| SarError::Overflow("filesystem object identity"))
+}
+
+/// Identity of the object a `stat` result describes: device and inode, which
+/// the destination filesystem itself assigns, whatever names reach the object.
+fn object_id(stat: &Stat) -> Result<ObjectId, SarError> {
+    Ok(ObjectId::Inode {
+        device: widen(stat.st_dev)?,
+        inode: widen(stat.st_ino)?,
+    })
 }
 
 fn raw_mode(mode: u32) -> Result<Mode, SarError> {
@@ -91,14 +108,32 @@ fn hook(_point: &str) {
     test_hooks::fire(_point);
 }
 
-/// Open directory descriptor fixing the extraction scope for one run.
+/// Fails with `PathCollision` when the object currently reachable as `name`
+/// is owned by a different logical path. Nothing is followed or modified; a
+/// missing name or an object this run never claimed is not a collision.
+fn check_final_name(
+    ledger: &RefCell<CollisionLedger>,
+    dir: &OwnedFd,
+    name: &str,
+    node: NodeId,
+) -> Result<(), SarError> {
+    match rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) => ledger.borrow().check(node, &object_id(&stat)?),
+        Err(Errno::NOENT) => Ok(()),
+        Err(errno) => Err(io_error(errno)),
+    }
+}
+
+/// Open directory descriptor fixing the extraction scope for one run, together
+/// with the ledger of which logical path owns which destination object.
 pub(crate) struct ExtractionRoot {
     dir: OwnedFd,
+    ledger: Rc<RefCell<CollisionLedger>>,
 }
 
 impl ExtractionRoot {
     /// Creates the root if missing, then resolves it once and anchors it.
-    pub(crate) fn open(path: &Path) -> Result<Self, SarError> {
+    pub(crate) fn open(path: &Path, limits: ResourceLimits) -> Result<Self, SarError> {
         fs::create_dir_all(path)?;
         let dir = rustix::fs::open(
             path,
@@ -106,23 +141,37 @@ impl ExtractionRoot {
             Mode::empty(),
         )
         .map_err(io_error)?;
-        Ok(Self { dir })
+        Ok(Self {
+            dir,
+            ledger: Rc::new(RefCell::new(CollisionLedger::new(limits))),
+        })
     }
 
-    /// Walks `components` below the root, creating missing directories.
-    fn ensure_directory(&self, components: &[String]) -> Result<OwnedFd, SarError> {
-        self.walk(components, true)
+    /// Walks `components` below the root, creating missing directories. Every
+    /// directory reached is claimed for its logical prefix; reaching one that a
+    /// differently spelled prefix already owns is a collision. That check runs
+    /// right after the component is opened, and a component that was created
+    /// by this walk is empty and unaliased, so no mutation can precede it.
+    fn ensure_directory(&self, components: &[String]) -> Result<(OwnedFd, NodeId), SarError> {
+        let mut current = self.dir.try_clone()?;
+        let mut node = ROOT_NODE;
+        for component in components {
+            current = open_component(&current, component, true)?;
+            let stat = rustix::fs::fstat(&current).map_err(io_error)?;
+            let id = object_id(&stat)?;
+            let mut ledger = self.ledger.borrow_mut();
+            ledger.check_candidate(node, component, &id)?;
+            node = ledger.child(node, component)?;
+            ledger.claim(node, id)?;
+        }
+        Ok((current, node))
     }
 
-    /// Walks `components` below the root without creating anything.
+    /// Walks `components` below the root without creating or claiming anything.
     fn open_directory(&self, components: &[String]) -> Result<OwnedFd, SarError> {
-        self.walk(components, false)
-    }
-
-    fn walk(&self, components: &[String], create: bool) -> Result<OwnedFd, SarError> {
         let mut current = self.dir.try_clone()?;
         for component in components {
-            current = open_component(&current, component, create)?;
+            current = open_component(&current, component, false)?;
         }
         Ok(current)
     }
@@ -133,13 +182,32 @@ impl ExtractionRoot {
         self.ensure_directory(rel.components()).map(drop)
     }
 
+    /// Resolves the destination directory and the logical node of the final
+    /// name, refusing to continue when the final name already reaches an
+    /// object owned by a different logical path.
+    fn prepare_final(&self, rel: &SafeRelativePath) -> Result<(OwnedFd, NodeId, String), SarError> {
+        let (dir, parent) = self.ensure_directory(rel.parent_components())?;
+        let final_name = rel.file_name()?.to_string();
+        match rustix::fs::statat(&dir, final_name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => {
+                let id = object_id(&stat)?;
+                self.ledger
+                    .borrow()
+                    .check_candidate(parent, &final_name, &id)?;
+            }
+            Err(Errno::NOENT) => {}
+            Err(errno) => return Err(io_error(errno)),
+        }
+        let node = self.ledger.borrow_mut().child(parent, &final_name)?;
+        Ok((dir, node, final_name))
+    }
+
     /// Stages a new regular file next to its final name. The staging file is
     /// always created private (0600, subject to the umask) and stays so until
     /// publication, when `publish` gives it the mode an ordinary `creat(0666)`
     /// would have received unless permission restoration set one.
     pub(crate) fn stage_file(&self, rel: &SafeRelativePath) -> Result<StagedFile, SarError> {
-        let dir = self.ensure_directory(rel.parent_components())?;
-        let final_name = rel.file_name()?.to_string();
+        let (dir, node, final_name) = self.prepare_final(rel)?;
         reject_existing_directory(
             &dir,
             &final_name,
@@ -155,10 +223,14 @@ impl ExtractionRoot {
                 mode,
             )
         })?;
+        let staged_id = object_id(&rustix::fs::fstat(&fd).map_err(io_error)?)?;
         Ok(StagedFile {
             dir,
             temp_name,
             final_name,
+            ledger: Rc::clone(&self.ledger),
+            node,
+            staged_id,
             file: File::from(fd),
             permissions_restored: Cell::new(false),
             published: false,
@@ -172,8 +244,8 @@ impl ExtractionRoot {
         rel: &SafeRelativePath,
         target: &str,
     ) -> Result<(), SarError> {
-        let dir = self.ensure_directory(rel.parent_components())?;
-        let final_name = rel.file_name()?;
+        let (dir, node, final_name) = self.prepare_final(rel)?;
+        let final_name = final_name.as_str();
         reject_existing_directory(
             &dir,
             final_name,
@@ -181,11 +253,31 @@ impl ExtractionRoot {
         )?;
         hook("after-parent-open");
         let ((), temp_name) = create_unique(|name| rustix::fs::symlinkat(target, &dir, name))?;
-        hook("before-publish");
-        if let Err(errno) = rustix::fs::renameat(&dir, temp_name.as_str(), &dir, final_name) {
+        let published = self.publish_symlink(&dir, &temp_name, final_name, node);
+        if published.is_err() {
             let _ = rustix::fs::unlinkat(&dir, temp_name.as_str(), AtFlags::empty());
+        }
+        published
+    }
+
+    fn publish_symlink(
+        &self,
+        dir: &OwnedFd,
+        temp_name: &str,
+        final_name: &str,
+        node: NodeId,
+    ) -> Result<(), SarError> {
+        let stat =
+            rustix::fs::statat(dir, temp_name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
+        let id = object_id(&stat)?;
+        hook("before-publish");
+        check_final_name(&self.ledger, dir, final_name, node)?;
+        let reservation = self.ledger.borrow_mut().reserve(node, &id)?;
+        if let Err(errno) = rustix::fs::renameat(dir, temp_name, dir, final_name) {
+            self.ledger.borrow_mut().release(reservation);
             return Err(io_error(errno));
         }
+        self.ledger.borrow_mut().commit(node, id, reservation);
         Ok(())
     }
 
@@ -284,6 +376,9 @@ pub(crate) struct StagedFile {
     dir: OwnedFd,
     temp_name: String,
     final_name: String,
+    ledger: Rc<RefCell<CollisionLedger>>,
+    node: NodeId,
+    staged_id: ObjectId,
     file: File,
     permissions_restored: Cell<bool>,
     published: bool,
@@ -337,14 +432,26 @@ impl StagedFile {
             rustix::fs::fchmod(&self.file, mode).map_err(io_error)?;
         }
         hook("before-publish");
-        rustix::fs::renameat(
+        // Re-checked at the last moment: the final name may have come to reach
+        // an object owned by another logical path since staging began.
+        check_final_name(&self.ledger, &self.dir, &self.final_name, self.node)?;
+        let reservation = self
+            .ledger
+            .borrow_mut()
+            .reserve(self.node, &self.staged_id)?;
+        if let Err(errno) = rustix::fs::renameat(
             &self.dir,
             self.temp_name.as_str(),
             &self.dir,
             self.final_name.as_str(),
-        )
-        .map_err(io_error)?;
+        ) {
+            self.ledger.borrow_mut().release(reservation);
+            return Err(io_error(errno));
+        }
         self.published = true;
+        self.ledger
+            .borrow_mut()
+            .commit(self.node, self.staged_id.clone(), reservation);
         Ok(())
     }
 }
@@ -368,7 +475,7 @@ mod tests {
     };
 
     use rustix::fs::{Mode, OFlags};
-    use sar_core::SarError;
+    use sar_core::{ResourceLimits, SarError};
     use tempfile::{TempDir, tempdir};
 
     use super::{ExtractionRoot, create_unique, test_hooks};
@@ -455,7 +562,7 @@ mod tests {
         let link = fx.root_path.join("link");
         symlink(&real, &link).expect("link");
 
-        let root = ExtractionRoot::open(&link).expect("open");
+        let root = ExtractionRoot::open(&link, ResourceLimits::default()).expect("open");
         fs::remove_file(&link).expect("remove link");
         symlink(&fx.outside, &link).expect("substitute root symlink");
 
@@ -478,7 +585,7 @@ mod tests {
         fs::write(fx.outside.join("file"), b"x").expect("file");
         symlink(fx.outside.join("file"), fx.root_path.join("s")).expect("file symlink");
         fs::write(fx.root_path.join("plain"), b"x").expect("plain");
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
 
         for parts in [&["d", "f"][..], &["s", "f"][..], &["d", "x", "f"][..]] {
             let err = root.stage_file(&rel(parts)).err().expect("refused");
@@ -501,7 +608,8 @@ mod tests {
     fn parent_replaced_after_check_cannot_redirect_staging_or_publication() {
         for point in ["after-parent-open", "before-publish"] {
             let fx = fixture();
-            let root = ExtractionRoot::open(&fx.root_path).expect("open");
+            let root =
+                ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
             root.create_directory(&rel(&["d"])).expect("mkdir");
             let _guard = swap_at(point, fx.root_path.join("d"), fx.outside.clone());
 
@@ -520,7 +628,8 @@ mod tests {
     fn parent_replaced_cannot_redirect_symlink_creation() {
         for point in ["after-parent-open", "before-publish"] {
             let fx = fixture();
-            let root = ExtractionRoot::open(&fx.root_path).expect("open");
+            let root =
+                ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
             root.create_directory(&rel(&["d"])).expect("mkdir");
             let _guard = swap_at(point, fx.root_path.join("d"), fx.outside.clone());
 
@@ -539,7 +648,7 @@ mod tests {
     #[test]
     fn directory_metadata_follows_descriptor_not_replaced_path() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         root.create_directory(&rel(&["d"])).expect("mkdir");
         fs::set_permissions(&fx.outside, fs::Permissions::from_mode(0o755)).expect("chmod");
         let outside_before = fs::metadata(&fx.outside).expect("stat");
@@ -576,7 +685,7 @@ mod tests {
     #[test]
     fn directory_metadata_refuses_component_replaced_before_open() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         root.create_directory(&rel(&["d"])).expect("mkdir");
         fs::set_permissions(&fx.outside, fs::Permissions::from_mode(0o755)).expect("chmod");
         swap_for_symlink(&fx.root_path.join("d"), &fx.outside);
@@ -594,7 +703,7 @@ mod tests {
     #[test]
     fn file_metadata_is_applied_to_staging_file_before_publication() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         let seen = Rc::new(RefCell::new(None));
         let observed = Rc::clone(&seen);
         let dir = fx.root_path.clone();
@@ -638,7 +747,7 @@ mod tests {
     fn staging_file_is_private_until_publication_then_gets_default_mode() {
         let fx = fixture();
         fs::set_permissions(&fx.root_path, fs::Permissions::from_mode(0o777)).expect("chmod");
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         let reference = fx.root_path.join("reference");
         fs::File::create(&reference).expect("reference");
         let default_mode = fs::metadata(&reference).expect("stat").mode() & 0o777;
@@ -681,7 +790,7 @@ mod tests {
     #[test]
     fn owner_restoration_uses_descriptor_and_never_follows_replaced_path() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         let uid = rustix::process::geteuid().as_raw();
         let gid = rustix::process::getegid().as_raw();
         let options = ExtractMetadataOptions {
@@ -723,7 +832,7 @@ mod tests {
     #[test]
     fn directories_are_never_group_or_world_accessible_while_created() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         let modes = Rc::new(RefCell::new(Vec::new()));
         let observed = Rc::clone(&modes);
         let base = fx.root_path.clone();
@@ -754,7 +863,7 @@ mod tests {
     #[test]
     fn maximum_length_basenames_stage_and_publish() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         for len in [250usize, 255] {
             let name = "n".repeat(len);
             let mut staged = root.stage_file(&rel(&[name.as_str()])).expect("stage");
@@ -776,7 +885,7 @@ mod tests {
     #[test]
     fn unpublished_staging_file_is_removed_on_drop() {
         let fx = fixture();
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         let staged = root.stage_file(&rel(&["f"])).expect("stage");
         assert_eq!(entries(&fx.root_path).len(), 1);
         drop(staged);
@@ -789,7 +898,7 @@ mod tests {
         let victim = fx.outside.join("victim");
         fs::write(&victim, b"keep").expect("victim");
         symlink(&victim, fx.root_path.join("taken")).expect("symlink");
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
 
         let errno = rustix::fs::openat(
             &root.dir,
@@ -813,7 +922,7 @@ mod tests {
         let victim = fx.outside.join("victim");
         fs::write(&victim, b"keep").expect("victim");
         fs::hard_link(&victim, fx.root_path.join("l")).expect("hardlink");
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
 
         root.create_symlink(&rel(&["l"]), "t").expect("symlink");
 
@@ -825,7 +934,7 @@ mod tests {
     fn refuses_replacing_existing_directory() {
         let fx = fixture();
         fs::create_dir(fx.root_path.join("d")).expect("dir");
-        let root = ExtractionRoot::open(&fx.root_path).expect("open");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
         assert!(root.stage_file(&rel(&["d"])).is_err());
         assert!(root.create_symlink(&rel(&["d"]), "t").is_err());
         assert!(fx.root_path.join("d").is_dir());
@@ -836,5 +945,379 @@ mod tests {
         assert!(SafeRelativePath::from_components(vec!["..".to_string()]).is_err());
         assert!(SafeRelativePath::from_components(vec!["a/b".to_string()]).is_err());
         assert!(SafeRelativePath::from_components(vec![".".to_string()]).is_err());
+    }
+
+    fn publish_bytes(root: &ExtractionRoot, parts: &[&str], data: &[u8]) -> Result<(), SarError> {
+        use std::io::Write;
+        let mut staged = root.stage_file(&rel(parts))?;
+        staged.file_mut().write_all(data).expect("write");
+        staged.publish()
+    }
+
+    fn is_collision(result: Result<(), SarError>) -> bool {
+        matches!(result, Err(SarError::PathCollision(_)))
+    }
+
+    /// Directory for filesystem-behavior probes. `SAR_TEST_FS_PROBE_DIR` may
+    /// name a directory on a case-insensitive or normalizing filesystem (for
+    /// example a casefold ext4/tmpfs directory or an APFS volume).
+    fn probe_dir() -> TempDir {
+        match std::env::var_os("SAR_TEST_FS_PROBE_DIR") {
+            Some(base) => tempfile::tempdir_in(base).expect("probe dir"),
+            None => tempdir().expect("probe dir"),
+        }
+    }
+
+    fn fs_folds_case(dir: &Path) -> bool {
+        fs::write(dir.join("Probe-Case"), b"").expect("probe");
+        let folds = fs::symlink_metadata(dir.join("probe-case")).is_ok();
+        fs::remove_file(dir.join("Probe-Case")).expect("cleanup");
+        folds
+    }
+
+    fn fs_folds_unicode_normalization(dir: &Path) -> bool {
+        fs::write(dir.join("Probe-\u{e9}"), b"").expect("probe");
+        let folds = fs::symlink_metadata(dir.join("Probe-e\u{301}")).is_ok();
+        fs::remove_file(dir.join("Probe-\u{e9}")).expect("cleanup");
+        folds
+    }
+
+    #[test]
+    fn distinct_paths_without_a_filesystem_collision_extract_normally() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["Dir", "a"], b"1").expect("Dir/a");
+        publish_bytes(&root, &["dir", "a"], b"2").expect("dir/a");
+        publish_bytes(&root, &["b"], b"3").expect("b");
+        root.create_symlink(&rel(&["c"]), "b").expect("symlink");
+        // Only meaningful on a case-sensitive destination, where the two
+        // spellings are different objects; folding hosts are covered below.
+        if !fs_folds_case(&fx.root_path) {
+            assert_eq!(fs::read(fx.root_path.join("Dir/a")).expect("read"), b"1");
+            assert_eq!(fs::read(fx.root_path.join("dir/a")).expect("read"), b"2");
+        }
+    }
+
+    #[test]
+    fn repeated_identical_logical_path_is_not_a_collision() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["d", "f"], b"first").expect("first");
+        publish_bytes(&root, &["d", "f"], b"second").expect("repeat");
+        root.create_directory(&rel(&["d"])).expect("repeated dir");
+        root.create_symlink(&rel(&["l"]), "t").expect("link");
+        root.create_symlink(&rel(&["l"]), "u")
+            .expect("repeated link");
+        assert_eq!(fs::read(fx.root_path.join("d/f")).expect("read"), b"second");
+        assert_eq!(
+            fs::read_link(fx.root_path.join("l")).expect("link"),
+            Path::new("u")
+        );
+    }
+
+    #[test]
+    fn replaced_object_does_not_leave_a_stale_identity_behind() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        // Repeatedly replacing one path frees and recycles inode numbers while
+        // other paths keep being created; none of that may look like a collision.
+        for round in 0..32 {
+            publish_bytes(&root, &["a"], format!("a{round}").as_bytes()).expect("a");
+            publish_bytes(&root, &[format!("n{round}").as_str()], b"n").expect("n");
+        }
+    }
+
+    #[test]
+    fn existing_destination_objects_without_a_competing_archive_path_are_replaced() {
+        let fx = fixture();
+        fs::write(fx.root_path.join("keep"), b"old").expect("old");
+        fs::write(fx.root_path.join("twin-a"), b"shared").expect("twin");
+        fs::hard_link(fx.root_path.join("twin-a"), fx.root_path.join("twin-b")).expect("alias");
+        fs::create_dir(fx.root_path.join("existing")).expect("dir");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+
+        publish_bytes(&root, &["keep"], b"new").expect("replace pre-existing file");
+        publish_bytes(&root, &["existing", "f"], b"x").expect("reuse pre-existing directory");
+        // Pre-existing aliases are unrelated to each other: each archive path
+        // replaces only its own name.
+        publish_bytes(&root, &["twin-a"], b"a").expect("twin-a");
+        publish_bytes(&root, &["twin-b"], b"b").expect("twin-b");
+        assert_eq!(fs::read(fx.root_path.join("keep")).expect("read"), b"new");
+        assert_eq!(fs::read(fx.root_path.join("twin-a")).expect("read"), b"a");
+        assert_eq!(fs::read(fx.root_path.join("twin-b")).expect("read"), b"b");
+    }
+
+    #[test]
+    fn alias_to_an_object_owned_by_another_path_is_refused_before_mutation() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["sub", "first"], b"owner").expect("first");
+        // A second name for the same object, as a folding or normalizing
+        // filesystem would present for a differently spelled path.
+        fs::hard_link(
+            fx.root_path.join("sub/first"),
+            fx.root_path.join("sub/alias"),
+        )
+        .expect("alias");
+
+        let err = root
+            .stage_file(&rel(&["sub", "alias"]))
+            .err()
+            .expect("refused");
+        assert!(matches!(err, SarError::PathCollision(_)), "{err:?}");
+        assert_eq!(
+            entries(&fx.root_path.join("sub")),
+            vec!["alias".to_string(), "first".to_string()],
+            "no staging file was created"
+        );
+        assert_eq!(
+            fs::read(fx.root_path.join("sub/first")).expect("read"),
+            b"owner"
+        );
+        assert_eq!(
+            fs::read(fx.root_path.join("sub/alias")).expect("read"),
+            b"owner"
+        );
+        // The owning path itself is still a plain repeat.
+        publish_bytes(&root, &["sub", "first"], b"again").expect("repeat");
+    }
+
+    #[test]
+    fn alias_to_a_symlink_owned_by_another_path_is_refused() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        root.create_symlink(&rel(&["one"]), "target")
+            .expect("symlink");
+        if fs::hard_link(fx.root_path.join("one"), fx.root_path.join("two")).is_err() {
+            eprintln!("SKIPPED: hard links to symlinks are unavailable on this filesystem");
+            return;
+        }
+        assert!(is_collision(root.create_symlink(&rel(&["two"]), "other")));
+        assert!(is_collision(root.stage_file(&rel(&["two"])).map(drop)));
+        assert_eq!(
+            fs::read_link(fx.root_path.join("one")).expect("link"),
+            Path::new("target")
+        );
+        assert_eq!(
+            entries(&fx.root_path),
+            vec!["one".to_string(), "two".to_string()]
+        );
+    }
+
+    #[test]
+    fn alias_appearing_after_staging_is_caught_before_publication() {
+        for symlink_entry in [false, true] {
+            let fx = fixture();
+            let root =
+                ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+            publish_bytes(&root, &["first"], b"owner").expect("first");
+            let first = fx.root_path.join("first");
+            let alias = fx.root_path.join("alias");
+            test_hooks::install(move |point| {
+                if point == "before-publish" && !alias.exists() {
+                    fs::hard_link(&first, &alias).expect("alias");
+                }
+            });
+            let _guard = HookGuard;
+
+            let result = if symlink_entry {
+                root.create_symlink(&rel(&["alias"]), "t")
+            } else {
+                publish_bytes(&root, &["alias"], b"intruder")
+            };
+
+            assert!(is_collision(result), "symlink_entry={symlink_entry}");
+            assert_eq!(
+                fs::read(fx.root_path.join("first")).expect("read"),
+                b"owner"
+            );
+            assert_eq!(
+                fs::read(fx.root_path.join("alias")).expect("read"),
+                b"owner"
+            );
+            assert!(
+                entries(&fx.root_path)
+                    .iter()
+                    .all(|name| !name.starts_with(".sar-tmp-")),
+                "staging object removed"
+            );
+        }
+    }
+
+    #[test]
+    fn collisions_never_touch_objects_outside_the_root_and_symlinks_stay_refused() {
+        let fx = fixture();
+        let victim = fx.outside.join("victim");
+        fs::write(&victim, b"keep").expect("victim");
+        symlink(&fx.outside, fx.root_path.join("d")).expect("dir symlink");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+
+        let err = root
+            .stage_file(&rel(&["d", "victim"]))
+            .err()
+            .expect("refused");
+        assert!(matches!(&err, SarError::PathEscape(_)), "{err:?}");
+        assert_eq!(fs::read(&victim).expect("read"), b"keep");
+        assert_eq!(entries(&fx.outside), vec!["victim".to_string()]);
+    }
+
+    #[test]
+    fn collision_bookkeeping_is_bounded_by_the_pipeline_memory_limit() {
+        let fx = fixture();
+        let limits = ResourceLimits {
+            max_total_pipeline_memory: 2048,
+            ..ResourceLimits::default()
+        };
+        let root = ExtractionRoot::open(&fx.root_path, limits).expect("open");
+        let mut failure = None;
+        for index in 0..64 {
+            let name = format!("f{index}");
+            if let Err(err) = publish_bytes(&root, &[name.as_str()], b"x") {
+                failure = Some(err);
+                break;
+            }
+        }
+        let err = failure.expect("limit reached");
+        assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        assert!(
+            entries(&fx.root_path)
+                .iter()
+                .all(|name| !name.starts_with(".sar-tmp-"))
+        );
+    }
+
+    #[test]
+    fn case_insensitive_filesystems_report_collisions_for_differently_cased_paths() {
+        let probe = probe_dir();
+        if !fs_folds_case(probe.path()) {
+            eprintln!("SKIPPED: destination filesystem is case-sensitive");
+            return;
+        }
+        let root = ExtractionRoot::open(probe.path(), ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["Readme"], b"upper").expect("first");
+        assert!(is_collision(publish_bytes(&root, &["README"], b"lower")));
+        assert_eq!(
+            fs::read(probe.path().join("Readme")).expect("read"),
+            b"upper"
+        );
+
+        // Nested: differently cased intermediate directories name one directory.
+        publish_bytes(&root, &["Dir", "x"], b"x").expect("Dir/x");
+        assert!(is_collision(publish_bytes(&root, &["dir", "y"], b"y")));
+        assert!(is_collision(root.create_directory(&rel(&["DIR"]))));
+        assert_eq!(entries(&probe.path().join("Dir")), vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn normalizing_filesystems_report_collisions_for_equivalent_unicode_paths() {
+        let probe = probe_dir();
+        if !fs_folds_unicode_normalization(probe.path()) {
+            eprintln!("SKIPPED: destination filesystem does not normalize Unicode names");
+            return;
+        }
+        let root = ExtractionRoot::open(probe.path(), ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["caf\u{e9}"], b"nfc").expect("first");
+        assert!(is_collision(publish_bytes(&root, &["cafe\u{301}"], b"nfd")));
+        publish_bytes(&root, &["d\u{e9}", "f"], b"1").expect("nested first");
+        assert!(is_collision(publish_bytes(
+            &root,
+            &["de\u{301}", "g"],
+            b"2"
+        )));
+    }
+
+    /// Ledger bytes for one top-level one-byte-named object: the logical node
+    /// (128 + 1 component byte) plus the claimed object (128).
+    const ONE_OBJECT_BUDGET: u64 = 128 + 1 + 128;
+
+    fn tight(extra: i64) -> ResourceLimits {
+        ResourceLimits {
+            max_total_pipeline_memory: ONE_OBJECT_BUDGET.checked_add_signed(extra).expect("limit"),
+            ..ResourceLimits::default()
+        }
+    }
+
+    fn used(root: &ExtractionRoot) -> u64 {
+        root.ledger.borrow().used_bytes()
+    }
+
+    fn publish_kind(
+        root: &ExtractionRoot,
+        symlink_entry: bool,
+        name: &str,
+    ) -> Result<(), SarError> {
+        if symlink_entry {
+            root.create_symlink(&rel(&[name]), "t")
+        } else {
+            publish_bytes(root, &[name], b"x")
+        }
+    }
+
+    #[test]
+    fn publication_at_the_exact_ledger_limit_succeeds_and_one_byte_less_fails_cleanly() {
+        for symlink_entry in [false, true] {
+            let fx = fixture();
+            let root = ExtractionRoot::open(&fx.root_path, tight(0)).expect("open");
+            publish_kind(&root, symlink_entry, "f").expect("exact limit");
+            assert!(fs::symlink_metadata(fx.root_path.join("f")).is_ok());
+            assert_eq!(used(&root), ONE_OBJECT_BUDGET);
+
+            let fx = fixture();
+            let root = ExtractionRoot::open(&fx.root_path, tight(-1)).expect("open");
+            let err = publish_kind(&root, symlink_entry, "f").expect_err("one byte short");
+            assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+            // Refused before publication: no final object, no staging leftovers.
+            assert!(entries(&fx.root_path).is_empty(), "symlink={symlink_entry}");
+            assert_eq!(used(&root), 128 + 1, "reservation was not retained");
+        }
+    }
+
+    #[test]
+    fn failed_rename_releases_the_reserved_capacity() {
+        for symlink_entry in [false, true] {
+            let fx = fixture();
+            let root = ExtractionRoot::open(&fx.root_path, tight(0)).expect("open");
+            let target = fx.root_path.join("f");
+            // An unclaimed directory appearing at the final name makes the
+            // rename fail after the reservation was taken.
+            test_hooks::install(move |point| {
+                if point == "before-publish" && !target.exists() {
+                    fs::create_dir(&target).expect("obstacle");
+                }
+            });
+            let guard = HookGuard;
+            let err = publish_kind(&root, symlink_entry, "f").expect_err("rename fails");
+            assert!(matches!(err, SarError::Io(_)), "{err:?}");
+            drop(guard);
+            assert_eq!(used(&root), 128 + 1, "reservation released");
+            assert_eq!(entries(&fx.root_path), vec!["f".to_string()]);
+
+            fs::remove_dir(fx.root_path.join("f")).expect("clear obstacle");
+            publish_kind(&root, symlink_entry, "f").expect("capacity is available again");
+            assert_eq!(used(&root), ONE_OBJECT_BUDGET);
+        }
+    }
+
+    #[test]
+    fn same_path_replacement_succeeds_under_a_tight_limit() {
+        for symlink_entry in [false, true] {
+            let fx = fixture();
+            let root = ExtractionRoot::open(&fx.root_path, tight(0)).expect("open");
+            for _ in 0..8 {
+                publish_kind(&root, symlink_entry, "f").expect("replacement at the boundary");
+                assert_eq!(used(&root), ONE_OBJECT_BUDGET);
+            }
+        }
+    }
+
+    #[test]
+    fn collision_takes_precedence_over_the_ledger_limit() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, tight(0)).expect("open");
+        publish_bytes(&root, &["f"], b"owner").expect("first");
+        fs::hard_link(fx.root_path.join("f"), fx.root_path.join("g")).expect("alias");
+        // "g" would not fit, but the alias is reported as the collision it is.
+        assert!(is_collision(publish_bytes(&root, &["g"], b"x")));
+        assert!(is_collision(root.create_symlink(&rel(&["g"]), "t")));
     }
 }
