@@ -9,7 +9,12 @@
 //! Cleanup only ever acts on a registered artifact, through that descriptor,
 //! and only while the name still reaches the registered identity. A name that
 //! merely looks like `.sar-tmp-*` is never evidence of ownership, and nothing
-//! scans the destination.
+//! scans the destination. A registered identity is only meaningful while the
+//! object is held open (staging and probe files through their descriptor,
+//! staging symlinks through a path-only descriptor, aside directories through
+//! their verified descriptor): otherwise a freed inode number can be reused by
+//! a substituted object. A staging symlink that cannot be held that way is
+//! registered without an identity and is never removed.
 //!
 //! Bookkeeping is bounded by `MAX_TRACKED_ARTIFACTS` (live and unresolved
 //! artifacts together); the bound is checked before the object is created.

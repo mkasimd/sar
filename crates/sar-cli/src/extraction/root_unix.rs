@@ -405,12 +405,22 @@ impl ExtractionRoot {
         hook("after-parent-open");
         let slot = self.journal.slot(&dir, &rel.display())?;
         let ((), temp_name) = create_unique(|name| rustix::fs::symlinkat(target, &dir, name))?;
+        // Held until publication or cleanup is over: it keeps the symlink's
+        // inode allocated, so no substituted object can reuse its identity.
+        let pin = pin_symlink(&dir, &temp_name);
         let id = rustix::fs::statat(&dir, temp_name.as_str(), AtFlags::SYMLINK_NOFOLLOW)
             .map_err(io_error)
             .and_then(|stat| object_id(&stat));
-        let token = self
-            .journal
-            .track_object(slot, &temp_name, id.as_ref().ok().cloned());
+        // Without a pin, a matching identity proves nothing once the link is
+        // gone; cleanup then leaves the name alone and reports it.
+        let removable = match (&pin, &id) {
+            (Some(pin), Ok(id)) => rustix::fs::fstat(pin)
+                .ok()
+                .and_then(|stat| object_id(&stat).ok())
+                .filter(|pinned| pinned == id),
+            _ => None,
+        };
+        let token = self.journal.track_object(slot, &temp_name, removable);
         let published = id.and_then(|id| {
             publish_replacing(
                 &self.ledger,
@@ -425,6 +435,7 @@ impl ExtractionRoot {
         if published.is_err() {
             let _ = self.journal.discard(token);
         }
+        drop(pin);
         published
     }
 
@@ -483,6 +494,25 @@ fn classify_open_failure(parent: &OwnedFd, name: &str, errno: Errno) -> SarError
         },
         Err(_) => io_error(errno),
     }
+}
+
+/// Opens the symlink `name` itself (never its target) as a path-only
+/// descriptor. `None` where the platform cannot open a symlink without
+/// following it, or if the open fails.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+fn pin_symlink(dir: &OwnedFd, name: &str) -> Option<OwnedFd> {
+    rustix::fs::openat(
+        dir,
+        name,
+        OFlags::PATH | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+fn pin_symlink(_dir: &OwnedFd, _name: &str) -> Option<OwnedFd> {
+    None
 }
 
 /// A fresh private name, independent of any archived name.
