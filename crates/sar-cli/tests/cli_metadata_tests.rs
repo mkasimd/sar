@@ -322,7 +322,8 @@ fn hostile_paths_are_rejected() {
             ])
             .assert()
             .failure()
-            .stderr(contains(expected));
+            .stderr(contains(expected))
+            .stderr(contains("SAR_ERR_PATH_ESCAPE"));
     }
 }
 
@@ -358,7 +359,10 @@ fn unsafe_symlink_targets_are_rejected() {
         ])
         .assert()
         .failure()
-        .stderr(contains("parent directory traversal"));
+        .stderr(contains("symlink target escapes"))
+        .stderr(contains("SAR_ERR_PATH_ESCAPE"));
+    assert!(!extract_dir.join("link").exists());
+    assert!(fs::symlink_metadata(extract_dir.join("link")).is_err());
 }
 
 #[cfg(unix)]
@@ -431,7 +435,9 @@ fn extraction_rejects_existing_symlink_parent_component() {
         ])
         .assert()
         .failure()
-        .stderr(contains("existing symlink"));
+        .stderr(contains("existing symlink"))
+        .stderr(contains("SAR_ERR_PATH_ESCAPE"));
+    assert!(fs::read_dir(&outside).expect("outside").next().is_none());
 }
 
 #[cfg(unix)]
@@ -538,4 +544,147 @@ fn create_follow_symlink_rejects_recursive_directory_cycle() {
         .assert()
         .failure()
         .stderr(contains("recursive symlink directory cycle"));
+}
+
+#[cfg(unix)]
+fn symlink_archive(dir: &Path, entries: &[(&str, &[u8])]) -> std::path::PathBuf {
+    let archive = dir.join("links.sar");
+    write_archive(
+        &archive,
+        ArchiveWriterOptions {
+            no_index: true,
+            with_symlinks: true,
+            ..Default::default()
+        },
+        entries
+            .iter()
+            .map(|(name, target)| EntryInput {
+                name: (*name).into(),
+                payload: target.to_vec(),
+                kind: Some(EntryKind::Symlink),
+                ..Default::default()
+            })
+            .collect(),
+    )
+    .expect("archive");
+    archive
+}
+
+#[cfg(unix)]
+fn extract_with_symlinks(archive: &Path, out: &Path) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args([
+            "extract",
+            archive.to_str().expect("str"),
+            out.to_str().expect("str"),
+            "--allow-symlinks",
+        ])
+        .assert()
+}
+
+#[cfg(unix)]
+#[test]
+fn confined_symlink_targets_are_created_verbatim_including_dangling() {
+    let td = tempdir().expect("tmp");
+    let targets = [
+        ("dot", "."),
+        ("lex", "sub/../ok"),
+        ("dangling", "does/not/exist"),
+        ("nested/in/up", "../../top"),
+        ("nested/in/root", "../.."),
+    ];
+    let entries: Vec<(&str, &[u8])> = targets
+        .iter()
+        .map(|(name, target)| (*name, target.as_bytes()))
+        .collect();
+    let archive = symlink_archive(td.path(), &entries);
+    let out = td.path().join("out");
+
+    extract_with_symlinks(&archive, &out).success();
+
+    for (name, target) in targets {
+        assert_eq!(
+            fs::read_link(out.join(name)).expect("read_link"),
+            Path::new(target),
+            "{name}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn unsafe_symlink_targets_report_path_escape_and_create_nothing() {
+    let cases: [(&str, &[u8]); 5] = [
+        ("l", b".."),
+        ("a/l", b"../../x"),
+        ("l", b"/etc/passwd"),
+        ("l", b"a\\b"),
+        ("l", b"C:/x"),
+    ];
+    for (name, target) in cases {
+        let td = tempdir().expect("tmp");
+        let archive = symlink_archive(td.path(), &[(name, target)]);
+        let out = td.path().join("out");
+        extract_with_symlinks(&archive, &out)
+            .failure()
+            .stderr(contains("SAR_ERR_PATH_ESCAPE"));
+        assert!(
+            fs::symlink_metadata(out.join(name)).is_err(),
+            "{name} -> {target:?} must not exist"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn malformed_symlink_target_payloads_stay_malformed() {
+    let td = tempdir().expect("tmp");
+    let archive = symlink_archive(td.path(), &[("l", b"a\0b")]);
+    let out = td.path().join("out");
+    extract_with_symlinks(&archive, &out)
+        .failure()
+        .stderr(contains("SAR_ERR_MALFORMED"));
+    assert!(fs::symlink_metadata(out.join("l")).is_err());
+
+    // Invalid UTF-8 is rejected as malformed at the library boundary.
+    let err = write_archive(
+        &td.path().join("bad.sar"),
+        ArchiveWriterOptions {
+            no_index: true,
+            with_symlinks: true,
+            ..Default::default()
+        },
+        vec![EntryInput {
+            name: "l".into(),
+            payload: vec![0xff, 0xfe],
+            kind: Some(EntryKind::Symlink),
+            ..Default::default()
+        }],
+    )
+    .expect_err("invalid UTF-8 target");
+    assert!(
+        matches!(
+            err.downcast_ref::<sar_core::SarError>(),
+            Some(sar_core::SarError::Malformed(_))
+        ),
+        "{err:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlink_entry_cannot_be_created_through_existing_symlink_directory() {
+    let td = tempdir().expect("tmp");
+    let archive = symlink_archive(td.path(), &[("d/l", b"x")]);
+    let outside = td.path().join("outside");
+    let out = td.path().join("out");
+    fs::create_dir_all(&outside).expect("outside");
+    fs::create_dir_all(&out).expect("out");
+    symlink(&outside, out.join("d")).expect("symlink");
+
+    extract_with_symlinks(&archive, &out)
+        .failure()
+        .stderr(contains("SAR_ERR_PATH_ESCAPE"));
+    assert!(fs::read_dir(&outside).expect("outside").next().is_none());
 }

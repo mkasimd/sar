@@ -39,7 +39,7 @@ impl ExtractionRoot {
             match fs::symlink_metadata(&current) {
                 Ok(metadata) => {
                     if metadata.file_type().is_symlink() {
-                        return Err(SarError::Malformed(
+                        return Err(SarError::PathEscape(
                             "refusing to traverse an existing symlink during extraction",
                         ));
                     }

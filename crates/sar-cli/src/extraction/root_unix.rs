@@ -28,7 +28,9 @@ use rustix::{
 use sar_core::SarError;
 
 use crate::extraction::{
-    metadata::apply_fd_metadata, paths::SafeRelativePath, policy::ExtractMetadataOptions,
+    metadata::apply_fd_metadata,
+    paths::{SafeRelativePath, check_plain_components},
+    policy::ExtractMetadataOptions,
 };
 
 const TEMP_PREFIX: &str = ".sar-tmp-";
@@ -204,11 +206,7 @@ impl ExtractionRoot {
 }
 
 fn open_component(parent: &OwnedFd, name: &str, create: bool) -> Result<OwnedFd, SarError> {
-    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
-        return Err(SarError::Malformed(
-            "path components must be single plain names",
-        ));
-    }
+    check_plain_components([name])?;
     match rustix::fs::openat(parent, name, directory_flags(), Mode::empty()) {
         Ok(fd) => return Ok(fd),
         Err(Errno::NOENT) if create => {}
@@ -235,7 +233,7 @@ fn classify_open_failure(parent: &OwnedFd, name: &str, errno: Errno) -> SarError
     match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) => match FileType::from_raw_mode(stat.st_mode) {
             FileType::Symlink => {
-                SarError::Malformed("refusing to traverse an existing symlink during extraction")
+                SarError::PathEscape("refusing to traverse an existing symlink during extraction")
             }
             FileType::Directory => io_error(errno),
             _ => SarError::Malformed("path component exists but is not a directory"),
@@ -485,7 +483,7 @@ mod tests {
         for parts in [&["d", "f"][..], &["s", "f"][..], &["d", "x", "f"][..]] {
             let err = root.stage_file(&rel(parts)).err().expect("refused");
             assert!(
-                matches!(&err, SarError::Malformed(msg) if msg.contains("existing symlink")),
+                matches!(&err, SarError::PathEscape(msg) if msg.contains("existing symlink")),
                 "{err:?}"
             );
         }
@@ -586,7 +584,7 @@ mod tests {
         let err = root
             .apply_directory_metadata(&rel(&["d"]), Some(0o500), None, None, WANT_PERMS_AND_TIMES)
             .expect_err("replaced component");
-        assert!(matches!(&err, SarError::Malformed(msg) if msg.contains("existing symlink")));
+        assert!(matches!(&err, SarError::PathEscape(msg) if msg.contains("existing symlink")));
         assert_eq!(
             fs::metadata(&fx.outside).expect("stat").mode() & 0o777,
             0o755
