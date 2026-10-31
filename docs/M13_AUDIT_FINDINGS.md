@@ -199,7 +199,7 @@ Registry status: `in_progress`
 | `M13-TRANSPORT-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules |
 | `M13-FFI-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | SarStatus registry does not implement the finalized Section 10 status model |
 | `M13-EXTRACT-007` | `implementation_defect` | `resolved` | `low` | `low` | `M13b.3` | `repair` writes its temporary output through a predictable, symlink-following path |
-| `M13-EXTRACT-008` | `documentation_gap` | `open` | `low` | `low` | `pending_triage` | Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits |
+| `M13-EXTRACT-008` | `documentation_gap` | `resolved` | `low` | `low` | `M13b.3` | Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits |
 | `M13-PARSER-018` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.4` | Archive readers accept nonconforming encoded LFH Name String and Path String values instead of returning SAR_ERR_MALFORMED |
 
 ## Finding Details
@@ -2736,11 +2736,11 @@ Rationale: Both acceptance criteria are met on Unix: a pre-existing symlink (or 
 | --- | --- |
 | Type | documentation_gap |
 | Source milestone | M13a.4 |
-| Status | open |
+| Status | resolved |
 | Severity | low |
 | Priority | low |
-| Owner | pending_triage |
-| Compatibility | documentation_only |
+| Owner | M13b.3 |
+| Compatibility | clarification_only |
 
 #### Summary
 
@@ -2748,7 +2748,7 @@ The CLI extractor never reads the Entry Mode bits HIDDEN_ATTR, FORCE_SYNC or OP_
 
 #### Current Behavior
 
-HIDDEN_ATTR: written by create and exposed as `is_hidden` metadata by sar-archive, but not restored by extraction on any platform (platform-specific; Unix has no portable hidden attribute and extraction is refused elsewhere). FORCE_SYNC (`Bypasses local conflict resolution`): ignored; ordinary extraction has no conflict-resolution step and already follows the Section 6.1.5 final state, so the bit is not applicable to archive extraction and belongs to state application. OP_CODE and SESSION_CONTROL: `ArchiveReader` rejects SESSION_CONTROL and nonzero OP_CODE Entries by default with SAR_ERR_UNSUPPORTED (inert audit mode reports them without executing), so they cannot reach the extractor; Section 6.3 processes them only in Stateful Streaming Mode (M13b.4). ATOMIC_WRITE is satisfied by staging, integrity verification and atomic rename on Unix.
+HIDDEN_ATTR: encodable through the `sar-archive` writer API (`EntryInput.is_hidden`; the CLI `sar create` does not set it) and exposed as `is_hidden` metadata by sar-archive readers, but not restored by extraction on any platform (platform-specific; Unix has no portable hidden attribute and extraction is refused elsewhere). FORCE_SYNC (`Bypasses local conflict resolution`): ignored; ordinary extraction has no conflict-resolution step and already follows the Section 6.1.5 final state, so the bit is not applicable to archive extraction and belongs to state application. OP_CODE and SESSION_CONTROL: `ArchiveReader` rejects SESSION_CONTROL and nonzero OP_CODE Entries by default with SAR_ERR_UNSUPPORTED (inert audit mode reports them without executing), so they cannot reach the extractor; Section 6.3 processes them only in Stateful Streaming Mode (M13b.4). ATOMIC_WRITE is satisfied by staging, integrity verification and atomic rename on Unix.
 
 #### Expected Behavior
 
@@ -2763,13 +2763,17 @@ Callers may assume that hidden-attribute or force-sync semantics are honored dur
 * `crates/sar-archive/src/archive.rs` (`ArchiveReader` entry parsing (SESSION_CONTROL/OP_CODE rejection) and `is_hidden` metadata): Nonzero OP_CODE and SESSION_CONTROL are rejected by default; HIDDEN_ATTR is surfaced as metadata only.
 * `specification.md` (Sections 6.2 and 6.3): OP_CODE commands are processed only if Stateful Streaming Mode is active; FORCE_SYNC bypasses local conflict resolution; HIDDEN_ATTR sets the filesystem hidden attribute.
 
-#### Remediation
-
-* Record the applicability of HIDDEN_ATTR, FORCE_SYNC and OP_CODE to ordinary extraction versus M13b.4 state application and decide whether platform-specific HIDDEN_ATTR restoration is wanted.
-
 #### Relationships
 
 * **Related findings:** `M13-EXTRACT-001`
+
+#### Resolution
+
+`specification_change` - `2026-10-31`
+
+Resolved by SAR-M13b3-EXTRACT008-CONTROLLER-DECISION-001 (implemented by SAR-M13b3-EXTRACT008-CLOSURE-IMPLEMENTATION-001). New specification Section 6.2.4 (HIDDEN_ATTR Materialization) states that ordinary extraction is not required to materialize HIDDEN_ATTR, that non-materialization alone is not an error, incomplete result or unsupported feature, that any restoration is an optional, explicitly caller-selected capability not implied by permission, ownership or timestamp options, that it must follow the Section 22.4 confinement model and Section 6.1.5 final-state semantics, that explicitly requested but unsupported restoration reports SAR_ERR_UNSUPPORTED (application failures SAR_ERR_IO or a more specific error), and that Name String and Path String must not be rewritten to represent hidden state. The stale Section 6.3 cross-reference to Section 16.1 now points to Section 18. Accepted applicability decisions: FORCE_SYNC does not apply to ordinary archive extraction, which has no conflict-resolution step and follows Section 6.1.5 final state; OP_CODE and SESSION_CONTROL are processed only in Stateful Streaming Mode (Section 6.3) and are rejected by ArchiveReader with SAR_ERR_UNSUPPORTED by default; ATOMIC_WRITE (Section 18.4.1) is satisfied for ordinary Unix extraction by secure staging, integrity verification and atomic publication. HIDDEN_ATTR remains encodable through the sar-archive writer API (the CLI `sar create` does not set it) and exposed by readers as metadata; ordinary CLI extraction does not restore it. Any future restoration is a separately scoped opt-in capability, not planned by this resolution. No wire-format, CLI, extraction, archive-reader or public Rust API change; no implementation testing is required for the applicability decision.
+
+Rationale: The specification previously contained only the one-line description of HIDDEN_ATTR in the Entry Mode table and no restoration, platform-capability or failure semantics. Section 6.2.4 resolves that gap without imposing a mandatory restoration obligation, which no platform backend could currently satisfy under the secure descriptor-relative Unix extraction design (Windows and other non-Unix extraction remains refused, macOS runtime remains unverified, FreeBSD evidence remains limited). The scoped Unix extraction closure, macOS waiver, FreeBSD evidence limits and non-Unix fail-closed posture are unchanged.
 
 ### M13-PARSER-018: Archive readers accept nonconforming encoded LFH Name String and Path String values instead of returning SAR_ERR_MALFORMED
 

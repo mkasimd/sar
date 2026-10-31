@@ -1246,8 +1246,24 @@ prevents deterministic reconstruction of the logical object.
 Such failures MUST be reported using the corresponding error code even when
 LOSS_TOLERANT is set.
 
+#### 6.2.4 HIDDEN_ATTR Materialization
+
+`HIDDEN_ATTR` represents the hidden-attribute state associated with a logical Entry. It is Entry metadata and is subject to the existing fragment-group invariance and Full Logical Entry Path replacement rules.
+
+Ordinary archive extraction is not required to materialize `HIDDEN_ATTR` as a destination filesystem attribute. An implementation that does not materialize this attribute remains conformant, and non-materialization alone MUST NOT cause extraction to fail, be reported as incomplete, or be classified as an unsupported feature.
+
+An implementation MAY provide explicit, caller-selected restoration of `HIDDEN_ATTR` where the destination platform and filesystem support a compatible native hidden attribute. Such restoration MUST NOT be enabled implicitly by unrelated permission, ownership, or timestamp restoration options.
+
+When hidden-attribute restoration is selected, the implementation MUST apply it within the same filesystem confinement requirements as other metadata operations under Section 22.4. The final applied hidden state MUST reflect the last complete Entry at the Full Logical Entry Path under Section 6.1.5.
+
+If requested restoration is unsupported, the implementation MUST report `SAR_ERR_UNSUPPORTED`. If supported restoration fails during filesystem application, the implementation MUST report `SAR_ERR_IO` or a more specific applicable error. It MUST NOT silently report successful restoration.
+
+An implementation MUST NOT rename, prefix, rewrite, or otherwise alter an Entry's Name String or Path String to represent hidden state.
+
+This subsection does not require an implementation to provide a hidden-attribute restoration capability.
+
 ### 6.3 OP_CODE Registry
-These commands are processed ONLY if Stateful Streaming Mode is active (see 16.1).
+These commands are processed ONLY if Stateful Streaming Mode is active (see Section 18).
 
 #### 6.3.1 Filesystem Mode (`SESSION_CONTROL` == 0)
 The Filesystem Mode deals with standard replication and archival operations. It is utilized if `SESSION_CONTROL` Entry Mode is unset.
