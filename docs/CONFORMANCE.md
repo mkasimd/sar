@@ -425,6 +425,7 @@ M13b WP-7 delta pipeline (spec §6.1.2, §8.4, §13.1):
 - `sar extract --preserve-times`
 - `sar extract --preserve-owner`
 - `sar extract --allow-symlinks`
+- Unix extraction is anchored to a descriptor-held extraction root (M13b.3 Package A): no operation re-resolves validated parent paths, regular-file metadata is applied before atomic publication, and temporary names are short and random. Runtime validation covers Linux and FreeBSD 15.1 (sar-cli tests run natively on a FreeBSD host); macOS runtime validation is outstanding, and Windows extraction is not hardened or claimed conformant.
 - `sar list --metadata`
 - `sar inspect --json` metadata-rich output
 

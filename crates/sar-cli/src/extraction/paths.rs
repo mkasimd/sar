@@ -1,11 +1,6 @@
 // SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
-
 use sar_core::SarError;
 
 #[derive(Debug, Clone)]
@@ -17,6 +12,18 @@ impl SafeRelativePath {
     pub(crate) fn from_components(components: Vec<String>) -> Result<Self, SarError> {
         if components.is_empty() {
             return Err(SarError::Malformed("empty paths are not allowed"));
+        }
+        // Defense in depth for the descriptor-relative walk: a component must
+        // be a single plain name, never a separator, "." or "..".
+        if components.iter().any(|component| {
+            component.is_empty()
+                || component == "."
+                || component == ".."
+                || component.contains(['/', '\0'])
+        }) {
+            return Err(SarError::Malformed(
+                "path components must be single plain names",
+            ));
         }
         Ok(Self { components })
     }
@@ -94,86 +101,4 @@ pub(crate) fn validate_relative_archive_path(name: &str) -> Result<SafeRelativeP
     }
 
     SafeRelativePath::from_components(components)
-}
-
-pub(crate) fn prepare_output_file_path(
-    output_dir: &Path,
-    rel: &SafeRelativePath,
-) -> Result<PathBuf, SarError> {
-    let parent = ensure_parent_directory_path(output_dir, rel.parent_components())?;
-    let out_path = parent.join(rel.file_name()?);
-    if let Ok(existing) = fs::symlink_metadata(&out_path)
-        && existing.file_type().is_dir()
-    {
-        return Err(SarError::Malformed(
-            "refusing to replace existing directory with file output",
-        ));
-    }
-    Ok(out_path)
-}
-
-pub(crate) fn ensure_safe_directory_path(
-    output_dir: &Path,
-    rel: &SafeRelativePath,
-) -> Result<PathBuf, SarError> {
-    ensure_parent_directory_path(output_dir, rel.components())
-}
-
-pub(crate) fn resolve_existing_directory_path(
-    output_dir: &Path,
-    rel: &SafeRelativePath,
-) -> Result<PathBuf, SarError> {
-    let path = ensure_parent_directory_path(output_dir, rel.components())?;
-    let meta = fs::symlink_metadata(&path)?;
-    if meta.file_type().is_symlink() {
-        return Err(SarError::Malformed(
-            "refusing to apply directory metadata through symlink",
-        ));
-    }
-    if !meta.is_dir() {
-        return Err(SarError::Malformed(
-            "refusing to apply directory metadata to non-directory",
-        ));
-    }
-    Ok(path)
-}
-
-pub(crate) fn ensure_parent_directory_path(
-    output_dir: &Path,
-    components: &[String],
-) -> Result<PathBuf, SarError> {
-    let mut current = output_dir.to_path_buf();
-    for component in components {
-        current.push(component);
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) => {
-                if metadata.file_type().is_symlink() {
-                    return Err(SarError::Malformed(
-                        "refusing to traverse an existing symlink during extraction",
-                    ));
-                }
-                if !metadata.is_dir() {
-                    return Err(SarError::Malformed(
-                        "path component exists but is not a directory",
-                    ));
-                }
-            }
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                create_restrictive_directory(&current)?;
-            }
-            Err(err) => return Err(SarError::Io(err)),
-        }
-    }
-    Ok(current)
-}
-
-fn create_restrictive_directory(path: &Path) -> Result<(), SarError> {
-    fs::create_dir(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    Ok(())
 }

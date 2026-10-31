@@ -2105,6 +2105,9 @@
         ]
       },
       "compatibility_impact": "preserves_compliant_inputs",
+      "notes": [
+        "Progress (M13b.3 Package A, SAR-M13b3-EXTRACTION-WPA-IMPLEMENTATION-001): on Unix targets the extraction root is opened once as a directory descriptor (a root symlink is resolved exactly once) and every directory walk, directory creation, temporary-file creation, rename, symlink creation, unlink and metadata mutation is performed relative to descriptors via openat/mkdirat/renameat/unlinkat/symlinkat/fchown/futimens/fchmod, with O_NOFOLLOW directory traversal and O_EXCL temporary files named independently of the archived basename. Regular-file metadata is applied to the open staging file before publication; staging files are always created 0600 and, when no permission restoration applies, receive the default creat(0666) mode (umask and default ACLs honored, learned from an empty probe file, no process umask change) via fchmod just before the rename; directories are created 0700 and never exposed with permissive modes. Deterministic race-injection tests (root_unix.rs) cover parent replacement between check and mutation, symlinked-root substitution, staging publication, symlink creation and directory metadata. Status intentionally left confirmed: Windows and other non-Unix targets use an unhardened path-based fallback (Package F), macOS runtime validation is outstanding (Linux and FreeBSD 15.1 sar-cli tests pass), and path-status mapping, collisions, replacement semantics and partial-extraction cleanup remain in Packages B-E."
+      ],
       "verification": {
         "test_requirement": "required",
         "acceptance_criteria": [

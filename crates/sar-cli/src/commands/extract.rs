@@ -1,12 +1,7 @@
 // SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 // SPDX-License-Identifier: Apache-2.0
 
-use std::{
-    collections::HashMap,
-    fs::{self, File},
-    io::BufReader,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashMap, fs::File, io::BufReader, path::PathBuf};
 
 use sar_archive::{
     ArchiveReader, ArchiveReaderOptions, EntryReader, fragment_group::CollectedEntry,
@@ -16,15 +11,11 @@ use sar_core::{EntryKind, GlobalFlags, ResourceLimits, SarError};
 
 use crate::{
     extraction::{
-        metadata::{PendingDirectoryMetadata, apply_file_metadata, finalize_directory_metadata},
-        paths::{
-            SafeRelativePath, ensure_safe_directory_path, prepare_output_file_path,
-            validate_relative_archive_path,
-        },
+        metadata::{PendingDirectoryMetadata, finalize_directory_metadata},
+        paths::{SafeRelativePath, validate_relative_archive_path},
         policy::{ExtractMetadataOptions, validate_extract_metadata_support},
-        staging::{
-            compute_sparse_crc32, verify_crc32, write_bytes_via_temp, write_sparse_payload_via_temp,
-        },
+        root::ExtractionRoot,
+        staging::{compute_sparse_crc32, stage_bytes, stage_sparse, verify_crc32},
     },
     password::{CliKeyProvider, load_password},
 };
@@ -38,7 +29,8 @@ pub(crate) fn extract_archive(
     metadata: ExtractMetadataOptions,
 ) -> Result<(), SarError> {
     validate_extract_metadata_support(metadata)?;
-    fs::create_dir_all(&output_dir)?;
+    // The root is resolved exactly once; every later mutation is relative to it.
+    let root = ExtractionRoot::open(&output_dir)?;
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
         ArchiveReaderOptions {
@@ -62,7 +54,7 @@ pub(crate) fn extract_archive(
         let group = match item {
             CollectedEntry::Entry(entry) => {
                 extract_non_fragment_entry(
-                    &output_dir,
+                    &root,
                     &entry,
                     header.flags,
                     &limits,
@@ -117,10 +109,10 @@ pub(crate) fn extract_archive(
         }
 
         let rel = validate_relative_archive_path(&name)?;
-        let out_path = prepare_output_file_path(&output_dir, &rel)?;
+        let permissions = index0.as_ref().and_then(|m| m.permissions).map(|v| v.mode);
         // The authoritative CRC32 is the LAST_FRAGMENT value; degraded output
         // is never reported as integrity-verified.
-        if let Some(sparse) = sparse.as_ref() {
+        let staged = if let Some(sparse) = sparse.as_ref() {
             // The logical file (holes included) is never materialized in memory:
             // the CRC is streamed over zero runs and the output is written by
             // extent into a sparse temporary file.
@@ -131,13 +123,14 @@ pub(crate) fn extract_archive(
                     "file CRC32 mismatch on reconstructed fragment-group logical file",
                 )?;
             }
-            write_sparse_payload_via_temp(
-                &out_path,
+            stage_sparse(
+                &root,
+                &rel,
                 &raw,
                 &sparse.extents,
                 sparse.logical_size,
                 &limits,
-            )?;
+            )?
         } else {
             if !is_degraded && header.flags.contains(GlobalFlags::PER_FILE_CRC) {
                 verify_crc32(
@@ -146,11 +139,11 @@ pub(crate) fn extract_archive(
                     "file CRC32 mismatch on reconstructed fragment-group logical file",
                 )?;
             }
-            write_bytes_via_temp(&out_path, &raw)?;
-        }
-        apply_file_metadata(
-            &out_path,
-            index0.as_ref().and_then(|m| m.permissions).map(|v| v.mode),
+            stage_bytes(&root, &rel, &raw)?
+        };
+        // Metadata is applied to the open staging file before publication.
+        staged.apply_metadata(
+            permissions,
             index0.as_ref().and_then(|m| m.owner).map(|v| v.uid_gid),
             index0
                 .as_ref()
@@ -158,14 +151,15 @@ pub(crate) fn extract_archive(
                 .map(|v| [v.mtime, v.atime, v.ctime]),
             metadata,
         )?;
+        staged.publish()?;
     }
 
-    finalize_directory_metadata(&output_dir, pending_directories, metadata)?;
+    finalize_directory_metadata(&root, pending_directories, metadata)?;
     Ok(())
 }
 
 fn extract_non_fragment_entry(
-    output_dir: &Path,
+    root: &ExtractionRoot,
     entry: &EntryReader,
     global_flags: GlobalFlags,
     limits: &ResourceLimits,
@@ -175,12 +169,11 @@ fn extract_non_fragment_entry(
     let rel = validate_relative_archive_path(&entry.metadata.name)?;
     match entry.metadata.entry_kind {
         EntryKind::Directory => {
-            let out_path = ensure_safe_directory_path(output_dir, &rel)?;
+            root.create_directory(&rel)?;
             record_directory_metadata(pending_directories, &rel, entry);
-            let _ = out_path;
             Ok(())
         }
-        EntryKind::Symlink => extract_symlink_entry(output_dir, &rel, entry, metadata),
+        EntryKind::Symlink => extract_symlink_entry(root, &rel, entry, metadata),
         EntryKind::RegularFile => {
             verify_content_hash(
                 entry.metadata.hash_algo_id,
@@ -192,8 +185,8 @@ fn extract_non_fragment_entry(
                     .as_ref()
                     .map(|sparse| (sparse.extents.as_slice(), sparse.logical_size)),
             )?;
-            let out_path = prepare_output_file_path(output_dir, &rel)?;
-            if let Some(sparse) = entry.metadata.sparse.as_ref() {
+            let permissions = entry.metadata.permissions.map(|value| value.mode);
+            let staged = if let Some(sparse) = entry.metadata.sparse.as_ref() {
                 let extents = &sparse.extents;
                 let actual_crc =
                     compute_sparse_crc32(&entry.payload, extents, sparse.logical_size, limits)?;
@@ -204,13 +197,14 @@ fn extract_non_fragment_entry(
                         "file CRC32 mismatch on reconstructed logical file",
                     )?;
                 }
-                write_sparse_payload_via_temp(
-                    &out_path,
+                stage_sparse(
+                    root,
+                    &rel,
                     &entry.payload,
                     extents,
                     sparse.logical_size,
                     limits,
-                )?;
+                )?
             } else {
                 if global_flags.contains(GlobalFlags::PER_FILE_CRC) {
                     verify_crc32(
@@ -219,18 +213,18 @@ fn extract_non_fragment_entry(
                         "file CRC32 mismatch on reconstructed logical file",
                     )?;
                 }
-                write_bytes_via_temp(&out_path, &entry.payload)?;
-            }
-            apply_file_metadata(
-                &out_path,
-                entry.metadata.permissions.map(|value| value.mode),
+                stage_bytes(root, &rel, &entry.payload)?
+            };
+            staged.apply_metadata(
+                permissions,
                 entry.metadata.owner.map(|value| value.uid_gid),
                 entry
                     .metadata
                     .timestamps
                     .map(|value| [value.mtime, value.atime, value.ctime]),
                 metadata,
-            )
+            )?;
+            staged.publish()
         }
         EntryKind::EmptyArea => Ok(()),
     }
@@ -256,7 +250,7 @@ fn record_directory_metadata(
 }
 
 fn extract_symlink_entry(
-    output_dir: &Path,
+    root: &ExtractionRoot,
     rel: &SafeRelativePath,
     entry: &EntryReader,
     metadata: ExtractMetadataOptions,
@@ -276,28 +270,5 @@ fn extract_symlink_entry(
         ))?;
     let _ = validate_relative_archive_path(target)?;
 
-    let out_path = prepare_output_file_path(output_dir, rel)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::symlink;
-
-        if let Ok(existing) = fs::symlink_metadata(&out_path) {
-            if existing.file_type().is_dir() {
-                return Err(SarError::Malformed(
-                    "refusing to replace existing directory with symlink",
-                ));
-            }
-            fs::remove_file(&out_path)?;
-        }
-        symlink(target, &out_path)?;
-        Ok(())
-    }
-
-    #[cfg(not(unix))]
-    {
-        let _ = (output_dir, rel, entry);
-        Err(SarError::Unsupported(
-            "symlink extraction is only supported on Unix-like platforms",
-        ))
-    }
+    root.create_symlink(rel, target)
 }
