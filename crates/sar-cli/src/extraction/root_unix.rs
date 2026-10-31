@@ -28,14 +28,19 @@ use rustix::{
 };
 use sar_core::{ResourceLimits, SarError};
 
+#[path = "journal.rs"]
+mod journal;
 #[path = "replace.rs"]
 mod replace;
+
+use journal::{Journal, Token};
 
 use crate::extraction::{
     collision::{CollisionLedger, NodeId, ObjectId, ROOT_NODE},
     metadata::apply_fd_metadata,
     paths::{SafeRelativePath, check_plain_components},
     policy::ExtractMetadataOptions,
+    report::ExtractionReport,
 };
 
 const TEMP_PREFIX: &str = ".sar-tmp-";
@@ -138,11 +143,13 @@ struct Remainder<'a> {
 pub(crate) struct ExtractionRoot {
     dir: OwnedFd,
     ledger: Rc<RefCell<CollisionLedger>>,
+    journal: Rc<Journal>,
 }
 
 impl ExtractionRoot {
     /// Creates the root if missing, then resolves it once and anchors it.
     pub(crate) fn open(path: &Path, limits: ResourceLimits) -> Result<Self, SarError> {
+        let created = fs::symlink_metadata(path).is_err();
         fs::create_dir_all(path)?;
         let dir = rustix::fs::open(
             path,
@@ -153,7 +160,25 @@ impl ExtractionRoot {
         Ok(Self {
             dir,
             ledger: Rc::new(RefCell::new(CollisionLedger::new(limits))),
+            journal: Rc::new(Journal::new(created)),
         })
+    }
+
+    /// Accounts for a failed run: tries a last identity-verified cleanup of
+    /// run-owned temporary objects and reports what may remain. Never touches
+    /// anything this run did not create.
+    pub(crate) fn failure_report(&self) -> ExtractionReport {
+        self.journal.report()
+    }
+
+    /// A run that reports success must not retain temporary objects.
+    pub(crate) fn ensure_no_temporary_artifacts(&self) -> Result<(), SarError> {
+        if self.journal.holds_artifacts() {
+            return Err(SarError::Internal(
+                "run-owned temporary objects remain after extraction",
+            ));
+        }
+        Ok(())
     }
 
     /// Walks `components` below the root, creating missing directories. Every
@@ -208,7 +233,7 @@ impl ExtractionRoot {
             Err(Errno::NOENT) => {}
             Err(errno) => return self.replace_component(parent, parent_node, name, errno, rest),
         }
-        make_directory(parent, name)
+        make_directory(&self.journal, parent, name)
     }
 
     /// Handles a component that exists but cannot be opened as a directory.
@@ -265,7 +290,10 @@ impl ExtractionRoot {
         }
         hook("before-replace-component");
         rustix::fs::unlinkat(parent, name, AtFlags::empty()).map_err(io_error)?;
-        match make_directory(parent, name) {
+        // Not compensated if the directory cannot be created: recreating the
+        // removed object could only worsen an already failing destination.
+        self.journal.note_change();
+        match make_directory(&self.journal, parent, name) {
             Ok(created) => Ok(created),
             Err(err) => {
                 self.ledger.borrow_mut().forget(&id);
@@ -326,6 +354,8 @@ impl ExtractionRoot {
         replace::find_replaceable_directory(&self.ledger, &dir, &final_name, node)?;
         hook("after-parent-open");
         let mode = raw_mode(STAGING_MODE)?;
+        let location = rel.display();
+        let slot = self.journal.slot(&dir, &location)?;
         let (fd, temp_name) = create_unique(|name| {
             rustix::fs::openat(
                 &dir,
@@ -334,10 +364,24 @@ impl ExtractionRoot {
                 mode,
             )
         })?;
-        let staged_id = object_id(&rustix::fs::fstat(&fd).map_err(io_error)?)?;
+        let staged_id = rustix::fs::fstat(&fd)
+            .map_err(io_error)
+            .and_then(|stat| object_id(&stat));
+        let token = self
+            .journal
+            .track_object(slot, &temp_name, staged_id.as_ref().ok().cloned());
+        let staged_id = match staged_id {
+            Ok(id) => id,
+            Err(err) => {
+                let _ = self.journal.discard(token);
+                return Err(err);
+            }
+        };
         Ok(StagedFile {
             dir,
             temp_name,
+            token,
+            journal: Rc::clone(&self.journal),
             final_name,
             ledger: Rc::clone(&self.ledger),
             node,
@@ -359,33 +403,29 @@ impl ExtractionRoot {
         let final_name = final_name.as_str();
         replace::find_replaceable_directory(&self.ledger, &dir, final_name, node)?;
         hook("after-parent-open");
+        let slot = self.journal.slot(&dir, &rel.display())?;
         let ((), temp_name) = create_unique(|name| rustix::fs::symlinkat(target, &dir, name))?;
-        let published = self.publish_symlink(&dir, &temp_name, final_name, node);
+        let id = rustix::fs::statat(&dir, temp_name.as_str(), AtFlags::SYMLINK_NOFOLLOW)
+            .map_err(io_error)
+            .and_then(|stat| object_id(&stat));
+        let token = self
+            .journal
+            .track_object(slot, &temp_name, id.as_ref().ok().cloned());
+        let published = id.and_then(|id| {
+            publish_replacing(
+                &self.ledger,
+                &self.journal,
+                &dir,
+                (&temp_name, token),
+                (final_name, node),
+                id,
+                &mut false,
+            )
+        });
         if published.is_err() {
-            let _ = rustix::fs::unlinkat(&dir, temp_name.as_str(), AtFlags::empty());
+            let _ = self.journal.discard(token);
         }
         published
-    }
-
-    fn publish_symlink(
-        &self,
-        dir: &OwnedFd,
-        temp_name: &str,
-        final_name: &str,
-        node: NodeId,
-    ) -> Result<(), SarError> {
-        let stat =
-            rustix::fs::statat(dir, temp_name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
-        let id = object_id(&stat)?;
-        publish_replacing(
-            &self.ledger,
-            dir,
-            temp_name,
-            final_name,
-            node,
-            id,
-            &mut false,
-        )
     }
 
     /// Restores metadata on a directory created during this run through its
@@ -398,16 +438,23 @@ impl ExtractionRoot {
         timestamps: Option<[u64; 3]>,
         options: ExtractMetadataOptions,
     ) -> Result<(), SarError> {
+        hook("before-directory-open");
         let dir = self.open_directory(rel.components())?;
         hook("before-directory-metadata");
+        self.journal.note_change();
         apply_fd_metadata(&dir, permissions, owner, timestamps, options)
     }
 }
 
 /// Creates `name` below `parent` (never wider than 0o700) and opens it.
-fn make_directory(parent: &OwnedFd, name: &str) -> Result<(OwnedFd, bool), SarError> {
+fn make_directory(
+    journal: &Journal,
+    parent: &OwnedFd,
+    name: &str,
+) -> Result<(OwnedFd, bool), SarError> {
     match rustix::fs::mkdirat(parent, name, raw_mode(DIRECTORY_MODE)?) {
         Ok(()) => {
+            journal.note_change();
             hook("after-mkdir");
             let fd = rustix::fs::openat(parent, name, directory_flags(), Mode::empty())
                 .map_err(|errno| classify_open_failure(parent, name, errno))?;
@@ -450,24 +497,26 @@ fn fresh_temp_name() -> Result<String, SarError> {
     Ok(name)
 }
 
-/// Publishes the unpublished object `temp_name` as `final_name`, replacing
-/// whatever this run previously published there.
+/// Publishes the unpublished object `temp` as `target`, replacing whatever
+/// this run previously published there.
 ///
 /// Order: (1) collision re-check, (2) read-only proof that a directory at the
 /// final name, if any, is run-created with an entirely run-created subtree,
-/// (3) ledger reservation, so every refusal and resource failure precedes any
-/// mutation, then (4) the directory is renamed aside to a private name,
-/// (5) the new object is renamed into place (the aside directory is renamed
-/// back if that fails), (6) the ledger is updated, and (7) the aside subtree is
-/// removed through the verified descriptor. A failure in step 7 leaves the
-/// final state published and an unreachable `.sar-tmp-*` directory behind.
+/// (3) ledger reservation and artifact capacity, so every refusal and resource
+/// failure precedes any mutation, then (4) the directory is renamed aside to a
+/// private name and registered, (5) the new object is renamed into place (the
+/// aside directory is renamed back if that fails; if that fails too, the
+/// failed restoration is recorded), (6) the ledger is updated, and (7) the
+/// aside subtree is removed through the verified descriptor. A failure in step
+/// 7 keeps the published final state and is returned as an error, with the
+/// remaining run-owned content recorded as an unresolved artifact.
 /// `published` is set once step 5 succeeded.
 fn publish_replacing(
     ledger: &RefCell<CollisionLedger>,
+    journal: &Journal,
     dir: &OwnedFd,
-    temp_name: &str,
-    final_name: &str,
-    node: NodeId,
+    (temp_name, temp_token): (&str, Token),
+    (final_name, node): (&str, NodeId),
     id: ObjectId,
     published: &mut bool,
 ) -> Result<(), SarError> {
@@ -478,27 +527,47 @@ fn publish_replacing(
     let doomed = replace::find_replaceable_directory(ledger, dir, final_name, node)?;
     let reservation = ledger.borrow_mut().reserve(node, &id)?;
     let aside = match doomed {
-        Some(doomed) => match replace::move_aside(dir, final_name, &doomed) {
-            Ok(name) => Some((doomed, name)),
-            Err(err) => {
-                ledger.borrow_mut().release(reservation);
-                return Err(err);
+        Some(doomed) => {
+            let moved = journal
+                .slot(dir, &journal.location(temp_token))
+                .and_then(|slot| {
+                    replace::move_aside(dir, final_name, &doomed).map(|name| (slot, name))
+                });
+            match moved {
+                Ok((slot, name)) => {
+                    journal.note_change();
+                    let token = journal.track_aside(slot, &name, final_name, doomed);
+                    Some(token)
+                }
+                Err(err) => {
+                    ledger.borrow_mut().release(reservation);
+                    return Err(err);
+                }
             }
-        },
+        }
         None => None,
     };
     hook("after-aside");
+    if let Some(token) = aside
+        && let Err(err) = journal.verify_aside(token)
+    {
+        ledger.borrow_mut().release(reservation);
+        journal.restore(token);
+        return Err(err);
+    }
     if let Err(errno) = rustix::fs::renameat(dir, temp_name, dir, final_name) {
         ledger.borrow_mut().release(reservation);
-        if let Some((_, name)) = &aside {
-            replace::restore_aside(dir, name, final_name);
+        if let Some(token) = aside {
+            journal.restore(token);
         }
         return Err(io_error(errno));
     }
     *published = true;
+    journal.retire(temp_token);
+    journal.note_change();
     ledger.borrow_mut().commit(node, id, reservation);
-    if let Some((doomed, name)) = aside {
-        replace::remove_aside(ledger, dir, &name, doomed)?;
+    if let Some(token) = aside {
+        journal.remove_aside(ledger, token)?;
     }
     Ok(())
 }
@@ -520,10 +589,14 @@ fn create_unique<T>(
 }
 
 /// An unpublished staging file held open inside its destination directory.
-/// Dropping it without `publish` removes the staging file.
+/// Dropping it without `publish` removes the staging file, but only while its
+/// name still reaches the object this run created; a failed removal is
+/// recorded for the failure report.
 pub(crate) struct StagedFile {
     dir: OwnedFd,
     temp_name: String,
+    token: Token,
+    journal: Rc<Journal>,
     final_name: String,
     ledger: Rc<RefCell<CollisionLedger>>,
     node: NodeId,
@@ -536,8 +609,9 @@ pub(crate) struct StagedFile {
 /// Mode an ordinary `creat(0666)` in `dir` would produce (umask and default
 /// ACLs included), learned from an empty probe file so the process umask is
 /// never read or changed.
-fn default_file_mode(dir: &OwnedFd) -> Result<Mode, SarError> {
+fn default_file_mode(journal: &Journal, dir: &OwnedFd, location: &str) -> Result<Mode, SarError> {
     let mode = raw_mode(0o666)?;
+    let slot = journal.slot(dir, location)?;
     let (probe, name) = create_unique(|name| {
         rustix::fs::openat(
             dir,
@@ -546,12 +620,14 @@ fn default_file_mode(dir: &OwnedFd) -> Result<Mode, SarError> {
             mode,
         )
     })?;
-    let stat = rustix::fs::fstat(&probe);
-    let removed = rustix::fs::unlinkat(dir, name.as_str(), AtFlags::empty());
-    let stat = stat.map_err(io_error)?;
-    removed.map_err(io_error)?;
+    let stat = rustix::fs::fstat(&probe).map_err(io_error);
+    let id = stat.as_ref().ok().and_then(|stat| object_id(stat).ok());
+    let token = journal.track_object(slot, &name, id);
+    let stat = stat?;
+    journal.discard(token)?;
     Ok(Mode::from_raw_mode(stat.st_mode & 0o777))
 }
+
 impl StagedFile {
     pub(crate) fn file_mut(&mut self) -> &mut File {
         &mut self.file
@@ -577,15 +653,16 @@ impl StagedFile {
     /// default mode a plain create would have had (still before publication).
     pub(crate) fn publish(mut self) -> Result<(), SarError> {
         if !self.permissions_restored.get() {
-            let mode = default_file_mode(&self.dir)?;
+            let location = self.journal.location(self.token);
+            let mode = default_file_mode(&self.journal, &self.dir, &location)?;
             rustix::fs::fchmod(&self.file, mode).map_err(io_error)?;
         }
         publish_replacing(
             &self.ledger,
+            &self.journal,
             &self.dir,
-            &self.temp_name,
-            &self.final_name,
-            self.node,
+            (&self.temp_name, self.token),
+            (&self.final_name, self.node),
             self.staged_id.clone(),
             &mut self.published,
         )
@@ -595,7 +672,7 @@ impl StagedFile {
 impl Drop for StagedFile {
     fn drop(&mut self) {
         if !self.published {
-            let _ = rustix::fs::unlinkat(&self.dir, self.temp_name.as_str(), AtFlags::empty());
+            let _ = self.journal.discard(self.token);
         }
     }
 }
@@ -1603,10 +1680,13 @@ mod tests {
         assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
         assert_eq!(entries(&fx.outside), vec!["precious".to_string()]);
         assert_eq!(fs::read(fx.root_path.join("d.moved/x")).expect("x"), b"x");
-        assert!(
-            fx.root_path.join("d").is_symlink(),
-            "substitute left in place"
-        );
+        // The substitute is not the recorded directory, so it is not renamed
+        // back; it stays under its temporary name and the failure is reported.
+        assert!(!fx.root_path.join("d").exists());
+        let aside = aside_names(&fx.root_path);
+        assert_eq!(aside.len(), 1);
+        assert!(aside[0].is_symlink(), "substitute left in place");
+        assert_eq!(root.failure_report().cleanup_failures.len(), 1);
     }
 
     #[test]
@@ -1733,5 +1813,410 @@ mod tests {
         fs::hard_link(fx.root_path.join("d"), fx.root_path.join("D")).expect("alias");
         assert!(is_collision(publish_bytes(&root, &["D"], b"other")));
         publish_bytes(&root, &["d"], b"again").expect("same logical path is not a collision");
+    }
+
+    fn temp_objects(dir: &Path) -> Vec<String> {
+        entries(dir)
+            .into_iter()
+            .filter(|name| name.starts_with(".sar-tmp-"))
+            .collect()
+    }
+
+    #[test]
+    fn failure_before_the_first_publication_changes_nothing() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        let staged = root.stage_file(&rel(&["a"])).expect("stage");
+        drop(staged);
+
+        let report = root.failure_report();
+        assert!(!report.partial_changes);
+        assert!(report.cleanup_failures.is_empty());
+        assert!(entries(&fx.root_path).is_empty());
+    }
+
+    #[test]
+    fn newly_created_destination_is_a_reported_change() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path.join("fresh"), ResourceLimits::default())
+            .expect("open");
+        assert!(root.failure_report().partial_changes);
+    }
+
+    #[test]
+    fn failure_after_one_published_entry_keeps_it_and_reports_partial_changes() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["first"], b"1").expect("first");
+        let staged = root.stage_file(&rel(&["second"])).expect("stage");
+        drop(staged);
+
+        let report = root.failure_report();
+        assert!(report.partial_changes);
+        assert!(report.cleanup_failures.is_empty());
+        assert_eq!(entries(&fx.root_path), vec!["first".to_string()]);
+    }
+
+    #[test]
+    fn failed_staging_publication_removes_the_staging_file_and_nothing_else() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        let base = fx.root_path.clone();
+        test_hooks::install(move |point| {
+            if point == "after-aside" {
+                // A directory this run did not create appears at the final name.
+                fs::create_dir(base.join("f")).expect("foreign directory");
+                fs::write(base.join("f/inner"), b"foreign").expect("inner");
+            }
+        });
+        let _guard = HookGuard;
+
+        let err = publish_bytes(&root, &["f"], b"data").expect_err("rename fails");
+        assert!(matches!(err, SarError::Io(_)), "{err:?}");
+        assert_eq!(entries(&fx.root_path), vec!["f".to_string()]);
+        assert_eq!(
+            fs::read(fx.root_path.join("f/inner")).expect("inner"),
+            b"foreign"
+        );
+        let report = root.failure_report();
+        assert!(report.cleanup_failures.is_empty());
+        assert!(!report.partial_changes);
+    }
+
+    #[test]
+    fn failed_replacement_restores_the_directory_without_unresolved_artifacts() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        let base = fx.root_path.clone();
+        test_hooks::install(move |point| {
+            if point == "after-aside" {
+                let temp = aside_names(&base)
+                    .into_iter()
+                    .find(|path| path.is_file())
+                    .expect("staging file");
+                fs::remove_file(temp).expect("sabotage");
+            }
+        });
+        let _guard = HookGuard;
+
+        publish_bytes(&root, &["d"], b"file").expect_err("rename fails");
+        assert_eq!(entries(&fx.root_path), vec!["d".to_string()]);
+        assert_eq!(fs::read(fx.root_path.join("d/sub/y")).expect("y"), b"y");
+        let report = root.failure_report();
+        assert!(report.cleanup_failures.is_empty());
+        assert!(report.partial_changes, "earlier Entries were published");
+        // The restored directory is still run-owned and replaceable.
+        drop(_guard);
+        publish_bytes(&root, &["d"], b"file").expect("later replacement");
+        assert_eq!(fs::read(fx.root_path.join("d")).expect("d"), b"file");
+        assert!(temp_objects(&fx.root_path).is_empty());
+    }
+
+    #[test]
+    fn failed_restoration_is_reported_and_keeps_the_directory_aside() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        let before = used(&root);
+        let base = fx.root_path.clone();
+        test_hooks::install(move |point| {
+            if point == "after-aside" {
+                // The publishing rename fails (a directory occupies the final
+                // name) and so does putting the old directory back.
+                fs::create_dir(base.join("d")).expect("foreign directory");
+                fs::write(base.join("d/inner"), b"foreign").expect("inner");
+            }
+        });
+        let _guard = HookGuard;
+
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("rename fails");
+        assert!(
+            matches!(err, SarError::Io(_)),
+            "primary cause kept: {err:?}"
+        );
+        assert_eq!(
+            fs::read(fx.root_path.join("d/inner")).expect("inner"),
+            b"foreign"
+        );
+        let aside = aside_names(&fx.root_path);
+        assert_eq!(aside.len(), 1, "staging file removed, directory kept aside");
+        assert_eq!(fs::read(aside[0].join("x")).expect("x"), b"x");
+        assert_eq!(fs::read(aside[0].join("sub/y")).expect("y"), b"y");
+        assert_eq!(used(&root), before, "reservation released");
+
+        let report = root.failure_report();
+        assert!(report.partial_changes);
+        assert_eq!(report.cleanup_failures.len(), 1, "{report:?}");
+        assert!(report.cleanup_failures[0].contains("could not be restored"));
+        assert!(root.ensure_no_temporary_artifacts().is_err());
+    }
+
+    /// Swaps the moved-aside directory for `substitute` at `after-aside`, then
+    /// publishes over `d`, and checks that nothing is renamed back or deleted.
+    fn restoration_refused_after_substitution(substitute: impl Fn(&Path, &Path) + 'static) {
+        let fx = fixture();
+        let outside = fx
+            .root_path
+            .parent()
+            .expect("parent")
+            .join("outside-target");
+        fs::create_dir_all(&outside).expect("outside");
+        fs::write(outside.join("keep"), b"keep").expect("keep");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        publish_bytes(&root, &["unrelated"], b"u").expect("unrelated");
+        let base = fx.root_path.clone();
+        let target = outside.clone();
+        test_hooks::install(move |point| {
+            if point == "after-aside" {
+                let aside = aside_names(&base)
+                    .into_iter()
+                    .find(|path| path.is_dir())
+                    .expect("aside directory");
+                fs::rename(&aside, base.join("original-moved")).expect("move original");
+                substitute(&aside, &target);
+            }
+        });
+        let _guard = HookGuard;
+
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("verification fails");
+        assert!(
+            matches!(err, SarError::Io(_) | SarError::AlreadyExists(_)),
+            "{err:?}"
+        );
+        assert!(!fx.root_path.join("d").exists(), "nothing renamed to d");
+        assert_eq!(fs::read(fx.root_path.join("unrelated")).expect("u"), b"u");
+        assert_eq!(fs::read(outside.join("keep")).expect("keep"), b"keep");
+        assert_eq!(
+            fs::read(fx.root_path.join("original-moved/x")).expect("x"),
+            b"x"
+        );
+        let report = root.failure_report();
+        assert!(report.partial_changes);
+        assert_eq!(report.cleanup_failures.len(), 1, "{report:?}");
+        assert!(report.cleanup_failures[0].contains("could not be restored"));
+        assert!(root.ensure_no_temporary_artifacts().is_err());
+        fs::remove_dir_all(&outside).expect("cleanup outside");
+    }
+
+    #[test]
+    fn restoration_refuses_an_aside_replaced_by_a_symlink() {
+        restoration_refused_after_substitution(|aside, target| {
+            std::os::unix::fs::symlink(target, aside).expect("symlink");
+        });
+    }
+
+    #[test]
+    fn restoration_refuses_an_aside_replaced_by_another_directory() {
+        restoration_refused_after_substitution(|aside, _| {
+            fs::create_dir(aside).expect("directory");
+            fs::write(aside.join("foreign"), b"f").expect("foreign");
+        });
+    }
+
+    #[test]
+    fn unrecognized_content_in_the_aside_subtree_survives_and_is_reported() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        let base = fx.root_path.clone();
+        test_hooks::install(move |point| {
+            if point == "before-delete-replaced" {
+                let aside = aside_names(&base).pop().expect("aside directory");
+                fs::write(aside.join("sub/foreign"), b"foreign").expect("foreign");
+            }
+        });
+        let _guard = HookGuard;
+
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("incomplete cleanup");
+        assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+        assert_eq!(
+            fs::read(fx.root_path.join("d")).expect("published"),
+            b"file"
+        );
+        let aside = aside_names(&fx.root_path).pop().expect("aside kept");
+        assert!(!aside.join("x").exists(), "recognized file removed");
+        assert!(!aside.join("sub/y").exists(), "recognized file removed");
+        assert_eq!(
+            fs::read(aside.join("sub/foreign")).expect("foreign"),
+            b"foreign"
+        );
+        // Removed objects were forgotten; the published file and the retained
+        // run-created `sub` directory are still claimed.
+        assert_eq!(root.ledger.borrow().claimed_objects(), 2);
+        let report = root.failure_report();
+        assert!(report.partial_changes);
+        assert_eq!(report.cleanup_failures.len(), 1);
+    }
+
+    #[test]
+    fn substituted_nested_symlink_is_neither_followed_nor_removed_during_cleanup() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        fs::write(fx.outside.join("precious"), b"p").expect("precious");
+        let (base, outside) = (fx.root_path.clone(), fx.outside.clone());
+        test_hooks::install(move |point| {
+            if point == "before-delete-replaced" {
+                let aside = aside_names(&base).pop().expect("aside directory");
+                swap_for_symlink(&aside.join("sub"), &outside);
+            }
+        });
+        let _guard = HookGuard;
+
+        publish_bytes(&root, &["d"], b"file").expect_err("incomplete cleanup");
+        assert_eq!(entries(&fx.outside), vec!["precious".to_string()]);
+        let aside = aside_names(&fx.root_path).pop().expect("aside kept");
+        assert!(
+            fs::symlink_metadata(aside.join("sub"))
+                .expect("link")
+                .is_symlink()
+        );
+        assert!(!aside.join("x").exists());
+        assert_eq!(root.failure_report().cleanup_failures.len(), 1);
+    }
+
+    #[test]
+    fn substituted_staging_name_is_not_removed_by_cleanup() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        let staged = root.stage_file(&rel(&["a"])).expect("stage");
+        let temp = aside_names(&fx.root_path).pop().expect("staging file");
+        fs::write(fx.outside.join("precious"), b"p").expect("precious");
+        fs::remove_file(&temp).expect("remove staging name");
+        symlink(fx.outside.join("precious"), &temp).expect("substitute");
+
+        drop(staged);
+
+        assert!(fs::symlink_metadata(&temp).expect("kept").is_symlink());
+        assert_eq!(fs::read(fx.outside.join("precious")).expect("p"), b"p");
+        let report = root.failure_report();
+        assert_eq!(report.cleanup_failures.len(), 1, "{report:?}");
+        assert!(report.partial_changes);
+    }
+
+    #[test]
+    fn substituted_symlink_staging_name_is_not_removed_after_failed_publication() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        fs::write(fx.outside.join("precious"), b"p").expect("precious");
+        let (base, outside) = (fx.root_path.clone(), fx.outside.join("precious"));
+        test_hooks::install(move |point| {
+            if point == "before-publish" {
+                let temp = aside_names(&base).pop().expect("staging symlink");
+                fs::remove_file(&temp).expect("remove");
+                symlink(&outside, &temp).expect("substitute");
+                // Make the publication fail afterwards.
+                fs::create_dir(base.join("l")).expect("directory in the way");
+                fs::write(base.join("l/x"), b"x").expect("x");
+            }
+        });
+        let _guard = HookGuard;
+
+        root.create_symlink(&rel(&["l"]), "t").expect_err("refused");
+        assert_eq!(fs::read(fx.outside.join("precious")).expect("p"), b"p");
+        assert_eq!(temp_objects(&fx.root_path).len(), 1, "foreign object kept");
+        assert_eq!(root.failure_report().cleanup_failures.len(), 1);
+    }
+
+    #[test]
+    fn preexisting_lookalikes_are_not_run_owned_and_are_never_removed() {
+        let fx = fixture();
+        let lookalike = fx
+            .root_path
+            .join(".sar-tmp-00000000000000000000000000000000");
+        fs::write(&lookalike, b"unrelated").expect("lookalike");
+        let lookalike_dir = fx
+            .root_path
+            .join(".sar-tmp-ffffffffffffffffffffffffffffffff");
+        fs::create_dir(&lookalike_dir).expect("lookalike dir");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["kept"], b"1").expect("kept");
+        let staged = root.stage_file(&rel(&["pending"])).expect("stage");
+        drop(staged);
+
+        let report = root.failure_report();
+        assert!(report.cleanup_failures.is_empty());
+        assert_eq!(fs::read(&lookalike).expect("file"), b"unrelated");
+        assert!(lookalike_dir.is_dir());
+        assert_eq!(fs::read(fx.root_path.join("kept")).expect("kept"), b"1");
+        assert_eq!(temp_objects(&fx.root_path).len(), 2);
+    }
+
+    #[test]
+    fn tracked_artifacts_are_bounded_exactly() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        let mut held = Vec::new();
+        for index in 0..super::journal::MAX_TRACKED_ARTIFACTS {
+            held.push(
+                root.stage_file(&rel(&[&format!("f{index}")]))
+                    .expect("within the bound"),
+            );
+        }
+        let err = root
+            .stage_file(&rel(&["one-too-many"]))
+            .err()
+            .expect("bound exceeded");
+        assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        assert_eq!(
+            temp_objects(&fx.root_path).len(),
+            super::journal::MAX_TRACKED_ARTIFACTS,
+            "refused before creating anything"
+        );
+
+        held.pop();
+        root.stage_file(&rel(&["fits-again"]))
+            .expect("capacity freed");
+    }
+
+    #[test]
+    fn interrupted_file_to_directory_transition_is_reported_without_compensation() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["a"], b"old").expect("file");
+        let _guard = swap_at("after-mkdir", fx.root_path.join("a"), fx.outside.clone());
+
+        let err = publish_bytes(&root, &["a", "b"], b"x").expect_err("directory cannot open");
+        assert!(matches!(err, SarError::PathEscape(_)), "{err:?}");
+        // The earlier object stays removed; nothing was recreated.
+        assert!(fs::read(fx.root_path.join("a")).is_err());
+        assert!(entries(&fx.outside).is_empty());
+        let report = root.failure_report();
+        assert!(report.partial_changes);
+    }
+
+    #[test]
+    fn failed_final_directory_metadata_restoration_is_a_reported_change() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        root.create_directory(&rel(&["d"])).expect("dir");
+        let _guard = swap_at(
+            "before-directory-open",
+            fx.root_path.join("d"),
+            fx.outside.clone(),
+        );
+
+        let err = root
+            .apply_directory_metadata(&rel(&["d"]), Some(0o750), None, None, WANT_PERMS_AND_TIMES)
+            .expect_err("component replaced");
+        assert!(matches!(err, SarError::PathEscape(_)), "{err:?}");
+        assert!(root.failure_report().partial_changes);
+        assert!(entries(&fx.outside).is_empty());
+    }
+
+    #[test]
+    fn a_successful_sequence_retains_no_run_owned_temporary_objects() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        publish_bytes(&root, &["d"], b"file").expect("replace directory");
+        root.create_symlink(&rel(&["d"]), "t")
+            .expect("replace by symlink");
+        publish_bytes(&root, &["d", "now", "dir"], b"x").expect("back to a directory");
+        root.ensure_no_temporary_artifacts().expect("clean");
+        assert!(temp_objects(&fx.root_path).is_empty());
+        assert!(temp_objects(&fx.root_path.join("d")).is_empty());
     }
 }

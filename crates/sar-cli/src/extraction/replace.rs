@@ -9,7 +9,9 @@
 //! identified by the device/inode identities recorded in the collision ledger.
 //! Anything else (a pre-existing directory, or any unrecognized entry found
 //! inside a run-created directory) makes the replacement fail with
-//! `SAR_ERR_ALREADY_EXISTS` before a single object is removed.
+//! `SAR_ERR_ALREADY_EXISTS` before a single object is removed. Once the
+//! replacement is published, removal of the moved-aside subtree is best effort
+//! over recognized objects only and reports whatever it had to leave.
 //!
 //! Every step is descriptor-relative: directories are opened by name with
 //! `O_NOFOLLOW | O_DIRECTORY`, identity is re-checked on the opened descriptor,
@@ -116,52 +118,17 @@ fn verify_tree(
     Ok(())
 }
 
-/// Removes everything below `fd`, re-verifying ownership of each object
-/// immediately before it is unlinked.
-fn delete_tree(
-    ledger: &RefCell<CollisionLedger>,
-    fd: &OwnedFd,
-    node: NodeId,
-    depth: usize,
-) -> Result<(), SarError> {
-    if depth > MAX_REPLACE_DEPTH {
-        return Err(SarError::LimitExceeded(
-            "directory being replaced is nested too deeply to remove safely",
-        ));
-    }
-    let budget = ledger.borrow().claimed_objects();
-    let entries = listing(fd, budget)?;
-    for (name, stat) in entries {
-        let id = object_id(&stat)?;
-        if !ledger.borrow().is_created_child(node, name.to_bytes(), &id) {
-            return Err(not_ours());
-        }
-        let flags = if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
-            let child = open_directory_at(fd, name.as_c_str()).map_err(|_| changed())?;
-            let opened = object_id(&rustix::fs::fstat(&child).map_err(io_error)?)?;
-            if opened != id {
-                return Err(changed());
-            }
-            let child_node = ledger
-                .borrow()
-                .lookup(node, name_str(&name)?)
-                .ok_or_else(not_ours)?;
-            delete_tree(ledger, &child, child_node, depth + 1)?;
-            AtFlags::REMOVEDIR
-        } else {
-            AtFlags::empty()
-        };
-        rustix::fs::unlinkat(fd, name.as_c_str(), flags).map_err(io_error)?;
-        ledger.borrow_mut().forget(&id);
-    }
-    Ok(())
-}
-
 /// A run-created directory proven removable, still reachable by name.
 pub(super) struct DoomedDirectory {
     fd: OwnedFd,
     id: ObjectId,
     node: NodeId,
+}
+
+impl DoomedDirectory {
+    pub(super) fn id(&self) -> &ObjectId {
+        &self.id
+    }
 }
 
 /// Looks at `name` below `dir`. `Ok(None)` means it is not a directory (or is
@@ -191,8 +158,10 @@ pub(super) fn find_replaceable_directory(
     Ok(Some(DoomedDirectory { fd, id, node }))
 }
 
-/// Moves the verified directory out of the way under a private name, then
-/// confirms the object that moved is the one that was verified.
+/// Renames the verified directory out of the way under a fresh private name
+/// and returns that name. The caller registers it immediately and then calls
+/// `aside_is_verified`; nothing here moves it back, so a failure after the
+/// rename is always visible to (and recoverable by) the caller.
 pub(super) fn move_aside(
     parent: &OwnedFd,
     name: &str,
@@ -210,34 +179,150 @@ pub(super) fn move_aside(
     }
     hook("before-aside");
     rustix::fs::renameat(parent, name, parent, aside.as_str()).map_err(io_error)?;
-    let moved = rustix::fs::statat(parent, aside.as_str(), AtFlags::SYMLINK_NOFOLLOW)
-        .map_err(io_error)
-        .and_then(|stat| object_id(&stat));
-    if moved.as_ref().ok() != Some(&doomed.id) {
-        let _ = rustix::fs::renameat(parent, aside.as_str(), parent, name);
-        return Err(changed());
-    }
     Ok(aside)
 }
 
-/// Puts a moved-aside directory back after a failed publication.
-pub(super) fn restore_aside(parent: &OwnedFd, aside: &str, name: &str) {
-    let _ = rustix::fs::renameat(parent, aside, parent, name);
+/// Confirms that the object which was moved aside is the one that was verified.
+pub(super) fn aside_is_verified(
+    parent: &OwnedFd,
+    aside: &str,
+    doomed: &DoomedDirectory,
+) -> Result<(), SarError> {
+    let moved = rustix::fs::statat(parent, aside, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
+    if object_id(&moved)? == doomed.id {
+        Ok(())
+    } else {
+        Err(changed())
+    }
+}
+
+/// Puts a moved-aside directory back. It never replaces anything: the original
+/// name must be unoccupied, otherwise the restoration fails and the directory
+/// stays aside. The moved-aside object must still be the recorded directory
+/// (checked without following symlinks). Only the rename is undone; no content is touched.
+pub(super) fn restore_aside(
+    parent: &OwnedFd,
+    aside: &str,
+    name: &str,
+    doomed: &DoomedDirectory,
+) -> Result<(), SarError> {
+    aside_is_verified(parent, aside, doomed)?;
+    match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+        Err(Errno::NOENT) => {}
+        Ok(_) => {
+            return Err(SarError::AlreadyExists(
+                "the original name is occupied by another object",
+            ));
+        }
+        Err(errno) => return Err(io_error(errno)),
+    }
+    rustix::fs::renameat(parent, aside, parent, name).map_err(io_error)
+}
+
+/// What a best-effort removal could not remove.
+#[derive(Default)]
+struct Leftovers {
+    count: usize,
+    first: Option<SarError>,
+}
+
+impl Leftovers {
+    fn keep(&mut self, error: SarError) {
+        self.count += 1;
+        self.first.get_or_insert(error);
+    }
+}
+
+/// Removes every object below `fd` that this run created, re-verifying each by
+/// identity right before it is unlinked. Unrecognized, substituted or
+/// unremovable entries stay, and so do the directories that contain them.
+fn sweep_tree(
+    ledger: &RefCell<CollisionLedger>,
+    fd: &OwnedFd,
+    node: NodeId,
+    depth: usize,
+    left: &mut Leftovers,
+) {
+    if depth > MAX_REPLACE_DEPTH {
+        left.keep(SarError::LimitExceeded(
+            "directory being replaced is nested too deeply to remove safely",
+        ));
+        return;
+    }
+    let budget = ledger.borrow().claimed_objects();
+    let entries = match listing(fd, budget) {
+        Ok(entries) => entries,
+        Err(err) => {
+            left.keep(err);
+            return;
+        }
+    };
+    for (name, stat) in entries {
+        let id = match object_id(&stat) {
+            Ok(id) => id,
+            Err(err) => {
+                left.keep(err);
+                continue;
+            }
+        };
+        if !ledger.borrow().is_created_child(node, name.to_bytes(), &id) {
+            left.keep(not_ours());
+            continue;
+        }
+        let mut flags = AtFlags::empty();
+        if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
+            let Ok(child) = open_directory_at(fd, name.as_c_str()) else {
+                left.keep(changed());
+                continue;
+            };
+            let opened = rustix::fs::fstat(&child)
+                .map_err(io_error)
+                .and_then(|stat| object_id(&stat));
+            if opened.as_ref().ok() != Some(&id) {
+                left.keep(changed());
+                continue;
+            }
+            let child_node = name_str(&name)
+                .ok()
+                .and_then(|component| ledger.borrow().lookup(node, component));
+            let Some(child_node) = child_node else {
+                left.keep(not_ours());
+                continue;
+            };
+            let before = left.count;
+            sweep_tree(ledger, &child, child_node, depth + 1, left);
+            if left.count != before {
+                continue;
+            }
+            flags = AtFlags::REMOVEDIR;
+        }
+        match rustix::fs::unlinkat(fd, name.as_c_str(), flags) {
+            Ok(()) => ledger.borrow_mut().forget(&id),
+            Err(errno) => left.keep(io_error(errno)),
+        }
+    }
 }
 
 /// Removes the moved-aside subtree through the descriptor that was verified,
-/// then the (now empty) aside directory itself.
+/// then the (now empty) aside directory itself. The replacement is already
+/// published, so recognized run-created content is removed even when something
+/// else prevents completion; the first obstacle is returned as the error.
 pub(super) fn remove_aside(
     ledger: &RefCell<CollisionLedger>,
     parent: &OwnedFd,
     aside: &str,
-    doomed: DoomedDirectory,
+    doomed: &DoomedDirectory,
 ) -> Result<(), SarError> {
     hook("before-delete-replaced");
-    // Re-prove ownership of the moved subtree so that nothing is removed if
-    // unrecognized content appeared between the preflight and the move.
-    verify_tree(ledger, &doomed.fd, doomed.node, 0)?;
-    delete_tree(ledger, &doomed.fd, doomed.node, 0)?;
-    rustix::fs::unlinkat(parent, aside, AtFlags::REMOVEDIR).map_err(io_error)?;
-    Ok(())
+    let mut left = Leftovers::default();
+    sweep_tree(ledger, &doomed.fd, doomed.node, 0, &mut left);
+    if let Some(error) = left.first {
+        return Err(error);
+    }
+    match rustix::fs::statat(parent, aside, AtFlags::SYMLINK_NOFOLLOW) {
+        Ok(stat) if object_id(&stat)? == doomed.id => {}
+        Ok(_) | Err(Errno::NOENT) => return Err(changed()),
+        Err(errno) => return Err(io_error(errno)),
+    }
+    rustix::fs::unlinkat(parent, aside, AtFlags::REMOVEDIR).map_err(io_error)
 }

@@ -5,6 +5,7 @@ pub(crate) mod collision;
 pub(crate) mod metadata;
 pub(crate) mod paths;
 pub(crate) mod policy;
+pub(crate) mod report;
 #[cfg(not(unix))]
 #[path = "root_fallback.rs"]
 pub(crate) mod root;

@@ -23,6 +23,7 @@ use crate::extraction::{
     metadata::apply_path_metadata,
     paths::SafeRelativePath,
     policy::ExtractMetadataOptions,
+    report::ExtractionReport,
 };
 
 /// Identity of an existing object: its canonical on-disk path, which hosts
@@ -58,6 +59,20 @@ impl ExtractionRoot {
             path: path.to_path_buf(),
             ledger: Rc::new(RefCell::new(CollisionLedger::new(limits))),
         })
+    }
+
+    /// This backend keeps no record of destination changes, so a failed run
+    /// conservatively reports that partial changes may remain. Its staging
+    /// files are removed by path on drop, without an identity proof.
+    pub(crate) fn failure_report(&self) -> ExtractionReport {
+        ExtractionReport {
+            partial_changes: true,
+            cleanup_failures: Vec::new(),
+        }
+    }
+
+    pub(crate) fn ensure_no_temporary_artifacts(&self) -> Result<(), SarError> {
+        Ok(())
     }
 
     fn ensure_directory(&self, components: &[String]) -> Result<(PathBuf, NodeId), SarError> {
