@@ -18,7 +18,11 @@ use sar_core::partition_manifest::{
 use sar_crypto::aead::aead_decrypt;
 use sar_crypto::algorithm::AEAD_TAG_SIZE;
 use sar_crypto::hash::{Hasher, ct_eq, new_hasher};
-use sar_partition::{ManifestAuthentication, PartitionSetStatus, PredecessorLink};
+use sar_partition::{
+    AssessedPartition, ManifestAuthentication, PartitionKmsProfile, PartitionSetAssessment,
+    PartitionSetLimits, PartitionSetMode, PartitionSetStatus, PredecessorLink,
+    UnverifiedPartitionFacts, assess_partition_set,
+};
 
 /// Largest Manifest payload read into memory.  Version 1 needs 116 bytes at
 /// most; the margin only bounds the allocation made before the Manifest
@@ -36,16 +40,38 @@ const HASH_CHUNK: usize = 64 * 1024;
 /// established.  It is **not** a Partition Set: the predecessor link is
 /// unverified and the set status is
 /// [`PartitionSetStatus::NotEvaluated`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedPartition {
     manifest: PartitionManifestV1,
     manifest_offset: u64,
     partition_len: u64,
     indexed: bool,
     authentication: ManifestAuthentication,
+    header_version: u8,
+    global_flags: GlobalFlags,
+    kms: PartitionKmsProfile,
+    manifest_aead_algo_id: Option<u8>,
 }
 
 impl ValidatedPartition {
+    /// Set-level metadata of this Partition for Partition Set assessment.
+    ///
+    /// The result is plain, unverified data: it carries no validation claim
+    /// by itself and is meaningful only inside [`ValidatedPartitionSet`].
+    #[must_use]
+    pub(crate) fn facts(&self) -> UnverifiedPartitionFacts {
+        UnverifiedPartitionFacts::new(
+            self.manifest,
+            self.partition_len,
+            self.header_version,
+            sar_core::GLOBAL_FLAGS_SIZE,
+            self.global_flags,
+            self.kms.clone(),
+            self.manifest_aead_algo_id,
+            self.authentication,
+        )
+    }
+
     /// The decoded Manifest.
     #[must_use]
     pub const fn manifest(&self) -> &PartitionManifestV1 {
@@ -112,6 +138,115 @@ impl ValidatedPartition {
     #[must_use]
     pub const fn set_status(&self) -> PartitionSetStatus {
         PartitionSetStatus::NotEvaluated
+    }
+}
+
+/// A Partition Set assessed from physically inspected Partitions.
+///
+/// Private fields; the only constructors take [`ValidatedPartition`] values
+/// (which only physical inspection produces), so a caller cannot manufacture a
+/// set claiming physical validation.
+///
+/// **Metadata-only.**  The result is not pinned to any source: a successful
+/// inspection at time T does not prove a reopened file still holds the same
+/// bytes later, so every member must be physically revalidated before its
+/// content is consumed.  No Entries are reconstructed, no key is derived and
+/// the logical set is **not** authenticated (hashes are unkeyed;
+/// [`Self::manifests_aead_authenticated`] is per-Manifest evidence only).
+/// An incomplete set is never eligible for ordinary extraction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedPartitionSet {
+    assessment: PartitionSetAssessment,
+    rejected_candidates: usize,
+}
+
+impl ValidatedPartitionSet {
+    /// Assesses already-inspected Partitions (any input order).
+    ///
+    /// # Errors
+    ///
+    /// See [`sar_partition::assess_partition_set`].
+    pub fn validate(
+        partitions: &[ValidatedPartition],
+        limits: &PartitionSetLimits,
+        mode: PartitionSetMode,
+    ) -> Result<Self, SarError> {
+        if partitions.len() > limits.max_candidates {
+            return Err(SarError::LimitExceeded(
+                "Partition candidate count exceeds the configured limit",
+            ));
+        }
+        let facts: Vec<UnverifiedPartitionFacts> =
+            partitions.iter().map(ValidatedPartition::facts).collect();
+        Ok(Self {
+            assessment: assess_partition_set(&facts, limits, mode)?,
+            rejected_candidates: 0,
+        })
+    }
+
+    /// Assesses the outcomes of per-candidate inspection.  Candidates that
+    /// failed local validation are never used as replicas or members and
+    /// cannot cause conflicts; they are only counted, and count toward the
+    /// discovered-candidate limit.
+    ///
+    /// # Errors
+    ///
+    /// See [`Self::validate`].
+    pub fn from_inspection_results(
+        results: Vec<Result<ValidatedPartition, SarError>>,
+        limits: &PartitionSetLimits,
+        mode: PartitionSetMode,
+    ) -> Result<Self, SarError> {
+        if results.len() > limits.max_candidates {
+            return Err(SarError::LimitExceeded(
+                "Partition candidate count exceeds the configured limit",
+            ));
+        }
+        let mut valid = Vec::new();
+        let mut rejected = 0usize;
+        for r in results {
+            match r {
+                Ok(p) => valid.push(p),
+                Err(_) => {
+                    rejected = rejected
+                        .checked_add(1)
+                        .ok_or(SarError::Overflow("rejected candidate count"))?;
+                }
+            }
+        }
+        let mut set = Self::validate(&valid, limits, mode)?;
+        set.rejected_candidates = rejected;
+        Ok(set)
+    }
+
+    /// True only for a proven complete set.
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.assessment.is_complete()
+    }
+
+    /// The underlying metadata assessment.
+    #[must_use]
+    pub const fn assessment(&self) -> &PartitionSetAssessment {
+        &self.assessment
+    }
+
+    /// Deduplicated members in ascending Partition Index order.
+    #[must_use]
+    pub fn members(&self) -> &[AssessedPartition] {
+        self.assessment.members()
+    }
+
+    /// Per-Manifest AEAD evidence only; never whole-set authentication.
+    #[must_use]
+    pub const fn manifests_aead_authenticated(&self) -> bool {
+        self.assessment.manifests_aead_authenticated()
+    }
+
+    /// Candidates that failed local validation and were excluded.
+    #[must_use]
+    pub const fn rejected_candidates(&self) -> usize {
+        self.rejected_candidates
     }
 }
 
@@ -379,12 +514,17 @@ impl<R: Read + Seek> ArchiveReader<R> {
             ));
         }
 
+        let kms = PartitionKmsProfile::from_kms(header.kms.as_ref())?;
         Ok(ValidatedPartition {
             manifest,
             manifest_offset: site.offset,
             partition_len: self.file_len,
             indexed: self.cd.is_some(),
             authentication,
+            header_version: header.version,
+            global_flags: header.flags,
+            kms,
+            manifest_aead_algo_id: site.lfh.encr_algo_id,
         })
     }
 

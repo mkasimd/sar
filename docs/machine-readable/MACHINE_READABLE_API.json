@@ -4602,6 +4602,56 @@
               "SarError::LimitExceeded",
               "SarError::HashMismatch"
             ]
+          },
+          {
+            "name": "ValidatedPartitionSet::validate",
+            "description": "Assesses physically inspected Partitions (any order). Metadata-only; members must be revalidated before content use.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs",
+              "returns": "Result<ValidatedPartitionSet, SarError>"
+            },
+            "signature": "pub fn validate(partitions: &[ValidatedPartition], limits: &PartitionSetLimits, mode: PartitionSetMode) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::PartitionMismatch",
+              "SarError::PartitionMissing",
+              "SarError::InvalidVersion",
+              "SarError::LimitExceeded",
+              "SarError::Overflow"
+            ]
+          },
+          {
+            "name": "ValidatedPartitionSet::from_inspection_results",
+            "description": "Assesses per-candidate inspection outcomes; failed candidates are excluded and counted, never used as replicas.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs",
+              "returns": "Result<ValidatedPartitionSet, SarError>"
+            },
+            "signature": "pub fn from_inspection_results(results: Vec<Result<ValidatedPartition, SarError>>, limits: &PartitionSetLimits, mode: PartitionSetMode) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::PartitionMismatch",
+              "SarError::PartitionMissing",
+              "SarError::InvalidVersion",
+              "SarError::LimitExceeded",
+              "SarError::Overflow"
+            ]
           }
         ],
         "types": [
@@ -5579,6 +5629,24 @@
             },
             "kind": "struct",
             "signature": "pub struct ValidatedPartition { .. }"
+          },
+          {
+            "name": "ValidatedPartitionSet",
+            "description": "Metadata-only Partition Set result; private fields, constructible only from ValidatedPartition values. Not pinned to sources; not whole-set authentication; no extraction eligibility when incomplete.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition",
+              "path": "src/archive/partition.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct ValidatedPartitionSet { .. }"
           }
         ],
         "constants": [
@@ -8214,7 +8282,73 @@
       "description": "Status vocabulary for one physical Partition (M13b.3 P1). Holds no constructor for validated results: the validated type lives in sar-archive. Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, KMS consistency and extraction remain deferred (M13-BOUNDARY-003 open).",
       "status": "partial",
       "api": {
-        "functions": [],
+        "functions": [
+          {
+            "name": "assess_partition_set",
+            "description": "Pure, metadata-only Partition Set consistency, ordering, replica, predecessor-link and completeness assessment over caller-asserted facts. Makes no physical-validation, authentication or source-stability claim.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs",
+              "returns": "Result<PartitionSetAssessment, SarError>"
+            },
+            "signature": "pub fn assess_partition_set(candidates: &[UnverifiedPartitionFacts], limits: &PartitionSetLimits, mode: PartitionSetMode) -> Result<PartitionSetAssessment, SarError>",
+            "errors": [
+              "SarError::PartitionMismatch",
+              "SarError::PartitionMissing",
+              "SarError::InvalidVersion",
+              "SarError::LimitExceeded",
+              "SarError::Overflow"
+            ]
+          },
+          {
+            "name": "UnverifiedPartitionFacts::new",
+            "description": "Bundles caller-asserted Partition metadata; validates nothing.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs",
+              "returns": "UnverifiedPartitionFacts"
+            },
+            "signature": "pub const fn new(manifest: PartitionManifestV1, partition_len: u64, header_version: u8, flags_size: u16, global_flags: GlobalFlags, kms: PartitionKmsProfile, manifest_aead_algo_id: Option<u8>, manifest_authentication: ManifestAuthentication) -> Self",
+            "errors": []
+          },
+          {
+            "name": "PartitionKmsProfile::from_kms",
+            "description": "Extracts set-defining KMS properties with the existing KMS metadata parsers; derives no keys.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs",
+              "returns": "Result<PartitionKmsProfile, SarError>"
+            },
+            "signature": "pub fn from_kms(kms: Option<&KmsData>) -> Result<Self, SarError>",
+            "errors": [
+              "SarError"
+            ]
+          }
+        ],
         "types": [
           {
             "name": "ManifestAuthentication",
@@ -8269,6 +8403,168 @@
             },
             "kind": "enum",
             "signature": "pub enum PartitionSetStatus { NotEvaluated }"
+          },
+          {
+            "name": "PartitionKmsProfile",
+            "description": "Set-defining KMS properties of one Partition (spec 19.1.11); salts, costs and wrapped keys are excluded.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum PartitionKmsProfile { None, Pbkdf2 { prf_algo_id: u8 }, Argon2 { variant: u8, version: u8 }, AsymmetricWrap { wrap_algo_id: u8, recipients: Vec<Vec<u8>> }, TlsExporter { context_version: u8, kdf_algo_id: u8 } }"
+          },
+          {
+            "name": "UnverifiedPartitionFacts",
+            "description": "Caller-asserted Partition metadata with no physical-validation claim.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "struct",
+            "signature": "#[non_exhaustive] pub struct UnverifiedPartitionFacts { pub manifest: PartitionManifestV1, pub partition_len: u64, pub header_version: u8, pub flags_size: u16, pub global_flags: GlobalFlags, pub kms: PartitionKmsProfile, pub manifest_aead_algo_id: Option<u8>, pub manifest_authentication: ManifestAuthentication }"
+          },
+          {
+            "name": "PartitionSetLimits",
+            "description": "Configurable Partition Set bounds: partitions, candidates, duplicates, aggregate encoded bytes, retained metadata, relationship steps.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "struct",
+            "signature": "#[non_exhaustive] pub struct PartitionSetLimits { pub max_partitions: u32, pub max_candidates: usize, pub max_duplicate_candidates: usize, pub max_aggregate_encoded_bytes: u64, pub max_retained_metadata_bytes: u64, pub max_relationship_steps: u64 }"
+          },
+          {
+            "name": "PartitionSetMode",
+            "description": "RequireComplete (default) or caller-selected AllowIncomplete.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum PartitionSetMode { RequireComplete, AllowIncomplete }"
+          },
+          {
+            "name": "SetBoundary",
+            "description": "Known total or unknown boundary of an assessed set.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum SetBoundary { Known(u32), Unknown }"
+          },
+          {
+            "name": "LinkStatus",
+            "description": "Predecessor-link outcome of one member; unkeyed, never authenticity.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "enum",
+            "signature": "pub enum LinkStatus { NotApplicable, Verified, PredecessorUnavailable }"
+          },
+          {
+            "name": "MissingRange",
+            "description": "Inclusive range of missing Partition Indices.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct MissingRange { pub first: u32, pub last: u32 }"
+          },
+          {
+            "name": "AssessedPartition",
+            "description": "One deduplicated member of an assessed set.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct AssessedPartition { .. }"
+          },
+          {
+            "name": "PartitionSetAssessment",
+            "description": "Metadata-only set assessment; is_complete only for a proven complete set; no whole-set authentication.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "set",
+              "path": "src/set.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetAssessment { .. }"
           }
         ],
         "constants": []

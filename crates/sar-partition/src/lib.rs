@@ -6,20 +6,29 @@
 
 //! Partition support for SAR archives.
 //!
-//! # Current scope (M13b.3 P1)
+//! # Current scope (M13b.3 P1-P2)
 //!
-//! This crate owns only the status vocabulary reported for **one physical
-//! Partition**.  The Manifest Version 1 codec lives in `sar-core`.  The
-//! validated result (`sar_archive::ValidatedPartition`) lives in `sar-archive`
-//! and can only be produced by `ArchiveReader::inspect_partition`, which owns
-//! physical verification; this crate deliberately offers no constructor that
-//! could forge a validation or authentication claim.
+//! P1: the status vocabulary for **one physical Partition**.  The Manifest
+//! Version 1 codec lives in `sar-core`; the validated result
+//! (`sar_archive::ValidatedPartition`) lives in `sar-archive` and can only be
+//! produced by `ArchiveReader::inspect_partition`.
 //!
-//! A validated Partition establishes only individual physical Partition
-//! validity.  It is **not** a Partition Set validator: predecessor links,
-//! set-wide consistency (UUID, total, hash algorithm, Global Header, KMS),
-//! duplicate resolution, completeness, fragment reconstruction and extraction
-//! are not evaluated.  Partition Set assembly remains future work.
+//! P2: [`assess_partition_set`], the pure, metadata-only Partition Set rules
+//! (identity, canonical order, replicas, predecessor links, header/KMS
+//! consistency, completeness, limits) over [`UnverifiedPartitionFacts`].  The
+//! facts are caller-asserted and carry no physical-validation claim; the
+//! trusted wrapper is `sar_archive::ValidatedPartitionSet`, constructible only
+//! from validated Partitions.  Nothing here pins a source, authenticates the
+//! logical set, reconstructs Entries, orchestrates KMS or extracts; fragment
+//! grouping and extraction remain future work.
+
+mod set;
+
+pub use set::{
+    AssessedPartition, LinkStatus, MissingRange, PartitionKmsProfile, PartitionSetAssessment,
+    PartitionSetLimits, PartitionSetMode, SetBoundary, UnverifiedPartitionFacts,
+    assess_partition_set,
+};
 
 /// Marker for not-yet-implemented partition functionality.
 ///

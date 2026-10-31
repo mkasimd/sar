@@ -45,7 +45,7 @@ use sar_core::{
 };
 
 mod partition;
-pub use partition::{PartitionManifestParams, ValidatedPartition};
+pub use partition::{PartitionManifestParams, ValidatedPartition, ValidatedPartitionSet};
 
 use crate::transform::{
     DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
