@@ -112,14 +112,16 @@ implementation:
 
 ### Partition/multi-volume support
 
-`sar-partition` is a placeholder crate. Partition/multi-volume archive support
-is not implemented.
+`sar-partition` is a placeholder crate. Partition Set support is not
+implemented. Partition Set semantics are normatively specified in
+`specification.md` Section 19.1; the implementation is a separately controlled
+workstream that has not been authorized.
 
 The `sar-partition` crate exists as a reserved namespace to avoid accidental
 responsibility bleed into other crates. It intentionally contains no production
-logic until the partition/multi-volume design is specified and reviewed.
+logic until a Controller-authorized implementation package starts.
 
-Partition and multi-volume semantics remain deferred future work.
+Partitioned archives are rejected with `SAR_ERR_UNSUPPORTED` until then.
 
 ### C ABI
 

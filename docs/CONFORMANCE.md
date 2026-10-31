@@ -504,7 +504,7 @@ Integration tests that depend on a successful CLI extraction are `#[cfg(unix)]`,
 - Profile validation helpers are useful but are not a complete standalone conformance oracle.
 - Platform-specific metadata restoration behavior remains policy-gated and best-effort where supported.
 - No stable C ABI/Python/mobile binding surface is implemented in M1-M12b (future milestones).
-- Partition/multi-volume conformance coverage is deferred; `sar-partition` is a placeholder.
+- Partition Set conformance coverage is deferred; `sar-partition` is a placeholder. Partition Set semantics are specified in `specification.md` Section 19.1; no Partition Set implementation or test vectors exist.
 - Cold-storage and tape profile vectors remain deferred (see `test-vectors/profiles/README.md`).
 - Independent conformance certification is not claimed.
 

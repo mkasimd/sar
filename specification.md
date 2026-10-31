@@ -2987,7 +2987,7 @@ When a single condition below applies, the mapped status is normative. This sect
 | `Data Area CRC32` mismatch | `SAR_ERR_CRC_MISMATCH` |
 | `Content Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
 | Partition hash (`Current Partition Hash`) mismatch | `SAR_ERR_HASH_MISMATCH` |
-| `Previous Partition Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
+| `Previous Partition Hash` predecessor-link mismatch (Section 19.1.4) | `SAR_ERR_PARTITION_MISMATCH` |
 | `Delta Base Hash` mismatch | `SAR_ERR_HASH_MISMATCH` |
 | Anchor Hash (`DATA_HASH`) mismatch | `SAR_ERR_HASH_MISMATCH` |
 | CDC verified chunk hash mismatch | `SAR_ERR_HASH_MISMATCH` |
@@ -5039,7 +5039,9 @@ Partition-capable conforming implementations MUST support complete Partition Set
 
 Manifest Version 1 uses the existing SAR DATA_HASH algorithm identifier namespace. SHA256 (`0x30`), BLAKE3-256 (`0x31`), and SHA3_256 (`0x32`) produce the required 32-byte digest size. A partition-capable implementation MUST support SHA256 for Partition Manifest hashing.
 
-Every Manifest in one Partition Set MUST use the same Hash Algorithm ID.
+Every Manifest in one Partition Set MUST use the same Hash Algorithm ID. A Hash Algorithm ID that differs between Partitions of one Partition Set MUST return `SAR_ERR_PARTITION_MISMATCH`.
+
+SHA256 is the only Manifest hash algorithm that Partition support requires. Partition support does not require BLAKE3-256 or SHA3_256, and Section 12 profile requirements are not altered by this section.
 
 `Committed Content Length` MUST equal the physical byte offset of the Partition Manifest LFH from byte zero of the current Partition.
 
@@ -5178,6 +5180,8 @@ When Manifest encryption is active, its AEAD authentication protects Partition S
 
 Ordinary non-Manifest Entries retain their normal Entry Mode and encryption choices.
 
+Structural completeness and successful validation of `Current Partition Hash` and `Previous Partition Hash` do not establish cryptographic authenticity. These hashes are unkeyed and the Manifest of an unencrypted Partition Set is not authenticated by this section. A Partition Set that is neither signed nor encrypted with AEAD MUST NOT be reported as authenticated solely because its Partition hashes validate. Signatures and `DATA_HASH` anchors remain Partition-local (Section 7.3); this version defines no archive-wide Partition Set signature.
+
 
 #### 19.1.13 Resource Limits and Arithmetic
 
@@ -5190,6 +5194,22 @@ All arithmetic involving counts, indices, offsets, lengths, aggregate sizes, and
 #### 19.1.14 Manifest Validation
 
 A decoder MUST validate the Manifest's structural classification, exact Version 1 decoded size, supported version, reserved flag bits, nonzero Partition Set UUID, Partition Index, Total Partitions, finality relationship, configured count limits, checked arithmetic, Committed Content Length, Hash Algorithm ID, Current Partition Hash, Previous Partition Hash relationship when the predecessor is available, Global Header consistency, required KMS consistency, and local CD/Footer presence according to `NO_INDEX`.
+
+The following Manifest field conditions MUST return the stated status:
+
+| Condition | Status |
+| --- | --- |
+| `Total Partitions` equals `0x00000000` | `SAR_ERR_MALFORMED` |
+| Known `Total Partitions` with `Partition Index >= Total Partitions` | `SAR_ERR_MALFORMED` |
+| `FINAL_PARTITION` inconsistent with `Partition Index` and known `Total Partitions` (Section 19.1.3) | `SAR_ERR_MALFORMED` |
+| Unknown `Total Partitions` combined with `FINAL_PARTITION` | `SAR_ERR_MALFORMED` |
+| Final Partition that retains the unknown `Total Partitions` sentinel | `SAR_ERR_MALFORMED` |
+| All-zero `Partition Set UUID` | `SAR_ERR_MALFORMED` |
+| `Committed Content Length` differs from the physical offset of the Manifest LFH | `SAR_ERR_MALFORMED` |
+| Differing `Partition Set UUID`, known `Total Partitions`, or `Hash Algorithm ID` between Partitions of one Partition Set | `SAR_ERR_PARTITION_MISMATCH` |
+| Valid `Total Partitions` exceeding a configured limit | `SAR_ERR_LIMIT_EXCEEDED` |
+
+These mappings do not replace the statuses assigned by Section 19.1.2 (`SAR_ERR_INVALID_LENGTH`, `SAR_ERR_UNSUPPORTED`, `SAR_ERR_RESERVED_VALUE`) or by the following paragraph.
 
 A missing required Manifest MUST return `SAR_ERR_METADATA_MISSING`. More than one Manifest in one Partition MUST return `SAR_ERR_METADATA_CONFLICT`. A Manifest without `PARTITIONED_ARCHIVE` MUST return `SAR_ERR_FLAG_CONFLICT`. A Manifest that is not the final LFH in the Data Area MUST return `SAR_ERR_MALFORMED`.
 

@@ -4055,19 +4055,19 @@
         "test_requirement": "not_required"
       },
       "notes": [
-        "Drafted direction (not adopted): terminal LFH-based Partition Manifest Entry to replace or supplement the pre-Data-Area Partition Descriptor.",
-        "Drafted direction (not adopted): removal or redesign of the pre-Data-Area Partition Descriptor.",
-        "Drafted direction (not adopted): partition-local Central Dictionaries and Footers with partition-relative offsets.",
-        "Drafted direction (not adopted): Current Partition Hash and Previous Partition Hash fields for predecessor linkage.",
-        "Drafted direction (not adopted): Committed Content Length field for content commitment.",
-        "Drafted direction (not adopted): unknown Total Partitions sentinel value for streaming producers.",
-        "Drafted direction (not adopted): Final Partition bit or flag to signal partition set completion.",
-        "Drafted direction (not adopted): partition-local Data Area CRC32 integrity scope.",
-        "Drafted direction (not adopted): Manifest AEAD for partition manifest entry authentication.",
-        "Drafted direction (not adopted): complete Global Header AAD specification for partitioned archives.",
-        "Drafted direction (not adopted): partition-local signature scope definition.",
-        "Drafted direction (not adopted): cross-partition KMS consistency rules.",
-        "Drafted direction (not adopted): duplicate partition candidate resolution rules.",
+        "Earlier drafted direction (adopted in specification Section 19.1): terminal LFH-based Partition Manifest Entry to replace or supplement the pre-Data-Area Partition Descriptor.",
+        "Earlier drafted direction (adopted in specification Section 19.1): removal or redesign of the pre-Data-Area Partition Descriptor.",
+        "Earlier drafted direction (adopted in specification Section 19.1): partition-local Central Dictionaries and Footers with partition-relative offsets.",
+        "Earlier drafted direction (adopted in specification Section 19.1): Current Partition Hash and Previous Partition Hash fields for predecessor linkage.",
+        "Earlier drafted direction (adopted in specification Section 19.1): Committed Content Length field for content commitment.",
+        "Earlier drafted direction (adopted in specification Section 19.1): unknown Total Partitions sentinel value for streaming producers.",
+        "Earlier drafted direction (adopted in specification Section 19.1): Final Partition bit or flag to signal partition set completion.",
+        "Earlier drafted direction (adopted in specification Section 19.1): partition-local Data Area CRC32 integrity scope.",
+        "Earlier drafted direction (adopted in specification Section 19.1): Manifest AEAD for partition manifest entry authentication.",
+        "Earlier drafted direction (adopted in specification Section 19.1): complete Global Header AAD specification for partitioned archives.",
+        "Earlier drafted direction (adopted in specification Section 19.1): partition-local signature scope definition.",
+        "Earlier drafted direction (adopted in specification Section 19.1): cross-partition KMS consistency rules.",
+        "Earlier drafted direction (adopted in specification Section 19.1): duplicate partition candidate resolution rules.",
         "Dedicated binary-layout, compatibility, versioning, parser, encoder, and test vector review is required before any partition wire model change is adopted.",
         "Normative resolution: resolved. Implementation remediation: pending, tracked by M13-BOUNDARY-003."
       ],
@@ -4605,7 +4605,7 @@
       "confidence": "high",
       "summary": "The sar-partition crate is an explicit stub and archive integration does not implement Partition Manifests, partition-local Central Dictionaries and Footers, or Partition Set validation.",
       "current_behavior": "No Partition Manifest parsing, member-relative CD/Footer offsets, Current/Previous Partition Hash validation, incomplete-set handling, or cross-Partition fragment scope exists; the old descriptor-based model is referenced.",
-      "expected_behavior": "Implement Partition Set semantics of Section 19: terminal PARTITION_MANIFEST, partition-local CD/Footer, Data Area CRC32, hash linkage (mismatches map to SAR_ERR_HASH_MISMATCH), finality and known-boundary handling, incomplete Partition Set rules (19.1.8), and fragment groups spanning Partitions.",
+      "expected_behavior": "Implement Partition Set semantics of Section 19: terminal PARTITION_MANIFEST, partition-local CD/Footer, Data Area CRC32, hash linkage (Current Partition Hash and Anchor Hash mismatches map to SAR_ERR_HASH_MISMATCH; predecessor-link mismatches map to SAR_ERR_PARTITION_MISMATCH), finality and known-boundary handling, incomplete Partition Set rules (19.1.8), and fragment groups spanning Partitions.",
       "impact": "Partitioned archives cannot be produced or consumed interoperably.",
       "affected_artifacts": [
         "crates/sar-partition/src/lib.rs",
@@ -4632,7 +4632,7 @@
         "owner": "M13b.3",
         "requirements": [
           "Implement the Section 19 Partition Set model, including manifest validation, local offsets, and incomplete-set behavior.",
-          "Map Partition, Previous Partition, and Anchor hash mismatches to SAR_ERR_HASH_MISMATCH."
+          "Map Current Partition Hash and Anchor Hash mismatches to SAR_ERR_HASH_MISMATCH and Previous Partition Hash predecessor-link mismatches to SAR_ERR_PARTITION_MISMATCH (Section 10.4.1, Section 19.1.4)."
         ]
       },
       "verification": {
@@ -4650,6 +4650,7 @@
         ]
       },
       "notes": [
+        "Normative preparation (SAR-M13b3-PARTITION-PREP-001): local specification amendment aligns Section 10.4.1 with Section 19.1.4 (predecessor-link mismatch is SAR_ERR_PARTITION_MISMATCH), adds Manifest field validation statuses to Section 19.1.14, and clarifies that unkeyed Partition hash validation does not establish authenticity. No implementation was started; Partition Set implementation remains a separately controlled workstream and this finding remains open.",
         "Progress (WP-2a, M13b): only the obsolete Global Header PartitionDescriptor and CentralDictionary.partition_info were removed, and archive, stream, recovery, transcript and CD entry points now return SAR_ERR_UNSUPPORTED for PARTITIONED_ARCHIVE instead of processing the archive as an ordinary one. Partition Manifest, Partition Set validation and cross-Partition fragmentation are not implemented. Remaining (not closed): the full Section 19 model is owned by M13b.3 / WP-8.",
         "Package F (M13b.3 extraction platform evidence): cross-Partition extraction and Partition metadata handling remain outside extraction Packages A-F. Extraction takes a single archive file; a Partition-aware reader must funnel every Partition through the same descriptor-anchored `ExtractionRoot`. Nothing in Packages A-F creates or presumes Partition metadata, and no Partition Set work was started."
       ]
