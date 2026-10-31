@@ -586,3 +586,43 @@ fn written_bytes_have_correct_layout() {
 
     assert_eq!(bytes.len(), 64, "total size = 16 + 48 = 64");
 }
+
+// ---------------------------------------------------------------------------
+// Catalog consistency: duplicate hashes
+// ---------------------------------------------------------------------------
+
+fn record(hash: [u8; 32], offset: u64, size: u32) -> Vec<u8> {
+    let mut r = hash.to_vec();
+    r.extend_from_slice(&0u32.to_le_bytes());
+    r.extend_from_slice(&offset.to_le_bytes());
+    r.extend_from_slice(&size.to_le_bytes());
+    r
+}
+
+#[test]
+fn identical_duplicate_records_are_tolerated() {
+    let rec = record([7; 32], 100, 5);
+    let payload = [rec.clone(), rec].concat();
+    let raw = build_raw_v1(1, 0x31, 0, 2, 48, [0; 6], payload);
+    assert_eq!(parse_cdc_map(&raw, 16).expect("parse").records.len(), 2);
+}
+
+#[test]
+fn conflicting_duplicate_records_are_rejected() {
+    let payload = [record([7; 32], 100, 5), record([7; 32], 101, 5)].concat();
+    let raw = build_raw_v1(1, 0x31, 0, 2, 48, [0; 6], payload);
+    assert!(matches!(
+        parse_cdc_map(&raw, 16),
+        Err(CdcError::Conflict(_))
+    ));
+}
+
+#[test]
+fn compute_chunk_hash_matches_registered_algorithms() {
+    assert_eq!(
+        sar_cdc::compute_chunk_hash(0x31, b"x").expect("blake3"),
+        *blake3::hash(b"x").as_bytes()
+    );
+    assert!(sar_cdc::compute_chunk_hash(0x32, b"x").is_err());
+    assert!(sar_cdc::compute_chunk_hash(0x77, b"x").is_err());
+}

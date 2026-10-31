@@ -82,7 +82,19 @@ pub(crate) fn cdc_err_to_sar(e: CdcError) -> SarError {
         CdcError::Malformed(m) => SarError::Malformed(m),
         CdcError::LimitExceeded(m) => SarError::LimitExceeded(m),
         CdcError::InvalidLength(m) => SarError::InvalidLength(m),
+        CdcError::Conflict(m) => SarError::MetadataConflict(m),
     }
+}
+
+/// Computes a CDC chunk or Recipe-element hash with the registered SAR hash
+/// algorithm `hash_algorithm_id` (SHA-256 `0x30` or BLAKE3-256 `0x31`).
+///
+/// # Errors
+///
+/// [`SarError::Unsupported`] for a registered but unsupported algorithm and
+/// [`SarError::ReservedValue`] for a reserved identifier.
+pub fn compute_cdc_chunk_hash(hash_algorithm_id: u8, bytes: &[u8]) -> Result<[u8; 32], SarError> {
+    sar_cdc::compute_chunk_hash(hash_algorithm_id, bytes).map_err(cdc_err_to_sar)
 }
 
 /// Validates a raw CDC algorithm ID byte.
@@ -177,27 +189,43 @@ pub fn make_cdc_ext_provider_tlv(uri: &str, limits: &ResourceLimits) -> Result<T
     })
 }
 
-/// Extracts and parses the first CDC_MAP TLV (type ID `0x40`) found in
-/// `tlvs`, returning the parsed [`CdcMap`] or `None` if none is present.
+/// Extracts and parses the single CDC_MAP TLV (type ID `0x40`) in `tlvs`,
+/// returning the parsed [`CdcMap`] or `None` if none is present.
 ///
 /// # Errors
 ///
-/// Returns [`SarError`] if the TLV is found but malformed or exceeds limits.
+/// Returns [`SarError::MetadataConflict`] when more than one CDC_MAP is
+/// present (ambiguous catalog selection), or another [`SarError`] if the TLV
+/// is malformed or exceeds limits.
 pub fn parse_entry_cdc_map(
     tlvs: &[Tlv],
     limits: &ResourceLimits,
 ) -> Result<Option<CdcMap>, SarError> {
     limits.check_cdc_metadata_bytes(0)?; // fast-fail if limit is 0
 
-    for tlv in tlvs {
-        if tlv.type_id == TLV_CDC_MAP {
-            limits.check_cdc_metadata_bytes(tlv.value.len())?;
-            let max_records = limits.max_cdc_chunk_count;
-            let map = parse_cdc_map(&tlv.value, max_records).map_err(cdc_err_to_sar)?;
-            return Ok(Some(map));
+    let mut selected: Option<&Tlv> = None;
+    for tlv in tlvs.iter().filter(|t| t.type_id == TLV_CDC_MAP) {
+        if selected.is_some() {
+            return Err(SarError::MetadataConflict(
+                "multiple CDC_MAP catalogs present; catalog selection is ambiguous",
+            ));
         }
+        selected = Some(tlv);
     }
-    Ok(None)
+    let Some(tlv) = selected else {
+        return Ok(None);
+    };
+    limits.check_cdc_metadata_bytes(tlv.value.len())?;
+    // Parsing holds the TLV, the record vector and a transient duplicate index
+    // at once; charge that peak (about 144 bytes per 48-byte record) first.
+    let len = u64::try_from(tlv.value.len()).map_err(|_| SarError::Overflow("CDC_MAP length"))?;
+    let peak = (len / 48)
+        .checked_mul(48 + 96)
+        .and_then(|n| n.checked_add(len))
+        .ok_or(SarError::Overflow("CDC_MAP parse memory"))?;
+    limits.check_total_pipeline_memory(peak)?;
+    let map = parse_cdc_map(&tlv.value, limits.max_cdc_chunk_count).map_err(cdc_err_to_sar)?;
+    Ok(Some(map))
 }
 
 /// Serialises a [`CdcMap`] into a [`Tlv`] with type ID `0x40`.

@@ -64,7 +64,7 @@ pub use algo::{
     CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN, algo_name,
 };
 pub use fastcdc::{FastCdcOptions, chunk_data};
-pub use map::{parse_cdc_map, verify_cdc_map_record_hash, write_cdc_map};
+pub use map::{compute_chunk_hash, parse_cdc_map, verify_cdc_map_record_hash, write_cdc_map};
 pub use types::{
     CDC_MAP_HEADER_SIZE, CDC_MAP_RECORD_LEN, CDC_MAP_V1_RECORD_SIZE, CDC_MAP_VERSION_V1, CdcChunk,
     CdcMap, CdcMapHeader, CdcMapRecord, CdcMetadata,

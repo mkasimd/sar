@@ -59,8 +59,8 @@ pub const CDC_MAP_V1_RECORD_SIZE: u16 = 48;
 /// | Field             | Size |
 /// |-------------------|------|
 /// | `Hash`            | 32 B |
-/// | `Partition_ID`    |  4 B |
-/// | `Absolute_Offset` |  8 B |
+/// | `Partition_Index` |  4 B |
+/// | `Member_Offset`   |  8 B |
 /// | `Compressed_Size` |  4 B |
 pub const CDC_MAP_RECORD_LEN: usize = 32 + 4 + 8 + 4; // = 48
 
@@ -94,8 +94,8 @@ pub struct CdcMapHeader {
 /// | Field             | Size     |
 /// |-------------------|----------|
 /// | `Hash`            | 32 bytes |
-/// | `Partition_ID`    |  4 bytes |
-/// | `Absolute_Offset` |  8 bytes |
+/// | `Partition_Index` |  4 bytes |
+/// | `Member_Offset`   |  8 bytes |
 /// | `Compressed_Size` |  4 bytes |
 ///
 /// Total: 48 bytes per record.
@@ -104,9 +104,9 @@ pub struct CdcMapRecord {
     /// 32-byte chunk hash, computed using the `Hash_Algorithm_ID` from the
     /// CDC_MAP header (not the CDC chunking algorithm ID).
     pub hash: [u8; 32],
-    /// Partition identifier where the physical chunk bytes reside.
+    /// `Partition_Index` (wire name); must be 0 for unpartitioned archives.
     pub partition_id: u32,
-    /// Absolute byte offset of the chunk from the beginning of the archive.
+    /// `Member_Offset` (wire name): start of the raw chunk bytes in the selected member.
     pub absolute_offset: u64,
     /// Compressed (stored) byte length of the chunk payload.
     pub compressed_size: u32,

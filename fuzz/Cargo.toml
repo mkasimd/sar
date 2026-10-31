@@ -176,6 +176,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "cdc_recipe_resolution"
+path = "fuzz_targets/cdc_recipe_resolution.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "pr4_lfh_metadata_edges"
 path = "fuzz_targets/pr4_lfh_metadata_edges.rs"
 test = false

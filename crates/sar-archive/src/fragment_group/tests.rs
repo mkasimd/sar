@@ -178,7 +178,7 @@ fn incomplete_group_blocks_later_entries_then_releases_in_canonical_order() {
 #[test]
 fn retention_beyond_budget_behind_incomplete_group_fails_closed() {
     let limits = sar_core::ResourceLimits {
-        max_total_pipeline_memory: 2_500,
+        max_total_pipeline_memory: 5_000,
         ..sar_core::ResourceLimits::default()
     };
     let mut collector = FragmentGroupCollector::new(limits);
@@ -196,7 +196,7 @@ fn retention_beyond_budget_behind_incomplete_group_fails_closed() {
     }
     assert!(matches!(result, Err(SarError::LimitExceeded(_))));
     assert_eq!(pushed, 2, "group fragment plus one blocked Entry fit");
-    assert!(collector.retained_bytes() <= 2_500);
+    assert!(collector.retained_bytes() <= 5_000);
 }
 
 #[test]
@@ -441,4 +441,57 @@ fn op_code_must_agree_across_the_group() {
     assert!(matches!(result, Err(SarError::MetadataConflict(_))));
     let same = |h: &mut LocalFileHeader| set_bits(h, 0x0100);
     assert!(with_both(same, same).is_ok());
+}
+
+#[test]
+fn many_small_groups_exhaust_bookkeeping_before_payload_limits() {
+    // Payload bytes stay tiny; per-group state alone must hit the budget.
+    let limits = sar_core::ResourceLimits {
+        max_total_pipeline_memory: 20_000,
+        ..sar_core::ResourceLimits::default()
+    };
+    let mut collector = FragmentGroupCollector::new(limits);
+    let specs: Vec<Spec> = (0..64).map(|id| frag(id, 0, false, "g", 1)).collect();
+    let mut result = Ok(());
+    for entry in decode(GlobalFlags::empty(), &specs) {
+        result = collector.push(entry);
+        if result.is_err() {
+            break;
+        }
+    }
+    assert!(
+        matches!(result, Err(SarError::LimitExceeded(_))),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn group_count_is_bounded_by_max_entry_count() {
+    let limits = sar_core::ResourceLimits {
+        max_entry_count: 3,
+        ..sar_core::ResourceLimits::default()
+    };
+    let mut collector = FragmentGroupCollector::new(limits);
+    let specs: Vec<Spec> = (0..4).map(|id| frag(id, 0, true, "g", 1)).collect();
+    let mut outcomes = Vec::new();
+    for entry in decode(GlobalFlags::empty(), &specs) {
+        outcomes.push(collector.push(entry));
+        let _ = drain(&mut collector);
+    }
+    assert!(outcomes[..3].iter().all(Result::is_ok));
+    assert!(matches!(outcomes[3], Err(SarError::LimitExceeded(_))));
+}
+
+#[test]
+fn emitted_group_releases_bookkeeping() {
+    let mut collector = FragmentGroupCollector::new(sar_core::ResourceLimits::default());
+    for entry in decode(
+        GlobalFlags::empty(),
+        &[frag(1, 0, false, "G", 4), frag(1, 1, true, "", 4)],
+    ) {
+        collector.push(entry).expect("push");
+    }
+    assert_eq!(drain(&mut collector).len(), 1);
+    assert_eq!(collector.retained_bytes(), 0);
+    assert_eq!(collector.retention.aux, 0);
 }

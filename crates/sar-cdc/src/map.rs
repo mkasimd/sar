@@ -27,9 +27,13 @@
 //! | Field             | Size | Description                                        |
 //! |-------------------|------|----------------------------------------------------|
 //! | `Hash`            | 32 B | Chunk hash using `Hash_Algorithm_ID`               |
-//! | `Partition_ID`    |  4 B | Partition identifier                               |
-//! | `Absolute_Offset` |  8 B | Absolute byte offset from archive start            |
-//! | `Compressed_Size` |  4 B | Stored chunk payload size in bytes                 |
+//! | `Partition_Index` |  4 B | Physical Archive Member index (0 if unpartitioned) |
+//! | `Member_Offset`   |  8 B | Offset of the raw chunk bytes in that member       |
+//! | `Compressed_Size` |  4 B | Stored byte length of the raw chunk bytes          |
+//!
+//! CDC_MAP v1 defines no per-chunk compression, encryption or header: the
+//! stored bytes are the logical chunk bytes.  (The Rust field names
+//! `partition_id` / `absolute_offset` are retained for API stability.)
 //!
 //! ## Hash algorithm vs. CDC chunking algorithm
 //!
@@ -57,7 +61,9 @@ use crate::{
 /// * `Reserved` bytes are zero;
 /// * `Record_Size` is `48`;
 /// * TLV length equals `16 + Record_Count × 48` (checked arithmetic);
-/// * `Record_Count` ≤ `max_records`.
+/// * `Record_Count` ≤ `max_records`;
+/// * no two records share a hash with differing fields (identical duplicates
+///   are tolerated).
 ///
 /// # Errors
 ///
@@ -129,6 +135,10 @@ pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcErro
         .try_reserve(count)
         .map_err(|_| CdcError::LimitExceeded("CDC_MAP allocation failed"))?;
 
+    let mut seen: std::collections::HashMap<[u8; 32], usize> = std::collections::HashMap::new();
+    seen.try_reserve(count)
+        .map_err(|_| CdcError::LimitExceeded("CDC_MAP lookup allocation failed"))?;
+
     for i in 0..count {
         let start = CDC_MAP_HEADER_SIZE + i * CDC_MAP_RECORD_LEN;
         let rec = &bytes[start..start + CDC_MAP_RECORD_LEN];
@@ -155,18 +165,52 @@ pub fn parse_cdc_map(bytes: &[u8], max_records: usize) -> Result<CdcMap, CdcErro
                 .map_err(|_| CdcError::Malformed("CDC_MAP compressed_size slice wrong length"))?,
         );
 
-        records.push(CdcMapRecord {
+        let record = CdcMapRecord {
             hash,
             partition_id,
             absolute_offset,
             compressed_size,
-        });
+        };
+        match seen.get(&hash) {
+            Some(&prev) if records[prev] != record => {
+                return Err(CdcError::Conflict(
+                    "CDC_MAP contains conflicting records for the same hash",
+                ));
+            }
+            Some(_) => {}
+            None => {
+                seen.insert(hash, i);
+            }
+        }
+        records.push(record);
     }
 
     Ok(CdcMap {
         hash_algorithm_id,
         records,
     })
+}
+
+/// Computes the hash of `bytes` with the registered SAR hash algorithm
+/// `hash_algorithm_id`.
+///
+/// Supports SHA-256 (`0x30`) and BLAKE3-256 (`0x31`); both yield 32 bytes.
+///
+/// # Errors
+///
+/// [`CdcError::Unsupported`] / [`CdcError::ReservedValue`] for other IDs.
+pub fn compute_chunk_hash(hash_algorithm_id: u8, bytes: &[u8]) -> Result<[u8; 32], CdcError> {
+    validate_cdc_map_hash_algo_id(hash_algorithm_id)?;
+    match hash_algorithm_id {
+        0x30 => {
+            use sha2::Digest;
+            Ok(sha2::Sha256::digest(bytes).into())
+        }
+        0x31 => Ok(*blake3::hash(bytes).as_bytes()),
+        _ => Err(CdcError::Unsupported(
+            "hash algorithm not supported for CDC_MAP verification",
+        )),
+    }
 }
 
 /// Serialises a [`CdcMap`] to its on-wire TLV v1 value bytes.
@@ -253,7 +297,7 @@ pub fn verify_cdc_map_record_hash(
         .absolute_offset
         .checked_add(u64::from(record.compressed_size))
         .ok_or(CdcError::Overflow(
-            "CDC_MAP Absolute_Offset + Compressed_Size overflow",
+            "CDC_MAP Member_Offset + Compressed_Size overflow",
         ))?;
 
     let start = usize::try_from(record.absolute_offset)
@@ -269,20 +313,6 @@ pub fn verify_cdc_map_record_hash(
 
     let chunk_bytes = &archive_bytes[start..end];
 
-    let computed: [u8; 32] = match hash_algorithm_id {
-        0x30 => {
-            use sha2::Digest;
-            let mut h = sha2::Sha256::new();
-            h.update(chunk_bytes);
-            h.finalize().into()
-        }
-        0x31 => *blake3::hash(chunk_bytes).as_bytes(),
-        _ => {
-            return Err(CdcError::Unsupported(
-                "hash algorithm not supported for CDC_MAP verification",
-            ));
-        }
-    };
-
+    let computed = compute_chunk_hash(hash_algorithm_id, chunk_bytes)?;
     Ok(computed == record.hash)
 }

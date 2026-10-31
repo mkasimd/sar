@@ -107,13 +107,13 @@ claim).
 
 - **Wire:** none (clarifies existing fields). The `Compressed_Size` name
   remains until a later revision.
-- **Implementation (future, not authorized here):** a bounded CDC resolver in
-  the archive layer using `sar-cdc` helpers, with FASTCDC (`0x02`) as the
-  mandatory Standard Profile algorithm; `FRAGMENT_GAP` for incomplete
-  fragmented Recipes is already implemented.
-- **Gating:** The Controller has approved A1 to A5. CDC resolver
-  implementation and Standard Profile CDC claims remain gated on integration
-  (merge) of the normative alignment in `specification.md`.
+- **Implementation:** a bounded archive-level CDC resolver using `sar-cdc`
+  helpers (`SAR-M13b2-GROUPWIDE-IMPLEMENTATION-001`); `FRAGMENT_GAP` for
+  incomplete fragmented Recipes applies. Stream/session CDC and
+  cross-Partition lookup remain open (M13b.4, M13b.3).
+- **Gating (historical):** The Controller approved A1 to A5 and the normative
+  alignment was integrated; Standard Profile CDC claims still require the
+  remaining Section 12 obligations.
 
 ## 5. Decision record (`SAR-M13b2-CDC-NORMATIVE-CLARIFICATION-001`)
 
