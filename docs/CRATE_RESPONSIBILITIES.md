@@ -90,6 +90,7 @@ Includes:
 - create/extract/list/verify/inspect/repair command surface.
 - filesystem mutation behavior during extraction.
   - On Unix (Linux, FreeBSD, macOS) extraction is anchored to a single directory descriptor for the extraction root and uses descriptor-relative operations (M13b.3 Package A). The root path is resolved once; a root symlink is followed once and the resolved directory becomes the fixed scope. Extraction directories need read permission because they are opened for traversal.
+  - Extraction keeps a bounded ledger of which logical path owns which destination object (device/inode on Unix) and reports `SAR_ERR_PATH_COLLISION` when a different logical path reaches an already owned object (M13b.3 Package C). The ledger never folds or normalizes names, preserves the original spelling, and is charged against `max_total_pipeline_memory`. The ledger is individually bounded by `max_total_pipeline_memory`; it is not an aggregate accounting of all archive-reader and CLI allocations. Capacity is reserved before the publication rename, released if the rename fails, and committed afterwards without a fresh limit check, so a resource-limit failure never follows a successful publication; replacing a prior claim for the same logical path needs no extra capacity.
   - Non-Unix targets use an unhardened path-based fallback that is not claimed secure or conformant (hardening deferred).
 - metadata restoration policy gates and safe extraction defaults.
 
