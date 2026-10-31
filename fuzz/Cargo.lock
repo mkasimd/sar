@@ -635,6 +635,10 @@ version = "0.1.0"
 [[package]]
 name = "sar-partition"
 version = "0.1.0"
+dependencies = [
+ "sar-core",
+ "sar-crypto",
+]
 
 [[package]]
 name = "sar-sparse"

@@ -35,7 +35,8 @@ pub use archive::{
     ArchiveWriterOptions, CompressionSettings, ControlEntryPolicy, DeltaWriteOptions,
     EncryptionSettings, EntryInput, EntryMetadata, EntryReader, EntryWritten, FecSettings,
     LfhSizeFieldPolicy, LogicalFile, PartitionManifestParams, PayloadAuditPolicy,
-    SparseWriteOptions, StreamWriteState, ValidatedPartition, VerificationReport,
+    SparseWriteOptions, StreamWriteState, ValidatedPartition, ValidatedPartitionSet,
+    VerificationReport,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
 pub use recovery::{

@@ -341,6 +341,8 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | `StreamArchiveParser::with_key_provider` | `pub fn StreamArchiveParser::with_key_provider(self, key_provider: Box<dyn KeyProvider>) -> Self` | Attach key provider for encrypted entries. |
 | `StreamArchiveParser::with_options` | `pub fn StreamArchiveParser::with_options(options: ArchiveReaderOptions) -> Self` | Create parser with explicit options. |
 | `validate_archive_profile` | `pub fn validate_archive_profile(meta: &ArchiveMetadata, profile: ComplianceProfile) -> ProfileReport` | Validate archive metadata against the currently implemented compliance-profile rules. |
+| `ValidatedPartitionSet::from_inspection_results` | `pub fn from_inspection_results(results: Vec<Result<ValidatedPartition, SarError>>, limits: &PartitionSetLimits, mode: PartitionSetMode) -> Result<Self, SarError>` | Assesses per-candidate inspection outcomes; failed candidates are excluded and counted, never used as replicas. |
+| `ValidatedPartitionSet::validate` | `pub fn validate(partitions: &[ValidatedPartition], limits: &PartitionSetLimits, mode: PartitionSetMode) -> Result<Self, SarError>` | Assesses physically inspected Partitions (any order). Metadata-only; members must be revalidated before content use. |
 | `verify_content_hash` | `pub fn verify_content_hash(algo_id: Option<u8>, expected: Option<[u8; 32]>, gathered: &[u8], sparse: Option<(&[SparseExtent], u64)>) -> Result<(), SarError>` | Verifies an authoritative LFH Content Hash over the final logical Entry, hashing sparse holes as zero runs without materialization. An all-zero expected value is an ordinary digest. |
 
 #### Public types
@@ -394,6 +396,7 @@ High-level SAR archive reader/writer, verification, audit, transform orchestrati
 | `StreamStep` | `enum` | `pub enum StreamStep<T> { NeedMore { needed: Option<usize> }, Ready(T), Complete }` | Deterministic incremental parser step result. |
 | `StreamWriteState` | `enum` | `pub enum StreamWriteState { NeedLocalFileHeader, NeedPayload, EntryReady, NeedCentralDictionaryOrFooter, ArchiveComplete, Error }` | Structural archive writer phases for stream-oriented emission. |
 | `ValidatedPartition` | `struct` | `pub struct ValidatedPartition { .. }` | Result of ArchiveReader::inspect_partition for one physically validated Partition. Private fields and no public constructor: it cannot be forged without inspection. Not a Partition Set: predecessor link is unverified and set status is NotEvaluated. |
+| `ValidatedPartitionSet` | `struct` | `pub struct ValidatedPartitionSet { .. }` | Metadata-only Partition Set result; private fields, constructible only from ValidatedPartition values. Not pinned to sources; not whole-set authentication; no extraction eligibility when incomplete. |
 | `VerificationReport` | `struct` | `pub struct VerificationReport { pub valid: bool, pub entry_count: u64, pub indexed: bool, pub cdc_entry_count: u64, pub cdc_support: bool }` | Verification summary including CDC support and number of entries carrying cdc_algo_id |
 
 ### `sar-crypto`
@@ -619,13 +622,30 @@ Status: `partial`
 
 Status vocabulary for one physical Partition (M13b.3 P1). Holds no constructor for validated results: the validated type lives in sar-archive. Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, KMS consistency and extraction remain deferred (M13-BOUNDARY-003 open).
 
+#### Public functions
+
+| Name | Signature | Description |
+| --- | --- | --- |
+| `assess_partition_set` | `pub fn assess_partition_set(candidates: &[UnverifiedPartitionFacts], limits: &PartitionSetLimits, mode: PartitionSetMode) -> Result<PartitionSetAssessment, SarError>` | Pure, metadata-only Partition Set consistency, ordering, replica, predecessor-link and completeness assessment over caller-asserted facts. Makes no physical-validation, authentication or source-stability claim. |
+| `PartitionKmsProfile::from_kms` | `pub fn from_kms(kms: Option<&KmsData>) -> Result<Self, SarError>` | Extracts set-defining KMS properties with the existing KMS metadata parsers; derives no keys. |
+| `UnverifiedPartitionFacts::new` | `pub const fn new(manifest: PartitionManifestV1, partition_len: u64, header_version: u8, flags_size: u16, global_flags: GlobalFlags, kms: PartitionKmsProfile, manifest_aead_algo_id: Option<u8>, manifest_authentication: ManifestAuthentication) -> Self` | Bundles caller-asserted Partition metadata; validates nothing. |
+
 #### Public types
 
 | Name | Kind | Signature | Description |
 | --- | --- | --- | --- |
+| `AssessedPartition` | `struct` | `pub struct AssessedPartition { .. }` | One deduplicated member of an assessed set. |
+| `LinkStatus` | `enum` | `pub enum LinkStatus { NotApplicable, Verified, PredecessorUnavailable }` | Predecessor-link outcome of one member; unkeyed, never authenticity. |
 | `ManifestAuthentication` | `enum` | `pub enum ManifestAuthentication { Unauthenticated, Aead }` | Whether the Manifest payload was AEAD-authenticated. |
+| `MissingRange` | `struct` | `pub struct MissingRange { pub first: u32, pub last: u32 }` | Inclusive range of missing Partition Indices. |
+| `PartitionKmsProfile` | `enum` | `pub enum PartitionKmsProfile { None, Pbkdf2 { prf_algo_id: u8 }, Argon2 { variant: u8, version: u8 }, AsymmetricWrap { wrap_algo_id: u8, recipients: Vec<Vec<u8>> }, TlsExporter { context_version: u8, kdf_algo_id: u8 } }` | Set-defining KMS properties of one Partition (spec 19.1.11); salts, costs and wrapped keys are excluded. |
+| `PartitionSetAssessment` | `struct` | `pub struct PartitionSetAssessment { .. }` | Metadata-only set assessment; is_complete only for a proven complete set; no whole-set authentication. |
+| `PartitionSetLimits` | `struct` | `#[non_exhaustive] pub struct PartitionSetLimits { pub max_partitions: u32, pub max_candidates: usize, pub max_duplicate_candidates: usize, pub max_aggregate_encoded_bytes: u64, pub max_retained_metadata_bytes: u64, pub max_relationship_steps: u64 }` | Configurable Partition Set bounds: partitions, candidates, duplicates, aggregate encoded bytes, retained metadata, relationship steps. |
+| `PartitionSetMode` | `enum` | `pub enum PartitionSetMode { RequireComplete, AllowIncomplete }` | RequireComplete (default) or caller-selected AllowIncomplete. |
 | `PartitionSetStatus` | `enum` | `pub enum PartitionSetStatus { NotEvaluated }` | Partition Set evaluation status; always NotEvaluated in P1. |
 | `PredecessorLink` | `enum` | `pub enum PredecessorLink { NotApplicable, Unverified([u8; 32]) }` | Declared predecessor link; never verified in P1. |
+| `SetBoundary` | `enum` | `pub enum SetBoundary { Known(u32), Unknown }` | Known total or unknown boundary of an assessed set. |
+| `UnverifiedPartitionFacts` | `struct` | `#[non_exhaustive] pub struct UnverifiedPartitionFacts { pub manifest: PartitionManifestV1, pub partition_len: u64, pub header_version: u8, pub flags_size: u16, pub global_flags: GlobalFlags, pub kms: PartitionKmsProfile, pub manifest_aead_algo_id: Option<u8>, pub manifest_authentication: ManifestAuthentication }` | Caller-asserted Partition metadata with no physical-validation claim. |
 
 ### `sar-sparse`
 
