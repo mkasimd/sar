@@ -108,7 +108,7 @@
           },
           {
             "name": "verify_cdc_map_record_hash",
-            "description": "Verify that a CDC_MAP record hash matches the bytes at [Absolute_Offset, Absolute_Offset+Compressed_Size) in archive_bytes using the given hash algorithm (0x30=SHA-256, 0x31=BLAKE3). Uses checked arithmetic. Does not claim FASTCDC boundary-regeneration verification.",
+            "description": "Verify that a CDC_MAP record hash matches the bytes at [Member_Offset, Member_Offset+Compressed_Size) in archive_bytes using the given hash algorithm (0x30=SHA-256, 0x31=BLAKE3). Uses checked arithmetic. Does not claim FASTCDC boundary-regeneration verification.",
             "metadata": {
               "since_milestone": "9a",
               "implemented": true,
@@ -116,6 +116,17 @@
               "path": "src/map.rs"
             },
             "signature": "pub fn verify_cdc_map_record_hash(record: &CdcMapRecord, hash_algorithm_id: u8, archive_bytes: &[u8]) -> Result<bool, CdcError>"
+          },
+          {
+            "name": "compute_chunk_hash",
+            "description": "Compute the 32-byte CDC chunk hash for hash algorithm 0x30 (SHA-256) or 0x31 (BLAKE3); other IDs return CdcError. Shared by record verification and Recipe resolution.",
+            "metadata": {
+              "since_milestone": "13b",
+              "implemented": true,
+              "module": "map",
+              "path": "src/map.rs"
+            },
+            "signature": "pub fn compute_chunk_hash(hash_algorithm_id: u8, bytes: &[u8]) -> Result<[u8; 32], CdcError>"
           },
           {
             "name": "chunk_data",
@@ -179,7 +190,7 @@
           },
           {
             "name": "CdcMapRecord",
-            "description": "Single CDC_MAP v1 TLV record (48-byte layout: Hash 32B + Partition_ID u32 4B + Absolute_Offset u64 8B + Compressed_Size u32 4B)",
+            "description": "Single CDC_MAP v1 TLV record (48-byte layout: Hash 32B + Partition_Index u32 4B + Member_Offset u64 8B + Compressed_Size u32 4B)",
             "metadata": {
               "since_milestone": "9a",
               "implemented": true,
@@ -203,7 +214,7 @@
           },
           {
             "name": "CdcError",
-            "description": "CDC-specific error type with variants: Unsupported, ReservedValue, Overflow, Bounds, Malformed, LimitExceeded, InvalidLength",
+            "description": "CDC-specific error type with variants: Unsupported, ReservedValue, Overflow, Bounds, Malformed, LimitExceeded, InvalidLength, Conflict (conflicting records for one hash)",
             "metadata": {
               "since_milestone": "9a",
               "implemented": true,
@@ -835,12 +846,36 @@
               "SarError::ReservedValue",
               "SarError::Unsupported",
               "SarError::Malformed",
+              "SarError::MetadataConflict",
               "SarError::LimitExceeded"
             ]
           },
           {
+            "name": "compute_cdc_chunk_hash",
+            "description": "Compute the 32-byte CDC chunk hash for a registered hash algorithm (0x30=SHA-256, 0x31=BLAKE3). 0x32 returns SarError::Unsupported; unassigned IDs return SarError::ReservedValue. Never infers the algorithm from hash bytes.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<[u8; 32], SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": true,
+                "readiness": "candidate",
+                "notes": "Pure function."
+              },
+              "module": "cdc",
+              "path": "src/cdc.rs"
+            },
+            "signature": "pub fn compute_cdc_chunk_hash(algo: u8, bytes: &[u8]) -> Result<[u8; 32], SarError>",
+            "errors": [
+              "SarError::Unsupported",
+              "SarError::ReservedValue"
+            ]
+          },
+          {
             "name": "parse_entry_cdc_map",
-            "description": "Extracts/parses first stored CDC_MAP TLV from metadata; does not regenerate FASTCDC boundaries",
+            "description": "Extracts/parses the single stored CDC_MAP TLV from metadata; more than one CDC_MAP TLV is an ambiguous catalog and is rejected with SarError::MetadataConflict; conflicting duplicate-hash records are also MetadataConflict; does not regenerate FASTCDC boundaries",
             "metadata": {
               "since_milestone": "9a",
               "returns": "Result<Option<CdcMap>, SarError>",
@@ -858,6 +893,7 @@
             "signature": "pub fn parse_entry_cdc_map(tlvs: &[Tlv], limits: &ResourceLimits) -> Result<Option<CdcMap>, SarError>",
             "errors": [
               "SarError::Malformed",
+              "SarError::MetadataConflict",
               "SarError::LimitExceeded"
             ]
           },
@@ -3537,6 +3573,29 @@
             ]
           },
           {
+            "name": "ArchiveReader::with_cdc_resolver",
+            "description": "Explicitly configure an application-authorized external CDC chunk resolver and the registered hash algorithm (0x30 or 0x31) that applies to its Recipes. Never invoked by parsing, listing, next_entry, audit or verify; consulted only during logical reconstruction. The configured resolver is the exclusive catalog; a local CDC_MAP with a different algorithm is SarError::MetadataConflict.",
+            "metadata": {
+              "since_milestone": "13b",
+              "returns": "Result<ArchiveReader<R>, SarError>",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "unstable",
+                "notes": "Trait-object callback is not directly suitable for a C ABI."
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "signature": "pub fn ArchiveReader<R>::with_cdc_resolver(self, hash_algorithm_id: u8, resolver: Box<dyn CdcChunkResolver>) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::Unsupported",
+              "SarError::ReservedValue"
+            ]
+          },
+          {
             "name": "ArchiveWriter::add_entry",
             "description": "Add one archive entry. When the writer was created with CDC metadata, LFH cdc_algo_id is emitted as LITERAL_MODE (0x00) to keep CDC_SUPPORT archives internally consistent.",
             "metadata": {
@@ -4234,6 +4293,25 @@
             },
             "kind": "struct",
             "signature": "pub struct ArchiveReader<R> { ... }"
+          },
+          {
+            "name": "CdcChunkResolver",
+            "description": "Minimal application-implemented external CDC chunk provider. Called only during explicit logical reconstruction after explicit configuration. Receives the registered hash algorithm, the 32-byte hash and a maximum byte length; returns an owned Vec or None for missing/unauthorized/unavailable chunks (SAR_ERR_RECIPE_UNRESOLVABLE). Returned bytes larger than max_len are SAR_ERR_LIMIT_EXCEEDED and are always hash-verified (SAR_ERR_HASH_MISMATCH) before use. No network protocol is defined.",
+            "metadata": {
+              "since_milestone": "13b",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "unstable",
+                "notes": "Trait-object API is not directly suitable for a C ABI."
+              },
+              "module": "cdc_resolve",
+              "path": "src/cdc_resolve.rs"
+            },
+            "kind": "trait",
+            "signature": "pub trait CdcChunkResolver { fn resolve_chunk(&self, hash_algorithm_id: u8, hash: &[u8; 32], max_len: u64) -> Option<Vec<u8>>; }"
           },
           {
             "name": "ArchiveReaderOptions",

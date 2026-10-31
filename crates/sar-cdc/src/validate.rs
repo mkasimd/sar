@@ -32,6 +32,8 @@ pub enum CdcError {
     LimitExceeded(&'static str),
     /// Zero-length chunk or zero-count condition.
     InvalidLength(&'static str),
+    /// Conflicting metadata (e.g. two CDC_MAP records for one hash).
+    Conflict(&'static str),
 }
 
 impl core::fmt::Display for CdcError {
@@ -44,6 +46,7 @@ impl core::fmt::Display for CdcError {
             Self::Malformed(m) => write!(f, "CDC malformed: {m}"),
             Self::LimitExceeded(m) => write!(f, "CDC limit exceeded: {m}"),
             Self::InvalidLength(m) => write!(f, "CDC invalid length: {m}"),
+            Self::Conflict(m) => write!(f, "CDC conflict: {m}"),
         }
     }
 }

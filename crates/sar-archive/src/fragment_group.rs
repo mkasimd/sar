@@ -127,19 +127,99 @@ pub struct FragmentGroup {
     /// LFH Hash Algo ID of the terminal fragment (group-invariant, Class G).
     pub terminal_hash_algo_id: Option<u8>,
     entries: Vec<EntryReader>,
+    /// Logical bytes after the group-wide patch and CDC stages, set by
+    /// [`Self::resolve_recipe`] for a Recipe-Mode group.
+    resolved: Option<Vec<u8>>,
+    /// Bytes the collector still held (other groups, metadata, tombstones)
+    /// when this group was emitted; charged with the reconstruction peak.
+    held_elsewhere: u64,
 }
 
 impl FragmentGroup {
+    /// True when the group is Recipe Mode and still awaits CDC resolution.
+    pub(crate) fn needs_cdc(&self) -> bool {
+        self.resolved.is_none()
+            && self
+                .entries
+                .first()
+                .and_then(|e| e.metadata.cdc_algo_id)
+                .is_some_and(|id| id != CDC_ALGO_LITERAL)
+    }
+
+    /// Runs the group-wide stages up to and including CDC resolution
+    /// (Section 13.1 steps 4-6) for a Recipe-Mode group: fragment reassembly,
+    /// the group-wide patch, then `resolve` on the Recipe bytes.
+    ///
+    /// The group must be complete; an incomplete one is
+    /// [`SarError::FragmentGap`] even under `LOSS_TOLERANT`.  The result is
+    /// returned by [`Self::reconstruct`], which does not repeat these stages.
+    pub(crate) fn resolve_recipe(
+        &mut self,
+        options: &ArchiveReaderOptions,
+        resolve: impl FnOnce(&[u8]) -> Result<Vec<u8>, SarError>,
+    ) -> Result<(), SarError> {
+        if !self.is_complete() {
+            return Err(SarError::FragmentGap(
+                "a group-wide stage requires a complete fragment group",
+            ));
+        }
+        self.check_reconstruction_peak(&options.limits)?;
+        let patch = self.patch();
+        let fragments = std::mem::take(&mut self.entries)
+            .into_iter()
+            .map(|e| FragmentEntry {
+                fragment_index: e.metadata.fragment_index.unwrap_or(0),
+                is_last_fragment: e.metadata.is_last_fragment,
+                is_loss_tolerant: e.metadata.is_loss_tolerant,
+                uncompressed_size: e.metadata.uncompressed_size,
+                payload: e.payload,
+            })
+            .collect();
+        let (mut bytes, degraded) =
+            reconstruct_fragments(fragments, &options.limits.fragment_limits())?;
+        if degraded {
+            return Err(SarError::FragmentGap(
+                "a group-wide stage requires a complete fragment group",
+            ));
+        }
+        if let Some((algo_id, base_hash)) = patch {
+            bytes = apply_patch_stage(options, algo_id, base_hash, bytes)?;
+        }
+        self.resolved = Some(resolve(&bytes)?);
+        Ok(())
+    }
+
+    /// Concatenation grows the first contribution to the full group length
+    /// while the other contributions are still held, so the live peak is up to
+    /// twice the retained payload bytes; enforce that before allocating.
+    fn check_reconstruction_peak(&self, limits: &ResourceLimits) -> Result<(), SarError> {
+        let mut total: u64 = 0;
+        for e in &self.entries {
+            let len = u64::try_from(e.payload.len())
+                .map_err(|_| SarError::Overflow("fragment payload length"))?;
+            total = total
+                .checked_add(len)
+                .ok_or(SarError::Overflow("fragment length sum overflow"))?;
+        }
+        let peak = total
+            .checked_mul(2)
+            .and_then(|n| n.checked_add(self.held_elsewhere))
+            .ok_or(SarError::Overflow("fragment reconstruction memory"))?;
+        limits.check_total_pipeline_memory(peak)
+    }
+
     /// Returns true when Fragment Indices `0..=LAST_FRAGMENT` are all present.
     fn is_complete(&self) -> bool {
-        self.entries
-            .iter()
-            .find(|e| e.metadata.is_last_fragment)
-            .is_some_and(|t| {
-                t.metadata
-                    .fragment_index
-                    .is_some_and(|i| u64::from(i) + 1 == self.entries.len() as u64)
-            })
+        self.resolved.is_some()
+            || self
+                .entries
+                .iter()
+                .find(|e| e.metadata.is_last_fragment)
+                .is_some_and(|t| {
+                    t.metadata
+                        .fragment_index
+                        .is_some_and(|i| u64::from(i) + 1 == self.entries.len() as u64)
+                })
     }
 
     /// Patch Algo ID and Delta Base Hash of the group (Class G), when the
@@ -189,7 +269,11 @@ impl FragmentGroup {
             sparse.logical_size,
             &limits.sparse_limits(),
         )?;
-        if self.patch().is_none() {
+        if let Some(resolved) = &self.resolved {
+            let len =
+                u64::try_from(resolved.len()).map_err(|_| SarError::Overflow("gathered length"))?;
+            check_gathered_length(len, extent_total)?;
+        } else if self.patch().is_none() {
             require_literal_cdc(self.entries.first().and_then(|e| e.metadata.cdc_algo_id))?;
             check_gathered_length(self.contribution_total()?, extent_total)?;
         }
@@ -213,8 +297,9 @@ impl FragmentGroup {
     /// patch, applied **once** to the complete Fragment Reassembly Sequence
     /// (see [`crate::apply_patch_stage`] semantics: output length comes from
     /// the patch construction, bounded before allocation); CDC resolution,
-    /// which fails closed with [`SarError::Unsupported`] for a non-literal CDC
-    /// Algo ID; and the sparse gathered-length check.  Sparse scattering and
+    /// which [`crate::archive::ArchiveReader::next_logical_entry`] performs
+    /// before releasing a Recipe-Mode group (an unresolved Recipe group fails
+    /// closed with [`SarError::Unsupported`] here); and the sparse gathered-length check.  Sparse scattering and
     /// final integrity verification are performed by the caller.
     ///
     /// Returns `(bytes, is_degraded)`.  A group requiring a group-wide stage
@@ -232,6 +317,19 @@ impl FragmentGroup {
     /// the group-wide stages.
     pub fn reconstruct(self, options: &ArchiveReaderOptions) -> Result<(Vec<u8>, bool), SarError> {
         let limits = &options.limits;
+        if let Some(bytes) = self.resolved {
+            if let Some(sparse) = self.index0.as_ref().and_then(|m| m.sparse.as_ref()) {
+                let extent_total = validate_sparse_extents(
+                    &sparse.extents,
+                    sparse.logical_size,
+                    &limits.sparse_limits(),
+                )?;
+                let gathered = u64::try_from(bytes.len())
+                    .map_err(|_| SarError::Overflow("gathered length"))?;
+                check_gathered_length(gathered, extent_total)?;
+            }
+            return Ok((bytes, false));
+        }
         let patch = self.patch();
         let cdc_algo_id = self.entries.first().and_then(|e| e.metadata.cdc_algo_id);
         let sparse_total = match self.index0.as_ref().and_then(|m| m.sparse.as_ref()) {
@@ -250,6 +348,7 @@ impl FragmentGroup {
                 "a group-wide stage requires a complete fragment group",
             ));
         }
+        self.check_reconstruction_peak(limits)?;
         let fragments = self
             .entries
             .into_iter()
@@ -291,6 +390,8 @@ struct GroupState {
     entries: Vec<EntryReader>,
     /// Decoded payload bytes currently retained in `entries`.
     retained: u64,
+    /// Per-Entry metadata bookkeeping bytes retained for this group.
+    aux: u64,
     /// True once Fragment Indices `0..=LAST_FRAGMENT` are all present.  The
     /// state is kept (without payloads) after emission so that a later
     /// fragment of the same group is still rejected.
@@ -309,6 +410,11 @@ enum Slot {
 struct Retention {
     limits: ResourceLimits,
     current: u64,
+    /// Bytes of fixed-size per-group state kept for the life of the
+    /// collector (see [`GROUP_TOMBSTONE_BYTES`]); never released.
+    permanent: u64,
+    /// Transient per-Entry metadata bytes, released on emission.
+    aux: u64,
     #[cfg(test)]
     peak: u64,
 }
@@ -320,13 +426,54 @@ impl Retention {
             .checked_add(bytes)
             .ok_or(SarError::Overflow("collector retained byte count"))?;
         if enforce {
-            self.limits.check_total_pipeline_memory(next)?;
+            self.limits
+                .check_total_pipeline_memory(self.held_with(next)?)?;
         }
         self.current = next;
         #[cfg(test)]
         {
             self.peak = self.peak.max(next);
         }
+        Ok(())
+    }
+
+    /// Total bytes held for a payload count of `payload`, plus bookkeeping.
+    fn held_with(&self, payload: u64) -> Result<u64, SarError> {
+        payload
+            .checked_add(self.permanent)
+            .and_then(|n| n.checked_add(self.aux))
+            .ok_or(SarError::Overflow("collector retained byte count"))
+    }
+
+    fn add_permanent(&mut self, bytes: u64) -> Result<(), SarError> {
+        let next = self
+            .permanent
+            .checked_add(bytes)
+            .ok_or(SarError::Overflow("collector bookkeeping byte count"))?;
+        let held = self
+            .held_with(self.current)?
+            .checked_add(bytes)
+            .ok_or(SarError::Overflow("collector bookkeeping byte count"))?;
+        self.limits.check_total_pipeline_memory(held)?;
+        self.permanent = next;
+        Ok(())
+    }
+
+    fn add_aux(&mut self, bytes: u64) -> Result<(), SarError> {
+        let held = self
+            .held_with(self.current)?
+            .checked_add(bytes)
+            .ok_or(SarError::Overflow("collector bookkeeping byte count"))?;
+        self.limits.check_total_pipeline_memory(held)?;
+        self.aux = self.aux.saturating_add(bytes);
+        Ok(())
+    }
+
+    fn release_aux(&mut self, bytes: u64) -> Result<(), SarError> {
+        self.aux = self
+            .aux
+            .checked_sub(bytes)
+            .ok_or(SarError::Internal("collector bookkeeping underflow"))?;
         Ok(())
     }
 
@@ -339,8 +486,34 @@ impl Retention {
     }
 }
 
+/// Accounted bytes of per-Entry metadata retained beside the payload: the
+/// parsed LFH, its metadata copy and the group's Index-0 copies.
+const ENTRY_BOOKKEEPING_BYTES: u64 = 1024;
+
+/// Accounted bytes of the fixed-size state kept for every Fragment ID seen,
+/// so a later fragment of an already-emitted group is still rejected.  The
+/// number of such states is bounded by `max_entry_count`.
+const GROUP_TOMBSTONE_BYTES: u64 = 128;
+
 fn payload_bytes(entry: &EntryReader) -> Result<u64, SarError> {
     u64::try_from(entry.payload.len()).map_err(|_| SarError::Overflow("payload length"))
+}
+
+/// Metadata bytes retained beside an Entry's payload (not counted in
+/// [`Retention::current`], which is payload only).
+fn entry_bookkeeping(entry: &EntryReader) -> Result<u64, SarError> {
+    let variable = entry
+        .header
+        .name
+        .len()
+        .checked_add(entry.header.path.len())
+        .and_then(|n| n.checked_add(entry.header.sparse_map.len()))
+        .and_then(|n| n.checked_mul(3))
+        .ok_or(SarError::Overflow("entry metadata length"))?;
+    u64::try_from(variable)
+        .ok()
+        .and_then(|v| v.checked_add(ENTRY_BOOKKEEPING_BYTES))
+        .ok_or(SarError::Overflow("entry metadata length"))
 }
 
 /// Streaming collector yielding logical Entries in canonical order while
@@ -369,6 +542,8 @@ impl FragmentGroupCollector {
             retention: Retention {
                 limits,
                 current: 0,
+                permanent: 0,
+                aux: 0,
                 #[cfg(test)]
                 peak: 0,
             },
@@ -376,10 +551,17 @@ impl FragmentGroupCollector {
         }
     }
 
-    /// Decoded payload bytes currently retained by the collector.
+    /// Payload and per-Entry bookkeeping bytes currently retained.
     #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> u64 {
         self.retention.current
+    }
+
+    /// Everything the collector holds (payloads, per-Entry metadata and
+    /// per-group state), so later stages can charge it against
+    /// `max_total_pipeline_memory` together with their own buffers.
+    pub(crate) fn held_bytes(&self) -> Result<u64, SarError> {
+        self.retention.held_with(self.retention.current)
     }
 
     /// Highest retained decoded payload byte count observed.
@@ -431,6 +613,7 @@ impl FragmentGroupCollector {
             // incomplete earlier group and counts against the budget.
             let blocked = !self.queue.is_empty();
             self.retention.add(bytes, blocked)?;
+            self.retention.add_aux(entry_bookkeeping(&entry)?)?;
             self.queue.push_back(Slot::Entry(Box::new(entry)));
             return Ok(());
         }
@@ -465,6 +648,13 @@ impl FragmentGroupCollector {
         }
 
         if !self.groups.contains_key(&fid) {
+            self.limits.check_entry_count(
+                self.groups
+                    .len()
+                    .checked_add(1)
+                    .ok_or(SarError::Overflow("fragment group count"))?,
+            )?;
+            self.retention.add_permanent(GROUP_TOMBSTONE_BYTES)?;
             self.queue.push_back(Slot::Group(fid));
             self.groups.insert(
                 fid,
@@ -480,6 +670,7 @@ impl FragmentGroupCollector {
                     terminal_hash_algo_id: None,
                     entries: Vec::new(),
                     retained: 0,
+                    aux: 0,
                     complete: false,
                 },
             );
@@ -545,6 +736,12 @@ impl FragmentGroupCollector {
         // Fragment contributions are always retained until the group is
         // emitted, so they are always checked against the budget.
         self.retention.add(bytes, true)?;
+        let aux = entry_bookkeeping(&entry)?;
+        self.retention.add_aux(aux)?;
+        group.aux = group
+            .aux
+            .checked_add(aux)
+            .ok_or(SarError::Overflow("fragment group bookkeeping"))?;
         group.retained = group
             .retained
             .checked_add(bytes)
@@ -602,6 +799,7 @@ impl FragmentGroupCollector {
         match slot {
             Slot::Entry(entry) => {
                 self.retention.release(payload_bytes(&entry)?)?;
+                self.retention.release_aux(entry_bookkeeping(&entry)?)?;
                 Ok(Some(CollectedEntry::Entry(entry)))
             }
             Slot::Group(fid) => {
@@ -611,6 +809,11 @@ impl FragmentGroupCollector {
                     .ok_or(SarError::Internal("fragment group state vanished"))?;
                 self.retention
                     .release(std::mem::take(&mut state.retained))?;
+                self.retention.release_aux(std::mem::take(&mut state.aux))?;
+                let held_elsewhere = self.retention.held_with(self.retention.current)?;
+                // Keep only the fixed-size tombstone (`complete`, id).
+                state.seen = HashSet::new();
+                state.path = None;
                 let name = state
                     .name
                     .take()
@@ -626,6 +829,8 @@ impl FragmentGroupCollector {
                     terminal_content_hash: state.terminal_content_hash,
                     terminal_hash_algo_id: state.terminal_hash_algo_id,
                     entries: std::mem::take(&mut state.entries),
+                    resolved: None,
+                    held_elsewhere,
                 }))))
             }
         }

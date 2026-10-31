@@ -1023,6 +1023,7 @@ If this milestone document appears to describe library/profile layout differentl
 * preserve compliant behavior unless a reviewed compatibility change is explicitly recorded
 * update finding status, verification evidence, and resolution records after remediation
 * do not modify unrelated extraction, filesystem, transport, binding, or public-API behavior
+* progress (`SAR-M13b2-GROUPWIDE-IMPLEMENTATION-001`): archive-level CDC Recipe resolution (local CDC_MAP v1 plus an explicit bounded resolver callback) and fragment-group collector bookkeeping bounds are implemented; stream/session CDC and fragment-group reconstruction, exporter, profile and public-API requirements are carried to M13b.4, and cross-Partition chunk lookup to the separately controlled M13b.3 partition package
 
 ## M13b.3: extraction, metadata, and filesystem remediation
 

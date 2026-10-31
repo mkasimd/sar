@@ -34,9 +34,10 @@ pub mod tlv;
 pub use cdc::{
     CDC_ALGO_BUZHASH, CDC_ALGO_FASTCDC, CDC_ALGO_LITERAL, CDC_ALGO_RABIN, CDC_RECIPE_HASH_LEN,
     CdcAlgoId, CdcChunk, CdcExtProviderMetadata, CdcMapRecord, CdcMetadata, TLV_CDC_CUSTOM,
-    TLV_CDC_EXT_PROVIDER, TLV_CDC_MAP, TLV_DATA_HASH_BLAKE3, is_cdc_metadata_tlv_type,
-    make_cdc_ext_provider_tlv, make_cdc_map_tlv, parse_cdc_ext_provider_tlv, parse_entry_cdc_map,
-    validate_cdc_algo_id, validate_cdc_metadata_tlv, validate_recipe_payload,
+    TLV_CDC_EXT_PROVIDER, TLV_CDC_MAP, TLV_DATA_HASH_BLAKE3, compute_cdc_chunk_hash,
+    is_cdc_metadata_tlv_type, make_cdc_ext_provider_tlv, make_cdc_map_tlv,
+    parse_cdc_ext_provider_tlv, parse_entry_cdc_map, validate_cdc_algo_id,
+    validate_cdc_metadata_tlv, validate_recipe_payload,
 };
 pub use error::{SarError, SarStatus};
 pub use fec::{FecSummary, parse_lfh_fec_value, validate_recovery_tlv};

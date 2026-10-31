@@ -8,6 +8,7 @@
 
 /// High-level archive reader/writer APIs and integration types.
 pub mod archive;
+pub mod cdc_resolve;
 /// Conformance vector manifest types and schema validator (M12a).
 pub mod conformance;
 pub(crate) mod content_hash;

@@ -12,9 +12,10 @@ This is an **implemented profile** report, not a claim of full standard conforma
 **No complete Section 12 Compliance Profile is currently claimed.** The names in
 the `sar-archive` `ComplianceProfile` enum are repository policy presets, not
 automatically the normative Section 12 profiles. Aligning them is M13b.4 work.
-Capabilities required by Section 12 that are still incomplete include CDC recipe
-resolution (Standard Profile), stream-level fragment-group reconstruction with
-final Content Hash verification (streaming profiles) and directional
+Capabilities required by Section 12 that are still incomplete include
+stream-level CDC and fragment-group reconstruction with final Content Hash
+verification (streaming profiles; archive-level CDC resolution exists but is
+not by itself a Standard Profile claim) and directional
 `TLS_EXPORTER` bootstrap (SAR-over-QUIC).
 
 ## M12a-audit-cp: archive audit primitives and transcript recording
@@ -347,10 +348,30 @@ M13b WP-7 delta pipeline (spec §6.1.2, §8.4, §13.1):
   and `invalid/delta/*` fixtures were regenerated accordingly.
 - The patch is applied once to the complete patch representation, after
   fragment concatenation and before CDC and sparse reconstruction.
-- A non-literal CDC Algo ID returns `SAR_ERR_UNSUPPORTED`; recipe bytes are
-  never returned as a logical Entry. Mandatory CDC resolution (CDC_MAP,
-  external CAS) remains a deferred Compliance Profile obligation; Standard
-  Profile CDC resolution is incomplete.
+- Archive-level CDC Recipe Mode (spec §§8.5, 13.1, 20, 21; M13b.2): a
+  non-literal CDC Algo ID marks the payload as a Recipe of 32-byte hashes.
+  `ArchiveReader::next_logical_entry`/`read_all_logical_files` resolve it
+  against the single local `CDC_MAP` v1 catalog (SHA-256 `0x30`, BLAKE3-256
+  `0x31`; `0x32` is `SAR_ERR_UNSUPPORTED`, unassigned IDs are
+  `SAR_ERR_RESERVED_VALUE`), verify every chunk against its Recipe hash, then
+  continue with sparse reconstruction and final CRC32/Content Hash checks.
+  Unresolved chunks are `SAR_ERR_RECIPE_UNRESOLVABLE`, corrupt chunks
+  `SAR_ERR_HASH_MISMATCH`, conflicting duplicate records or ambiguous
+  catalogs `SAR_ERR_METADATA_CONFLICT`, and an incomplete fragmented Recipe is
+  `SAR_ERR_FRAGMENT_GAP` even under LOSS_TOLERANT. Recipe Mode does not
+  require `DEDUPLICATION`. `next_entry`, listing, audit and `verify` stay
+  structural and never read chunks or call a resolver.
+- `sar inspect` is an inventory (spec §22.6): it reports each CDC TLV after
+  per-TLV validation (map header, record layout, algorithm, conflicting
+  records, provider URI) and fails on a malformed one, but it does not
+  enforce cross-TLV catalog selection or `Partition_Index = 0`; `verify`
+  enforces those and reading rejects them when a Recipe is resolved.
+- External resolution requires an explicit `ArchiveReader::with_cdc_resolver`
+  (hash algorithm plus `CdcChunkResolver`); `CDC_EXT_PROVIDER` URIs are inert
+  metadata and no network client exists. Not implemented: stream/session CDC
+  reconstruction (the stream parser still returns `SAR_ERR_UNSUPPORTED`,
+  M13b.4) and cross-Partition lookup (M13b.3). Archive-level CDC capability
+  is not a complete Section 12 Standard Profile claim.
 - `max_loss_tolerant_gap` (`ResourceLimits`, `FragmentLimits`,
   `--max-loss-tolerant-gap`) is retained but currently inactive: nothing
   consults it, and it does not authorize zero-filling fragment gaps.
@@ -359,6 +380,15 @@ M13b WP-7 delta pipeline (spec §6.1.2, §8.4, §13.1):
 - Memory: patch input plus patch output are bounded by
   `max_total_pipeline_memory`, and patch output by `max_decoded_entry_size`,
   checked before the output buffer is allocated.
+- CDC memory model: Recipe resolution is charged, against
+  `max_total_pipeline_memory`, for the Recipe, catalog bookkeeping, output and
+  the bytes the fragment-group collector still retains; map parsing is charged
+  for the TLV, record vector and transient duplicate index; fragment
+  concatenation is charged at twice the group payload plus the bytes the collector
+  still retains for other groups. Not modeled (cannot
+  be enforced by the reader): allocator overhead beyond the per-record
+  estimates, and the buffer an external resolver allocates before returning
+  (the reader only bounds the size it accepts afterwards).
 - Tests: `crates/sar-archive/tests/delta_pipeline_tests.rs`; fuzzing:
   `delta_bsdiff_apply` and `delta_vcdiff_apply` (bounded local runs only).
 

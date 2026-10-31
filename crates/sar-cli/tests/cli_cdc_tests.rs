@@ -82,6 +82,89 @@ fn build_indexed_cdc_provider_archive_file(dir: &std::path::Path) -> std::path::
 }
 
 // ---------------------------------------------------------------------------
+// inspect reports an inventory of validated CDC TLVs; verify enforces catalog
+// selection and Partition_Index rules.
+// ---------------------------------------------------------------------------
+
+fn cdc_map_value(partition: u32) -> Vec<u8> {
+    let mut v = vec![1u8, 0x30, 0, 0, 1, 0, 0, 0, 48, 0, 0, 0, 0, 0, 0, 0];
+    v.extend_from_slice(&[0xAB; 32]);
+    v.extend_from_slice(&partition.to_le_bytes());
+    v.extend_from_slice(&100u64.to_le_bytes());
+    v.extend_from_slice(&5u32.to_le_bytes());
+    v
+}
+
+fn build_indexed_archive_with_cdc_maps(
+    dir: &std::path::Path,
+    maps: Vec<Vec<u8>>,
+) -> std::path::PathBuf {
+    let flags = GlobalFlags::OPT_PRESENT | GlobalFlags::CDC_SUPPORT;
+    let mut bytes = write_global_header(&GlobalHeader {
+        version: 1,
+        flags,
+        kms: None,
+    })
+    .expect("header");
+    let lfh_offset = bytes.len() as u64;
+    let lfh = LocalFileHeader::minimal_store(b"test.bin".to_vec(), 5);
+    bytes.extend_from_slice(&write_lfh(&flags, &lfh).expect("lfh"));
+    bytes.extend_from_slice(b"hello");
+    let cd_offset = bytes.len() as u64;
+    let cd = CentralDictionary {
+        version: 1,
+        file_count: 1,
+        global_crc32: None,
+        metadata: maps
+            .into_iter()
+            .map(|value| sar_core::tlv::Tlv {
+                type_id: sar_core::TLV_CDC_MAP,
+                value,
+            })
+            .collect(),
+        offsets: vec![lfh_offset],
+    };
+    bytes.extend_from_slice(&write_central_dictionary(&cd, flags).expect("cd"));
+    bytes.extend_from_slice(&write_footer(Footer { cd_offset }));
+    let path = dir.join("cdc_maps.sar");
+    fs::write(&path, &bytes).expect("write archive");
+    path
+}
+
+#[test]
+fn inspect_validates_each_cdc_tlv_but_verify_enforces_catalog_rules() {
+    let td = tempdir().expect("tmp");
+    let cases = [
+        vec![cdc_map_value(0), cdc_map_value(0)],
+        vec![cdc_map_value(1)],
+    ];
+    for maps in cases {
+        let archive = build_indexed_archive_with_cdc_maps(td.path(), maps);
+        let path = archive.to_str().expect("str");
+        Command::cargo_bin("sar-cli")
+            .expect("bin")
+            .args(["inspect", path, "--json"])
+            .assert()
+            .success();
+        Command::cargo_bin("sar-cli")
+            .expect("bin")
+            .args(["verify", path, "--cdc"])
+            .assert()
+            .failure();
+    }
+
+    // A malformed individual map is rejected by inspect as well.
+    let mut bad = cdc_map_value(0);
+    bad[8] = 47;
+    let archive = build_indexed_archive_with_cdc_maps(td.path(), vec![bad]);
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args(["inspect", archive.to_str().expect("str"), "--json"])
+        .assert()
+        .failure();
+}
+
+// ---------------------------------------------------------------------------
 // inspect --json reports cdc_support = true when CDC_SUPPORT flag is active
 // ---------------------------------------------------------------------------
 
@@ -136,15 +219,20 @@ fn inspect_json_entry_includes_cdc_algo_id() {
 
 // ---------------------------------------------------------------------------
 #[test]
-fn inspect_non_literal_cdc_fails_closed() {
+fn inspect_non_literal_cdc_is_structural_and_reports_algo() {
     let td = tempdir().expect("tmp");
     let archive = build_cdc_archive_file(td.path(), 0x02, b"fastcdc data");
 
-    Command::cargo_bin("sar-cli")
+    let out = Command::cargo_bin("sar-cli")
         .expect("bin")
         .args(["inspect", archive.to_str().expect("str"), "--json"])
         .assert()
-        .failure();
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let v: Value = serde_json::from_slice(&out).expect("json");
+    assert_eq!(v["entries"][0]["cdc_algo_id"], Value::Number(2.into()));
 }
 
 // ---------------------------------------------------------------------------
@@ -203,15 +291,27 @@ fn verify_cdc_succeeds_on_valid_cdc_archive() {
 }
 
 #[test]
-fn verify_cdc_non_literal_recipe_fails_closed() {
+fn verify_cdc_non_literal_recipe_is_structural_only() {
     let td = tempdir().expect("tmp");
     let archive = build_cdc_archive_file(td.path(), 0x02, b"valid cdc payload");
 
+    // Structural verification never resolves chunks; extraction does.
     Command::cargo_bin("sar-cli")
         .expect("bin")
         .args(["verify", archive.to_str().expect("str"), "--cdc"])
         .assert()
-        .failure();
+        .success();
+    let out = td.path().join("out");
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args([
+            "extract",
+            archive.to_str().expect("str"),
+            out.to_str().expect("str"),
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("recipe"));
 }
 
 // ---------------------------------------------------------------------------

@@ -55,12 +55,20 @@ fn cdc_literal_mode_entry_parses() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn cdc_fastcdc_entry_is_unsupported() {
+fn cdc_fastcdc_entry_is_a_recipe_resolved_only_during_logical_reads() {
     let payload: Vec<u8> = (0..256).map(|i| i as u8).collect();
     let bytes = build_cdc_archive(0x02, &payload);
-    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes.clone())).expect("reader");
     reader.read_global_header().expect("header");
-    assert!(matches!(reader.next_entry(), Err(SarError::Unsupported(_))));
+    // Physical decoding returns the Recipe bytes and never resolves.
+    let entry = reader.next_entry().expect("entry").expect("some");
+    assert_eq!(entry.payload, payload);
+    // No catalog and no resolver: logical reconstruction cannot resolve.
+    let mut reader = sar_archive::ArchiveReader::new(Cursor::new(bytes)).expect("reader");
+    assert!(matches!(
+        reader.read_all_logical_files(false),
+        Err(SarError::RecipeUnresolvable(_))
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -387,8 +395,8 @@ fn recipe_payload_empty_is_valid_zero_chunks() {
 
 // ---------------------------------------------------------------------------
 // CDC + SPARSE: an unresolved Hash Recipe is never gathered sparse data
-// (spec §13.1.3, §20.3).  The reader performs no recipe resolution, so every
-// non-literal CDC Algo ID on a sparse Entry fails closed.
+// (spec §13.1.3, §20.3).  Without a catalog or resolver every Recipe fails
+// closed with SAR_ERR_RECIPE_UNRESOLVABLE.
 // ---------------------------------------------------------------------------
 
 mod sparse_cdc_boundary {
@@ -524,18 +532,19 @@ mod sparse_cdc_boundary {
         let mut reader = ArchiveReader::new(Cursor::new(out)).expect("reader");
         assert!(matches!(
             reader.read_all_logical_files(false),
-            Err(SarError::Unsupported(_))
+            Err(SarError::RecipeUnresolvable(_))
         ));
     }
 
     #[test]
-    fn unfragmented_sparse_with_active_cdc_is_unsupported() {
+    fn unfragmented_sparse_with_active_cdc_needs_a_catalog() {
         let bytes = unfragmented(0x02);
         let err = read_all(bytes.clone(), false).expect_err("must fail");
-        assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+        assert!(matches!(err, SarError::RecipeUnresolvable(_)), "{err:?}");
         let mut reader = ArchiveReader::new(Cursor::new(bytes.clone())).expect("reader");
         reader.read_global_header().expect("header");
-        assert!(matches!(reader.next_entry(), Err(SarError::Unsupported(_))));
+        assert!(reader.next_entry().expect("physical decode").is_some());
+        // The stateful stream reader still fails closed (M13b.4).
         assert!(matches!(
             stream_result(&bytes),
             Err(SarError::Unsupported(_))
@@ -543,10 +552,10 @@ mod sparse_cdc_boundary {
     }
 
     #[test]
-    fn fragmented_sparse_with_active_cdc_is_unsupported() {
+    fn fragmented_sparse_with_active_cdc_needs_a_catalog() {
         for lossy in [false, true] {
             let err = read_all(fragmented(0x02, true), lossy).expect_err("must fail");
-            assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+            assert!(matches!(err, SarError::RecipeUnresolvable(_)), "{err:?}");
         }
     }
 

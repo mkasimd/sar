@@ -440,3 +440,50 @@ silently downgraded.
 covered by `parse_global_header` and `archive_structural` via
 `tools/copy_fuzz_seeds.sh`. No dedicated fuzz target added; existing
 global-header and structural targets consume these seeds effectively.
+
+## M13b.2 GROUPWIDE: CDC Recipe resolution target
+
+Target: `cdc_recipe_resolution` (seeds in `fuzz/seeds/cdc_recipe/`, 11 files of
+46-65 bytes).
+It builds a valid archive whose CDC_MAP and Recipe derive from the input and a
+mutation selector (hash algorithm 0x30/0x31/0x32/reserved, shifted or
+overflowing offsets, size changes, conflicting duplicates, missing records,
+non-multiple-of-32 Recipes, non-zero Partition_Index), and also feeds the raw
+input to `ArchiveReader::read_all_logical_files` (strict and lossy) and
+`verify` under small resource limits (`max_cdc_chunk_count` is 4).
+
+Input byte 0 selects the algorithm (`& 3`: 0 SHA-256, 1 BLAKE3-256, 2 `0x32`
+unsupported, 3 `0x77` reserved) and the chunk count (`(>> 2 & 7) + 1`); byte 1
+selects the mutation (`% 8`). Each seed's observed outcome (read / verify):
+
+| Seed | Intended path | Observed |
+| --- | --- | --- |
+| `valid_sha256` (`D0`) | SHA-256, 2 chunks | read ok, verify ok |
+| `valid_blake3` (`E0`) | BLAKE3-256, 2 chunks | read ok, verify ok |
+| `bad_recipe_length` (`D5`) | Recipe not a multiple of 32 | `InvalidLength` / verify ok |
+| `missing_record` (`D4`) | chunk absent from map | `RecipeUnresolvable` / verify ok |
+| `partition_index` (`@7`) | non-zero `Partition_Index` | `Malformed` / `Malformed` |
+| `conflicting_duplicate` (`A3`) | conflicting records | `MetadataConflict` / same |
+| `range_overflow` (`A6`) | offset + size overflow | `Overflow` / verify ok |
+| `size_mutation` (`A2`) | changed stored size | `HashMismatch` / verify ok |
+| `unsupported_algorithm` (`B0`) | header `0x32` | `Unsupported` / same |
+| `reserved_algorithm` (`C0`) | header `0x77` | `ReservedValue` / same |
+| `record_count_limit` (`P0`) | 5 records > limit 4 | `LimitExceeded` / same |
+
+Earlier seeds `B5`, `B7` and `C4` selected `0x32`/`0x77` and failed on
+algorithm validation before reaching their intended paths; they were
+replaced.
+
+Evidence recorded locally (nightly `cargo fuzz`, Linux):
+
+* Compiled: `cargo +nightly fuzz build` (all targets).
+* Seed replay: `-runs=0` over the 11 seeds, no crash. Existing corpora and
+  seeds were replayed per target (`-runs=0`) with no crash.
+* Bounded run: `-max_total_time=30 -max_len=4096` (about 454k executions), no
+  crash or timeout.
+* Replay of existing `archive_logical_files`, `archive_entry_decode`,
+  `archive_structural` and `archive_audit` corpora: no crash.
+
+These are corpus replays and one short bounded run, not a sustained fuzz
+campaign; no exhaustive coverage is claimed. The generated corpus is not
+committed.

@@ -876,6 +876,10 @@ pub struct ArchiveReader<R> {
     /// KMS Master Secret for this physical archive; the KDF runs once.
     master_secret: Mutex<MasterSecretScope>,
     logical: LogicalState,
+    /// Explicitly configured external CDC chunk resolver (never implicit).
+    cdc_external: Option<crate::cdc_resolve::ExternalCdc>,
+    /// Lazily selected local `CDC_MAP` catalog; `Some(None)` = none present.
+    cdc_catalog: Option<Option<crate::cdc_resolve::LocalCatalog>>,
 }
 
 /// Progress of [`ArchiveReader::next_logical_entry`].
@@ -926,7 +930,121 @@ impl<R: Read + Seek> ArchiveReader<R> {
             key_provider: None,
             master_secret: Mutex::new(MasterSecretScope::new()),
             logical: LogicalState::NotStarted,
+            cdc_external: None,
+            cdc_catalog: None,
         })
+    }
+
+    /// Explicitly configures external CDC chunk resolution.
+    ///
+    /// `hash_algorithm_id` is the registered SAR hash algorithm (SHA-256
+    /// `0x30` or BLAKE3-256 `0x31`) of the Recipes the resolver serves; it is
+    /// never inferred from hash bytes.  When configured, the resolver is the
+    /// selected catalog for logical reconstruction and the local `CDC_MAP`
+    /// is not consulted for chunks; a local `CDC_MAP` declaring a different
+    /// algorithm is `SAR_ERR_METADATA_CONFLICT`.  The resolver is invoked only
+    /// by [`Self::next_logical_entry`] and [`Self::read_all_logical_files`],
+    /// never by parsing, listing, [`Self::next_entry`] or [`Self::verify`].
+    /// `CDC_EXT_PROVIDER` URIs are never dereferenced.
+    ///
+    /// # Errors
+    ///
+    /// [`SarError::Unsupported`] / [`SarError::ReservedValue`] when the
+    /// algorithm is not a supported registered hash.
+    pub fn with_cdc_resolver(
+        mut self,
+        hash_algorithm_id: u8,
+        resolver: Box<dyn crate::cdc_resolve::CdcChunkResolver>,
+    ) -> Result<Self, SarError> {
+        sar_core::compute_cdc_chunk_hash(hash_algorithm_id, &[])?;
+        self.cdc_external = Some(crate::cdc_resolve::ExternalCdc {
+            algo_id: hash_algorithm_id,
+            resolver,
+        });
+        Ok(self)
+    }
+
+    /// Selects the local catalog (once) and checks it against any configured
+    /// external resolver.
+    fn prepare_cdc_catalog(&mut self) -> Result<(), SarError> {
+        if self.cdc_catalog.is_none() {
+            let catalog = match &self.cd {
+                Some(cd) => {
+                    crate::cdc_resolve::LocalCatalog::select(&cd.metadata, &self.options.limits)?
+                }
+                None => None,
+            };
+            self.cdc_catalog = Some(catalog);
+        }
+        if let (Some(ext), Some(Some(local))) = (&self.cdc_external, &self.cdc_catalog)
+            && ext.algo_id != local.algo_id
+        {
+            return Err(SarError::MetadataConflict(
+                "configured CDC resolver algorithm differs from the CDC_MAP Hash_Algorithm_ID",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Completes the CDC stage of one logical item (Section 13.1 step 6).
+    fn resolve_cdc_item(
+        &mut self,
+        item: crate::fragment_group::CollectedEntry,
+        held_elsewhere: u64,
+    ) -> Result<crate::fragment_group::CollectedEntry, SarError> {
+        use crate::cdc_resolve::{ChunkSource, resolve_recipe};
+        use crate::fragment_group::CollectedEntry;
+        let is_recipe = |id: Option<u8>| id.is_some_and(|i| i != sar_core::cdc::CDC_ALGO_LITERAL);
+        match item {
+            CollectedEntry::Entry(mut entry) if is_recipe(entry.metadata.cdc_algo_id) => {
+                self.prepare_cdc_catalog()?;
+                let source = match (&self.cdc_external, &self.cdc_catalog) {
+                    (Some(ext), _) => ChunkSource::External(ext),
+                    (None, Some(Some(catalog))) => ChunkSource::Local {
+                        reader: &mut self.reader,
+                        catalog,
+                        header_len: self.header_len,
+                        data_end: self.data_end,
+                    },
+                    _ => ChunkSource::Unavailable,
+                };
+                let resolved =
+                    resolve_recipe(source, &self.options.limits, &entry.payload, held_elsewhere)?;
+                if let Some(sparse) = &entry.metadata.sparse {
+                    let extent_total = validate_sparse_extents(
+                        &sparse.extents,
+                        sparse.logical_size,
+                        &self.options.limits.sparse_limits(),
+                    )?;
+                    check_gathered_length(
+                        u64::try_from(resolved.len())
+                            .map_err(|_| SarError::Overflow("gathered length"))?,
+                        extent_total,
+                    )?;
+                }
+                entry.payload = resolved;
+                Ok(CollectedEntry::Entry(entry))
+            }
+            CollectedEntry::Group(mut group) if group.needs_cdc() => {
+                self.prepare_cdc_catalog()?;
+                let source = match (&self.cdc_external, &self.cdc_catalog) {
+                    (Some(ext), _) => ChunkSource::External(ext),
+                    (None, Some(Some(catalog))) => ChunkSource::Local {
+                        reader: &mut self.reader,
+                        catalog,
+                        header_len: self.header_len,
+                        data_end: self.data_end,
+                    },
+                    _ => ChunkSource::Unavailable,
+                };
+                let limits = self.options.limits;
+                group.resolve_recipe(&self.options, |recipe| {
+                    resolve_recipe(source, &limits, recipe, held_elsewhere)
+                })?;
+                Ok(CollectedEntry::Group(group))
+            }
+            other => Ok(other),
+        }
     }
 
     /// Attach a key provider used for encrypted entry decoding.
@@ -1073,7 +1191,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// This decodes one physical Entry (including AEAD authentication of an
     /// encrypted Entry).  It does not reassemble fragment groups and does not
     /// verify the LFH Content Hash, which covers the final logical Entry; use
-    /// [`Self::read_all_logical_files`] for that verification.
+    /// [`Self::read_all_logical_files`] for that verification.  For a
+    /// non-literal CDC Entry the returned payload is the serialized Recipe,
+    /// not file content: no chunk is read and no resolver is called.
+    /// [`Self::next_logical_entry`] resolves Recipes.
     pub fn next_entry(&mut self) -> Result<Option<EntryReader>, SarError> {
         let header = self
             .global_header
@@ -1229,6 +1350,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
                     if sar_core::cdc::is_cdc_metadata_tlv_type(tlv.type_id) {
                         sar_core::cdc::validate_cdc_metadata_tlv(tlv, &self.options.limits)?;
                     }
+                }
+                // Catalog selection must be unambiguous and unpartitioned;
+                // chunk bytes are not read or resolved here.
+                if let Some(map) =
+                    sar_core::cdc::parse_entry_cdc_map(&cd.metadata, &self.options.limits)?
+                {
+                    crate::cdc_resolve::check_unpartitioned(&map)?;
                 }
             }
         }
@@ -1572,6 +1700,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
             None
         };
 
+        let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
+            let algo_id = lfh.cdc_algo_id.unwrap_or(0);
+            sar_core::cdc::validate_cdc_algo_id(algo_id)?;
+            Some(algo_id)
+        } else {
+            None
+        };
         let sparse_map: Option<SparseMap> = if is_sparse {
             let is_64bit = header.flags.contains(GlobalFlags::SIZE_64BIT);
             let map = sar_core::sparse::parse_sparse_map(
@@ -1587,7 +1722,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
             // An unfragmented sparse Entry's decoded payload is the complete
             // gathered data; a fragment is only a contribution, checked when the
             // group is assembled.
-            if !lfh.entry_mode.is_fragment() {
+            // A Recipe's payload is not the gathered data; the length is
+            // checked after CDC resolution.
+            let is_recipe = cdc_algo_id_opt.is_some_and(|id| id != sar_core::cdc::CDC_ALGO_LITERAL);
+            if !lfh.entry_mode.is_fragment() && !is_recipe {
                 check_gathered_length(
                     u64::try_from(decoded.len())
                         .map_err(|_| SarError::Overflow("gathered length"))?,
@@ -1600,20 +1738,6 @@ impl<R: Read + Seek> ArchiveReader<R> {
         };
         let sparse_extents: Option<Vec<SparseExtent>> =
             sparse_map.as_ref().map(|m| m.extents.clone());
-
-        let cdc_algo_id_opt: Option<u8> = if header.flags.contains(GlobalFlags::CDC_SUPPORT) {
-            let algo_id = lfh.cdc_algo_id.unwrap_or(0);
-            sar_core::cdc::validate_cdc_algo_id(algo_id)?;
-            Some(algo_id)
-        } else {
-            None
-        };
-        // CDC recipe resolution follows patch application and is not
-        // implemented; an unresolved Hash Recipe is never a logical Entry.
-        // A fragment is a contribution whose group is checked on assembly.
-        if !lfh.entry_mode.is_fragment() {
-            require_literal_cdc(cdc_algo_id_opt)?;
-        }
 
         let name = String::from_utf8(lfh.name.clone())
             .map_err(|_| SarError::Malformed("LFH Name String is not valid UTF-8"))?;
@@ -1886,6 +2010,8 @@ impl<R: Read + Seek> ArchiveReader<R> {
         };
         loop {
             if let Some(item) = collector.next_ready()? {
+                let held = collector.held_bytes()?;
+                let item = self.resolve_cdc_item(item, held)?;
                 self.logical = LogicalState::Active(collector);
                 return Ok(Some(item));
             }

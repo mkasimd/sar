@@ -350,7 +350,7 @@ fn patch_output_bound_is_enforced_before_release() {
 }
 
 #[test]
-fn non_literal_cdc_is_unsupported_unfragmented_and_fragmented() {
+fn non_literal_cdc_without_catalog_is_unresolvable_unfragmented_and_fragmented() {
     let spec = Spec {
         patch_algo: None,
         base_hash: [0u8; 32],
@@ -358,12 +358,13 @@ fn non_literal_cdc_is_unsupported_unfragmented_and_fragmented() {
     };
     let err =
         read_all(unfragmented(&spec, b"recipe-bytes"), options(None), false).expect_err("cdc");
-    assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+    // No catalog and no resolver: the Recipe is unresolvable, not unsupported.
+    assert!(matches!(err, SarError::RecipeUnresolvable(_)), "{err:?}");
 
     let frags = split_frags(b"recipe", b"-bytes");
     let archive = fragmented(&spec, false, &frags);
     let err = read_all(archive, options(None), false).expect_err("cdc frag");
-    assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+    assert!(matches!(err, SarError::RecipeUnresolvable(_)), "{err:?}");
 
     // An incomplete recipe is a gap before it is ever interpreted.
     let gap = [
@@ -398,12 +399,12 @@ fn literal_cdc_after_patch_is_supported() {
 }
 
 #[test]
-fn delta_patch_then_non_literal_cdc_is_unsupported() {
+fn delta_patch_then_non_literal_cdc_is_unresolvable_without_catalog() {
     let mut spec = delta(PATCH_STORE);
     spec.base_hash = [0u8; 32];
     spec.cdc = Some(0x02);
     let err = read_all(unfragmented(&spec, b"abc"), options(None), false).expect_err("cdc");
-    assert!(matches!(err, SarError::Unsupported(_)), "{err:?}");
+    assert!(matches!(err, SarError::RecipeUnresolvable(_)), "{err:?}");
 }
 
 fn stream_first_entry(archive: &[u8], opts: ArchiveReaderOptions) -> Result<Vec<u8>, SarError> {
