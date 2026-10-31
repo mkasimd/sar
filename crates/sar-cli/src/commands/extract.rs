@@ -12,7 +12,7 @@ use sar_core::{EntryKind, GlobalFlags, ResourceLimits, SarError};
 use crate::{
     extraction::{
         metadata::{PendingDirectoryMetadata, finalize_directory_metadata},
-        paths::{SafeRelativePath, validate_relative_archive_path},
+        paths::{SafeRelativePath, validate_relative_archive_path, validate_symlink_target},
         policy::{ExtractMetadataOptions, validate_extract_metadata_support},
         root::ExtractionRoot,
         staging::{compute_sparse_crc32, stage_bytes, stage_sparse, verify_crc32},
@@ -268,7 +268,7 @@ fn extract_symlink_entry(
         .ok_or(SarError::Malformed(
             "symlink entry is missing target metadata",
         ))?;
-    let _ = validate_relative_archive_path(target)?;
+    validate_symlink_target(rel, target)?;
 
     root.create_symlink(rel, target)
 }
