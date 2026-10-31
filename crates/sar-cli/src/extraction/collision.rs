@@ -54,12 +54,22 @@ impl ObjectId {
     }
 }
 
+/// Logical owner of a destination object. `created` records that this
+/// extraction run itself created the object (a published file or symlink, or a
+/// directory made by `mkdir`), as opposed to a directory that merely already
+/// existed. Only run-created objects may ever be replaced or removed.
+#[derive(Debug, Clone, Copy)]
+struct Owner {
+    node: NodeId,
+    created: bool,
+}
+
 pub(crate) struct CollisionLedger {
     limits: ResourceLimits,
     used_bytes: u64,
     next_node: NodeId,
     children: HashMap<(NodeId, String), NodeId>,
-    owners: HashMap<ObjectId, NodeId>,
+    owners: HashMap<ObjectId, Owner>,
     current: HashMap<NodeId, ObjectId>,
 }
 
@@ -122,7 +132,7 @@ impl CollisionLedger {
     ) -> Result<(), SarError> {
         let node = self.children.get(&(parent, component.to_string())).copied();
         match self.owners.get(id) {
-            Some(owner) if Some(*owner) != node => Err(SarError::PathCollision(
+            Some(owner) if Some(owner.node) != node => Err(SarError::PathCollision(
                 "distinct archive paths map to the same destination filesystem object",
             )),
             _ => Ok(()),
@@ -134,7 +144,7 @@ impl CollisionLedger {
     /// never evidence of a collision.
     pub(crate) fn check(&self, node: NodeId, id: &ObjectId) -> Result<(), SarError> {
         match self.owners.get(id) {
-            Some(owner) if *owner != node => Err(SarError::PathCollision(
+            Some(owner) if owner.node != node => Err(SarError::PathCollision(
                 "distinct archive paths map to the same destination filesystem object",
             )),
             _ => Ok(()),
@@ -173,6 +183,10 @@ impl CollisionLedger {
     /// A repeated logical path replaces the identity it previously owned, so
     /// recycled inode numbers cannot produce stale matches.
     pub(crate) fn commit(&mut self, node: NodeId, id: ObjectId, reservation: Reservation) {
+        self.commit_as(node, id, reservation, true);
+    }
+
+    fn commit_as(&mut self, node: NodeId, id: ObjectId, reservation: Reservation, created: bool) {
         let new_bytes = id.accounted_bytes();
         if self.current.get(&node) == Some(&id) {
             return;
@@ -187,15 +201,71 @@ impl CollisionLedger {
         let needed = new_bytes.saturating_sub(previous_bytes);
         self.refund(reservation.charged.saturating_sub(needed));
         self.refund(previous_bytes.saturating_sub(new_bytes));
-        self.owners.insert(id, node);
+        self.owners.insert(id, Owner { node, created });
     }
 
     /// Reserves and commits in one step for directory claims, which have no
-    /// publication mutation in between.
-    pub(crate) fn claim(&mut self, node: NodeId, id: ObjectId) -> Result<(), SarError> {
+    /// publication mutation in between. `created` is true only for a
+    /// directory this run made; re-claiming the identity a node already owns
+    /// keeps the original provenance.
+    pub(crate) fn claim(
+        &mut self,
+        node: NodeId,
+        id: ObjectId,
+        created: bool,
+    ) -> Result<(), SarError> {
         let reservation = self.reserve(node, &id)?;
-        self.commit(node, id, reservation);
+        self.commit_as(node, id, reservation, created);
         Ok(())
+    }
+
+    /// Fails with `LimitExceeded` unless `objects` more claimed objects would
+    /// still fit, without charging anything. Used before a destructive step to
+    /// guarantee that the bookkeeping the step's successors need is available.
+    pub(crate) fn ensure_headroom(&self, objects: usize) -> Result<(), SarError> {
+        let bytes = u64::try_from(objects)
+            .ok()
+            .and_then(|count| count.checked_mul(ENTRY_OVERHEAD_BYTES))
+            .and_then(|bytes| self.used_bytes.checked_add(bytes))
+            .ok_or(SarError::Overflow("collision ledger byte count"))?;
+        self.limits.check_total_pipeline_memory(bytes)
+    }
+
+    /// Existing node for `component` below `parent`, without interning.
+    pub(crate) fn lookup(&self, parent: NodeId, component: &str) -> Option<NodeId> {
+        self.children.get(&(parent, component.to_string())).copied()
+    }
+
+    /// True when `id` is currently owned by `node` and was created by this run.
+    pub(crate) fn is_created_by(&self, node: NodeId, id: &ObjectId) -> bool {
+        matches!(self.owners.get(id), Some(owner) if owner.node == node && owner.created)
+    }
+
+    /// True when `id` is the run-created object owned by the logical path
+    /// `parent/component`. An object that merely shares an identity with some
+    /// other run-created object (for example a hard link) does not qualify.
+    pub(crate) fn is_created_child(&self, parent: NodeId, component: &[u8], id: &ObjectId) -> bool {
+        std::str::from_utf8(component)
+            .ok()
+            .and_then(|component| self.lookup(parent, component))
+            .is_some_and(|node| self.is_created_by(node, id))
+    }
+
+    /// Number of destination objects currently claimed; an upper bound on how
+    /// many entries a run-created subtree can legitimately contain.
+    pub(crate) fn claimed_objects(&self) -> usize {
+        self.owners.len()
+    }
+
+    /// Drops the claim on an object this run removed from the destination, so
+    /// a recycled inode number can never match a stale owner.
+    pub(crate) fn forget(&mut self, id: &ObjectId) {
+        if let Some(owner) = self.owners.remove(id) {
+            if self.current.get(&owner.node) == Some(id) {
+                self.current.remove(&owner.node);
+            }
+            self.refund(id.accounted_bytes());
+        }
     }
 }
 
@@ -228,8 +298,8 @@ mod tests {
         let upper = path(&mut ledger, &["Dir"]);
         let lower = path(&mut ledger, &["dir"]);
         assert_ne!(upper, lower, "spellings are never folded");
-        ledger.claim(upper, id(7)).expect("first claim");
-        let err = ledger.claim(lower, id(7)).expect_err("collision");
+        ledger.claim(upper, id(7), true).expect("first claim");
+        let err = ledger.claim(lower, id(7), true).expect_err("collision");
         assert_eq!(err.status(), SarStatus::ErrPathCollision);
     }
 
@@ -237,7 +307,7 @@ mod tests {
     fn nested_components_collide_through_a_shared_directory_identity() {
         let mut ledger = CollisionLedger::new(ResourceLimits::default());
         let first = path(&mut ledger, &["Dir"]);
-        ledger.claim(first, id(3)).expect("claim");
+        ledger.claim(first, id(3), true).expect("claim");
         let second = path(&mut ledger, &["dir"]);
         assert!(matches!(
             ledger.check(second, &id(3)),
@@ -253,8 +323,10 @@ mod tests {
         let mut ledger = CollisionLedger::new(ResourceLimits::default());
         let node = path(&mut ledger, &["a", "b"]);
         assert_eq!(node, path(&mut ledger, &["a", "b"]));
-        ledger.claim(node, id(1)).expect("claim");
-        ledger.claim(node, id(1)).expect("same identity again");
+        ledger.claim(node, id(1), true).expect("claim");
+        ledger
+            .claim(node, id(1), true)
+            .expect("same identity again");
         ledger.check(node, &id(99)).expect("unclaimed object");
     }
 
@@ -263,11 +335,13 @@ mod tests {
         let mut ledger = CollisionLedger::new(ResourceLimits::default());
         let a = path(&mut ledger, &["a"]);
         let b = path(&mut ledger, &["b"]);
-        ledger.claim(a, id(5)).expect("claim");
-        ledger.claim(a, id(6)).expect("replaced by repeated path");
+        ledger.claim(a, id(5), true).expect("claim");
+        ledger
+            .claim(a, id(6), true)
+            .expect("replaced by repeated path");
         let before = ledger.used_bytes();
         // Inode 5 was freed by the replacement and may be reused by another path.
-        ledger.claim(b, id(5)).expect("recycled inode");
+        ledger.claim(b, id(5), true).expect("recycled inode");
         assert!(ledger.check(a, &id(6)).is_ok());
         assert!(ledger.check(b, &id(6)).is_err());
         assert_eq!(ledger.used_bytes(), before + super::ENTRY_OVERHEAD_BYTES);
@@ -335,9 +409,13 @@ mod tests {
             ..ResourceLimits::default()
         });
         let node = ledger.child(ROOT_NODE, "a").expect("node");
-        ledger.claim(node, id(1)).expect("first");
-        ledger.claim(node, id(2)).expect("replacement at boundary");
-        ledger.claim(node, id(2)).expect("same identity again");
+        ledger.claim(node, id(1), true).expect("first");
+        ledger
+            .claim(node, id(2), true)
+            .expect("replacement at boundary");
+        ledger
+            .claim(node, id(2), true)
+            .expect("same identity again");
         let other = ledger.child(ROOT_NODE, "b");
         assert!(other.is_err(), "no spare capacity was created");
     }
@@ -350,8 +428,49 @@ mod tests {
         });
         let a = ledger.child(ROOT_NODE, "a").expect("a");
         let b = ledger.child(ROOT_NODE, "b").expect("b");
-        ledger.claim(a, id(1)).expect("claim");
+        ledger.claim(a, id(1), true).expect("claim");
         let err = ledger.reserve(b, &id(1)).expect_err("collision wins");
         assert_eq!(err.status(), SarStatus::ErrPathCollision);
+    }
+
+    #[test]
+    fn provenance_distinguishes_created_from_encountered_and_forget_releases() {
+        let mut ledger = CollisionLedger::new(ResourceLimits::default());
+        let made = path(&mut ledger, &["made"]);
+        let met = path(&mut ledger, &["met"]);
+        ledger.claim(made, id(1), true).expect("created");
+        ledger.claim(met, id(2), false).expect("encountered");
+        assert!(ledger.is_created_by(made, &id(1)));
+        assert!(!ledger.is_created_by(met, &id(2)));
+        assert!(!ledger.is_created_by(made, &id(2)));
+        assert!(ledger.is_created_child(ROOT_NODE, b"made", &id(1)));
+        assert!(!ledger.is_created_child(ROOT_NODE, b"met", &id(2)));
+        // A hard link or alias under another name is not the owned object.
+        assert!(!ledger.is_created_child(ROOT_NODE, b"met", &id(1)));
+        assert!(!ledger.is_created_child(ROOT_NODE, b"\xff", &id(1)));
+        // Re-walking an object keeps its original provenance.
+        ledger.claim(made, id(1), false).expect("re-walk");
+        assert!(ledger.is_created_by(made, &id(1)));
+
+        let before = ledger.used_bytes();
+        ledger.forget(&id(1));
+        assert_eq!(ledger.used_bytes(), before - super::ENTRY_OVERHEAD_BYTES);
+        assert!(!ledger.is_created_by(made, &id(1)));
+        // The recycled identity can now belong to another logical path.
+        ledger.claim(met, id(1), true).expect("recycled inode");
+    }
+
+    #[test]
+    fn headroom_checks_without_charging() {
+        let mut ledger = CollisionLedger::new(ResourceLimits {
+            max_total_pipeline_memory: 3 * 128,
+            ..ResourceLimits::default()
+        });
+        ledger.ensure_headroom(3).expect("fits");
+        assert_eq!(ledger.used_bytes(), 0);
+        assert!(ledger.ensure_headroom(4).is_err());
+        let node = ledger.child(ROOT_NODE, "").expect("node");
+        ledger.claim(node, id(1), true).expect("claim");
+        assert!(ledger.ensure_headroom(2).is_err());
     }
 }
