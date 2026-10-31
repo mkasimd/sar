@@ -100,36 +100,3 @@ pub(crate) fn apply_fd_metadata(
     }
     Ok(())
 }
-
-/// Path-based fallback used only where no descriptor-relative backend exists.
-#[cfg(not(unix))]
-pub(crate) fn apply_path_metadata(
-    path: &std::path::Path,
-    permissions: Option<u16>,
-    owner: Option<u32>,
-    timestamps: Option<[u64; 3]>,
-    metadata: ExtractMetadataOptions,
-) -> Result<(), SarError> {
-    if (metadata.preserve_owner && owner.is_some())
-        || (metadata.preserve_permissions && permissions.is_some())
-    {
-        return Err(SarError::Unsupported(
-            "owner and permission restoration are only supported on Unix-like platforms",
-        ));
-    }
-    if metadata.preserve_times
-        && let Some([mtime, atime, _ctime]) = timestamps
-    {
-        let atime = i64::try_from(atime)
-            .map_err(|_| SarError::Overflow("atime does not fit host timestamp range"))?;
-        let mtime = i64::try_from(mtime)
-            .map_err(|_| SarError::Overflow("mtime does not fit host timestamp range"))?;
-        filetime::set_file_times(
-            path,
-            filetime::FileTime::from_unix_time(atime, 0),
-            filetime::FileTime::from_unix_time(mtime, 0),
-        )
-        .map_err(SarError::Io)?;
-    }
-    Ok(())
-}

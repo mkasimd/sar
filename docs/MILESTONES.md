@@ -1035,6 +1035,7 @@ If this milestone document appears to describe library/profile layout differentl
 * add deterministic regression tests and platform-specific tests required by the findings registry
 * update finding status, verification evidence, and resolution records after remediation
 * do not modify unrelated parser, cryptographic, transform, transport, binding, or public-API behavior
+* progress (`SAR-M13b3-EXTRACTION-WPF-IMPLEMENTATION-001`): Unix extraction is descriptor-relative (Packages A-E) with Linux runtime evidence and Package A backend evidence on FreeBSD 15.1; macOS native runtime is unverified; non-Unix targets refuse extraction with `SAR_ERR_PATH_ESCAPE` (no secure Windows backend; a Windows backend needs a separately scoped implementation and native validation); `M13-EXTRACT-001` is retained as confirmed with a residual record and closure recommendation; residuals recorded but not implemented: `repair` temporary output (`M13-EXTRACT-007`), `HIDDEN_ATTR`/`FORCE_SYNC`/`OP_CODE` (`M13-EXTRACT-008`), cross-Partition extraction (`M13-BOUNDARY-003`), archive-reader Name/Path validation and M13b.4 stream/session materialization. See `docs/CONFORMANCE.md`
 
 ## M13b.4: boundary, transport, public API, and binding-readiness remediation
 

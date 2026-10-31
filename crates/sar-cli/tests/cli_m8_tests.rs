@@ -345,6 +345,7 @@ fn repair_fec_failure_no_final_output() {
 // Extract --allow-lossy
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 #[test]
 fn extract_allow_lossy_flag_is_accepted() {
     let td = tempdir().expect("tmp");
@@ -367,6 +368,7 @@ fn extract_allow_lossy_flag_is_accepted() {
     assert_eq!(content, b"test content for m8");
 }
 
+#[cfg(unix)]
 #[test]
 fn extract_without_allow_lossy_succeeds_for_normal_entries() {
     let td = tempdir().expect("tmp");

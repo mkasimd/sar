@@ -7,10 +7,13 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::Path;
 
 use assert_cmd::Command;
+#[cfg(unix)]
 use filetime::{FileTime, set_file_times};
 use predicates::str::contains;
 use sar_archive::{ArchiveWriter, ArchiveWriterOptions, EntryInput};
+#[cfg(unix)]
 use sar_core::EntryKind;
+#[cfg(unix)]
 use serde_json::Value;
 use tempfile::tempdir;
 
@@ -42,6 +45,7 @@ fn write_archive(
     Ok(())
 }
 
+#[cfg(unix)]
 fn inspect_json(archive: &Path) -> Value {
     let output = Command::cargo_bin("sar-cli")
         .expect("bin")

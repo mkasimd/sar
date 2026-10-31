@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! CLI parity tests for the shared WP-4 fragment-group collector.
+//!
+//! Every test extracts, and non-Unix extraction is refused by design
+//! (see `cli_platform_guard_tests.rs`).
+
+#![cfg(unix)]
 
 use std::fs;
 

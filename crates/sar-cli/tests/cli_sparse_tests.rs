@@ -68,6 +68,7 @@ fn write_sparse_archive(
 
 /// `sar extract` reconstructs sparse holes correctly.
 /// The extracted file must contain zero bytes in hole regions.
+#[cfg(unix)]
 #[test]
 fn extract_sparse_holes_are_reconstructed() {
     let td = tempdir().expect("tmp");
@@ -100,6 +101,7 @@ fn extract_sparse_holes_are_reconstructed() {
 }
 
 /// Extracted file size equals LFH `Uncompressed Size`.
+#[cfg(unix)]
 #[test]
 fn extract_file_size_equals_uncompressed_size() {
     let td = tempdir().expect("tmp");
@@ -131,6 +133,7 @@ fn extract_file_size_equals_uncompressed_size() {
 }
 
 /// Trailing holes are preserved (zero bytes after last extent).
+#[cfg(unix)]
 #[test]
 fn extract_trailing_holes_preserved() {
     let td = tempdir().expect("tmp");
@@ -159,6 +162,7 @@ fn extract_trailing_holes_preserved() {
 
 /// Malformed sparse map (non-multiple of descriptor size) causes extraction
 /// failure with a non-zero exit code.
+#[cfg(unix)]
 #[test]
 fn extract_malformed_sparse_map_causes_failure() {
     let td = tempdir().expect("tmp");
@@ -192,6 +196,7 @@ fn extract_malformed_sparse_map_causes_failure() {
 }
 
 /// `sar extract` on a normal (non-sparse) archive is unaffected by sparse fixes.
+#[cfg(unix)]
 #[test]
 fn extract_non_sparse_archive_unaffected() {
     let td = tempdir().expect("tmp");
@@ -281,6 +286,7 @@ fn inspect_json_reports_sparse_extent_count() {
 }
 
 /// `sar extract --allow-lossy` works for a normal sparse archive (no fragments).
+#[cfg(unix)]
 #[test]
 fn extract_allow_lossy_with_sparse_archive_succeeds() {
     let td = tempdir().expect("tmp");
@@ -307,6 +313,7 @@ fn extract_allow_lossy_with_sparse_archive_succeeds() {
 
 /// Fragmented sparse entries extract to the Sparse Logical Size, including an
 /// empty terminal contribution and a trailing hole, via the CLI group path.
+#[cfg(unix)]
 #[test]
 fn extract_fragmented_sparse_uses_sparse_logical_size() {
     use sar_core::{flags::EntryMode, sparse::SparseMap};

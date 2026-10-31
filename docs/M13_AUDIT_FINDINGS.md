@@ -198,6 +198,8 @@ Registry status: `in_progress`
 | `M13-CRYPTO-008` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | LFH Content Hash has no algorithm selector and final Content Hash verification is not implemented |
 | `M13-TRANSPORT-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules |
 | `M13-FFI-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | SarStatus registry does not implement the finalized Section 10 status model |
+| `M13-EXTRACT-007` | `implementation_defect` | `open` | `low` | `low` | `pending_triage` | `repair` writes its temporary output through a predictable, symlink-following path |
+| `M13-EXTRACT-008` | `documentation_gap` | `open` | `low` | `low` | `pending_triage` | Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits |
 
 ## Finding Details
 
@@ -862,7 +864,7 @@ The CLI extractor lexically validates archive names and checks existing parent c
 
 #### Current Behavior
 
-`extract_archive()` creates `output_dir` with `create_dir_all()` and then passes the raw path through `prepare_output_file_path()` and `ensure_parent_directory_path()`. Those helpers walk components with `symlink_metadata()` and `create_dir()` checks, but `write_bytes_via_temp()`, `write_sparse_payload_via_temp()`, `finalize_temp_file()`, `extract_symlink_entry()`, `apply_file_metadata()`, and `finalize_directory_metadata()` all perform their final create, rename, remove, chmod, chown, or timestamp operations through ordinary path-based APIs without canonicalizing the resolved target or holding directory-relative handles across the check/use boundary.
+Current (M13b.3 Packages A-F, branch m13b3-extraction-platform-evidence): the original path-based Unix mutation model (the `create_dir_all()`/`symlink_metadata()` walk followed by path-based create, rename, remove, chmod, chown and timestamp calls) has been replaced by directory-descriptor-relative operations. On Unix targets `ExtractionRoot` (crates/sar-cli/src/extraction/root_unix.rs) opens the selected root once as a directory descriptor (a root symlink is resolved exactly once) and performs every directory walk, mkdir, staging-file creation, rename, symlink creation, unlink and metadata mutation relative to descriptors (openat, mkdirat, renameat, unlinkat, symlinkat, fchown, futimens, fchmod) with O_NOFOLLOW directory traversal and O_EXCL staging files. Escapes and unconfinable paths report SAR_ERR_PATH_ESCAPE (Package B), distinct logical paths reaching one destination object report SAR_ERR_PATH_COLLISION (Package C), the Section 6.1.5 final state is implemented without deleting pre-existing content (Package D), and run-owned temporary artifacts are tracked and cleaned by identity with partial-result and cleanup diagnostics (Package E). On targets without `cfg(unix)` the remaining path-based extractor was removed (Package F): `sar extract` refuses before the archive is opened or the destination is touched, with SAR_ERR_PATH_ESCAPE, because confinement cannot be established; create, list, inspect, verify and repair are unaffected. Residuals: the Unix backend is runtime-tested on Linux, and FreeBSD 15.1 only for the Package A backend; macOS runtime is unverified; case-folding and Unicode-normalizing destination tests have not run on the development hosts; POSIX provides no atomic identity-checked unlink or rename, so a hostile writer to the destination retains a narrow check/use window for run-owned temporary names; extraction is neither all-or-nothing nor crash-recoverable; Windows and other non-Unix targets have no secure extraction backend.
 
 #### Expected Behavior
 
@@ -874,21 +876,28 @@ An attacker who can influence pre-existing filesystem state for the chosen extra
 
 #### Evidence
 
-* `crates/sar-cli/src/commands/extract.rs` (function `extract_archive()`, extraction orchestration and final `finalize_directory_metadata(...)` call): `extract_archive()` accepts the caller-supplied `output_dir`, calls `create_dir_all()`, then performs reconstructed-file writes and final directory metadata application through raw `PathBuf` values without canonicalizing the extraction root.
-* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()`, `prepare_output_file_path()`, and `ensure_parent_directory_path()`): `prepare_output_file_path()` and `ensure_parent_directory_path()` join unchecked `output_dir` prefixes with lexical archive components, inspect parents with `symlink_metadata()`, and create directories with `create_dir()`/`set_permissions()`, but never prove the final resolved path remains beneath a canonical root.
-* `crates/sar-cli/src/extraction/staging.rs` (functions `write_bytes_via_temp()`, `write_sparse_payload_via_temp()`, and `finalize_temp_file()`): Temporary output paths are derived from the final `Path`, opened with `create_new`, and published with `rename()` using ordinary path resolution; no directory handle or post-resolution confinement check is retained across the check/use window.
-* `crates/sar-cli/src/extraction/metadata.rs` (functions `apply_file_metadata()`, `finalize_directory_metadata()`, `apply_permissions()`, `apply_owner()`, and `apply_timestamps()`): File and directory metadata restoration re-checks paths with `symlink_metadata()` but then calls `chown`, `set_file_times`, and `set_permissions` by path, so later replacement can change which inode receives the mutation.
-* `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Before any write operation, target paths MUST be canonicalized, all symbolic links and segments MUST be resolved, and extraction MUST ensure the final path resides within the intended extraction root.
+* `crates/sar-cli/src/commands/extract.rs` (function `extract_archive()`, extraction orchestration and final `finalize_directory_metadata(...)` call): Historical (M13a.4 audit baseline, reviewed commit 71e35d8; the cited path-based functions were replaced by descriptor-relative operations in M13b.3 Packages A-E): `extract_archive()` accepts the caller-supplied `output_dir`, calls `create_dir_all()`, then performs reconstructed-file writes and final directory metadata application through raw `PathBuf` values without canonicalizing the extraction root.
+* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()`, `prepare_output_file_path()`, and `ensure_parent_directory_path()`): Historical (M13a.4 audit baseline, reviewed commit 71e35d8; the cited path-based functions were replaced by descriptor-relative operations in M13b.3 Packages A-E): `prepare_output_file_path()` and `ensure_parent_directory_path()` join unchecked `output_dir` prefixes with lexical archive components, inspect parents with `symlink_metadata()`, and create directories with `create_dir()`/`set_permissions()`, but never prove the final resolved path remains beneath a canonical root.
+* `crates/sar-cli/src/extraction/staging.rs` (functions `write_bytes_via_temp()`, `write_sparse_payload_via_temp()`, and `finalize_temp_file()`): Historical (M13a.4 audit baseline, reviewed commit 71e35d8; the cited path-based functions were replaced by descriptor-relative operations in M13b.3 Packages A-E): Temporary output paths are derived from the final `Path`, opened with `create_new`, and published with `rename()` using ordinary path resolution; no directory handle or post-resolution confinement check is retained across the check/use window.
+* `crates/sar-cli/src/extraction/metadata.rs` (functions `apply_file_metadata()`, `finalize_directory_metadata()`, `apply_permissions()`, `apply_owner()`, and `apply_timestamps()`): Historical (M13a.4 audit baseline, reviewed commit 71e35d8; the cited path-based functions were replaced by descriptor-relative operations in M13b.3 Packages A-E): File and directory metadata restoration re-checks paths with `symlink_metadata()` but then calls `chown`, `set_file_times`, and `set_permissions` by path, so later replacement can change which inode receives the mutation.
+* `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Historical wording from the M13a.4 baseline, superseded by the M13a.7 revision of Section 22.4 (see the current normative_basis entry): Before any write operation, target paths MUST be canonicalized, all symbolic links and segments MUST be resolved, and extraction MUST ensure the final path resides within the intended extraction root.
+* `crates/sar-cli/src/extraction/root_unix.rs` (`ExtractionRoot` and `StagedFile`): Current Unix backend: root opened once as a directory descriptor; all mutations use descriptor-relative *at calls with O_NOFOLLOW traversal and O_EXCL staging; metadata is applied to open descriptors.
+* `crates/sar-cli/src/extraction/root_unix.rs` (tests `symlinked_root_is_resolved_once_and_then_fixed`, `parent_replaced_after_check_cannot_redirect_staging_or_publication`, `parent_replaced_cannot_redirect_symlink_creation`, `directory_metadata_follows_descriptor_not_replaced_path`, `owner_restoration_uses_descriptor_and_never_follows_replaced_path`): Deterministic hook-injected race tests cover root-symlink resolution, parent replacement between check and mutation, symlink creation and data publication, and file/directory/owner metadata restoration. Run on Linux; Package A backend tests also ran on FreeBSD 15.1.
+* `crates/sar-cli/tests/cli_metadata_tests.rs` (tests `extraction_into_symlinked_root_resolves_it_once_and_leaves_no_staging_files` and the confined-symlink and permission tests): CLI-level evidence that extraction into a pre-existing symlinked root is confined and that compliant in-root content and metadata are still restored.
+* `crates/sar-cli/src/extraction/root_fallback.rs` (`ExtractionRoot::open` and policy `require_secure_extraction_backend`): Non-Unix targets compile an uninhabited ExtractionRoot whose `open` always fails with SAR_ERR_PATH_ESCAPE before any filesystem access; no path-based extractor remains.
+* `crates/sar-cli/tests/cli_platform_guard_tests.rs` (tests `extraction_is_refused_without_touching_the_destination` and `read_only_commands_still_work`): Compiled only for non-Unix targets (type-checked for x86_64-pc-windows-gnu; never executed on a native non-Unix host). The refusal logic itself is unit-tested on Linux in policy.rs and the stub was exercised on Linux by temporarily selecting it, which is not native evidence.
 
 #### Normative Basis
 
-* `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
+* `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Historical wording from the M13a.4 baseline, superseded by the M13a.7 revision of Section 22.4: Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
+* `specification.md` (Section 22.4 `Path Security`): Every filesystem mutation during materialization MUST remain within the selected scope; lexical validation alone is insufficient; if an Entry destination escapes the scope or confinement cannot be established the implementation MUST return `SAR_ERR_PATH_ESCAPE` and MUST NOT perform the affected mutation; later operations MUST NOT follow a materialized or pre-existing symbolic link outside the scope; distinct Full Logical Entry Paths mapping to one destination object MUST return `SAR_ERR_PATH_COLLISION`.
 
 #### Remediation
 
 * Constrain every extraction write, replacement, symlink creation, and metadata-restoration operation to a canonicalized extraction root so that pre-existing symlinks and later path replacement cannot redirect effects outside the permitted tree.
 * Eliminate the identified check/use windows in the extraction path, including temporary-file publication and post-write metadata restoration, or otherwise make those operations resolve against stable directory-relative state.
 * Add deterministic hostile-filesystem tests covering pre-existing output-root symlinks or equivalent confined-root setup and path-replacement attempts against both data writes and metadata restoration paths.
+* Targets without a secure extraction backend must refuse extraction with SAR_ERR_PATH_ESCAPE before any mutation instead of using a path-based fallback; a future Windows backend requires a separately scoped secure implementation and native validation.
 
 #### Verification
 
@@ -897,6 +906,7 @@ Requirement: `required`
 * Demonstrate that regular-file, sparse-file, and symlink extraction refuse or correctly confine destinations when the selected extraction root itself resolves through a pre-existing symlink on the host filesystem; note that symlink parent components within the extraction tree are already rejected by existing path-walking checks (verified in M13-EXTRACT-002) and do not represent the unprotected scenario targeted by this criterion.
 * Demonstrate that path-replacement attempts cannot redirect temporary-file publication or post-write metadata restoration outside the extraction root.
 * Verify that successful extraction still restores in-root content and metadata for compliant archive names after the confinement hardening.
+* Document the security-support matrix (Linux, FreeBSD, macOS, Windows/non-Unix) without claiming validation beyond the executed evidence, and refuse extraction on targets without a secure backend before any mutation.
 
 ### M13-EXTRACT-002: Archive path parsing rejects common traversal and ambiguous host-path forms before joining
 
@@ -2652,3 +2662,92 @@ Requirement: `required`
 #### Relationships
 
 * **Related findings:** `M13-SPEC-007`, `M13-BOUNDARY-005`, `M13-TRANSPORT-004`, `M13-FFI-002`
+
+### M13-EXTRACT-007: `repair` writes its temporary output through a predictable, symlink-following path
+
+| Field | Value |
+| --- | --- |
+| Type | implementation_defect |
+| Source milestone | M13a.4 |
+| Status | open |
+| Severity | low |
+| Priority | low |
+| Owner | pending_triage |
+| Compatibility | preserves_compliant_inputs |
+
+#### Summary
+
+`sar repair` writes the repaired archive to `<output>.tmp` with `fs::write`, which follows a pre-existing symlink at that name, is not created exclusively and uses a predictable name, and then renames it onto the output by path.
+
+#### Current Behavior
+
+crates/sar-cli/src/commands/repair.rs builds `<output>.tmp`, writes it with `fs::write`, re-reads it for verification and renames it to `output` with path-based calls. The output directory is not anchored by a descriptor and the temporary name is not exclusive. This is not part of extraction and was deliberately left unchanged by M13b.3 Package F.
+
+#### Expected Behavior
+
+Repair output should be created exclusively (create_new, random name) in the output directory, not follow symlinks, and be published by an identity-safe rename, consistent with the extraction staging discipline.
+
+#### Impact
+
+A local attacker who can write to the output directory can pre-create a symlink at `<output>.tmp` and redirect the repaired archive bytes to another file writable by the invoking user, or race the verify/rename sequence.
+
+#### Evidence
+
+* `crates/sar-cli/src/commands/repair.rs` (`repair_archive()` temporary output handling): `fs::write(&tmp_path, ...)` followed by `fs::rename(&tmp_path, &output)` with `tmp_path = <output>.tmp`.
+
+#### Remediation
+
+* Create the repair temporary file exclusively with an unpredictable name without following symlinks and publish it atomically, or document why in-place semantics are acceptable.
+* Add a deterministic test with a pre-existing symlink at the former temporary name.
+
+#### Verification
+
+Requirement: `required`
+
+* A pre-existing symlink at the temporary name is not followed and does not redirect the repaired bytes.
+* Successful repair still produces the verified output archive.
+
+#### Relationships
+
+* **Related findings:** `M13-EXTRACT-001`
+
+### M13-EXTRACT-008: Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits
+
+| Field | Value |
+| --- | --- |
+| Type | documentation_gap |
+| Source milestone | M13a.4 |
+| Status | open |
+| Severity | low |
+| Priority | low |
+| Owner | pending_triage |
+| Compatibility | documentation_only |
+
+#### Summary
+
+The CLI extractor never reads the Entry Mode bits HIDDEN_ATTR, FORCE_SYNC or OP_CODE, and its applicability to ordinary archive extraction is not recorded in the conformance documentation.
+
+#### Current Behavior
+
+HIDDEN_ATTR: written by create and exposed as `is_hidden` metadata by sar-archive, but not restored by extraction on any platform (platform-specific; Unix has no portable hidden attribute and extraction is refused elsewhere). FORCE_SYNC (`Bypasses local conflict resolution`): ignored; ordinary extraction has no conflict-resolution step and already follows the Section 6.1.5 final state, so the bit is not applicable to archive extraction and belongs to state application. OP_CODE and SESSION_CONTROL: `ArchiveReader` rejects SESSION_CONTROL and nonzero OP_CODE Entries by default with SAR_ERR_UNSUPPORTED (inert audit mode reports them without executing), so they cannot reach the extractor; Section 6.3 processes them only in Stateful Streaming Mode (M13b.4). ATOMIC_WRITE is satisfied by staging, integrity verification and atomic rename on Unix.
+
+#### Expected Behavior
+
+The applicability of each bit to ordinary extraction versus stream/session state application is documented, and any later restoration of HIDDEN_ATTR is explicitly policy-gated per platform.
+
+#### Impact
+
+Callers may assume that hidden-attribute or force-sync semantics are honored during extraction; no data-safety or confinement effect.
+
+#### Evidence
+
+* `crates/sar-archive/src/archive.rs` (`ArchiveReader` entry parsing (SESSION_CONTROL/OP_CODE rejection) and `is_hidden` metadata): Nonzero OP_CODE and SESSION_CONTROL are rejected by default; HIDDEN_ATTR is surfaced as metadata only.
+* `specification.md` (Sections 6.2 and 6.3): OP_CODE commands are processed only if Stateful Streaming Mode is active; FORCE_SYNC bypasses local conflict resolution; HIDDEN_ATTR sets the filesystem hidden attribute.
+
+#### Remediation
+
+* Record the applicability of HIDDEN_ATTR, FORCE_SYNC and OP_CODE to ordinary extraction versus M13b.4 state application and decide whether platform-specific HIDDEN_ATTR restoration is wanted.
+
+#### Relationships
+
+* **Related findings:** `M13-EXTRACT-001`
