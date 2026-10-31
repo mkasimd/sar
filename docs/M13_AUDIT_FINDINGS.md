@@ -153,7 +153,7 @@ Registry status: `in_progress`
 | `M13-CRYPTO-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Authentication and AEAD tag failures are handled as hard fail-closed errors before downstream processing |
 | `M13-CRYPTO-005` | `positive_observation` | `verified` | `informational` | `low` | `none` | Secret-dependent comparisons are limited and use constant-time or library-internal verification paths |
 | `M13-CRYPTO-006` | `positive_observation` | `verified` | `informational` | `low` | `none` | Cryptographic dependency selection is narrow and unsupported non-AEAD modes fail closed at dispatch |
-| `M13-EXTRACT-001` | `implementation_spec_mismatch` | `confirmed` | `medium` | `high` | `M13b.3` | Extractor does not enforce canonicalized, directory-relative confinement for final filesystem mutations |
+| `M13-EXTRACT-001` | `implementation_spec_mismatch` | `resolved` | `medium` | `high` | `M13b.3` | Extractor does not enforce canonicalized, directory-relative confinement for final filesystem mutations |
 | `M13-EXTRACT-002` | `positive_observation` | `verified` | `informational` | `low` | `none` | Archive path parsing rejects common traversal and ambiguous host-path forms before joining |
 | `M13-EXTRACT-003` | `positive_observation` | `verified` | `informational` | `low` | `none` | Staging chmod to 0o700 precedes child extraction; directory metadata finalization is deferred and occurs in reverse-depth order |
 | `M13-EXTRACT-004` | `positive_observation` | `verified` | `informational` | `low` | `none` | Current extractor exposes no hardlink creation path |
@@ -198,8 +198,9 @@ Registry status: `in_progress`
 | `M13-CRYPTO-008` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | LFH Content Hash has no algorithm selector and final Content Hash verification is not implemented |
 | `M13-TRANSPORT-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules |
 | `M13-FFI-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | SarStatus registry does not implement the finalized Section 10 status model |
-| `M13-EXTRACT-007` | `implementation_defect` | `open` | `low` | `low` | `pending_triage` | `repair` writes its temporary output through a predictable, symlink-following path |
+| `M13-EXTRACT-007` | `implementation_defect` | `open` | `low` | `low` | `M13b.3` | `repair` writes its temporary output through a predictable, symlink-following path |
 | `M13-EXTRACT-008` | `documentation_gap` | `open` | `low` | `low` | `pending_triage` | Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits |
+| `M13-PARSER-018` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.4` | Archive readers accept nonconforming encoded LFH Name String and Path String values instead of returning SAR_ERR_MALFORMED |
 
 ## Finding Details
 
@@ -852,7 +853,7 @@ Verified during M13a.2: the audited SAR crypto surface uses a narrow dependency 
 | --- | --- |
 | Type | implementation_spec_mismatch |
 | Source milestone | M13a.4 |
-| Status | confirmed |
+| Status | resolved |
 | Severity | medium |
 | Priority | high |
 | Owner | M13b.3 |
@@ -864,7 +865,7 @@ The CLI extractor lexically validates archive names and checks existing parent c
 
 #### Current Behavior
 
-Current (M13b.3 Packages A-F, branch m13b3-extraction-platform-evidence): the original path-based Unix mutation model (the `create_dir_all()`/`symlink_metadata()` walk followed by path-based create, rename, remove, chmod, chown and timestamp calls) has been replaced by directory-descriptor-relative operations. On Unix targets `ExtractionRoot` (crates/sar-cli/src/extraction/root_unix.rs) opens the selected root once as a directory descriptor (a root symlink is resolved exactly once) and performs every directory walk, mkdir, staging-file creation, rename, symlink creation, unlink and metadata mutation relative to descriptors (openat, mkdirat, renameat, unlinkat, symlinkat, fchown, futimens, fchmod) with O_NOFOLLOW directory traversal and O_EXCL staging files. Escapes and unconfinable paths report SAR_ERR_PATH_ESCAPE (Package B), distinct logical paths reaching one destination object report SAR_ERR_PATH_COLLISION (Package C), the Section 6.1.5 final state is implemented without deleting pre-existing content (Package D), and run-owned temporary artifacts are tracked and cleaned by identity with partial-result and cleanup diagnostics (Package E). On targets without `cfg(unix)` the remaining path-based extractor was removed (Package F): `sar extract` refuses before the archive is opened or the destination is touched, with SAR_ERR_PATH_ESCAPE, because confinement cannot be established; create, list, inspect, verify and repair are unaffected. Residuals: the Unix backend is runtime-tested on Linux, and FreeBSD 15.1 only for the Package A backend; macOS runtime is unverified; case-folding and Unicode-normalizing destination tests have not run on the development hosts; POSIX provides no atomic identity-checked unlink or rename, so a hostile writer to the destination retains a narrow check/use window for run-owned temporary names; extraction is neither all-or-nothing nor crash-recoverable; Windows and other non-Unix targets have no secure extraction backend.
+Current (M13b.3 Packages A-F, merged to m13b by PRs #95-#100; origin/m13b dae0ba46ea723e3dbff5478d0ef0447b1230fbb): the original path-based Unix mutation model (the `create_dir_all()`/`symlink_metadata()` walk followed by path-based create, rename, remove, chmod, chown and timestamp calls) has been replaced by directory-descriptor-relative operations. On Unix targets `ExtractionRoot` (crates/sar-cli/src/extraction/root_unix.rs) opens the selected root once as a directory descriptor (a root symlink is resolved exactly once) and performs every directory walk, mkdir, staging-file creation, rename, symlink creation, unlink and metadata mutation relative to descriptors (openat, mkdirat, renameat, unlinkat, symlinkat, fchown, futimens, fchmod) with O_NOFOLLOW directory traversal and O_EXCL staging files. Escapes and unconfinable paths report SAR_ERR_PATH_ESCAPE (Package B), distinct logical paths reaching one destination object report SAR_ERR_PATH_COLLISION (Package C), the Section 6.1.5 final state is implemented without deleting pre-existing content (Package D), and run-owned temporary artifacts are tracked and cleaned by identity with partial-result and cleanup diagnostics (Package E). On targets without `cfg(unix)` the remaining path-based extractor was removed (Package F): `sar extract` refuses before the archive is opened or the destination is touched, with SAR_ERR_PATH_ESCAPE, because confinement cannot be established; create, list, inspect, verify and repair are unaffected. Residuals: the Unix backend is runtime-tested on Linux, and FreeBSD 15.1 only for the Package A backend; macOS runtime is unverified; case-folding and Unicode-normalizing destination tests have not run on the development hosts; POSIX provides no atomic identity-checked unlink or rename, so a hostile writer to the destination retains a narrow check/use window for run-owned temporary names; extraction is neither all-or-nothing nor crash-recoverable; Windows and other non-Unix targets have no secure extraction backend.
 
 #### Expected Behavior
 
@@ -892,13 +893,6 @@ An attacker who can influence pre-existing filesystem state for the chosen extra
 * `specification.md` (Section 22.4 `Path Security`, canonicalization and extraction-root confinement requirements): Historical wording from the M13a.4 baseline, superseded by the M13a.7 revision of Section 22.4: Before any write operation, target paths MUST be canonicalized. Implementations MUST resolve all symbolic links and segments to ensure the final path resides within the intended extraction root. If canonicalization fails or points outside the allowed scope, the implementation MUST return `SAR_ERR_IO` and MUST NOT attempt to create the file.
 * `specification.md` (Section 22.4 `Path Security`): Every filesystem mutation during materialization MUST remain within the selected scope; lexical validation alone is insufficient; if an Entry destination escapes the scope or confinement cannot be established the implementation MUST return `SAR_ERR_PATH_ESCAPE` and MUST NOT perform the affected mutation; later operations MUST NOT follow a materialized or pre-existing symbolic link outside the scope; distinct Full Logical Entry Paths mapping to one destination object MUST return `SAR_ERR_PATH_COLLISION`.
 
-#### Remediation
-
-* Constrain every extraction write, replacement, symlink creation, and metadata-restoration operation to a canonicalized extraction root so that pre-existing symlinks and later path replacement cannot redirect effects outside the permitted tree.
-* Eliminate the identified check/use windows in the extraction path, including temporary-file publication and post-write metadata restoration, or otherwise make those operations resolve against stable directory-relative state.
-* Add deterministic hostile-filesystem tests covering pre-existing output-root symlinks or equivalent confined-root setup and path-replacement attempts against both data writes and metadata restoration paths.
-* Targets without a secure extraction backend must refuse extraction with SAR_ERR_PATH_ESCAPE before any mutation instead of using a path-based fallback; a future Windows backend requires a separately scoped secure implementation and native validation.
-
 #### Verification
 
 Requirement: `required`
@@ -907,6 +901,14 @@ Requirement: `required`
 * Demonstrate that path-replacement attempts cannot redirect temporary-file publication or post-write metadata restoration outside the extraction root.
 * Verify that successful extraction still restores in-root content and metadata for compliant archive names after the confinement hardening.
 * Document the security-support matrix (Linux, FreeBSD, macOS, Windows/non-Unix) without claiming validation beyond the executed evidence, and refuse extraction on targets without a secure backend before any mutation.
+
+#### Resolution
+
+`implementation_change` - `2026-10-31`
+
+Scoped remediation complete (SAR-M13b3-EXTRACTION-CLOSURE-DECISION-001): Unix extraction is descriptor-relative (root opened once, openat/mkdirat/renameat/unlinkat/symlinkat/fchown/futimens/fchmod, O_NOFOLLOW traversal, O_EXCL staging) with SAR_ERR_PATH_ESCAPE for escapes, lexical symlink-target evaluation, filesystem-identity SAR_ERR_PATH_COLLISION detection, Section 6.1.5 final-state replacement that never deletes pre-existing content, identity-verified staging cleanup and incomplete-extraction reporting; targets without cfg(unix) refuse extraction with SAR_ERR_PATH_ESCAPE before any mutation. Validated on Linux (full regression evidence); FreeBSD 15.1 evidence covers the Package A backend only; macOS native runtime is waived and unverified. This closure does not claim full cross-platform SAR extraction conformance.
+
+Rationale: All four acceptance criteria are met for the declared scope: root-symlink confinement, race-injection tests for publication and metadata restoration, in-root content and metadata restoration (Linux; Package A backend on FreeBSD 15.1), and a security-support matrix that makes no claim beyond executed evidence with refusal on targets lacking a secure backend. Missing macOS, native non-Unix and filesystem-specific case-folding/Unicode-normalization runtime evidence limits the support claim but does not block scoped closure. Accepted residuals: POSIX offers no identity-checked unlink or rename, leaving a narrow check/use window for run-owned random temporary names; extraction is fail-fast, neither all-or-nothing nor crash-recoverable; case-folding and normalizing-destination tests are capability-probed and have not executed on the development hosts; Windows and other non-Unix targets have no secure backend (a Windows backend requires a separately scoped, natively validated package). Residual work is tracked separately: M13-EXTRACT-007, M13-EXTRACT-008, the archive-reader Name/Path validation finding (M13-PARSER-018), M13-BOUNDARY-003 and M13b.4 stream/session materialization.
 
 ### M13-EXTRACT-002: Archive path parsing rejects common traversal and ambiguous host-path forms before joining
 
@@ -925,8 +927,11 @@ Archive extraction performs explicit lexical validation before joining names to 
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()` and `ensure_parent_directory_path()`, traversal and symlink-parent rejection): `validate_relative_archive_path()` rejects absolute, UNC, drive-prefixed, backslash, NUL, empty, `.` and `..` forms, and `ensure_parent_directory_path()` refuses existing symlink parents.
-* `crates/sar-cli/tests/cli_metadata_tests.rs` (tests `hostile_paths_are_rejected` and `extraction_rejects_existing_symlink_parent_component`): CLI tests cover rejection of `../`, absolute, drive-prefixed, and UNC archive names and rejection of an existing symlink parent component during extraction.
+* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()` and `ensure_parent_directory_path()`, traversal and symlink-parent rejection): Historical (M13a.4 verification): `validate_relative_archive_path()` rejects absolute, UNC, drive-prefixed, backslash, NUL, empty, `.` and `..` forms, and `ensure_parent_directory_path()` refuses existing symlink parents. `ensure_parent_directory_path()` was removed in M13b.3 Packages A-E; `validate_relative_archive_path()` still exists.
+* `crates/sar-cli/src/extraction/paths.rs` (functions `validate_relative_archive_path()`, `check_plain_components()`, `full_logical_entry_path()` and `SafeRelativePath::from_components()`): Current: the Full Logical Entry Path is composed from the LFH Path String and Name String and validated lexically; empty or `.` components, NUL bytes, an empty Name String and a separator-bearing Name String are SAR_ERR_MALFORMED, while absolute, UNC, backslash, drive-prefixed and `..` forms are SAR_ERR_PATH_ESCAPE.
+* `crates/sar-cli/src/extraction/root_unix.rs` (`ExtractionRoot` directory walk with O_NOFOLLOW traversal): Current: existing symlink parent components are refused by descriptor-relative O_NOFOLLOW traversal (SAR_ERR_PATH_ESCAPE), replacing the former `symlink_metadata()` parent checks; Unix only.
+* `crates/sar-cli/tests/cli_metadata_tests.rs` (tests `hostile_paths_are_rejected` and `extraction_rejects_existing_symlink_parent_component`): CLI tests cover rejection of `../`, absolute, drive-prefixed, and UNC archive names and rejection of an existing symlink parent component during extraction (both tests still exist in the current source).
+* `crates/sar-cli/tests/cli_full_logical_path_tests.rs` (tests `name_string_with_separator_is_rejected_not_normalized` and `invalid_path_string_components_are_rejected`): Current: Name String and Path String component rules are enforced at extraction time through the composed Full Logical Entry Path. Archive-reader-level validation is not provided and is tracked by M13-PARSER-018.
 
 #### Resolution
 
@@ -947,12 +952,15 @@ Verified during M13a.4: lexical archive-path validation rejects common traversal
 
 #### Summary
 
-On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applies the process umask, typically yielding mode 0o755 with the standard umask of 0o022) and then calls `fs::set_permissions(path, 0o700)` as a separate step. Content extraction for a directory proceeds only after the `set_permissions` call succeeds; if it fails, extraction halts. Pending directory metadata is applied only after child extraction completes and in reverse-depth order, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced.
+Historical (M13a.4 verification; the create-then-chmod sequence was replaced in M13b.3, see evidence and notes): On Unix, `create_restrictive_directory()` calls `fs::create_dir()` (which applies the process umask, typically yielding mode 0o755 with the standard umask of 0o022) and then calls `fs::set_permissions(path, 0o700)` as a separate step. Content extraction for a directory proceeds only after the `set_permissions` call succeeds; if it fails, extraction halts. Pending directory metadata is applied only after child extraction completes and in reverse-depth order, regular-file metadata is applied after temp-file publication, symlink metadata application is skipped, and restored modes are masked to ordinary permission bits so setuid, setgid, and sticky bits are not reintroduced. Current (Unix): directories are created 0o700 atomically through descriptor-relative mkdirat, regular-file metadata is applied to the open staging descriptor before publication, directory metadata is finalized through descriptors after children in reverse-depth order, and restored modes remain masked to 0o777.
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/paths.rs` (function `create_restrictive_directory()`, staging directory mode `0o700`): `create_restrictive_directory()` calls `fs::create_dir(path)` to create the directory and then calls `fs::set_permissions(path, Permissions::from_mode(0o700))` on Unix. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with the standard umask of 0o022 the effective creation mode is 0o755. The chmod is a separate step and not atomic with creation. Content extraction proceeds only after `set_permissions` returns `Ok(())`; if it returns an error, extraction halts.
-* `crates/sar-cli/src/extraction/metadata.rs` (functions `apply_file_metadata()`, `finalize_directory_metadata()`, and `apply_permissions()`): `apply_file_metadata()` runs only after file publication, skips symlink paths, `finalize_directory_metadata()` applies directory metadata after child extraction in reverse depth order, and `apply_permissions()` masks restored modes with `0o0777`.
+* `crates/sar-cli/src/extraction/paths.rs` (function `create_restrictive_directory()`, staging directory mode `0o700`): Historical (M13a.4 verification; function removed in M13b.3 Packages A-E): `create_restrictive_directory()` called `fs::create_dir(path)` and then `fs::set_permissions(path, Permissions::from_mode(0o700))`. `fs::create_dir` passes mode 0o777 to the `mkdir` syscall, which applies the process umask; with the standard umask of 0o022 the effective creation mode was 0o755. The chmod was a separate step and not atomic with creation. Content extraction proceeded only after `set_permissions` returned `Ok(())`.
+* `crates/sar-cli/src/extraction/metadata.rs` (functions `apply_file_metadata()`, `finalize_directory_metadata()`, and `apply_permissions()`): Historical (M13a.4 verification): `apply_file_metadata()` ran after file publication, `finalize_directory_metadata()` applied directory metadata after child extraction in reverse depth order, and `apply_permissions()` masked restored modes with `0o0777`. `apply_file_metadata()` and `apply_permissions()` no longer exist; `finalize_directory_metadata()` remains.
+* `crates/sar-cli/src/extraction/root_unix.rs` (`DIRECTORY_MODE`, `ExtractionRoot::create_directory()`, `ExtractionRoot::apply_directory_metadata()` and `StagedFile::apply_metadata()`): Current (Unix): directories are created with mode never wider than 0o700 and the owner bits are restored after the umask is applied; regular-file metadata is applied to the staging file descriptor before atomic publication; directory metadata is applied through descriptors.
+* `crates/sar-cli/src/extraction/metadata.rs` (functions `finalize_directory_metadata()` and `apply_fd_metadata()`): Current: directory metadata is finalized after child extraction in reverse-depth order, and restored modes are masked with `0o0777` so setuid, setgid and sticky bits are not reintroduced.
+* `crates/sar-cli/src/extraction/root_unix.rs` (tests `directories_are_never_group_or_world_accessible_while_created`, `file_metadata_is_applied_to_staging_file_before_publication` and `directory_metadata_follows_descriptor_not_replaced_path`): Current: unit tests verify 0o700 directory creation, pre-publication file metadata and descriptor-based directory metadata (Linux; Package A backend also on FreeBSD 15.1).
 * `crates/sar-cli/tests/cli_metadata_tests.rs` (tests `create_archives_directories_and_extract_applies_directory_permissions` and `preserve_permissions_strips_setuid_bits_by_default`): CLI tests verify directory permissions are applied after extraction and that restoring `0o4755` results in `0o755` on disk.
 
 #### Resolution
@@ -1043,12 +1051,15 @@ Rationale: Normative decision incorporated into specification.md (commit(s) a864
 
 #### Summary
 
-Regular-file and directory extraction remain available cross-platform, but non-Unix builds reject `--preserve-permissions`, `--preserve-owner`, and `--allow-symlinks` instead of attempting partial or platform-reinterpreted restoration behavior.
+Historical (M13a.4 verification; superseded by M13b.3 Package F): Regular-file and directory extraction remained available cross-platform, but non-Unix builds rejected `--preserve-permissions`, `--preserve-owner`, and `--allow-symlinks` instead of attempting partial or platform-reinterpreted restoration behavior. Current: non-Unix builds refuse all extraction with SAR_ERR_PATH_ESCAPE before the archive is opened or the destination is touched, which subsumes and is stricter than the earlier checks; type-checked only for x86_64-pc-windows-gnu and never executed on a native non-Unix host.
 
 #### Evidence
 
-* `crates/sar-cli/src/extraction/policy.rs` (function `validate_extract_metadata_support()`, non-Unix fail-closed policy checks): `validate_extract_metadata_support()` returns `SarError::Unsupported` on non-Unix when permission restoration, owner restoration, or symlink extraction is requested.
-* `crates/sar-cli/src/commands/extract.rs` (function `extract_symlink_entry()`, `#[cfg(not(unix))]` unsupported-path rejection): The non-Unix branch of `extract_symlink_entry()` also fails closed with `SarError::Unsupported` instead of attempting host-specific symlink emulation.
+* `crates/sar-cli/src/extraction/policy.rs` (function `validate_extract_metadata_support()`, non-Unix fail-closed policy checks): Historical (M13a.4 verification; function removed in M13b.3 Package F): `validate_extract_metadata_support()` returned `SarError::Unsupported` on non-Unix when permission restoration, owner restoration, or symlink extraction was requested.
+* `crates/sar-cli/src/commands/extract.rs` (function `extract_symlink_entry()`, `#[cfg(not(unix))]` unsupported-path rejection): Historical (M13a.4 verification; the non-Unix branch was removed in M13b.3 Package F): the non-Unix branch of `extract_symlink_entry()` failed closed with `SarError::Unsupported` instead of attempting host-specific symlink emulation.
+* `crates/sar-cli/src/extraction/policy.rs` (`SECURE_EXTRACTION_BACKEND` and function `require_secure_extraction_backend()`): Current: `extract_archive()` calls `require_secure_extraction_backend(SECURE_EXTRACTION_BACKEND)` first; without cfg(unix) it fails with SAR_ERR_PATH_ESCAPE before any filesystem access. The refusal logic is unit-tested on Linux.
+* `crates/sar-cli/src/extraction/root_fallback.rs` (`ExtractionRoot::open`): Current: the non-Unix ExtractionRoot is uninhabited and `open` always fails with SAR_ERR_PATH_ESCAPE; no path-based extractor remains.
+* `crates/sar-cli/tests/cli_platform_guard_tests.rs` (tests `extraction_is_refused_without_touching_the_destination` and `read_only_commands_still_work`): Current: compiled only for non-Unix targets (`#![cfg(not(unix))]`); type-checked by cross-compilation and never run on a native non-Unix host.
 
 #### Resolution
 
@@ -2672,7 +2683,7 @@ Requirement: `required`
 | Status | open |
 | Severity | low |
 | Priority | low |
-| Owner | pending_triage |
+| Owner | M13b.3 |
 | Compatibility | preserves_compliant_inputs |
 
 #### Summary
@@ -2751,3 +2762,64 @@ Callers may assume that hidden-attribute or force-sync semantics are honored dur
 #### Relationships
 
 * **Related findings:** `M13-EXTRACT-001`
+
+### M13-PARSER-018: Archive readers accept nonconforming encoded LFH Name String and Path String values instead of returning SAR_ERR_MALFORMED
+
+| Field | Value |
+| --- | --- |
+| Type | implementation_spec_mismatch |
+| Source milestone | M13a.7 |
+| Status | confirmed |
+| Severity | medium |
+| Priority | medium |
+| Owner | M13b.4 |
+| Compatibility | rejects_previously_accepted_nonconforming_input |
+
+#### Summary
+
+Specification Section 6.1.5 requires a reader that encounters a nonconforming encoded Name String or Path String to return SAR_ERR_MALFORMED, but the archive readers only check UTF-8 validity. The Name/Path rules are enforced solely by the CLI extractor, at materialization time.
+
+#### Current Behavior
+
+crates/sar-archive (archive.rs, stream.rs, fragment_group.rs) decodes the LFH Name String and Path String with `String::from_utf8` and returns SAR_ERR_MALFORMED only for invalid UTF-8. An empty Name String on an ordinary Entry, a Name String containing `/`, `\` or U+0000, and a Path String that begins or ends with `/`, contains `\` or U+0000, an empty component, a `.` component or a `..` component are accepted by the reader. The CLI composes the Full Logical Entry Path per Entry during extraction (`full_logical_entry_path()` in crates/sar-cli/src/extraction/paths.rs, called from commands/extract.rs) and rejects those forms there, mixing statuses: empty or `.` components, NUL and an empty or separator-bearing Name String are SAR_ERR_MALFORMED, while absolute, UNC, backslash, drive-prefixed and `..` forms are SAR_ERR_PATH_ESCAPE. `list` renders the composed path without validation (`display_full_path()`). The writer (`ArchiveWriter::add_entry()` validation in archive.rs) checks Name/Path lengths and HAS_PATH but no content rules, so SAR_ERR_INVALID_INPUT is not raised for nonconforming source names (observed by source reading; not separately reproduced).
+
+#### Expected Behavior
+
+Section 6.1.5: a reader encountering a nonconforming encoded Name String or Path String MUST return SAR_ERR_MALFORMED, and implementations MUST NOT normalize, rewrite, escape or substitute it; a writer receiving a nonconforming Name String or Path String MUST return SAR_ERR_INVALID_INPUT and MUST NOT emit the Entry. SAR_ERR_PATH_ESCAPE (Section 22.4) remains the materialization status for a syntactically conforming Entry whose destination or symbolic-link target cannot be confined; it does not replace the reader-level SAR_ERR_MALFORMED for nonconforming encoded fields.
+
+#### Impact
+
+Archives carrying nonconforming Name/Path Strings are accepted by archive reading, listing, inspection and verification and are reported inconsistently. During ordinary extraction a nonconforming later Entry is discovered only after earlier Entries were already published, so the run fails with a partial result (reported as incomplete, not rolled back) where an up-front reader rejection would have prevented any mutation. The status returned for the same nonconforming field differs between SAR_ERR_MALFORMED and SAR_ERR_PATH_ESCAPE.
+
+#### Evidence
+
+* `specification.md` (Section 6.1.5 Name and Path Semantics): Defines the Name String and Path String syntax rules, the Full Logical Entry Path, SAR_ERR_MALFORMED for readers and SAR_ERR_INVALID_INPUT for writers, and forbids normalizing or rewriting nonconforming fields.
+* `crates/sar-archive/src/archive.rs` (LFH Name String and Path String decoding in `ArchiveReader` entry parsing): Only UTF-8 validity is checked (`LFH Name String is not valid UTF-8`, `LFH Path String is not valid UTF-8`); no Section 6.1.5 syntax rule is applied. The same pattern appears in stream.rs and fragment_group.rs.
+* `crates/sar-cli/src/extraction/paths.rs` (functions `full_logical_entry_path()`, `validate_relative_archive_path()` and `check_plain_components()`): The Name/Path rules are enforced only at CLI materialization time, with SAR_ERR_MALFORMED for some forms and SAR_ERR_PATH_ESCAPE for others; drive-prefixed components are rejected with SAR_ERR_PATH_ESCAPE even though Section 22.4 states host-specific pathname restrictions do not make a conforming path malformed (classification question for the Controller).
+* `crates/sar-cli/tests/cli_full_logical_path_tests.rs` (tests `name_string_with_separator_is_rejected_not_normalized` and `invalid_path_string_components_are_rejected`): Existing tests cover rejection during extraction only; no archive-reader, list, inspect or verify test asserts SAR_ERR_MALFORMED for nonconforming encoded Name/Path Strings.
+
+#### Normative Basis
+
+* `specification.md` (Section 6.1.5 Name and Path Semantics): A reader encountering a nonconforming encoded Name String or Path String MUST return SAR_ERR_MALFORMED; a writer receiving one MUST return SAR_ERR_INVALID_INPUT and MUST NOT emit the Entry; implementations MUST NOT normalize, rewrite, escape, substitute or otherwise alter a nonconforming Name String or Path String.
+* `specification.md` (Section 22.4 Path Security): If an Entry destination escapes the selected scope or confinement cannot be established the implementation MUST return SAR_ERR_PATH_ESCAPE and MUST NOT perform the affected mutation; host-specific pathname restrictions do not make an otherwise conforming Full Logical Entry Path malformed.
+
+#### Remediation
+
+* Validate the encoded Name String and Path String against Section 6.1.5 in the shared archive, stream and fragment-group parsing paths and return SAR_ERR_MALFORMED for nonconforming values without normalizing or rewriting them.
+* Enforce the writer-side SAR_ERR_INVALID_INPUT requirement for nonconforming source names without emitting the Entry.
+* Keep materialization SAR_ERR_PATH_ESCAPE for conforming Entries whose destination or symbolic-link target cannot be confined, and obtain a Controller ruling on the classification of forms such as drive-prefixed components that are conforming on a Unix host.
+* Ensure ordinary extraction of an archive whose Entries are rejected by the reader performs no filesystem mutation for the rejected archive when rejection occurs before extraction begins, and document any remaining case where a later malformed Entry is found after earlier Entries were published.
+
+#### Verification
+
+Requirement: `required`
+
+* Archive-reader tests show SAR_ERR_MALFORMED for an empty Name String and for Name Strings containing `/`, `\` or U+0000 on ordinary Entries.
+* Archive-reader tests show SAR_ERR_MALFORMED for Path Strings that begin or end with `/`, contain `\` or U+0000, or contain an empty, `.` or `..` component, including fragmented and stream-parsed Entries.
+* list, inspect and verify reject such archives with SAR_ERR_MALFORMED and do not normalize or rewrite the fields.
+* CLI extraction regression tests show that an archive with a nonconforming Name or Path String, including one in a later Entry, is rejected with SAR_ERR_MALFORMED without publishing earlier Entries, and that materialization escapes of conforming Entries still report SAR_ERR_PATH_ESCAPE.
+* Writer tests show SAR_ERR_INVALID_INPUT and no emitted Entry for nonconforming source names.
+
+#### Relationships
+
+* **Related findings:** `M13-EXTRACT-001`, `M13-EXTRACT-002`, `M13-EXTRACT-005`
