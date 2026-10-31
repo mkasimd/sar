@@ -34,6 +34,7 @@ pub(crate) struct LimitArgs {
     max_fragment_count: Option<usize>,
     #[arg(long, value_name = "BYTES")]
     max_fragment_group_span: Option<u64>,
+    /// Retained for compatibility; currently inactive (never authorizes zero-filling gaps).
     #[arg(long, value_name = "BYTES")]
     max_loss_tolerant_gap: Option<u64>,
     #[arg(long, value_name = "BYTES")]

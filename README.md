@@ -101,11 +101,20 @@ The implementation currently includes:
 * explicit inert container/transcript audit mode for SAR-shaped bytes in `sar-archive`
 * stateful streaming session semantics in `sar-stream`
 * serialized stream transcript validation and optional exact-byte transcript recording in `sar-stream`
-* TCP and QUIC transport bindings in `sar-transport`
+* TCP and QUIC transport binding code in `sar-transport` (complete directional `TLS_EXPORTER` bootstrap and interoperability for SAR-over-QUIC are not yet claimed)
 * deterministic conformance-vector framework under `test-vectors/`
 * a command-line tool, `sar`
 
 The implementation is not yet a finished stable release. Public APIs, packaging, conformance profiles, fuzzing, security audit, and foreign-language bindings are still being developed.
+
+### Capability claims
+
+* **No complete Section 12 Compliance Profile is currently claimed.** The `ComplianceProfile` presets in `sar-archive` are repository policy presets; they are not automatically the normative Section 12 profiles.
+* Standard Profile CDC resolution (`CDC_MAP` and external chunk resolution) is incomplete. A non-literal CDC Algo ID is rejected with `SAR_ERR_UNSUPPORTED`.
+* SAR-over-QUIC binding code exists, but complete directional `TLS_EXPORTER` bootstrap and its interoperability are not yet claimed.
+* ASYMMETRIC_WRAP (KMS Mode `0x03`) is parsed and delegates unwrapping to a caller-supplied `KeyProvider`. SAR ships no RSA-OAEP, X25519-HPKE or ML-KEM construction, so the mode is not claimed as a fully implemented KMS mode.
+* Parsing a physical Entry and verifying the final logical Entry's Content Hash are distinct operations. Final logical verification happens only in the fully reconstructing reader paths (`ArchiveReader::read_all_logical_files` and `sar extract`).
+* Cryptographic reference vectors under `test-vectors/crypto-reference/` demonstrate agreement with independent third-party libraries. They are not a second SAR implementation, and multi-implementation interoperability has not been demonstrated.
 
 For the detailed milestone roadmap, see:
 
@@ -426,7 +435,7 @@ Typical commands:
 sar create <input> <output.sar>
 sar extract <archive.sar> <output-dir>
 sar list <archive.sar>
-sar verify <archive.sar>
+sar verify <archive.sar>   # structural/index/per-Entry decode check; not final logical Content Hash verification
 sar inspect <archive.sar> --json
 sar repair <archive.sar> <output.sar>
 sar version
@@ -463,9 +472,10 @@ Example bounded extraction:
 ```bash
 sar extract asset.sar ./target \
   --max-decoded-entry-size 1073741824 \
-  --max-in-memory-buffer 268435456 \
-  --max-loss-tolerant-gap 65536
+  --max-in-memory-buffer 268435456
 ```
+
+`--max-loss-tolerant-gap` is retained for compatibility but is currently inactive: no code path consults it, and it never authorizes zero-filling a fragment gap.
 
 The exact limits should be selected for the deployment environment and profile. The CLI uses conservative defaults and fails closed on configured limit violations.
 

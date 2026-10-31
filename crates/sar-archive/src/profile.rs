@@ -6,7 +6,12 @@ use serde::Serialize;
 use crate::archive::ArchiveMetadata;
 use sar_core::flags::GlobalFlags;
 
-/// SAR v1.0 conformance profile selector.
+/// Repository policy preset selector.
+///
+/// These presets are **not** automatically the normative Section 12
+/// Compliance Profiles of `specification.md`, and selecting one is not a
+/// Compliance Profile claim.  No complete Section 12 profile is currently
+/// claimed; aligning this type with Section 12 is M13b.4 work.
 ///
 /// Each variant corresponds to a named conformance profile defined in
 /// `test-vectors/profiles/README.md`. Profile validation applies
@@ -16,7 +21,9 @@ pub enum ComplianceProfile {
     /// Minimal interoperable archive profile (legacy, pre-M12a).
     ///
     /// Kept for backward compatibility. Prefer the named profiles below
-    /// for new code.
+    /// for new code.  Despite its name this is not the Section 12.2 Minimal
+    /// Archive profile (which requires `AES256_GCM` and PBKDF2); this preset
+    /// rejects encrypted archives.
     MinimalInteroperableArchive,
 
     /// Static archive profile.
@@ -127,7 +134,8 @@ pub struct ProfileReport {
 /// - Algorithm ID checks are not yet implemented (requires entry iteration).
 /// - Unsafe filesystem metadata rejection is implemented in the CLI extraction
 ///   layer, not here.
-/// - `Standard` profile validation is a placeholder.
+/// - `Standard` profile validation is a placeholder, and none of these presets is a
+///   complete Section 12 Compliance Profile claim.
 ///
 /// These limitations are documented in `docs/CONFORMANCE.md`.
 #[must_use]

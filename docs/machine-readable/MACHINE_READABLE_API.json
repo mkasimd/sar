@@ -2843,7 +2843,7 @@
           },
           {
             "name": "ResourceLimits",
-            "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. M13b WP-6 adds max_pbkdf2_iterations, max_kdf_salt_bytes, max_argon2_memory_kib, max_argon2_time_cost and max_argon2_parallelism; defaults (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) admit the mandatory interoperable KDF ranges with a 2-4x margin and unlimited() disables them.",
+            "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. M13b WP-6 adds max_pbkdf2_iterations, max_kdf_salt_bytes, max_argon2_memory_kib, max_argon2_time_cost and max_argon2_parallelism; defaults (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) admit the mandatory interoperable KDF ranges with a 2-4x margin and unlimited() disables them. max_loss_tolerant_gap is retained but currently inactive: no reassembly path consults it and it never authorizes zero-filling fragment gaps.",
             "metadata": {
               "safety_notes": [
                 "All archive-declared sizes and counts are attacker-controlled; ResourceLimits enforces checked preflight before any dangerous allocation.",
@@ -3347,7 +3347,7 @@
           },
           {
             "name": "ArchiveReader::next_entry",
-            "description": "Read the next sequential archive entry.",
+            "description": "Read the next physical archive entry sequentially, including AEAD authentication of an encrypted Entry. Does not reassemble fragment groups and does not verify the LFH Content Hash, which covers the final logical Entry; read_all_logical_files performs that verification.",
             "metadata": {
               "since_milestone": "3",
               "returns": "Result<Option<EntryReader>, SarError>",
@@ -3416,7 +3416,7 @@
           },
           {
             "name": "ArchiveReader::verify",
-            "description": "Verify archive structure/index consistency and CDC metadata structural validity when CDC_SUPPORT is active.",
+            "description": "Verify archive structure/index consistency and CDC metadata structural validity when CDC_SUPPORT is active. Decodes physical Entries via next_entry; does not verify the final logical Content Hash or reconstruct fragment groups.",
             "metadata": {
               "since_milestone": "3",
               "returns": "Result<VerificationReport, SarError>",
@@ -4590,7 +4590,7 @@
           },
           {
             "name": "ComplianceProfile",
-            "description": "Current archive compliance-profile selector.",
+            "description": "Repository policy preset selector. The variants are not automatically the normative Section 12 Compliance Profiles and selecting one is not a Compliance Profile claim; no complete Section 12 profile is currently claimed. MinimalInteroperableArchive is a legacy preset that rejects encrypted archives and is not the Section 12.2 Minimal Archive profile; Standard is a placeholder. Alignment with Section 12 belongs to M13b.4.",
             "metadata": {
               "since_milestone": "3",
               "stability": "experimental",
@@ -9289,7 +9289,7 @@
       },
       "loss_tolerant": {
         "resource_limits_bypass": false,
-        "note": "allow_lossy never bypasses ResourceLimits. Fragment gaps filled with zeros are bounded by max_loss_tolerant_gap.",
+        "note": "allow_lossy never bypasses ResourceLimits. max_loss_tolerant_gap is currently inactive and never authorizes zero-filling fragment gaps; a missing fragment yields at most the contiguous prefix from Fragment Index 0 (never zero-filled).",
         "aead_bypass": false,
         "aead_note": "AEAD authentication failures are never suppressed by allow_lossy or LOSS_TOLERANT flag."
       },
@@ -9466,7 +9466,7 @@
               },
               {
                 "name": "--max-loss-tolerant-gap BYTES",
-                "description": "Override ResourceLimits.max_loss_tolerant_gap."
+                "description": "Override ResourceLimits.max_loss_tolerant_gap (retained for compatibility; currently inactive)."
               }
             ],
             "exit_codes": [
@@ -9551,7 +9551,7 @@
             "name": "verify",
             "usage": "sar verify <archive.sar> [--password PASSWORD] [--recovery] [--cdc] [--max-archive-size BYTES] [--max-decoded-entry-size BYTES] [--max-in-memory-buffer BYTES] [--max-total-pipeline-memory BYTES] [--max-sparse-map-bytes BYTES] [--max-sparse-descriptors COUNT] [--max-fragment-count COUNT] [--max-fragment-group-span BYTES] [--max-loss-tolerant-gap BYTES]",
             "status": "implemented",
-            "description": "Verify archive integrity. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts --cdc for structural CDC validation only.",
+            "description": "Verify archive structure, index consistency and per-Entry decoding (including AEAD authentication of encrypted Entries). Does not provide the final logical Content Hash verification of the fully reconstructing reader paths. Accepts --recovery to validate fragmentation, sparse, and Data Recovery TLV metadata. Accepts --cdc for structural CDC validation only.",
             "options": [
               {
                 "name": "--password",
@@ -9599,7 +9599,7 @@
               },
               {
                 "name": "--max-loss-tolerant-gap BYTES",
-                "description": "Override ResourceLimits.max_loss_tolerant_gap."
+                "description": "Override ResourceLimits.max_loss_tolerant_gap (retained for compatibility; currently inactive)."
               }
             ],
             "exit_codes": [
@@ -9693,7 +9693,7 @@
               },
               {
                 "name": "--max-loss-tolerant-gap BYTES",
-                "description": "Override ResourceLimits.max_loss_tolerant_gap."
+                "description": "Override ResourceLimits.max_loss_tolerant_gap (retained for compatibility; currently inactive)."
               },
               {
                 "name": "--max-recovery-protected-range BYTES",

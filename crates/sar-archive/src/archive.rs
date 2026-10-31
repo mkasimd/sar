@@ -1068,7 +1068,12 @@ impl<R: Read + Seek> ArchiveReader<R> {
         Ok(header)
     }
 
-    /// Reads the next archive entry sequentially.
+    /// Reads the next physical archive entry sequentially.
+    ///
+    /// This decodes one physical Entry (including AEAD authentication of an
+    /// encrypted Entry).  It does not reassemble fragment groups and does not
+    /// verify the LFH Content Hash, which covers the final logical Entry; use
+    /// [`Self::read_all_logical_files`] for that verification.
     pub fn next_entry(&mut self) -> Result<Option<EntryReader>, SarError> {
         let header = self
             .global_header
@@ -1140,6 +1145,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
     }
 
     /// Verifies archive structure and index consistency.
+    ///
+    /// Physical Entries are decoded through [`Self::next_entry`], so this does
+    /// not verify the final logical Content Hash or reconstruct fragment
+    /// groups; those require [`Self::read_all_logical_files`].
     pub fn verify(&mut self) -> Result<VerificationReport, SarError> {
         if self.global_header.is_none() {
             let _ = self.read_global_header()?;
@@ -1851,6 +1860,9 @@ impl<R: Read + Seek> ArchiveReader<R> {
     /// Iteration starts at the first Entry and ends with `Ok(None)`; a
     /// failure ends it.  [`Self::read_all_logical_files`] restarts it.
     ///
+    /// This iterator does not itself verify the LFH Content Hash of the
+    /// released logical Entry; [`Self::read_all_logical_files`] does.
+    ///
     /// # Errors
     ///
     /// Fragment-group validation errors (see [`Self::read_all_logical_files`]),
@@ -2125,6 +2137,30 @@ impl<R: Read + Seek> ArchiveReader<R> {
             &limits.sparse_limits(),
         )?)
     }
+}
+
+/// Maximum attempts to draw a nonce not yet used by this writer.
+const NONCE_GENERATION_ATTEMPTS: usize = 3;
+
+/// Draws a nonce and records it in `used`, the writer's nonce-uniqueness scope.
+///
+/// A writer has exactly one KMS Master Secret and one `Encr Algo ID`, so one
+/// set per writer is the Section 8.2.2 scope.  For `AES256_GCM` the reserved
+/// trailing bytes are always zero, so comparing the whole 24-byte field is
+/// equivalent to comparing the 12-byte active nonce.  Exhausting the attempts
+/// aborts the encoding with `SAR_ERR_NONCE_REUSE`.
+fn reserve_unique_nonce(
+    used: &mut HashSet<[u8; 24]>,
+    mut generate: impl FnMut(&mut [u8; 24]) -> Result<(), sar_crypto::SarCryptoError>,
+) -> Result<[u8; 24], SarError> {
+    let mut nonce = [0u8; 24];
+    for _ in 0..NONCE_GENERATION_ATTEMPTS {
+        generate(&mut nonce).map_err(SarError::from)?;
+        if used.insert(nonce) {
+            return Ok(nonce);
+        }
+    }
+    Err(SarError::NonceReuse("failed to generate a unique nonce"))
 }
 
 /// Checks the bytes held at once while scattering: gathered data, the output
@@ -2689,18 +2725,9 @@ impl<W: Write> ArchiveWriter<W> {
             let algo_id = self
                 .encr_algo_id
                 .ok_or(SarError::Internal("missing writer encryption algorithm"))?;
-            let mut nonce = [0u8; 24];
-            let mut inserted = false;
-            for _ in 0..3 {
-                generate_nonce(algo_id, &mut nonce).map_err(SarError::from)?;
-                if self.used_nonces.insert(nonce) {
-                    inserted = true;
-                    break;
-                }
-            }
-            if !inserted {
-                return Err(SarError::NonceReuse("failed to generate a unique nonce"));
-            }
+            let nonce = reserve_unique_nonce(&mut self.used_nonces, |field| {
+                generate_nonce(algo_id, field)
+            })?;
             lfh.encr_algo_id = Some(algo_id);
             lfh.iv_nonce = Some(nonce);
             lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::ENCRYPTED);
@@ -3180,18 +3207,9 @@ impl<W: Write> ArchiveWriter<W> {
             let algo_id = self
                 .encr_algo_id
                 .ok_or(SarError::Internal("missing writer encryption algorithm"))?;
-            let mut nonce = [0u8; 24];
-            let mut inserted = false;
-            for _ in 0..3 {
-                generate_nonce(algo_id, &mut nonce).map_err(SarError::from)?;
-                if self.used_nonces.insert(nonce) {
-                    inserted = true;
-                    break;
-                }
-            }
-            if !inserted {
-                return Err(SarError::NonceReuse("failed to generate a unique nonce"));
-            }
+            let nonce = reserve_unique_nonce(&mut self.used_nonces, |field| {
+                generate_nonce(algo_id, field)
+            })?;
             lfh.encr_algo_id = Some(algo_id);
             lfh.iv_nonce = Some(nonce);
             lfh.entry_mode = EntryMode::from_bits(lfh.entry_mode.bits() | EntryMode::ENCRYPTED);
@@ -3642,4 +3660,50 @@ pub(crate) fn vcdiff_limits_from_resource_limits(
         max_instruction_count: r.max_vcdiff_instruction_count,
         max_output_size: max_output,
     })
+}
+
+#[cfg(test)]
+mod nonce_reuse_tests {
+    use super::*;
+    use sar_core::SarStatus;
+
+    #[test]
+    fn repeated_nonce_aborts_with_nonce_reuse() {
+        let mut used = HashSet::new();
+        let fixed = |field: &mut [u8; 24]| {
+            field[..12].copy_from_slice(&[0x11; 12]);
+            Ok(())
+        };
+        let first = reserve_unique_nonce(&mut used, fixed).expect("first nonce is fresh");
+        assert_eq!(&first[..12], &[0x11; 12]);
+
+        let mut calls = 0;
+        let err = reserve_unique_nonce(&mut used, |field| {
+            calls += 1;
+            field[..12].copy_from_slice(&[0x11; 12]);
+            Ok(())
+        })
+        .expect_err("reuse must abort");
+        assert_eq!(err.status(), SarStatus::ErrNonceReuse);
+        assert_eq!(calls, NONCE_GENERATION_ATTEMPTS);
+        assert_eq!(used.len(), 1, "a rejected nonce is not recorded twice");
+    }
+
+    #[test]
+    fn collision_is_retried_and_fresh_nonce_succeeds() {
+        let mut used = HashSet::new();
+        reserve_unique_nonce(&mut used, |field| {
+            field[0] = 1;
+            Ok(())
+        })
+        .expect("first");
+        let mut sequence = [1u8, 2u8].into_iter();
+        let second = reserve_unique_nonce(&mut used, |field| {
+            field[0] = sequence.next().expect("sequence");
+            Ok(())
+        })
+        .expect("retry succeeds");
+        assert_eq!(second[0], 2);
+        assert_eq!(used.len(), 2);
+    }
 }

@@ -4273,7 +4273,7 @@
       "priority": "high",
       "confidence": "high",
       "summary": "Reassembly, degraded output, and LOSS_TOLERANT handling follow the old offset-based model.",
-      "current_behavior": "Output size is computed from absolute offset plus fragment size, payloads are scattered at descriptor offsets, overlaps are rejected, and gaps are handled by descriptor ranges with possible zero fill.",
+      "current_behavior": "Implemented: dense Fragment Index concatenation with exactly Uncompressed Size bytes per fragment, no zero fill, prefix-only degraded output under LOSS_TOLERANT, Class G checks, a streaming-safe archive-layer FragmentGroupCollector (payload bytes bounded by max_total_pipeline_memory), delta applied once after reassembly, SAR_ERR_FRAGMENT_GAP for incomplete groups needing a group-wide stage, and rejection of non-literal CDC with SAR_ERR_UNSUPPORTED. Not implemented: CDC recipe resolution (CDC_MAP and external chunk resolution, mandatory for the Standard Profile); stream/session fragment-group reconstruction (M13b.4); collector bounds on group count and group metadata; final audit of the Section 13.1 fragment-local versus group-wide split; disposition of max_loss_tolerant_gap (retained, currently inactive, never authorizes zero fill). Historical (pre-WP-3): absolute-offset scatter with possible zero fill.",
       "expected_behavior": "The Fragment Reassembly Sequence is the concatenation of fragment contributions in ascending Fragment Index order; indices are dense with exactly one LAST_FRAGMENT; degraded LOSS_TOLERANT output is only the longest contiguous valid prefix from Fragment Index 0 with no synthetic fill and no partial group-wide stage; incomplete groups never reach delta, CDC, or sparse stages.",
       "impact": "Reconstructed bytes, degraded output, and error statuses differ from the specification.",
       "affected_artifacts": [
@@ -4331,7 +4331,8 @@
         "Progress (SAR-M13b-WP5-SPARSE-LOGICAL-SIZE-IMPLEMENTATION-001, M13b.2, WP-5): incomplete fragmented sparse groups return SAR_ERR_FRAGMENT_GAP even under allow_lossy and LOSS_TOLERANT; no degraded sparse output is produced (spec 19.4.5). The two WP-3 degraded-sparse success tests were replaced by active FragmentGap tests. max_loss_tolerant_gap remains unchanged and tracked as separate compatibility debt.",
         "Progress (WP-7, SAR-M13b-WP7-IMPLEMENTATION-001): the delta stage now follows the canonical pipeline. Fragment-local decoding is checked against each LFH Uncompressed Size (SAR_ERR_INVALID_LENGTH); FragmentGroup::reconstruct concatenates contributions, applies VCDIFF/BSDIFF/STORE_PATCH exactly once to the complete patch representation, then fails closed with SAR_ERR_UNSUPPORTED for a non-literal CDC recipe, then checks the sparse gathered length. A group that needs a group-wide stage (patch, non-literal CDC, sparse) and is incomplete returns SAR_ERR_FRAGMENT_GAP even with LOSS_TOLERANT. Unfragmented delta Entries are patched in the reader and the stream parser; the patch output is never compared with an LFH Uncompressed Size, and the writer emits the decoded patch representation size. Covered by crates/sar-archive/tests/delta_pipeline_tests.rs.",
         "Remaining (not closed): max_loss_tolerant_gap stays present and semantically inactive pending its separate disposition; full CDC resolution (CDC_MAP, external CAS) is not implemented; the stream parser emits physical Entries and does not reassemble fragment groups; closure is reserved for registry reconciliation (WP-7C).",
-        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): re-inspected and retained open. Outstanding obligations: (1) Section 13.1 fragment-local versus group-wide pipeline split is only partially implemented; (2) mandatory Compliance Profile CDC support (CDC_MAP resolution, external CAS) is not implemented, so any profile requiring CDC must not be claimed (non-literal CDC returns SAR_ERR_UNSUPPORTED); (3) the stream parser does not reassemble fragment groups (M13b.4); (4) max_loss_tolerant_gap is unenforced pending disposition; (5) group bookkeeping is uncapped. Owner: M13b.2 remainder, with streaming items at M13b.4."
+        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): re-inspected and retained open. Outstanding obligations: (1) Section 13.1 fragment-local versus group-wide pipeline split is only partially implemented; (2) mandatory Compliance Profile CDC support (CDC_MAP resolution, external CAS) is not implemented, so any profile requiring CDC must not be claimed (non-literal CDC returns SAR_ERR_UNSUPPORTED); (3) the stream parser does not reassemble fragment groups (M13b.4); (4) max_loss_tolerant_gap is unenforced pending disposition; (5) group bookkeeping is uncapped. Owner: M13b.2 remainder, with streaming items at M13b.4.",
+        "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: documentation and Rust docs now state that max_loss_tolerant_gap (field, FragmentLimits field and --max-loss-tolerant-gap) is retained but inactive and never authorizes zero-filling; no enforcement was invented and no API was removed. A CDC clarification proposal was prepared as decision support only (docs/CDC_NORMATIVE_CLARIFICATION_PROPOSAL.md); no CDC resolver was implemented. Status retained (open). Remaining obligations: CDC recipe resolution (M13b.2 pending Controller decision), Section 13.1 split audit, collector group-count/metadata bounds, max_loss_tolerant_gap disposition, stream/session reconstruction (M13b.4); no cross-milestone obligation is marked complete."
       ]
     },
     {
@@ -4547,7 +4548,10 @@
           "M13-SPEC-006",
           "M13-CRYPTO-007"
         ]
-      }
+      },
+      "notes": [
+        "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: proposed (not adopted) ownership change: implementation alignment of the ComplianceProfile model with Section 12 belongs to M13b.4. resolution_owner, remediation.owner and verification.owner_milestone are intentionally unchanged (M13b.2) pending Controller approval; normative milestone boundaries are unchanged. Interim documentation now states that no complete Section 12 Compliance Profile is claimed and that existing ComplianceProfile presets are repository presets."
+      ]
     },
     {
       "id": "M13-BOUNDARY-005",
@@ -4640,7 +4644,7 @@
       "priority": "high",
       "confidence": "high",
       "summary": "The cryptographic implementation does not contain the finalized KMS hierarchy.",
-      "current_behavior": "No KMS Master Secret abstraction or HKDF-SHA256 Entry key derivation exists in the implementation; key and AAD handling follow the previous contract.",
+      "current_behavior": "Implemented (WP-6, M13b.1): 32-byte KMS Master Secret resolution (PBKDF2-HMAC-SHA256 and Argon2id v0x13 with limits checked before derivation; ASYMMETRIC_WRAP delegated to a caller KeyProvider; TLS_EXPORTER requires a transport-supplied secret), HKDF-SHA256 per-Entry key derivation (empty salt, info = 'SAR-v1-entry-key' || Encr Algo ID || 24-byte IV/Nonce field), complete encoded Global Header || LFH as AEAD AAD, one Master Secret derivation per scope, AES-256-GCM and XChaCha20-Poly1305, AEAD failures as SAR_ERR_AUTH_FAILED, and per-writer nonce-uniqueness enforcement with SAR_ERR_NONCE_REUSE. Not implemented: directional TLS_EXPORTER bootstrap and key separation in sar-transport (M13b.4; transport tests still use legacy non-specification exporter labels); cross-Partition KMS consistency and per-Partition Master Secret scopes (M13b.3; sar-partition is a stub); ASYMMETRIC_WRAP constructions (RSA-OAEP, X25519-HPKE, ML-KEM; not claimed); second-implementation archive interoperability evidence. Historical (pre-WP-6): no Master Secret abstraction or HKDF Entry-key derivation existed.",
       "expected_behavior": "Implement the 32-byte KMS Master Secret, HKDF-SHA256 per-Entry (and per-fragment) key derivation, PBKDF2 and Argon2id baselines, the specified asymmetric wrapping constructions, nonce-scope rules, full encoded Global Header as Entry AAD, and directional TLS_EXPORTER scopes; AEAD failures map to SAR_ERR_AUTH_FAILED.",
       "impact": "Encrypted archives are not interoperable with the specification.",
       "affected_artifacts": [
@@ -4651,9 +4655,63 @@
       "evidence": [
         {
           "kind": "source_code",
+          "artifact": "crates/sar-crypto/src/entry_key.rs",
+          "locator": "derive_entry_key, hkdf_sha256_empty_salt",
+          "description": "HKDF-SHA256 Entry-key derivation per Section 5.3.4; the Master Secret is never used as the Entry key."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-crypto/src/aad.rs",
+          "locator": "build_aead_aad",
+          "description": "AAD is the complete encoded Global Header followed by the LFH bytes."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-crypto/src/kms/pbkdf2.rs",
+          "locator": "derive_key",
+          "description": "PBKDF2-HMAC-SHA256 only; PRFs 0x02 and 0x03 return SAR_ERR_UNSUPPORTED; KDF limits are checked before derivation."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-crypto/src/kms/argon2.rs",
+          "locator": "derive_key",
+          "description": "Argon2id version 0x13 only; limits are checked before allocation."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-archive/src/archive.rs",
+          "locator": "reserve_unique_nonce",
+          "description": "Per-writer nonce-uniqueness set; one writer has one Master Secret and one Encr Algo ID."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-crypto/tests/entry_key_tests.rs",
+          "locator": "RFC 5869 case and Entry-key tests",
+          "description": "HKDF and Entry-key known answers, AAD construction."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-archive/tests/crypto_reference_vector_tests.rs",
+          "locator": "all tests",
+          "description": "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: deterministic vectors generated by tools/generate_crypto_reference_vectors.py from independent third-party libraries (PBKDF2/Argon2id range boundaries, HKDF Entry keys, Global Header+LFH AAD, AES-256-GCM and XChaCha20-Poly1305 with fixed test-only material). Evidence level: independent-library agreement; not second-implementation SAR interoperability."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-archive/src/archive.rs",
+          "locator": "nonce_reuse_tests",
+          "description": "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: deterministic SAR_ERR_NONCE_REUSE regression."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-archive/tests/wp6_crypto_integrity_tests.rs",
+          "locator": "all tests",
+          "description": "End-to-end writer/reader tests for HKDF keys, AAD binding and KDF limits."
+        },
+        {
+          "kind": "source_code",
           "artifact": "crates/sar-crypto/src/kms/mod.rs",
           "locator": "KMS module",
-          "description": "No HKDF-based Master Secret hierarchy is present in the workspace sources."
+          "description": "Historical (pre-WP-6) evidence: no HKDF-based Master Secret hierarchy was present. Superseded by the entries above."
         }
       ],
       "normative_basis": [
@@ -4688,7 +4746,8 @@
         ]
       },
       "notes": [
-        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): TLS_EXPORTER header validation and CLI password documentation re-reviewed. Status retained: outstanding obligations are (1) optional ASYMMETRIC_WRAP Wrap Algo IDs (RSA-OAEP-2048/4096, X25519-HPKE, ML-KEM) are unsupported; SAR only parses payloads and delegates unwrap to a caller KeyProvider, so a claim of KMS Mode 0x03 additionally requires RSA-OAEP-2048 (owner: future optional-algorithm work or KeyProvider integrators); (2) directional TLS_EXPORTER derivation/bootstrap (M13b.4); (3) cross-Partition key behavior (M13b.3); (4) cross-implementation Guaranteed Interoperability Baseline decrypt and KAT evidence (M13b.2 closure/conformance vectors)."
+        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): TLS_EXPORTER header validation and CLI password documentation re-reviewed. Status retained: outstanding obligations are (1) optional ASYMMETRIC_WRAP Wrap Algo IDs (RSA-OAEP-2048/4096, X25519-HPKE, ML-KEM) are unsupported; SAR only parses payloads and delegates unwrap to a caller KeyProvider, so a claim of KMS Mode 0x03 additionally requires RSA-OAEP-2048 (owner: future optional-algorithm work or KeyProvider integrators); (2) directional TLS_EXPORTER derivation/bootstrap (M13b.4); (3) cross-Partition key behavior (M13b.3); (4) cross-implementation Guaranteed Interoperability Baseline decrypt and KAT evidence (M13b.2 closure/conformance vectors).",
+        "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: added deterministic independent-library vectors (PBKDF2-HMAC-SHA256 and Argon2id v0x13 at mandatory-range corners, HKDF Entry keys, complete Global Header+LFH AAD, AES-256-GCM, XChaCha20-Poly1305) and a deterministic nonce-reuse regression. Nonce scope review: the writer enforces uniqueness per writer instance; since a writer has exactly one KMS Master Secret and one Encr Algo ID this equals the Section 8.2.2 scope for a single writer, and AES-256-GCM reserved bytes are always zero so full-field comparison equals active-nonce comparison. Two separate writers sharing a Master Secret are not coordinated (caller responsibility); no defect found and no wire change. Status retained (open). Remaining obligations: (1) directional TLS_EXPORTER bootstrap and key separation (M13b.4); (2) cross-Partition KMS consistency (M13b.3); (3) second-implementation archive interoperability evidence for the Guaranteed Interoperability Baseline; (4) ASYMMETRIC_WRAP remains unclaimed. No cross-milestone obligation is marked complete."
       ]
     },
     {
@@ -4707,7 +4766,7 @@
       "priority": "high",
       "confidence": "high",
       "summary": "The LFH Content Hash was a bare 32-byte field with no defined digest algorithm, and no Content Hash verification exists.",
-      "current_behavior": "Before SAR-M13b-COORD-HASH-001 the LFH carried only a 32-byte Content Hash under DEDUPLICATION. The Content Hash is retained (including the terminal fragment value) but never verified and SAR_ERR_HASH_MISMATCH is never produced.",
+      "current_behavior": "Implemented: one-byte LFH Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256; 0x32 SHA3-256 optional and unsupported), Class G group check, BLAKE3-256 writer default, and final logical Content Hash verification (including sparse holes, constant-time compare, SAR_ERR_HASH_MISMATCH) in the fully reconstructing reader paths (ArchiveReader::read_all_logical_files and CLI extract). Not verified: ArchiveReader::next_entry, ArchiveReader::verify and CLI verify decode physical Entries without final logical Content Hash verification; the stateful stream parser (sar-archive stream.rs) and sar-transport retain but never verify the Content Hash (M13b.4). Historical (pre-SAR-M13b-COORD-HASH-001): the LFH carried only a bare 32-byte Content Hash that was never verified.",
       "expected_behavior": "A one-byte Hash Algo ID (0x30 SHA-256, 0x31 BLAKE3-256, 0x32 SHA3-256) precedes Content Hash when DEDUPLICATION is set; it is group-invariant (Class G, SAR_ERR_METADATA_CONFLICT on difference); Content Hash remains completion-authoritative (Class C) and is verified over the final logical Entry (including sparse holes), returning SAR_ERR_HASH_MISMATCH on mismatch.",
       "impact": "Content Hash values are not interoperable or verifiable, and archives written with the previous layout are unsupported under the corrected layout.",
       "affected_artifacts": [
@@ -4723,6 +4782,24 @@
           "artifact": "crates/sar-core/src/format.rs",
           "locator": "parse_lfh/write_lfh DEDUPLICATION field",
           "description": "Historical (pre-prerequisite) evidence: only a 32-byte Content Hash field was parsed and written; no algorithm identifier existed."
+        },
+        {
+          "kind": "source_code",
+          "artifact": "crates/sar-archive/src/content_hash.rs",
+          "locator": "verify_logical, digest_sparse_logical, verify_content_hash",
+          "description": "Final logical Content Hash verification; sparse holes are hashed as zeros."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-archive/tests/wp6_crypto_integrity_tests.rs",
+          "locator": "content hash tests",
+          "description": "Hash verification through the real writer/reader, including SAR_ERR_HASH_MISMATCH."
+        },
+        {
+          "kind": "test",
+          "artifact": "crates/sar-archive/tests/crypto_reference_vector_tests.rs",
+          "locator": "content_hash_vectors_plain_fragmented_and_sparse, archive_entry_vectors_cover_header_lfh_aad_and_payload",
+          "description": "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: SHA-256 and BLAKE3-256 Content Hash vectors from independent libraries (plain, fragmented, sparse with holes) and mismatch to SAR_ERR_HASH_MISMATCH. Independent-library agreement only."
         }
       ],
       "normative_basis": [
@@ -4758,7 +4835,8 @@
       "notes": [
         "Decision record: SAR-M13b-COORD-HASH-001 (adopted for M13b; controller review deferred to M13b closure).",
         "Progress (LFH Hash Algo ID prerequisite): specification.md, sar-core LFH parser/writer, metadata, writer defaults (BLAKE3-256), fragment-group Class G validation and tests are implemented. Legacy LFHs without Hash Algo ID are unsupported: the parser uses only the updated canonical layout, with no automatic legacy detection, fallback or reinterpretation, and malformed inputs return the applicable normative errors (typically SAR_ERR_INVALID_LENGTH or SAR_ERR_RESERVED_VALUE). Because legacy and current layouts share the same Global Header version and the first byte of a legacy Content Hash may coincide with an assigned Hash Algo ID, universal rejection of every structurally ambiguous legacy byte sequence is not guaranteed. No repository fixture or test vector encoded DEDUPLICATION. Final Content Hash verification remains WP-6.",
-        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): added fragmented_entry_terminal_content_hash_regression (correct hash over three fragments, HashMismatch, FRAGMENT_GAP ordering before hash, lossy degraded output unverified, non-terminal non-zero hash MetadataConflict) and fragmented_sparse_terminal_content_hash_covers_holes. Status retained: remaining obligations are (1) Content Hash verification in the stateful stream parser/transport/session path, which currently has none (proposed owner M13b.4 with the streaming work); (2) controller review of SAR-M13b-COORD-HASH-001 and the legacy-LFH ambiguity limitation at M13b closure."
+        "WP-7C (SAR-M13b-WP7C-IMPLEMENTATION-001): added fragmented_entry_terminal_content_hash_regression (correct hash over three fragments, HashMismatch, FRAGMENT_GAP ordering before hash, lossy degraded output unverified, non-terminal non-zero hash MetadataConflict) and fragmented_sparse_terminal_content_hash_covers_holes. Status retained: remaining obligations are (1) Content Hash verification in the stateful stream parser/transport/session path, which currently has none (proposed owner M13b.4 with the streaming work); (2) controller review of SAR-M13b-COORD-HASH-001 and the legacy-LFH ambiguity limitation at M13b closure.",
+        "SAR-M13b2-EVIDENCE-IMPLEMENTATION-001: documentation corrected to distinguish physical Entry parsing/decoding (next_entry, verify, CLI verify) from final logical Content Hash verification (read_all_logical_files, CLI extract). Status retained (open). Remaining obligations: Content Hash verification in the stateful stream parser, transport and session path (M13b.4); controller review of SAR-M13b-COORD-HASH-001; no cross-milestone obligation is marked complete."
       ]
     },
     {
