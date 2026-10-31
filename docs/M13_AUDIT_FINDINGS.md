@@ -198,7 +198,7 @@ Registry status: `in_progress`
 | `M13-CRYPTO-008` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.2` | LFH Content Hash has no algorithm selector and final Content Hash verification is not implemented |
 | `M13-TRANSPORT-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | Stateful Streaming ACK/OK/SUCCESS, fragment timeout, and reassembly caps do not follow the finalized session rules |
 | `M13-FFI-004` | `implementation_spec_mismatch` | `confirmed` | `high` | `high` | `M13b.4` | SarStatus registry does not implement the finalized Section 10 status model |
-| `M13-EXTRACT-007` | `implementation_defect` | `open` | `low` | `low` | `M13b.3` | `repair` writes its temporary output through a predictable, symlink-following path |
+| `M13-EXTRACT-007` | `implementation_defect` | `resolved` | `low` | `low` | `M13b.3` | `repair` writes its temporary output through a predictable, symlink-following path |
 | `M13-EXTRACT-008` | `documentation_gap` | `open` | `low` | `low` | `pending_triage` | Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits |
 | `M13-PARSER-018` | `implementation_spec_mismatch` | `confirmed` | `medium` | `medium` | `M13b.4` | Archive readers accept nonconforming encoded LFH Name String and Path String values instead of returning SAR_ERR_MALFORMED |
 
@@ -2680,7 +2680,7 @@ Requirement: `required`
 | --- | --- |
 | Type | implementation_defect |
 | Source milestone | M13a.4 |
-| Status | open |
+| Status | resolved |
 | Severity | low |
 | Priority | low |
 | Owner | M13b.3 |
@@ -2705,11 +2705,11 @@ A local attacker who can write to the output directory can pre-create a symlink 
 #### Evidence
 
 * `crates/sar-cli/src/commands/repair.rs` (`repair_archive()` temporary output handling): `fs::write(&tmp_path, ...)` followed by `fs::rename(&tmp_path, &output)` with `tmp_path = <output>.tmp`.
-
-#### Remediation
-
-* Create the repair temporary file exclusively with an unpredictable name without following symlinks and publish it atomically, or document why in-place semantics are acceptable.
-* Add a deterministic test with a pre-existing symlink at the former temporary name.
+* `crates/sar-cli/src/commands/repair_output.rs` (`write_verified_output()`, `write_with_names()`, `publish_in()`, `probe_mode()`, `discard()`): Current (merged, PR #102 at origin/m13b b81b5921a73a6b28fe2ad10eeda95e580318ef4a): the parent directory is opened once; the staging file is created with O_CREAT|O_EXCL|O_NOFOLLOW, mode 0600, under a random `.sar-repair-<32 hex>` name with at most 16 attempts; the repaired bytes are written and verified through the staged descriptor; the staging name is identity-checked and renamed with `renameat` relative to the held directory descriptor; staging and permissions-probe cleanup are identity-aware and leave substituted or unidentifiable objects in place.
+* `crates/sar-cli/src/commands/repair.rs` (`repair_cmd()` output stage): Current: `repair_cmd` delegates output staging, verification and publication to `write_verified_output()` and preserves the original error; on non-Unix targets it refuses the repair output operation with SAR_ERR_UNSUPPORTED before reading inputs. The former `<output>.tmp` handling shown in the first evidence entry no longer exists.
+* `crates/sar-cli/src/commands/repair_output.rs` (`tests` module (17 deterministic hook-based unit tests)): Symlink and ordinary file at the former `.tmp` name, successful verified output and default mode, replacement of an existing output, destination symlink not followed, name collision and bounded retries, verification failure and cleanup, publication failure and cleanup, staging substitution before publication, refused cleanup of a substituted staging object, parent-directory substitution, invalid output names, permissions-probe inspection failure, unchanged-probe cleanup, probe substitution before cleanup and its effect on the whole repair.
+* `crates/sar-cli/tests/cli_repair_output_tests.rs` (4 Unix CLI tests (global-EC archive fixture)): A symlink at the former `<output>.tmp` name is not followed and the victim is unchanged; an ordinary file at that name is untouched; an existing output is replaced and a destination symlink is replaced rather than followed; a failed repair leaves no staging file.
+* `crates/sar-cli/tests/cli_platform_guard_tests.rs` (`repair_output_is_refused_without_touching_the_output` (`#![cfg(not(unix))]`)): Non-Unix refusal of the repair output operation (SAR_ERR_UNSUPPORTED, no output created). Type-checked by cross-compilation (x86_64-pc-windows-gnu clippy) only; not run on a native non-Unix host.
 
 #### Verification
 
@@ -2721,6 +2721,14 @@ Requirement: `required`
 #### Relationships
 
 * **Related findings:** `M13-EXTRACT-001`
+
+#### Resolution
+
+`implementation_change` - `2026-10-31`
+
+Resolved (SAR-M13b3-REPAIR-WP1-CLOSURE-001) by PR #102, merge commit b81b5921a73a6b28fe2ad10eeda95e580318ef4a, with integrated PR #104. On Unix `repair` stages its output exclusively under a random name in the output's parent directory (descriptor-relative, O_EXCL|O_NOFOLLOW, mode 0600, bounded name retries), verifies the repaired archive through the staged descriptor, re-checks the staging identity and publishes by `renameat` relative to the held directory descriptor, preserving replacement of an existing output and never following a destination symlink. Staging and permissions-probe cleanup are identity-aware and never delete a substituted or unidentifiable object; the original repair error is preserved and unresolved cleanup is reported separately. Targets without cfg(unix) refuse the repair output operation with SAR_ERR_UNSUPPORTED while other commands stay available. Linux runtime validation: workspace tests 1466 passed, fmt, stable and nightly Clippy, API and audit checks, and GitHub CI green on the merged head. This does not claim transactional or crash-recoverable repair output, elimination of the POSIX identity-check/use race, or native macOS, Windows or FreeBSD runtime validation.
+
+Rationale: Both acceptance criteria are met on Unix: a pre-existing symlink (or ordinary file) at the former temporary name is neither followed nor modified and does not redirect the repaired bytes, and a successful repair still produces the verified output archive, including replacement of an existing output. Accepted residuals: POSIX offers no identity-checked rename or unlink, leaving a narrow check/use window between the staging identity check and `renameat`/`unlinkat` (publication re-checks the final name afterwards and fails if it does not reach the staged object, which detects but cannot undo a substitution inside the window); the parent directory path is followed once as written when opened; there is no crash recovery or rollback, so an abruptly terminated repair can leave a `.sar-repair-*` staging file; non-Unix repair output is refused; macOS and native Windows runtime are unverified and a targeted FreeBSD run is an outstanding platform-specific follow-up.
 
 ### M13-EXTRACT-008: Ordinary extraction does not apply HIDDEN_ATTR, FORCE_SYNC or OP_CODE Entry Mode bits
 
