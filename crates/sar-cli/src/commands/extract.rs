@@ -12,7 +12,7 @@ use sar_core::{EntryKind, GlobalFlags, ResourceLimits, SarError};
 use crate::{
     extraction::{
         metadata::{PendingDirectoryMetadata, finalize_directory_metadata},
-        paths::{SafeRelativePath, validate_relative_archive_path, validate_symlink_target},
+        paths::{SafeRelativePath, full_logical_entry_path, validate_symlink_target},
         policy::{ExtractMetadataOptions, validate_extract_metadata_support},
         root::ExtractionRoot,
         staging::{compute_sparse_crc32, stage_bytes, stage_sparse, verify_crc32},
@@ -108,7 +108,7 @@ pub(crate) fn extract_archive(
             )?;
         }
 
-        let rel = validate_relative_archive_path(&name)?;
+        let rel = full_logical_entry_path(index0.as_ref().and_then(|m| m.path.as_deref()), &name)?;
         let permissions = index0.as_ref().and_then(|m| m.permissions).map(|v| v.mode);
         // The authoritative CRC32 is the LAST_FRAGMENT value; degraded output
         // is never reported as integrity-verified.
@@ -152,6 +152,7 @@ pub(crate) fn extract_archive(
             metadata,
         )?;
         staged.publish()?;
+        discard_replaced_directory_metadata(&mut pending_directories, &rel);
     }
 
     finalize_directory_metadata(&root, pending_directories, metadata)?;
@@ -166,14 +167,18 @@ fn extract_non_fragment_entry(
     metadata: ExtractMetadataOptions,
     pending_directories: &mut HashMap<String, PendingDirectoryMetadata>,
 ) -> Result<(), SarError> {
-    let rel = validate_relative_archive_path(&entry.metadata.name)?;
+    let rel = full_logical_entry_path(entry.metadata.path.as_deref(), &entry.metadata.name)?;
     match entry.metadata.entry_kind {
         EntryKind::Directory => {
             root.create_directory(&rel)?;
             record_directory_metadata(pending_directories, &rel, entry);
             Ok(())
         }
-        EntryKind::Symlink => extract_symlink_entry(root, &rel, entry, metadata),
+        EntryKind::Symlink => {
+            extract_symlink_entry(root, &rel, entry, metadata)?;
+            discard_replaced_directory_metadata(pending_directories, &rel);
+            Ok(())
+        }
         EntryKind::RegularFile => {
             verify_content_hash(
                 entry.metadata.hash_algo_id,
@@ -224,10 +229,25 @@ fn extract_non_fragment_entry(
                     .map(|value| [value.mtime, value.atime, value.ctime]),
                 metadata,
             )?;
-            staged.publish()
+            staged.publish()?;
+            discard_replaced_directory_metadata(pending_directories, &rel);
+            Ok(())
         }
         EntryKind::EmptyArea => Ok(()),
     }
+}
+
+/// A non-directory Entry replaces any directory at its path and removes that
+/// directory's earlier descendants from the final logical state (specification
+/// Section 6.1.5), so their explicit metadata no longer applies. A directory
+/// that is later recreated implicitly starts without explicit metadata.
+fn discard_replaced_directory_metadata(
+    pending_directories: &mut HashMap<String, PendingDirectoryMetadata>,
+    rel: &SafeRelativePath,
+) {
+    let key = rel.display();
+    let prefix = format!("{key}/");
+    pending_directories.retain(|path, _| *path != key && !path.starts_with(&prefix));
 }
 
 fn record_directory_metadata(

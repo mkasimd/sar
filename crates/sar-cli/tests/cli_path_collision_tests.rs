@@ -10,12 +10,28 @@ use predicates::str::contains;
 use sar_archive::{ArchiveWriter, ArchiveWriterOptions, EntryInput};
 use tempfile::{TempDir, tempdir};
 
+/// Encodes a relative path as separate LFH Path String and Name String fields
+/// (specification Section 6.1.5).
+fn with_split_path(mut entry: EntryInput) -> EntryInput {
+    if let Some((path, name)) = entry.name.rsplit_once('/') {
+        entry.path = Some(path.to_string());
+        entry.name = name.to_string();
+    }
+    entry
+}
+
 fn write_archive(archive: &Path, entries: Vec<EntryInput>) {
     let mut file = fs::File::create(archive).expect("archive file");
-    let mut writer =
-        ArchiveWriter::new(&mut file, ArchiveWriterOptions::default()).expect("writer");
+    let mut writer = ArchiveWriter::new(
+        &mut file,
+        ArchiveWriterOptions {
+            with_path: true,
+            ..Default::default()
+        },
+    )
+    .expect("writer");
     for entry in entries {
-        writer.add_entry(entry).expect("entry");
+        writer.add_entry(with_split_path(entry)).expect("entry");
     }
     writer.finish().expect("finish");
 }

@@ -117,6 +117,38 @@ pub(crate) fn validate_symlink_target(
     Ok(())
 }
 
+/// Joins the encoded LFH Path String and Name String into the Full Logical
+/// Entry Path (specification Section 6.1.5) without altering either field:
+/// an absent or empty Path String yields the Name String, otherwise
+/// `Path/Name`. A Name String that is empty or contains `/` is malformed, so
+/// distinct (Path, Name) pairs can never compose to the same text. Every other
+/// field-level rule is enforced on the composed path.
+pub(crate) fn full_logical_entry_path(
+    path: Option<&str>,
+    name: &str,
+) -> Result<SafeRelativePath, SarError> {
+    if name.is_empty() {
+        return Err(SarError::Malformed("LFH Name String is empty"));
+    }
+    if name.contains('/') {
+        return Err(SarError::Malformed(
+            "LFH Name String contains a path separator",
+        ));
+    }
+    match path.filter(|path| !path.is_empty()) {
+        Some(path) => validate_relative_archive_path(&format!("{path}/{name}")),
+        None => validate_relative_archive_path(name),
+    }
+}
+
+/// Display form of the Full Logical Entry Path, for listings only.
+pub(crate) fn display_full_path(path: Option<&str>, name: &str) -> String {
+    match path.filter(|path| !path.is_empty()) {
+        Some(path) => format!("{path}/{name}"),
+        None => name.to_string(),
+    }
+}
+
 pub(crate) fn validate_relative_archive_path(name: &str) -> Result<SafeRelativePath, SarError> {
     if name.is_empty() {
         return Err(SarError::Malformed("empty paths are not allowed"));

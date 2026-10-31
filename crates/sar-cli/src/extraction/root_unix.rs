@@ -28,6 +28,9 @@ use rustix::{
 };
 use sar_core::{ResourceLimits, SarError};
 
+#[path = "replace.rs"]
+mod replace;
+
 use crate::extraction::{
     collision::{CollisionLedger, NodeId, ObjectId, ROOT_NODE},
     metadata::apply_fd_metadata,
@@ -124,6 +127,12 @@ fn check_final_name(
     }
 }
 
+/// The part of a path still to be walked after the current component.
+struct Remainder<'a> {
+    components: &'a [String],
+    final_name: Option<&'a str>,
+}
+
 /// Open directory descriptor fixing the extraction scope for one run, together
 /// with the ledger of which logical path owns which destination object.
 pub(crate) struct ExtractionRoot {
@@ -152,26 +161,131 @@ impl ExtractionRoot {
     /// differently spelled prefix already owns is a collision. That check runs
     /// right after the component is opened, and a component that was created
     /// by this walk is empty and unaliased, so no mutation can precede it.
-    fn ensure_directory(&self, components: &[String]) -> Result<(OwnedFd, NodeId), SarError> {
+    ///
+    /// A non-directory this run created earlier at a component (a file or a
+    /// symlink from an earlier Entry) becomes an implicit directory
+    /// (specification Section 6.1.5). Any other non-directory is refused.
+    ///
+    /// Before any replacement unlinks an object, the logical nodes and claims
+    /// the rest of the walk needs are charged or verified to fit, so no
+    /// bookkeeping limit can be hit after the destructive step.
+    fn ensure_directory(
+        &self,
+        components: &[String],
+        final_name: Option<&str>,
+    ) -> Result<(OwnedFd, NodeId), SarError> {
         let mut current = self.dir.try_clone()?;
         let mut node = ROOT_NODE;
-        for component in components {
-            current = open_component(&current, component, true)?;
+        for (index, component) in components.iter().enumerate() {
+            let rest = Remainder {
+                components: &components[index + 1..],
+                final_name,
+            };
+            let (fd, created) = self.open_or_create_component(&current, node, component, &rest)?;
+            current = fd;
             let stat = rustix::fs::fstat(&current).map_err(io_error)?;
             let id = object_id(&stat)?;
             let mut ledger = self.ledger.borrow_mut();
             ledger.check_candidate(node, component, &id)?;
             node = ledger.child(node, component)?;
-            ledger.claim(node, id)?;
+            ledger.claim(node, id, created)?;
         }
         Ok((current, node))
+    }
+
+    /// Opens the directory `name` below `parent`, creating it when missing.
+    /// The flag reports whether this call created it.
+    fn open_or_create_component(
+        &self,
+        parent: &OwnedFd,
+        parent_node: NodeId,
+        name: &str,
+        rest: &Remainder<'_>,
+    ) -> Result<(OwnedFd, bool), SarError> {
+        check_plain_components([name])?;
+        match rustix::fs::openat(parent, name, directory_flags(), Mode::empty()) {
+            Ok(fd) => return Ok((fd, false)),
+            Err(Errno::NOENT) => {}
+            Err(errno) => return self.replace_component(parent, parent_node, name, errno, rest),
+        }
+        make_directory(parent, name)
+    }
+
+    /// Handles a component that exists but cannot be opened as a directory.
+    fn replace_component(
+        &self,
+        parent: &OwnedFd,
+        parent_node: NodeId,
+        name: &str,
+        errno: Errno,
+        rest: &Remainder<'_>,
+    ) -> Result<(OwnedFd, bool), SarError> {
+        let stat = match rustix::fs::statat(parent, name, AtFlags::SYMLINK_NOFOLLOW) {
+            Ok(stat) => stat,
+            Err(_) => return Err(io_error(errno)),
+        };
+        let kind = FileType::from_raw_mode(stat.st_mode);
+        if kind == FileType::Directory {
+            return Err(io_error(errno));
+        }
+        let id = object_id(&stat)?;
+        let owned_by_this_run = {
+            let ledger = self.ledger.borrow();
+            ledger.check_candidate(parent_node, name, &id)?;
+            ledger
+                .lookup(parent_node, name)
+                .is_some_and(|node| ledger.is_created_by(node, &id))
+        };
+        if !owned_by_this_run {
+            return Err(if kind == FileType::Symlink {
+                SarError::PathEscape("refusing to traverse an existing symlink during extraction")
+            } else {
+                SarError::AlreadyExists(
+                    "path component exists but is not a directory; refusing to replace an object this extraction did not create",
+                )
+            });
+        }
+        // Replacing the node's previous claim by a directory claim has no net
+        // bookkeeping growth. The nodes of the rest of the path are interned
+        // and room for every object still to be claimed is verified here, so no
+        // resource limit can be hit after the unlink.
+        {
+            let mut ledger = self.ledger.borrow_mut();
+            let mut node = ledger.child(parent_node, name)?;
+            for component in rest
+                .components
+                .iter()
+                .map(String::as_str)
+                .chain(rest.final_name)
+            {
+                node = ledger.child(node, component)?;
+            }
+            ledger
+                .ensure_headroom(rest.components.len() + usize::from(rest.final_name.is_some()))?;
+        }
+        hook("before-replace-component");
+        rustix::fs::unlinkat(parent, name, AtFlags::empty()).map_err(io_error)?;
+        match make_directory(parent, name) {
+            Ok(created) => Ok(created),
+            Err(err) => {
+                self.ledger.borrow_mut().forget(&id);
+                Err(err)
+            }
+        }
     }
 
     /// Walks `components` below the root without creating or claiming anything.
     fn open_directory(&self, components: &[String]) -> Result<OwnedFd, SarError> {
         let mut current = self.dir.try_clone()?;
         for component in components {
-            current = open_component(&current, component, false)?;
+            check_plain_components([component.as_str()])?;
+            current = rustix::fs::openat(
+                &current,
+                component.as_str(),
+                directory_flags(),
+                Mode::empty(),
+            )
+            .map_err(|errno| classify_open_failure(&current, component, errno))?;
         }
         Ok(current)
     }
@@ -179,14 +293,15 @@ impl ExtractionRoot {
     /// Creates a directory (mode never wider than 0o700) and returns nothing;
     /// pending metadata is applied later by `apply_directory_metadata`.
     pub(crate) fn create_directory(&self, rel: &SafeRelativePath) -> Result<(), SarError> {
-        self.ensure_directory(rel.components()).map(drop)
+        self.ensure_directory(rel.components(), None).map(drop)
     }
 
     /// Resolves the destination directory and the logical node of the final
     /// name, refusing to continue when the final name already reaches an
     /// object owned by a different logical path.
     fn prepare_final(&self, rel: &SafeRelativePath) -> Result<(OwnedFd, NodeId, String), SarError> {
-        let (dir, parent) = self.ensure_directory(rel.parent_components())?;
+        let (dir, parent) =
+            self.ensure_directory(rel.parent_components(), Some(rel.file_name()?))?;
         let final_name = rel.file_name()?.to_string();
         match rustix::fs::statat(&dir, final_name.as_str(), AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat) => {
@@ -208,11 +323,7 @@ impl ExtractionRoot {
     /// would have received unless permission restoration set one.
     pub(crate) fn stage_file(&self, rel: &SafeRelativePath) -> Result<StagedFile, SarError> {
         let (dir, node, final_name) = self.prepare_final(rel)?;
-        reject_existing_directory(
-            &dir,
-            &final_name,
-            "refusing to replace existing directory with file output",
-        )?;
+        replace::find_replaceable_directory(&self.ledger, &dir, &final_name, node)?;
         hook("after-parent-open");
         let mode = raw_mode(STAGING_MODE)?;
         let (fd, temp_name) = create_unique(|name| {
@@ -246,11 +357,7 @@ impl ExtractionRoot {
     ) -> Result<(), SarError> {
         let (dir, node, final_name) = self.prepare_final(rel)?;
         let final_name = final_name.as_str();
-        reject_existing_directory(
-            &dir,
-            final_name,
-            "refusing to replace existing directory with symlink",
-        )?;
+        replace::find_replaceable_directory(&self.ledger, &dir, final_name, node)?;
         hook("after-parent-open");
         let ((), temp_name) = create_unique(|name| rustix::fs::symlinkat(target, &dir, name))?;
         let published = self.publish_symlink(&dir, &temp_name, final_name, node);
@@ -270,15 +377,15 @@ impl ExtractionRoot {
         let stat =
             rustix::fs::statat(dir, temp_name, AtFlags::SYMLINK_NOFOLLOW).map_err(io_error)?;
         let id = object_id(&stat)?;
-        hook("before-publish");
-        check_final_name(&self.ledger, dir, final_name, node)?;
-        let reservation = self.ledger.borrow_mut().reserve(node, &id)?;
-        if let Err(errno) = rustix::fs::renameat(dir, temp_name, dir, final_name) {
-            self.ledger.borrow_mut().release(reservation);
-            return Err(io_error(errno));
-        }
-        self.ledger.borrow_mut().commit(node, id, reservation);
-        Ok(())
+        publish_replacing(
+            &self.ledger,
+            dir,
+            temp_name,
+            final_name,
+            node,
+            id,
+            &mut false,
+        )
     }
 
     /// Restores metadata on a directory created during this run through its
@@ -297,14 +404,8 @@ impl ExtractionRoot {
     }
 }
 
-fn open_component(parent: &OwnedFd, name: &str, create: bool) -> Result<OwnedFd, SarError> {
-    check_plain_components([name])?;
-    match rustix::fs::openat(parent, name, directory_flags(), Mode::empty()) {
-        Ok(fd) => return Ok(fd),
-        Err(Errno::NOENT) if create => {}
-        Err(errno) => return Err(classify_open_failure(parent, name, errno)),
-    }
-
+/// Creates `name` below `parent` (never wider than 0o700) and opens it.
+fn make_directory(parent: &OwnedFd, name: &str) -> Result<(OwnedFd, bool), SarError> {
     match rustix::fs::mkdirat(parent, name, raw_mode(DIRECTORY_MODE)?) {
         Ok(()) => {
             hook("after-mkdir");
@@ -313,9 +414,10 @@ fn open_component(parent: &OwnedFd, name: &str, create: bool) -> Result<OwnedFd,
             // The umask can only narrow 0o700; restore owner rwx on the new
             // directory through its descriptor so extraction can proceed.
             rustix::fs::fchmod(&fd, raw_mode(DIRECTORY_MODE)?).map_err(io_error)?;
-            Ok(fd)
+            Ok((fd, true))
         }
         Err(Errno::EXIST) => rustix::fs::openat(parent, name, directory_flags(), Mode::empty())
+            .map(|fd| (fd, false))
             .map_err(|errno| classify_open_failure(parent, name, errno)),
         Err(errno) => Err(io_error(errno)),
     }
@@ -328,24 +430,77 @@ fn classify_open_failure(parent: &OwnedFd, name: &str, errno: Errno) -> SarError
                 SarError::PathEscape("refusing to traverse an existing symlink during extraction")
             }
             FileType::Directory => io_error(errno),
-            _ => SarError::Malformed("path component exists but is not a directory"),
+            _ => SarError::AlreadyExists(
+                "path component exists but is not a directory; refusing to replace an object this extraction did not create",
+            ),
         },
         Err(_) => io_error(errno),
     }
 }
 
-fn reject_existing_directory(
-    dir: &OwnedFd,
-    name: &str,
-    message: &'static str,
-) -> Result<(), SarError> {
-    match rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW) {
-        Ok(stat) if FileType::from_raw_mode(stat.st_mode) == FileType::Directory => {
-            Err(SarError::Malformed(message))
-        }
-        Ok(_) | Err(Errno::NOENT) => Ok(()),
-        Err(errno) => Err(io_error(errno)),
+/// A fresh private name, independent of any archived name.
+fn fresh_temp_name() -> Result<String, SarError> {
+    let mut random = [0u8; TEMP_RANDOM_BYTES];
+    getrandom::fill(&mut random)
+        .map_err(|_| SarError::Internal("system randomness unavailable"))?;
+    let mut name = String::from(TEMP_PREFIX);
+    for byte in random {
+        name.push_str(&format!("{byte:02x}"));
     }
+    Ok(name)
+}
+
+/// Publishes the unpublished object `temp_name` as `final_name`, replacing
+/// whatever this run previously published there.
+///
+/// Order: (1) collision re-check, (2) read-only proof that a directory at the
+/// final name, if any, is run-created with an entirely run-created subtree,
+/// (3) ledger reservation, so every refusal and resource failure precedes any
+/// mutation, then (4) the directory is renamed aside to a private name,
+/// (5) the new object is renamed into place (the aside directory is renamed
+/// back if that fails), (6) the ledger is updated, and (7) the aside subtree is
+/// removed through the verified descriptor. A failure in step 7 leaves the
+/// final state published and an unreachable `.sar-tmp-*` directory behind.
+/// `published` is set once step 5 succeeded.
+fn publish_replacing(
+    ledger: &RefCell<CollisionLedger>,
+    dir: &OwnedFd,
+    temp_name: &str,
+    final_name: &str,
+    node: NodeId,
+    id: ObjectId,
+    published: &mut bool,
+) -> Result<(), SarError> {
+    hook("before-publish");
+    // Re-checked at the last moment: the final name may have come to reach
+    // an object owned by another logical path since staging began.
+    check_final_name(ledger, dir, final_name, node)?;
+    let doomed = replace::find_replaceable_directory(ledger, dir, final_name, node)?;
+    let reservation = ledger.borrow_mut().reserve(node, &id)?;
+    let aside = match doomed {
+        Some(doomed) => match replace::move_aside(dir, final_name, &doomed) {
+            Ok(name) => Some((doomed, name)),
+            Err(err) => {
+                ledger.borrow_mut().release(reservation);
+                return Err(err);
+            }
+        },
+        None => None,
+    };
+    hook("after-aside");
+    if let Err(errno) = rustix::fs::renameat(dir, temp_name, dir, final_name) {
+        ledger.borrow_mut().release(reservation);
+        if let Some((_, name)) = &aside {
+            replace::restore_aside(dir, name, final_name);
+        }
+        return Err(io_error(errno));
+    }
+    *published = true;
+    ledger.borrow_mut().commit(node, id, reservation);
+    if let Some((doomed, name)) = aside {
+        replace::remove_aside(ledger, dir, &name, doomed)?;
+    }
+    Ok(())
 }
 
 /// Runs `create` with fresh short random names until one is created
@@ -354,13 +509,7 @@ fn create_unique<T>(
     mut create: impl FnMut(&str) -> Result<T, Errno>,
 ) -> Result<(T, String), SarError> {
     for _ in 0..TEMP_ATTEMPTS {
-        let mut random = [0u8; TEMP_RANDOM_BYTES];
-        getrandom::fill(&mut random)
-            .map_err(|_| SarError::Internal("system randomness unavailable"))?;
-        let mut name = String::from(TEMP_PREFIX);
-        for byte in random {
-            name.push_str(&format!("{byte:02x}"));
-        }
+        let name = fresh_temp_name()?;
         match create(&name) {
             Ok(value) => return Ok((value, name)),
             Err(Errno::EXIST) => {}
@@ -431,28 +580,15 @@ impl StagedFile {
             let mode = default_file_mode(&self.dir)?;
             rustix::fs::fchmod(&self.file, mode).map_err(io_error)?;
         }
-        hook("before-publish");
-        // Re-checked at the last moment: the final name may have come to reach
-        // an object owned by another logical path since staging began.
-        check_final_name(&self.ledger, &self.dir, &self.final_name, self.node)?;
-        let reservation = self
-            .ledger
-            .borrow_mut()
-            .reserve(self.node, &self.staged_id)?;
-        if let Err(errno) = rustix::fs::renameat(
+        publish_replacing(
+            &self.ledger,
             &self.dir,
-            self.temp_name.as_str(),
-            &self.dir,
-            self.final_name.as_str(),
-        ) {
-            self.ledger.borrow_mut().release(reservation);
-            return Err(io_error(errno));
-        }
-        self.published = true;
-        self.ledger
-            .borrow_mut()
-            .commit(self.node, self.staged_id.clone(), reservation);
-        Ok(())
+            &self.temp_name,
+            &self.final_name,
+            self.node,
+            self.staged_id.clone(),
+            &mut self.published,
+        )
     }
 }
 
@@ -598,7 +734,8 @@ mod tests {
             .stage_file(&rel(&["plain", "f"]))
             .err()
             .expect("refused");
-        assert!(matches!(&err, SarError::Malformed(msg) if msg.contains("not a directory")));
+        assert!(matches!(&err, SarError::AlreadyExists(msg) if msg.contains("not a directory")));
+        assert_eq!(fs::read(fx.root_path.join("plain")).expect("kept"), b"x");
         assert!(root.create_symlink(&rel(&["d", "l"]), "t").is_err());
         assert!(root.create_directory(&rel(&["d", "sub"])).is_err());
         assert_eq!(entries(&fx.outside), vec!["file".to_string()]);
@@ -1278,16 +1415,16 @@ mod tests {
             let fx = fixture();
             let root = ExtractionRoot::open(&fx.root_path, tight(0)).expect("open");
             let target = fx.root_path.join("f");
-            // An unclaimed directory appearing at the final name makes the
-            // rename fail after the reservation was taken.
+            // An unclaimed directory appearing at the final name is refused
+            // before the reservation is taken and must leak no capacity.
             test_hooks::install(move |point| {
                 if point == "before-publish" && !target.exists() {
                     fs::create_dir(&target).expect("obstacle");
                 }
             });
             let guard = HookGuard;
-            let err = publish_kind(&root, symlink_entry, "f").expect_err("rename fails");
-            assert!(matches!(err, SarError::Io(_)), "{err:?}");
+            let err = publish_kind(&root, symlink_entry, "f").expect_err("refused");
+            assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
             drop(guard);
             assert_eq!(used(&root), 128 + 1, "reservation released");
             assert_eq!(entries(&fx.root_path), vec!["f".to_string()]);
@@ -1319,5 +1456,282 @@ mod tests {
         // "g" would not fit, but the alias is reported as the collision it is.
         assert!(is_collision(publish_bytes(&root, &["g"], b"x")));
         assert!(is_collision(root.create_symlink(&rel(&["g"]), "t")));
+    }
+
+    fn aside_names(dir: &Path) -> Vec<PathBuf> {
+        entries(dir)
+            .into_iter()
+            .filter(|name| name.starts_with(".sar-tmp-"))
+            .map(|name| dir.join(name))
+            .collect()
+    }
+
+    fn populated_directory(root: &ExtractionRoot) {
+        publish_bytes(root, &["d", "x"], b"x").expect("d/x");
+        publish_bytes(root, &["d", "sub", "y"], b"y").expect("d/sub/y");
+    }
+
+    #[test]
+    fn run_created_directory_is_replaced_by_file_and_its_claims_are_released() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        publish_bytes(&root, &["d"], b"file").expect("replace directory");
+        assert_eq!(fs::read(fx.root_path.join("d")).expect("read"), b"file");
+        assert_eq!(entries(&fx.root_path), vec!["d".to_string()]);
+        // Four interned nodes (d, x, sub, y) plus the one object now claimed.
+        assert_eq!(used(&root), 3 * 129 + 131 + 128);
+
+        root.create_symlink(&rel(&["d", "l"]), "t")
+            .expect("back to a directory");
+        assert!(fx.root_path.join("d").is_dir());
+        assert!(fx.root_path.join("d/l").is_symlink());
+        assert_eq!(entries(&fx.root_path.join("d")), vec!["l".to_string()]);
+    }
+
+    #[test]
+    fn replacement_refuses_unrecognized_content_and_removes_nothing() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        fs::write(fx.root_path.join("d/sub/foreign"), b"not ours").expect("foreign");
+
+        for symlink_entry in [false, true] {
+            let err = publish_kind_at(&root, symlink_entry, &["d"]).expect_err("refused");
+            assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+        }
+        assert_eq!(fs::read(fx.root_path.join("d/x")).expect("x"), b"x");
+        assert_eq!(fs::read(fx.root_path.join("d/sub/y")).expect("y"), b"y");
+        assert_eq!(
+            fs::read(fx.root_path.join("d/sub/foreign")).expect("foreign"),
+            b"not ours"
+        );
+        assert_eq!(entries(&fx.root_path), vec!["d".to_string()]);
+    }
+
+    #[test]
+    fn excessive_unexpected_entries_are_rejected_without_removal() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        for i in 0..2000 {
+            fs::write(fx.root_path.join(format!("d/sub/junk{i}")), b"").expect("junk");
+        }
+        let err = publish_kind_at(&root, false, &["d"]).expect_err("refused");
+        assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+        assert_eq!(fs::read(fx.root_path.join("d/x")).expect("x"), b"x");
+        assert_eq!(fs::read(fx.root_path.join("d/sub/y")).expect("y"), b"y");
+        assert_eq!(entries(&fx.root_path.join("d/sub")).len(), 2001);
+        assert!(aside_names(&fx.root_path).is_empty());
+    }
+
+    #[test]
+    fn hard_link_to_a_run_created_object_is_not_treated_as_owned() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        publish_bytes(&root, &["other"], b"o").expect("other");
+        fs::hard_link(fx.root_path.join("other"), fx.root_path.join("d/alias")).expect("link");
+
+        let err = publish_kind_at(&root, false, &["d"]).expect_err("refused");
+        assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+        assert_eq!(fs::read(fx.root_path.join("d/x")).expect("x"), b"x");
+        assert_eq!(fs::read(fx.root_path.join("d/alias")).expect("alias"), b"o");
+    }
+
+    fn publish_kind_at(
+        root: &ExtractionRoot,
+        symlink_entry: bool,
+        parts: &[&str],
+    ) -> Result<(), SarError> {
+        if symlink_entry {
+            root.create_symlink(&rel(parts), "t")
+        } else {
+            publish_bytes(root, parts, b"x")
+        }
+    }
+
+    #[test]
+    fn preexisting_directories_are_never_replaced_even_when_empty() {
+        let fx = fixture();
+        fs::create_dir(fx.root_path.join("empty")).expect("empty");
+        fs::create_dir(fx.root_path.join("full")).expect("full");
+        fs::write(fx.root_path.join("full/keep"), b"keep").expect("keep");
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        // Walking through a pre-existing directory does not make it ours.
+        root.create_directory(&rel(&["full"]))
+            .expect("explicit entry");
+
+        for name in ["empty", "full"] {
+            for symlink_entry in [false, true] {
+                let err = publish_kind_at(&root, symlink_entry, &[name]).expect_err("refused");
+                assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+            }
+        }
+        assert_eq!(
+            fs::read(fx.root_path.join("full/keep")).expect("keep"),
+            b"keep"
+        );
+        assert!(fx.root_path.join("empty").is_dir());
+    }
+
+    #[test]
+    fn replacing_a_run_created_file_by_a_directory_unlinks_only_that_file() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["a"], b"file").expect("a");
+        root.create_symlink(&rel(&["b"]), "t").expect("b");
+        publish_bytes(&root, &["a", "x"], b"x").expect("a/x");
+        root.create_directory(&rel(&["b"])).expect("b dir");
+        assert!(fx.root_path.join("a").is_dir());
+        assert!(fx.root_path.join("b").is_dir());
+        assert_eq!(
+            entries(&fx.root_path),
+            vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn substituted_directory_before_the_move_cannot_redirect_removal() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        fs::write(fx.outside.join("precious"), b"p").expect("precious");
+        let _guard = swap_at("before-aside", fx.root_path.join("d"), fx.outside.clone());
+
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("identity changed");
+        assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+        assert_eq!(entries(&fx.outside), vec!["precious".to_string()]);
+        assert_eq!(fs::read(fx.root_path.join("d.moved/x")).expect("x"), b"x");
+        assert!(
+            fx.root_path.join("d").is_symlink(),
+            "substitute left in place"
+        );
+    }
+
+    #[test]
+    fn substitution_during_removal_cannot_redirect_deletion() {
+        // A nested directory swapped for a symlink is an unrecognized entry.
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        fs::write(fx.outside.join("precious"), b"p").expect("precious");
+        let (base, outside) = (fx.root_path.clone(), fx.outside.clone());
+        test_hooks::install(move |point| {
+            if point == "before-delete-replaced" {
+                let aside = aside_names(&base).pop().expect("aside directory");
+                swap_for_symlink(&aside.join("sub"), &outside);
+            }
+        });
+        let _guard = HookGuard;
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("refused");
+        assert!(matches!(err, SarError::AlreadyExists(_)), "{err:?}");
+        assert_eq!(entries(&fx.outside), vec!["precious".to_string()]);
+        drop(_guard);
+
+        // The moved-aside directory itself swapped for a symlink: removal
+        // follows the verified descriptor, never the name.
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        fs::write(fx.outside.join("precious"), b"p").expect("precious");
+        let (base, outside) = (fx.root_path.clone(), fx.outside.clone());
+        test_hooks::install(move |point| {
+            if point == "before-delete-replaced" {
+                let aside = aside_names(&base).pop().expect("aside directory");
+                swap_for_symlink(&aside, &outside);
+            }
+        });
+        let _guard = HookGuard;
+        let _ = publish_bytes(&root, &["d"], b"file");
+        assert_eq!(entries(&fx.outside), vec!["precious".to_string()]);
+        assert_eq!(
+            fs::read(fx.root_path.join("d")).expect("published"),
+            b"file"
+        );
+    }
+
+    #[test]
+    fn failed_publication_restores_the_replaced_directory() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        populated_directory(&root);
+        let before = used(&root);
+        let base = fx.root_path.clone();
+        test_hooks::install(move |point| {
+            if point == "after-aside" {
+                // Make the publishing rename fail after the directory moved.
+                let temp = aside_names(&base)
+                    .into_iter()
+                    .find(|path| path.is_file())
+                    .expect("staging file");
+                fs::remove_file(temp).expect("sabotage");
+            }
+        });
+        let _guard = HookGuard;
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("rename fails");
+        assert!(matches!(err, SarError::Io(_)), "{err:?}");
+        assert_eq!(fs::read(fx.root_path.join("d/x")).expect("x"), b"x");
+        assert_eq!(fs::read(fx.root_path.join("d/sub/y")).expect("y"), b"y");
+        assert_eq!(entries(&fx.root_path), vec!["d".to_string()]);
+        assert_eq!(used(&root), before, "reservation released");
+    }
+
+    #[test]
+    fn limit_failures_precede_replacing_a_run_created_file() {
+        let fx = fixture();
+        let one_more_node = ONE_OBJECT_BUDGET + 129;
+        let limited = |limit| ResourceLimits {
+            max_total_pipeline_memory: limit,
+            ..ResourceLimits::default()
+        };
+        // Room for the descendant's node but not for its claimed object.
+        let root = ExtractionRoot::open(&fx.root_path, limited(one_more_node)).expect("open");
+        publish_bytes(&root, &["a"], b"file").expect("a");
+        let err = publish_bytes(&root, &["a", "x"], b"x").expect_err("limit");
+        assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        assert_eq!(fs::read(fx.root_path.join("a")).expect("kept"), b"file");
+        assert_eq!(entries(&fx.root_path), vec!["a".to_string()]);
+
+        // No room even for the node.
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, limited(ONE_OBJECT_BUDGET)).expect("open");
+        publish_bytes(&root, &["a"], b"file").expect("a");
+        assert!(publish_bytes(&root, &["a", "x"], b"x").is_err());
+        assert_eq!(fs::read(fx.root_path.join("a")).expect("kept"), b"file");
+
+        // With enough room the same transition succeeds.
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, limited(one_more_node + 128)).expect("open");
+        publish_bytes(&root, &["a"], b"file").expect("a");
+        publish_bytes(&root, &["a", "x"], b"x").expect("a/x");
+        assert_eq!(fs::read(fx.root_path.join("a/x")).expect("x"), b"x");
+    }
+
+    #[test]
+    fn directory_trees_deeper_than_the_removal_bound_are_refused_intact() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        let mut parts = vec!["d".to_string()];
+        for index in 0..70 {
+            parts.push(format!("l{index}"));
+        }
+        let borrowed: Vec<&str> = parts.iter().map(String::as_str).collect();
+        root.create_directory(&rel(&borrowed)).expect("deep tree");
+        let err = publish_bytes(&root, &["d"], b"file").expect_err("too deep");
+        assert!(matches!(err, SarError::LimitExceeded(_)), "{err:?}");
+        assert!(fx.root_path.join("d").is_dir());
+        assert_eq!(entries(&fx.root_path), vec!["d".to_string()]);
+    }
+
+    #[test]
+    fn aliases_of_replacement_objects_remain_collisions() {
+        let fx = fixture();
+        let root = ExtractionRoot::open(&fx.root_path, ResourceLimits::default()).expect("open");
+        publish_bytes(&root, &["d", "x"], b"x").expect("d/x");
+        publish_bytes(&root, &["d"], b"file").expect("replace");
+        fs::hard_link(fx.root_path.join("d"), fx.root_path.join("D")).expect("alias");
+        assert!(is_collision(publish_bytes(&root, &["D"], b"other")));
+        publish_bytes(&root, &["d"], b"again").expect("same logical path is not a collision");
     }
 }

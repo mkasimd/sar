@@ -75,6 +75,7 @@ pub(crate) fn create_archive(
         with_uid_gid: metadata.preserve_owner,
         with_timestamps: metadata.preserve_times,
         with_symlinks: metadata.symlink_policy == SymlinkCreatePolicy::Archive,
+        with_path: true,
         ..Default::default()
     };
 
@@ -386,8 +387,15 @@ fn build_entry_input(
     fs_metadata: &fs::Metadata,
     metadata: CreateMetadataOptions,
 ) -> Result<EntryInput, SarError> {
+    // The Full Logical Entry Path is encoded as Path String plus Name String
+    // (specification Section 6.1.5); a Name String never contains `/`.
+    let (path, name) = match name.rsplit_once('/') {
+        Some((path, name)) => (Some(path.to_string()), name.to_string()),
+        None => (None, name),
+    };
     Ok(EntryInput {
         name,
+        path,
         payload,
         kind: Some(kind),
         permissions: if metadata.preserve_permissions {

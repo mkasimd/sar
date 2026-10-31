@@ -14,15 +14,29 @@ use sar_core::EntryKind;
 use serde_json::Value;
 use tempfile::tempdir;
 
+/// Encodes a relative path as separate LFH Path String and Name String fields
+/// (specification Section 6.1.5).
+fn with_split_path(mut entry: EntryInput) -> EntryInput {
+    if let Some((path, name)) = entry.name.rsplit_once('/') {
+        entry.path = Some(path.to_string());
+        entry.name = name.to_string();
+    }
+    entry
+}
+
 fn write_archive(
     archive: &Path,
     options: ArchiveWriterOptions,
     entries: Vec<EntryInput>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let options = ArchiveWriterOptions {
+        with_path: true,
+        ..options
+    };
     let mut file = fs::File::create(archive)?;
     let mut writer = ArchiveWriter::new(&mut file, options)?;
     for entry in entries {
-        writer.add_entry(entry)?;
+        writer.add_entry(with_split_path(entry))?;
     }
     writer.finish()?;
     Ok(())
@@ -294,7 +308,7 @@ fn create_skip_and_follow_symlink_policies_behave_as_expected() {
 fn hostile_paths_are_rejected() {
     let cases = [
         ("../escape.txt", "parent directory traversal"),
-        ("/absolute.txt", "absolute paths"),
+        ("/abs/absolute.txt", "absolute paths"),
         ("C:/drive.txt", "Windows drive-prefixed"),
         ("//server/share.txt", "UNC"),
     ];

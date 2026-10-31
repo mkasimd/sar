@@ -6,7 +6,7 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 use sar_archive::ArchiveReader;
 use sar_core::SarError;
 
-use crate::commands::entry_kind_label;
+use crate::{commands::entry_kind_label, extraction::paths::display_full_path};
 
 pub(crate) fn list_archive(archive: PathBuf, show_metadata: bool) -> Result<(), SarError> {
     let mut reader = ArchiveReader::new(BufReader::new(File::open(archive)?))?;
@@ -34,7 +34,7 @@ pub(crate) fn list_archive(archive: PathBuf, show_metadata: bool) -> Result<(), 
             }
             println!(
                 "{}\tkind={}\t{}\tencoded={}\tuncompressed={}{}",
-                entry.metadata.name,
+                display_full_path(entry.metadata.path.as_deref(), &entry.metadata.name),
                 entry_kind_label(entry.metadata.entry_kind),
                 entry.metadata.compression_algorithm,
                 entry.metadata.payload_size,
@@ -54,7 +54,7 @@ pub(crate) fn list_archive(archive: PathBuf, show_metadata: bool) -> Result<(), 
                 .unwrap_or_default();
             println!(
                 "{}\tkind={}\t{}\tencoded={}\tuncompressed={}{}",
-                entry.metadata.name,
+                display_full_path(entry.metadata.path.as_deref(), &entry.metadata.name),
                 entry_kind_label(entry.metadata.entry_kind),
                 entry.metadata.compression_algorithm,
                 entry.metadata.payload_size,
