@@ -124,16 +124,17 @@ implementation:
 
 ### Partition/multi-volume support
 
-`sar-partition` is a placeholder crate. Partition Set support is not
-implemented. Partition Set semantics are normatively specified in
-`specification.md` Section 19.1; the implementation is a separately controlled
-workstream that has not been authorized.
+Partition Set support is not implemented. SAR-M13b3-PARTITION-P1-IMPLEMENTATION-001
+adds validation of **one individual physical Partition** only: Partition Manifest
+Version 1 codec (`sar-core`), a `ValidatedPartition` result (`sar-archive`, unforgeable: private fields, produced only by inspection) with status enums in `sar-partition` and an
+explicit `ArchiveWriter::with_partition_manifest` /
+`ArchiveReader::inspect_partition` path (`sar-archive`). A locally valid Partition
+is not a complete or authenticated Partition Set; predecessor links, membership,
+equivalent replicas, cross-Partition fragmentation/CDC, Partition Set-wide KMS
+consistency and extraction are not implemented (M13-BOUNDARY-003 remains open).
 
-The `sar-partition` crate exists as a reserved namespace to avoid accidental
-responsibility bleed into other crates. It intentionally contains no production
-logic until a Controller-authorized implementation package starts.
-
-Partitioned archives are rejected with `SAR_ERR_UNSUPPORTED` until then.
+All generic archive, stream, recovery, transcript, CLI and Central Dictionary
+entry points still reject `PARTITIONED_ARCHIVE` with `SAR_ERR_UNSUPPORTED`.
 
 ### C ABI
 

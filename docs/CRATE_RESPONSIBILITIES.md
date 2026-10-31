@@ -165,7 +165,7 @@ Does not own:
 - `sar-sparse`: sparse semantic validation/reconstruction helpers.
 - `sar-loss-tolerant`: loss-tolerant policy helpers.
 - `sar-transport`: TCP/QUIC transport bindings over `sar-stream`.
-- `sar-partition`: deferred placeholder crate.
+- `sar-partition`: status enums for one physical Partition (P1); validated result lives in `sar-archive`; Partition Set logic deferred.
 
 Implementation policy notes for supporting crates:
 
@@ -174,7 +174,7 @@ Implementation policy notes for supporting crates:
 * **`sar-fec`**: The `max_fec_value_bytes` and `max_repair_working_set` limits are implementation-defined resource controls. The wire format defines the FEC TLV structure; enforcement limits are this implementation's policy.
 * **`sar-loss-tolerant`**: The `allow_lossy` flag never bypasses `ResourceLimits` or AEAD authentication failures. Suppressing AEAD errors via loss-tolerant semantics is explicitly prohibited by implementation policy and is not optional. The SAR spec does not permit loss-tolerant semantics to override authentication.
 * **`sar-fragmentation`**: Reassembly concatenates fragment contributions in Fragment Index order. Missing fragments are never zero-filled or length-inferred; under `LOSS_TOLERANT` only the longest contiguous prefix beginning at Fragment Index 0 may be emitted as degraded output (specification.md Section 19.4.5). `max_loss_tolerant_gap` is not consulted by canonical reassembly (a missing fragment's length is unknowable); its disposition is tracked under M13b.2.
-* **`sar-partition`**: This crate is an empty deferred placeholder. No partition/multi-volume logic exists. The obsolete Global Header `PartitionDescriptor` and CD partition field were removed; `GlobalFlags::PARTITIONED_ARCHIVE` is still parsed, and archive, stream, recovery, transcript and CD entry points return `SAR_ERR_UNSUPPORTED` for it until partition support is implemented. The deferred status is an implementation decision; Partition Set semantics are normatively defined in specification Section 19.1.
+* **`sar-partition`**: As of M13b.3 P1 this crate holds only the status enums (`ManifestAuthentication`, `PredecessorLink`, `PartitionSetStatus`) reported for one locally validated physical Partition (no dependencies). The validated result type `ValidatedPartition` lives in `sar-archive` with private fields and no public constructor, so it cannot be forged without physical inspection. Manifest Version 1 encoding/decoding and local field validation live in `sar-core`; physical inspection, hashing and CD/Footer/AEAD integration live in `sar-archive` (`ArchiveWriter::with_partition_manifest`, `ArchiveReader::inspect_partition`). No Partition Set or multi-volume logic exists. The obsolete Global Header `PartitionDescriptor` and CD partition field were removed; `GlobalFlags::PARTITIONED_ARCHIVE` is still parsed, and archive, stream, recovery, transcript and CD entry points return `SAR_ERR_UNSUPPORTED` for it until Partition Set processing is implemented (only the explicit P1 inspection path bypasses the gate). The deferred status is an implementation decision; Partition Set semantics are normatively defined in specification Section 19.1.
 
 ## Re-export policy note
 No compatibility re-export policy is implied by this document.

@@ -1450,6 +1450,7 @@ dependencies = [
  "sar-delta",
  "sar-fec",
  "sar-fragmentation",
+ "sar-partition",
  "sar-sparse",
  "serde",
  "serde_json",

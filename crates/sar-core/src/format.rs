@@ -801,9 +801,46 @@ pub fn parse_central_dictionary(
     flags: GlobalFlags,
     limits: &ResourceLimits,
 ) -> Result<(CentralDictionary, usize), SarError> {
+    require_unpartitioned_processing(flags)?;
+    parse_central_dictionary_inner(input, flags, limits)
+}
+
+/// Parses the partition-local Central Dictionary of one physical Partition.
+///
+/// Partition-aware counterpart of [`parse_central_dictionary`]: it requires
+/// `PARTITIONED_ARCHIVE` and otherwise applies the identical structural
+/// validation.  It does not interpret any offset outside the current Partition.
+///
+/// # Errors
+///
+/// [`SarError::FlagConflict`] when `PARTITIONED_ARCHIVE` is unset, plus every
+/// error of [`parse_central_dictionary`].
+pub fn parse_partition_central_dictionary(
+    input: &[u8],
+    flags: GlobalFlags,
+    limits: &ResourceLimits,
+) -> Result<(CentralDictionary, usize), SarError> {
+    require_partitioned_flag(flags)?;
+    parse_central_dictionary_inner(input, flags, limits)
+}
+
+fn require_partitioned_flag(flags: GlobalFlags) -> Result<(), SarError> {
+    if flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
+        Ok(())
+    } else {
+        Err(SarError::FlagConflict(
+            "partition-local Central Dictionary requires PARTITIONED_ARCHIVE",
+        ))
+    }
+}
+
+fn parse_central_dictionary_inner(
+    input: &[u8],
+    flags: GlobalFlags,
+    limits: &ResourceLimits,
+) -> Result<(CentralDictionary, usize), SarError> {
     limits
         .check_cd_bytes(u64::try_from(input.len()).map_err(|_| SarError::Overflow("CD size"))?)?;
-    require_unpartitioned_processing(flags)?;
     let mut cursor = ParseCursor::new(input);
     let version = cursor.read_u8()?;
     if version != SUPPORTED_CD_VERSION {
@@ -867,6 +904,30 @@ pub fn write_central_dictionary(
     flags: GlobalFlags,
 ) -> Result<Vec<u8>, SarError> {
     require_unpartitioned_processing(flags)?;
+    write_central_dictionary_inner(cd, flags)
+}
+
+/// Encodes the partition-local Central Dictionary of one physical Partition.
+///
+/// Partition-aware counterpart of [`write_central_dictionary`]; requires
+/// `PARTITIONED_ARCHIVE`.
+///
+/// # Errors
+///
+/// [`SarError::FlagConflict`] when `PARTITIONED_ARCHIVE` is unset, plus every
+/// error of [`write_central_dictionary`].
+pub fn write_partition_central_dictionary(
+    cd: &CentralDictionary,
+    flags: GlobalFlags,
+) -> Result<Vec<u8>, SarError> {
+    require_partitioned_flag(flags)?;
+    write_central_dictionary_inner(cd, flags)
+}
+
+fn write_central_dictionary_inner(
+    cd: &CentralDictionary,
+    flags: GlobalFlags,
+) -> Result<Vec<u8>, SarError> {
     let mut writer = BinaryWriter::new();
     writer.write_u8(cd.version);
     writer.write_bytes(&[0u8; 7]);
