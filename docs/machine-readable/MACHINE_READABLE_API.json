@@ -1006,6 +1006,28 @@
             "signature": "pub const fn SarError::status(&self) -> SarStatus"
           },
           {
+            "name": "CentralDictionary::validate_offset_layout",
+            "description": "Checks CD offset-array invariants decidable without the Data Area (Section 7.1): Entry Count equals array length (SAR_ERR_INVALID_LENGTH), offsets inside the member (SAR_ERR_BOUNDS), offsets within [first LFH, CD) and strictly ascending (SAR_ERR_MALFORMED). LFH-boundary membership requires archive-level verification.",
+            "metadata": {
+              "since_milestone": "13",
+              "returns": "Result<(), SarError>",
+              "stability": "stable",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready",
+                "notes": "Rust-only structural helper."
+              },
+              "module": "format",
+              "path": "src/format.rs"
+            },
+            "signature": "pub fn CentralDictionary::validate_offset_layout(&self, first_lfh_offset: u64, cd_offset: u64, member_len: u64) -> Result<(), SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
             "name": "SarStatus::code",
             "description": "Return the numeric SAR status code.",
             "metadata": {
@@ -2727,7 +2749,7 @@
           },
           {
             "name": "CentralDictionary",
-            "description": "Central dictionary structure.",
+            "description": "Central Dictionary structure. `file_count` is the legacy Rust name of the normative Entry Count (indexed LFHs only; Empty Areas excluded, Section 7.1) and `global_crc32` is the legacy Rust name of the normative Data Area CRC32 present when HAS_DATA_AREA_CRC32 (Global Flag bit 16, GlobalFlags::HAS_GLOBAL_CRC32) is set (Section 7.2).",
             "metadata": {
               "since_milestone": "2",
               "stability": "stable",
@@ -3452,7 +3474,7 @@
           },
           {
             "name": "ArchiveReader::verify",
-            "description": "Verify archive structure/index consistency and CDC metadata structural validity when CDC_SUPPORT is active. Decodes physical Entries via next_entry; does not verify the final logical Content Hash or reconstruct fragment groups.",
+            "description": "Verify archive structure/index consistency and CDC metadata structural validity when CDC_SUPPORT is active. Decodes physical Entries via next_entry; does not verify the final logical Content Hash or reconstruct fragment groups. When HAS_DATA_AREA_CRC32 is set, first verifies the Data Area CRC32 over the exact encoded bytes (SAR_ERR_CRC_MISMATCH), then checks the CD offsets against the physical LFH walk (Empty Areas must be absent).",
             "metadata": {
               "since_milestone": "3",
               "returns": "Result<VerificationReport, SarError>",
@@ -3750,6 +3772,28 @@
               "path": "src/archive.rs"
             },
             "signature": "pub fn ArchiveWriter<W>::new_with_compression_and_key_provider(writer: W, options: ArchiveWriterOptions, compression: CompressionSettings, key_provider: Option<Box<dyn KeyProvider>>) -> Result<Self, SarError>",
+            "errors": [
+              "SarError"
+            ]
+          },
+          {
+            "name": "ArchiveWriter::with_data_area_crc32",
+            "description": "Enable HAS_DATA_AREA_CRC32 (Global Flag bit 16; Rust GlobalFlags::HAS_GLOBAL_CRC32) before the Global Header is emitted. The CRC32 of the exact encoded Data Area bytes is computed incrementally and stored in the Central Dictionary (Section 7.2). Returns SAR_ERR_FLAG_CONFLICT for NO_INDEX writers and SAR_ERR_MALFORMED after header emission.",
+            "metadata": {
+              "since_milestone": "13",
+              "returns": "Result<Self, SarError>",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_ready",
+                "notes": "Rust builder method; FFI options struct is a separate decision."
+              },
+              "module": "archive",
+              "path": "src/archive.rs"
+            },
+            "signature": "pub fn ArchiveWriter<W>::with_data_area_crc32(self) -> Result<Self, SarError>",
             "errors": [
               "SarError"
             ]

@@ -889,6 +889,47 @@ enum LogicalState {
     Done,
 }
 
+/// True for an Empty Area LFH (empty name, not a fragment).
+fn is_empty_area(lfh: &LocalFileHeader) -> bool {
+    sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, lfh.name.is_empty())
+        == sar_core::metadata::EntryKind::EmptyArea
+}
+
+/// Checks the CD offset array against the physical LFH walk
+/// (`(offset, indexed)` in physical order); spec §7.1.
+///
+/// Offsets that are not LFH boundaries, or that name an Empty Area, are
+/// `Malformed`; an Entry Count that differs from the number of indexed LFHs
+/// (a missing or surplus offset) is `InvalidLength`.  Out-of-bounds offsets
+/// are rejected earlier by `CentralDictionary::validate_offset_layout`.
+fn check_cd_index_against_lfhs(
+    cd: &CentralDictionary,
+    physical: &[(u64, bool)],
+) -> Result<(), SarError> {
+    for offset in &cd.offsets {
+        match physical.binary_search_by_key(offset, |(o, _)| *o) {
+            Err(_) => {
+                return Err(SarError::Malformed(
+                    "CD offset does not identify an LFH boundary",
+                ));
+            }
+            Ok(idx) if !physical[idx].1 => {
+                return Err(SarError::Malformed(
+                    "CD offset refers to an Empty Area, which must not be indexed",
+                ));
+            }
+            Ok(_) => {}
+        }
+    }
+    let indexed = physical.iter().filter(|(_, indexed)| *indexed).count();
+    if cd.file_count != u64::try_from(indexed).map_err(|_| SarError::Overflow("entry count"))? {
+        return Err(SarError::InvalidLength(
+            "CD Entry Count does not match indexed LFH count",
+        ));
+    }
+    Ok(())
+}
+
 /// Fills a required structural buffer, mapping a short read to `Truncated`.
 ///
 /// Only `UnexpectedEof` is a truncation; every other I/O failure stays `Io`.
@@ -1148,6 +1189,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 return Err(SarError::Malformed("CD alignment padding must be all zero"));
             }
 
+            // Structural offset checks only; LFH-boundary membership needs a
+            // Data Area walk and is performed by verify()/audit().
+            cd.validate_offset_layout(header_len, cd_offset, self.file_len)?;
+
             let has_recovery_tlv = cd
                 .metadata
                 .iter()
@@ -1265,7 +1310,43 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }))
     }
 
+    /// Recomputes the Data Area CRC32 (spec §7.2) over the exact encoded bytes
+    /// `[first LFH, CD)` and compares it with the Central Dictionary value.
+    ///
+    /// No-op when `HAS_DATA_AREA_CRC32` is unset.  The range is streamed
+    /// through a fixed buffer; payloads are never decoded.
+    fn verify_data_area_crc32(&mut self) -> Result<(), SarError> {
+        let Some(expected) = self.cd.as_ref().and_then(|cd| cd.global_crc32) else {
+            return Ok(());
+        };
+        let mut remaining = self
+            .data_end
+            .checked_sub(self.header_len)
+            .ok_or(SarError::Bounds("Data Area end precedes first LFH"))?;
+        self.reader.seek(SeekFrom::Start(self.header_len))?;
+        let mut hasher = crc32fast::Hasher::new();
+        let mut buf = [0u8; 64 * 1024];
+        while remaining > 0 {
+            let chunk = usize::try_from(remaining.min(64 * 1024))
+                .map_err(|_| SarError::Overflow("CRC chunk length"))?;
+            read_required(&mut self.reader, &mut buf[..chunk], "Data Area")?;
+            hasher.update(&buf[..chunk]);
+            remaining -= u64::try_from(chunk).map_err(|_| SarError::Overflow("CRC chunk"))?;
+        }
+        if hasher.finalize() != expected {
+            return Err(SarError::CrcMismatch("Data Area CRC32 mismatch"));
+        }
+        Ok(())
+    }
+
     /// Verifies archive structure and index consistency.
+    ///
+    /// When `HAS_DATA_AREA_CRC32` is set, the Data Area CRC32 is verified over
+    /// the encoded bytes first (`SAR_ERR_CRC_MISMATCH`).  The CD offset array
+    /// is then checked against the physical LFH walk: Empty Areas must be
+    /// absent, every other LFH present, offsets strictly ascending.
+    /// [`Self::next_entry`] and [`Self::read_all_logical_files`] do not verify
+    /// the Data Area CRC32.
     ///
     /// Physical Entries are decoded through [`Self::next_entry`], so this does
     /// not verify the final logical Content Hash or reconstruct fragment
@@ -1281,11 +1362,15 @@ impl<R: Read + Seek> ArchiveReader<R> {
             .ok_or(SarError::Malformed("global header missing"))?
             .clone();
 
+        // Raw-byte integrity first: a corrupted Data Area must surface as
+        // SAR_ERR_CRC_MISMATCH rather than as a downstream decode error.
+        self.verify_data_area_crc32()?;
+
         self.next_offset = self.header_len;
-        let mut offsets = Vec::new();
+        let mut physical: Vec<(u64, bool)> = Vec::new();
         let mut cdc_entry_count: u64 = 0;
         while let Some(entry) = self.next_entry()? {
-            offsets.push(entry.metadata.lfh_offset);
+            physical.push((entry.metadata.lfh_offset, !is_empty_area(&entry.header)));
             if entry.metadata.cdc_algo_id.is_some() {
                 cdc_entry_count = cdc_entry_count
                     .checked_add(1)
@@ -1306,17 +1391,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 ));
             }
 
-            if cd.file_count
-                != u64::try_from(offsets.len()).map_err(|_| SarError::Overflow("entry count"))?
-            {
-                return Err(SarError::InvalidLength("CD file count mismatch"));
-            }
-
-            if cd.offsets != offsets {
-                return Err(SarError::InvalidMap(
-                    "CD offsets do not match Data Area LFH offsets",
-                ));
-            }
+            check_cd_index_against_lfhs(cd, &physical)?;
 
             if global.flags.contains(GlobalFlags::SIGNED) {
                 let has_data_hash = cd
@@ -1363,7 +1438,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
 
         Ok(VerificationReport {
             valid: true,
-            entry_count: u64::try_from(offsets.len())
+            entry_count: u64::try_from(physical.len())
                 .map_err(|_| SarError::Overflow("entry count"))?,
             indexed: self.cd.is_some(),
             cdc_entry_count,
@@ -1386,9 +1461,11 @@ impl<R: Read + Seek> ArchiveReader<R> {
             .as_ref()
             .ok_or(SarError::Malformed("global header missing"))?
             .clone();
+        self.verify_data_area_crc32()?;
         self.next_offset = self.header_len;
 
         let mut entries = Vec::new();
+        let mut physical: Vec<(u64, bool)> = Vec::new();
         while self.next_offset < self.data_end {
             let lfh_offset = self.next_offset;
             self.reader.seek(SeekFrom::Start(lfh_offset))?;
@@ -1410,6 +1487,7 @@ impl<R: Read + Seek> ArchiveReader<R> {
                 read_required(&mut self.reader, &mut lfh_bytes[4..], "LFH")?;
             }
             let (lfh, _) = parse_lfh(&lfh_bytes, &header.flags, &self.options.limits)?;
+            physical.push((lfh_offset, !is_empty_area(&lfh)));
 
             let session_control = lfh.entry_mode.is_session_control();
             let op_code = lfh.entry_mode.op_code();
@@ -1534,6 +1612,10 @@ impl<R: Read + Seek> ArchiveReader<R> {
             });
 
             self.next_offset = payload_end;
+        }
+
+        if let Some(cd) = &self.cd {
+            check_cd_index_against_lfhs(cd, &physical)?;
         }
 
         let mut recovery_type_ids: Vec<u8> = self
@@ -2317,7 +2399,12 @@ pub struct ArchiveWriter<W> {
     lfh_size_field_policy: LfhSizeFieldPolicy,
     compression: CompressionSettings,
     position: u64,
+    /// Total physical entries written, including Empty Areas.
+    entry_count: u64,
+    /// Offsets of indexed LFHs; Empty Areas are excluded (spec §7.1).
     offsets: Vec<u64>,
+    /// Running CRC32 over the encoded Data Area bytes (spec §7.2).
+    data_area_crc: Option<crc32fast::Hasher>,
     cd_metadata: Vec<Tlv>,
     finished: bool,
     master_secret: Option<SecretBytes>,
@@ -2611,7 +2698,9 @@ impl<W: Write> ArchiveWriter<W> {
             lfh_size_field_policy,
             compression,
             position: 0,
+            entry_count: 0,
             offsets: Vec::new(),
+            data_area_crc: None,
             cd_metadata,
             finished: false,
             master_secret,
@@ -2632,6 +2721,32 @@ impl<W: Write> ArchiveWriter<W> {
             }),
             stream_state: StreamWriteState::NeedLocalFileHeader,
         })
+    }
+
+    /// Enables `HAS_DATA_AREA_CRC32` (Global Flag bit 16, Rust name
+    /// `GlobalFlags::HAS_GLOBAL_CRC32`): the CRC32 of the exact encoded Data
+    /// Area bytes is computed incrementally while writing and stored in the
+    /// Central Dictionary (spec §7.2).
+    ///
+    /// Must be called before the first entry is added (the Global Header is
+    /// emitted lazily and carries the flag).
+    ///
+    /// # Errors
+    ///
+    /// [`SarError::FlagConflict`] for a `NO_INDEX` writer;
+    /// [`SarError::Malformed`] when the Global Header was already emitted or
+    /// the writer is finished.
+    pub fn with_data_area_crc32(mut self) -> Result<Self, SarError> {
+        if self.finished || self.header_written {
+            return Err(SarError::Malformed(
+                "Data Area CRC32 must be enabled before the Global Header is emitted",
+            ));
+        }
+        let flags = self.flags | GlobalFlags::HAS_GLOBAL_CRC32;
+        validate_global_flags(flags)?;
+        self.flags = flags;
+        self.data_area_crc = Some(crc32fast::Hasher::new());
+        Ok(self)
     }
 
     /// Returns the current structural writer state.
@@ -2942,6 +3057,10 @@ impl<W: Write> ArchiveWriter<W> {
         self.track_archive_recovery_bytes(&encoded_payload)?;
         self.writer.write_all(&lfh_bytes)?;
         self.writer.write_all(&encoded_payload)?;
+        if let Some(crc) = &mut self.data_area_crc {
+            crc.update(&lfh_bytes);
+            crc.update(&encoded_payload);
+        }
 
         let written = u64::try_from(lfh_bytes.len())
             .map_err(|_| SarError::Overflow("lfh bytes len"))?
@@ -2954,10 +3073,18 @@ impl<W: Write> ArchiveWriter<W> {
             .position
             .checked_add(written)
             .ok_or(SarError::Overflow("archive position"))?;
-        self.offsets.push(lfh_offset);
+        self.entry_count = self
+            .entry_count
+            .checked_add(1)
+            .ok_or(SarError::Overflow("entry count"))?;
+        let is_empty_area =
+            sar_core::metadata::EntryKind::from_mode_and_name(lfh.entry_mode, lfh.name.is_empty())
+                == sar_core::metadata::EntryKind::EmptyArea;
+        if !is_empty_area {
+            self.offsets.push(lfh_offset);
+        }
         self.stream_state = StreamWriteState::EntryReady;
 
-        let _ = lfh;
         Ok(EntryWritten {
             lfh_offset,
             total_bytes: written,
@@ -3423,7 +3550,7 @@ impl<W: Write> ArchiveWriter<W> {
             let cd = CentralDictionary {
                 version: SUPPORTED_CD_VERSION,
                 file_count,
-                global_crc32: None,
+                global_crc32: self.data_area_crc.take().map(|crc| crc.finalize()),
                 metadata: self.cd_metadata.clone(),
                 offsets: self.offsets.clone(),
             };
@@ -3459,8 +3586,7 @@ impl<W: Write> ArchiveWriter<W> {
         self.finished = true;
         self.stream_state = StreamWriteState::ArchiveComplete;
         Ok(ArchiveSummary {
-            entry_count: u64::try_from(self.offsets.len())
-                .map_err(|_| SarError::Overflow("entry count"))?,
+            entry_count: self.entry_count,
             archive_size: self.position,
             indexed: !self.flags.contains(GlobalFlags::NO_INDEX),
         })
