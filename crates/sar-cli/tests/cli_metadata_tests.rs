@@ -436,6 +436,86 @@ fn extraction_rejects_existing_symlink_parent_component() {
 
 #[cfg(unix)]
 #[test]
+fn extraction_into_symlinked_root_resolves_it_once_and_leaves_no_staging_files() {
+    let td = tempdir().expect("tmp");
+    let archive = td.path().join("a.sar");
+    write_archive(
+        &archive,
+        ArchiveWriterOptions {
+            no_index: true,
+            ..Default::default()
+        },
+        vec![EntryInput::file("d/file.txt", b"payload".to_vec())],
+    )
+    .expect("archive");
+    let real = td.path().join("real");
+    fs::create_dir_all(&real).expect("mkdir");
+    let link = td.path().join("link");
+    symlink(&real, &link).expect("symlink root");
+
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args([
+            "extract",
+            archive.to_str().expect("str"),
+            link.to_str().expect("str"),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read(real.join("d/file.txt")).expect("read"), b"payload");
+    let leftovers = fs::read_dir(real.join("d"))
+        .expect("readdir")
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .expect("entry")
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".sar-tmp-")
+        })
+        .count();
+    assert_eq!(leftovers, 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn extraction_supports_maximum_length_basenames() {
+    let td = tempdir().expect("tmp");
+    let archive = td.path().join("long.sar");
+    let names = ["a".repeat(250), "b".repeat(255)];
+    write_archive(
+        &archive,
+        ArchiveWriterOptions {
+            no_index: true,
+            ..Default::default()
+        },
+        names
+            .iter()
+            .map(|name| EntryInput::file(name, b"payload".to_vec()))
+            .collect(),
+    )
+    .expect("archive");
+    let out = td.path().join("out");
+
+    Command::cargo_bin("sar-cli")
+        .expect("bin")
+        .args([
+            "extract",
+            archive.to_str().expect("str"),
+            out.to_str().expect("str"),
+        ])
+        .assert()
+        .success();
+
+    for name in &names {
+        assert_eq!(fs::read(out.join(name)).expect("read"), b"payload");
+    }
+    assert_eq!(fs::read_dir(&out).expect("readdir").count(), 2);
+}
+
+#[cfg(unix)]
+#[test]
 fn create_follow_symlink_rejects_recursive_directory_cycle() {
     let td = tempdir().expect("tmp");
     let input_dir = td.path().join("in");

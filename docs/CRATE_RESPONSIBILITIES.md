@@ -89,6 +89,8 @@ Owns user-facing command behavior and extraction policy.
 Includes:
 - create/extract/list/verify/inspect/repair command surface.
 - filesystem mutation behavior during extraction.
+  - On Unix (Linux, FreeBSD, macOS) extraction is anchored to a single directory descriptor for the extraction root and uses descriptor-relative operations (M13b.3 Package A). The root path is resolved once; a root symlink is followed once and the resolved directory becomes the fixed scope. Extraction directories need read permission because they are opened for traversal.
+  - Non-Unix targets use an unhardened path-based fallback that is not claimed secure or conformant (hardening deferred).
 - metadata restoration policy gates and safe extraction defaults.
 
 Implementation policy notes (not wire-format behavior):

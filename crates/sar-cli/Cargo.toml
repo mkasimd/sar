@@ -19,7 +19,11 @@ sar-cdc = { path = "../sar-cdc" }
 sar-delta = { path = "../sar-delta" }
 sar-fragmentation = { path = "../sar-fragmentation" }
 sar-sparse = { path = "../sar-sparse" }
+
+[target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["fs", "process"] }
+
+[target.'cfg(not(unix))'.dependencies]
 filetime = "0.2.29"
 
 [lints]
@@ -29,4 +33,5 @@ workspace = true
 assert_cmd = "2.0"
 predicates = "3.1"
 tempfile = "3.13"
+filetime = "0.2.29"
 serde_json.workspace = true
