@@ -50,6 +50,18 @@ Current wire-format compatibility status:
   claimed as a fully implemented KMS mode.
 * `max_loss_tolerant_gap` and `--max-loss-tolerant-gap` are retained but
   currently inactive, and never authorize zero-filling a fragment gap.
+* Central Dictionary (Sections 7.1 and 7.2, SAR-M13b3-PARTITION-P0-IMPLEMENTATION-001):
+  Empty Areas are no longer indexed (Entry Count and Offsets exclude them).
+  Indexed archives written earlier by this implementation that contain Empty
+  Areas listed their offsets in the Central Dictionary; they are nonconforming
+  and `ArchiveReader::verify()` / `audit()` now reject them with
+  `SAR_ERR_MALFORMED`. Sequential reading with `next_entry()` is unaffected,
+  and `NO_INDEX` archives are unaffected. Archives written without
+  `HAS_DATA_AREA_CRC32` keep their previous bytes. The legacy Rust names
+  `CentralDictionary.file_count` (Entry Count), `CentralDictionary.global_crc32`
+  (Data Area CRC32) and `GlobalFlags::HAS_GLOBAL_CRC32` (`HAS_DATA_AREA_CRC32`,
+  bit 16) are retained unchanged; renaming them is recorded as a separate
+  recommendation.
 
 If `specification.md` and any other document conflict, `specification.md` wins.
 

@@ -258,6 +258,31 @@ by M12b fuzzing infrastructure without changing the M12a schema.
 - Global Header, LFH, Central Dictionary, Footer parsing/writing.
 - Indexed archives and `NO_INDEX` archive flows.
 - Fail-closed validation for malformed, reserved, and unsupported values.
+- Central Dictionary conformance (spec Sections 7, 7.1, 7.2;
+  `crates/sar-archive/tests/cd_conformance_tests.rs`), unpartitioned archives only:
+  - Empty Areas stay physically present in the Data Area but are excluded from the
+    CD Entry Count (`CentralDictionary.file_count`) and Offsets array. `verify()`
+    and `audit()` reject a CD listing an Empty Area or other non-LFH-boundary
+    offset (`SAR_ERR_MALFORMED`) and an Entry Count differing from the number of
+    indexed LFHs (`SAR_ERR_INVALID_LENGTH`). Earlier indexed archives that listed
+    Empty Area offsets are nonconforming.
+  - `HAS_DATA_AREA_CRC32` (Global Flag bit 16; Rust `GlobalFlags::HAS_GLOBAL_CRC32`,
+    `CentralDictionary.global_crc32`) is written incrementally by
+    `ArchiveWriter::with_data_area_crc32()` (builder method, called before the first
+    entry; `NO_INDEX` writers get `FlagConflict`) over the exact encoded Data Area
+    bytes (LFHs, encoded payloads, AEAD tags, Empty Areas, FEC fields). It is
+    verified over the same raw bytes by `ArchiveReader::verify()` and `audit()`
+    (`SAR_ERR_CRC_MISMATCH`), before any payload decoding. `next_entry()` and
+    `read_all_logical_files()` do not verify it, so reading individual Entries does
+    not imply a complete CRC check.
+  - Offsets: strictly ascending (`SAR_ERR_MALFORMED`, also enforced by the pure
+    `parse_central_dictionary`); outside the member `SAR_ERR_BOUNDS`; in the Global
+    Header, CD, padding, Footer or inside an LFH/payload `SAR_ERR_MALFORMED`. The
+    pure parser cannot decide LFH-boundary membership; that check is archive-level
+    (`verify()`/`audit()`). `CentralDictionary::validate_offset_layout` exposes the
+    structural subset; `read_global_header()` applies it.
+  - Not covered: Partition-local CDs, Partition Manifest, fragment-LFH-specific CRC
+    fixtures (fragment LFHs are ordinary Data Area bytes covered by the same range).
 
 ### Transform pipeline and compression
 - Transform ordering enforcement in high-level archive paths.

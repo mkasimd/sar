@@ -135,14 +135,71 @@ impl LocalFileHeader {
 pub struct CentralDictionary {
     /// Central dictionary version.
     pub version: u8,
-    /// File count.
+    /// Legacy Rust name for the normative `Entry Count` (spec §7, §7.1): the
+    /// number of indexed LFH offsets. Empty Areas are not indexed and are not
+    /// counted.
     pub file_count: u64,
-    /// Optional global CRC32.
+    /// Legacy Rust name for the normative `Data Area CRC32` (spec §7.2),
+    /// present when `HAS_DATA_AREA_CRC32` (Global Flag bit 16, Rust
+    /// `GlobalFlags::HAS_GLOBAL_CRC32`) is set.
     pub global_crc32: Option<u32>,
     /// Metadata TLVs.
     pub metadata: Vec<Tlv>,
-    /// Absolute LFH offsets.
+    /// Offsets of indexed LFHs, measured from byte zero of the physical
+    /// archive member. Strictly ascending; Empty Areas are excluded.
     pub offsets: Vec<u64>,
+}
+
+impl CentralDictionary {
+    /// Checks the offset-array invariants that are decidable without reading
+    /// the Data Area (spec §7.1).
+    ///
+    /// `first_lfh_offset` is the end of the Global Header, `cd_offset` is the
+    /// first byte of the Central Dictionary and `member_len` is the total
+    /// length of the physical archive member. Whether an in-range offset is an
+    /// actual LFH boundary can only be decided by walking the Data Area and is
+    /// checked by archive-level verification.
+    ///
+    /// # Errors
+    ///
+    /// * [`SarError::Bounds`] when an offset lies outside the member.
+    /// * [`SarError::Malformed`] when an in-range offset points into the Global
+    ///   Header, the CD, CD padding or the Footer, or when offsets are not
+    ///   strictly ascending.
+    /// * [`SarError::InvalidLength`] when `Entry Count` differs from the number
+    ///   of offsets.
+    pub fn validate_offset_layout(
+        &self,
+        first_lfh_offset: u64,
+        cd_offset: u64,
+        member_len: u64,
+    ) -> Result<(), SarError> {
+        if u64::try_from(self.offsets.len()).map_err(|_| SarError::Overflow("CD offset count"))?
+            != self.file_count
+        {
+            return Err(SarError::InvalidLength(
+                "CD Entry Count does not match offset array length",
+            ));
+        }
+        if self.offsets.iter().any(|offset| *offset >= member_len) {
+            return Err(SarError::Bounds(
+                "CD offset outside physical archive member",
+            ));
+        }
+        if self
+            .offsets
+            .iter()
+            .any(|offset| *offset < first_lfh_offset || *offset >= cd_offset)
+        {
+            return Err(SarError::Malformed(
+                "CD offset points outside the Data Area",
+            ));
+        }
+        if self.offsets.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(SarError::Malformed("CD offsets must be strictly ascending"));
+        }
+        Ok(())
+    }
 }
 
 /// Footer structure.
@@ -788,6 +845,9 @@ pub fn parse_central_dictionary(
     for _ in 0..file_count_usize {
         offsets.push(read_size(&mut cursor, flags)?);
     }
+    if offsets.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(SarError::Malformed("CD offsets must be strictly ascending"));
+    }
 
     Ok((
         CentralDictionary {
@@ -832,6 +892,10 @@ pub fn write_central_dictionary(
         return Err(SarError::InvalidLength(
             "offset count does not match file count",
         ));
+    }
+
+    if cd.offsets.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(SarError::Malformed("CD offsets must be strictly ascending"));
     }
 
     for offset in &cd.offsets {
