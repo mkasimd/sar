@@ -14,6 +14,7 @@ use crate::{
         metadata::{PendingDirectoryMetadata, finalize_directory_metadata},
         paths::{SafeRelativePath, full_logical_entry_path, validate_symlink_target},
         policy::{ExtractMetadataOptions, validate_extract_metadata_support},
+        report::ExtractionFailure,
         root::ExtractionRoot,
         staging::{compute_sparse_crc32, stage_bytes, stage_sparse, verify_crc32},
     },
@@ -27,10 +28,29 @@ pub(crate) fn extract_archive(
     allow_lossy: bool,
     limits: ResourceLimits,
     metadata: ExtractMetadataOptions,
-) -> Result<(), SarError> {
+) -> Result<(), ExtractionFailure> {
     validate_extract_metadata_support(metadata)?;
     // The root is resolved exactly once; every later mutation is relative to it.
     let root = ExtractionRoot::open(&output_dir, limits)?;
+    // Extraction stays fail-fast. After a failure the primary error is kept
+    // unchanged and the root reports what may remain in the destination.
+    match extract_into(&root, archive, password, allow_lossy, limits, metadata) {
+        Ok(()) => root.ensure_no_temporary_artifacts().map_err(Into::into),
+        Err(error) => Err(ExtractionFailure {
+            error,
+            report: root.failure_report(),
+        }),
+    }
+}
+
+fn extract_into(
+    root: &ExtractionRoot,
+    archive: PathBuf,
+    password: Option<String>,
+    allow_lossy: bool,
+    limits: ResourceLimits,
+    metadata: ExtractMetadataOptions,
+) -> Result<(), SarError> {
     let mut reader = ArchiveReader::with_options(
         BufReader::new(File::open(&archive)?),
         ArchiveReaderOptions {
@@ -54,7 +74,7 @@ pub(crate) fn extract_archive(
         let group = match item {
             CollectedEntry::Entry(entry) => {
                 extract_non_fragment_entry(
-                    &root,
+                    root,
                     &entry,
                     header.flags,
                     &limits,
@@ -124,7 +144,7 @@ pub(crate) fn extract_archive(
                 )?;
             }
             stage_sparse(
-                &root,
+                root,
                 &rel,
                 &raw,
                 &sparse.extents,
@@ -139,7 +159,7 @@ pub(crate) fn extract_archive(
                     "file CRC32 mismatch on reconstructed fragment-group logical file",
                 )?;
             }
-            stage_bytes(&root, &rel, &raw)?
+            stage_bytes(root, &rel, &raw)?
         };
         // Metadata is applied to the open staging file before publication.
         staged.apply_metadata(
@@ -155,7 +175,7 @@ pub(crate) fn extract_archive(
         discard_replaced_directory_metadata(&mut pending_directories, &rel);
     }
 
-    finalize_directory_metadata(&root, pending_directories, metadata)?;
+    finalize_directory_metadata(root, pending_directories, metadata)?;
     Ok(())
 }
 
@@ -306,8 +326,15 @@ mod tests {
 
     fn write_archive(path: &Path, entries: Vec<EntryInput>) {
         let mut file = fs::File::create(path).expect("archive file");
-        let mut writer =
-            ArchiveWriter::new(&mut file, ArchiveWriterOptions::default()).expect("writer");
+        let mut writer = ArchiveWriter::new(
+            &mut file,
+            ArchiveWriterOptions {
+                with_symlinks: true,
+                with_path: true,
+                ..Default::default()
+            },
+        )
+        .expect("writer");
         for entry in entries {
             writer.add_entry(entry).expect("entry");
         }
@@ -315,6 +342,13 @@ mod tests {
     }
 
     fn extract(archive: &Path, out: &Path) -> Result<(), sar_core::SarError> {
+        extract_with_report(archive, out).map_err(|failure| failure.error)
+    }
+
+    fn extract_with_report(
+        archive: &Path,
+        out: &Path,
+    ) -> Result<(), crate::extraction::report::ExtractionFailure> {
         extract_archive(
             archive.to_path_buf(),
             out.to_path_buf(),
@@ -376,5 +410,226 @@ mod tests {
         let out = td.path().join("out");
         extract(&archive, &out).expect("repeated path is not a collision");
         assert_eq!(fs::read(out.join("dup")).expect("read"), b"second");
+    }
+
+    #[test]
+    fn many_entries_release_journal_slots_between_publications() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        let entries: Vec<EntryInput> = (0..64)
+            .map(|i| nested("d", &format!("f{i}"), &[b'x'; 8]))
+            .collect();
+        write_archive(&archive, entries);
+        let out = td.path().join("out");
+        extract(&archive, &out).expect("more than eight entries extract");
+        for i in 0..64 {
+            assert_eq!(
+                fs::read(out.join(format!("d/f{i}"))).expect("read"),
+                [b'x'; 8]
+            );
+        }
+        assert!(leftovers(&out).is_empty());
+    }
+
+    fn leftovers(dir: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(current) = pending.pop() {
+            for entry in fs::read_dir(&current).expect("read_dir") {
+                let entry = entry.expect("entry");
+                if entry.file_name().to_string_lossy().starts_with(".sar-tmp-") {
+                    found.push(entry.path().display().to_string());
+                }
+                if entry.file_type().expect("type").is_dir() {
+                    pending.push(entry.path());
+                }
+            }
+        }
+        found
+    }
+
+    fn nested(path: &str, name: &str, data: &[u8]) -> EntryInput {
+        EntryInput {
+            path: Some(path.to_string()),
+            ..EntryInput::file(name, data.to_vec())
+        }
+    }
+
+    #[test]
+    fn failure_before_the_first_publication_reports_no_change() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        write_archive(
+            &archive,
+            vec![
+                symlink_entry("l", "a"),
+                EntryInput::file("a", b"a".to_vec()),
+            ],
+        );
+        let out = td.path().join("out");
+        fs::create_dir(&out).expect("out");
+
+        let failure = extract_with_report(&archive, &out).expect_err("symlinks are not enabled");
+
+        assert_eq!(failure.error.status(), SarStatus::ErrUnsupported);
+        assert!(!failure.report.partial_changes);
+        assert!(failure.report.cleanup_failures.is_empty());
+        assert!(failure.report.notes().is_empty());
+        assert!(leftovers(&out).is_empty());
+    }
+
+    #[test]
+    fn failure_after_one_entry_keeps_it_and_reports_partial_changes() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        write_archive(
+            &archive,
+            vec![
+                EntryInput::file("a", b"a".to_vec()),
+                symlink_entry("l", "a"),
+            ],
+        );
+        let out = td.path().join("out");
+
+        let failure = extract_with_report(&archive, &out).expect_err("unsupported symlink");
+
+        assert_eq!(failure.error.status(), SarStatus::ErrUnsupported);
+        assert!(failure.report.partial_changes);
+        assert!(failure.report.cleanup_failures.is_empty());
+        assert_eq!(fs::read(out.join("a")).expect("kept"), b"a");
+        assert!(leftovers(&out).is_empty());
+    }
+
+    fn symlink_entry(name: &str, target: &str) -> EntryInput {
+        EntryInput {
+            name: name.to_string(),
+            payload: target.as_bytes().to_vec(),
+            kind: Some(sar_core::EntryKind::Symlink),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn successful_replacement_leaves_no_run_owned_temporary_objects() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        write_archive(
+            &archive,
+            vec![
+                nested("d/sub", "x", b"x"),
+                EntryInput::file("d", b"replacement".to_vec()),
+            ],
+        );
+        let out = td.path().join("out");
+
+        extract(&archive, &out).expect("extracts");
+
+        assert_eq!(fs::read(out.join("d")).expect("d"), b"replacement");
+        assert!(leftovers(&out).is_empty());
+    }
+
+    #[test]
+    fn cleanup_failure_after_replacement_is_an_error_that_keeps_the_published_object() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        write_archive(
+            &archive,
+            vec![
+                nested("d/sub", "x", b"x"),
+                EntryInput::file("d", b"replacement".to_vec()),
+            ],
+        );
+        let out = td.path().join("out");
+        let base = out.clone();
+        test_hooks::install(move |point| {
+            if point == "before-delete-replaced" {
+                let aside = fs::read_dir(&base)
+                    .expect("read_dir")
+                    .map(|entry| entry.expect("entry").path())
+                    .find(|path| path.is_dir())
+                    .expect("moved-aside directory");
+                fs::write(aside.join("foreign"), b"not ours").expect("foreign");
+            }
+        });
+        let _guard = ClearHook;
+
+        let failure = extract_with_report(&archive, &out).expect_err("incomplete cleanup");
+
+        assert_eq!(failure.error.status(), SarStatus::ErrAlreadyExists);
+        assert_eq!(fs::read(out.join("d")).expect("published"), b"replacement");
+        assert!(failure.report.partial_changes);
+        assert_eq!(failure.report.cleanup_failures.len(), 1);
+        let notes = failure.report.notes();
+        assert!(notes[0].contains("incomplete"));
+        assert!(notes[1].starts_with("cleanup error"));
+        assert!(!notes[1].contains("not ours"));
+        let aside = leftovers(&out);
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        assert_eq!(
+            fs::read(Path::new(&aside[0]).join("foreign")).expect("foreign kept"),
+            b"not ours"
+        );
+    }
+
+    #[test]
+    fn failure_restoring_final_directory_metadata_keeps_published_entries() {
+        let td = tempdir().expect("tmp");
+        let archive = td.path().join("a.sar");
+        let mut file = fs::File::create(&archive).expect("archive file");
+        let mut writer = ArchiveWriter::new(
+            &mut file,
+            ArchiveWriterOptions {
+                with_permissions: true,
+                with_path: true,
+                ..Default::default()
+            },
+        )
+        .expect("writer");
+        writer
+            .add_entry(EntryInput {
+                permissions: Some(0o644),
+                ..nested("d", "f", b"data")
+            })
+            .expect("file");
+        writer
+            .add_entry(EntryInput {
+                name: "d".to_string(),
+                kind: Some(sar_core::EntryKind::Directory),
+                permissions: Some(0o750),
+                ..Default::default()
+            })
+            .expect("dir");
+        writer.finish().expect("finish");
+        drop(file);
+        let out = td.path().join("out");
+        let outside = td.path().join("outside");
+        fs::create_dir(&outside).expect("outside");
+        let (dir, target) = (out.join("d"), outside.clone());
+        test_hooks::install(move |point| {
+            if point == "before-directory-open" {
+                fs::rename(&dir, dir.with_file_name("d.moved")).expect("move");
+                std::os::unix::fs::symlink(&target, &dir).expect("swap");
+            }
+        });
+        let _guard = ClearHook;
+
+        let failure = extract_archive(
+            archive,
+            out.clone(),
+            None,
+            false,
+            ResourceLimits::default(),
+            ExtractMetadataOptions {
+                preserve_permissions: true,
+                ..Default::default()
+            },
+        )
+        .expect_err("component replaced before metadata restoration");
+
+        assert_eq!(failure.error.status(), SarStatus::ErrPathEscape);
+        assert!(failure.report.partial_changes);
+        assert_eq!(fs::read(out.join("d.moved/f")).expect("kept"), b"data");
+        assert!(fs::read_dir(&outside).expect("outside").next().is_none());
+        assert!(leftovers(&out).is_empty());
     }
 }
