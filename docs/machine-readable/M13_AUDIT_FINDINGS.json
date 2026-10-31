@@ -5262,12 +5262,12 @@
         "metadata_restoration",
         "conformance"
       ],
-      "status": "open",
+      "status": "resolved",
       "severity": "low",
       "priority": "low",
       "confidence": "confirmed",
       "summary": "The CLI extractor never reads the Entry Mode bits HIDDEN_ATTR, FORCE_SYNC or OP_CODE, and its applicability to ordinary archive extraction is not recorded in the conformance documentation.",
-      "current_behavior": "HIDDEN_ATTR: written by create and exposed as `is_hidden` metadata by sar-archive, but not restored by extraction on any platform (platform-specific; Unix has no portable hidden attribute and extraction is refused elsewhere). FORCE_SYNC (`Bypasses local conflict resolution`): ignored; ordinary extraction has no conflict-resolution step and already follows the Section 6.1.5 final state, so the bit is not applicable to archive extraction and belongs to state application. OP_CODE and SESSION_CONTROL: `ArchiveReader` rejects SESSION_CONTROL and nonzero OP_CODE Entries by default with SAR_ERR_UNSUPPORTED (inert audit mode reports them without executing), so they cannot reach the extractor; Section 6.3 processes them only in Stateful Streaming Mode (M13b.4). ATOMIC_WRITE is satisfied by staging, integrity verification and atomic rename on Unix.",
+      "current_behavior": "HIDDEN_ATTR: encodable through the `sar-archive` writer API (`EntryInput.is_hidden`; the CLI `sar create` does not set it) and exposed as `is_hidden` metadata by sar-archive readers, but not restored by extraction on any platform (platform-specific; Unix has no portable hidden attribute and extraction is refused elsewhere). FORCE_SYNC (`Bypasses local conflict resolution`): ignored; ordinary extraction has no conflict-resolution step and already follows the Section 6.1.5 final state, so the bit is not applicable to archive extraction and belongs to state application. OP_CODE and SESSION_CONTROL: `ArchiveReader` rejects SESSION_CONTROL and nonzero OP_CODE Entries by default with SAR_ERR_UNSUPPORTED (inert audit mode reports them without executing), so they cannot reach the extractor; Section 6.3 processes them only in Stateful Streaming Mode (M13b.4). ATOMIC_WRITE is satisfied by staging, integrity verification and atomic rename on Unix.",
       "expected_behavior": "The applicability of each bit to ordinary extraction versus stream/session state application is documented, and any later restoration of HIDDEN_ATTR is explicitly policy-gated per platform.",
       "impact": "Callers may assume that hidden-attribute or force-sync semantics are honored during extraction; no data-safety or confinement effect.",
       "affected_artifacts": [
@@ -5289,14 +5289,8 @@
           "description": "OP_CODE commands are processed only if Stateful Streaming Mode is active; FORCE_SYNC bypasses local conflict resolution; HIDDEN_ATTR sets the filesystem hidden attribute."
         }
       ],
-      "resolution_owner": "pending_triage",
-      "remediation": {
-        "owner": "pending_triage",
-        "requirements": [
-          "Record the applicability of HIDDEN_ATTR, FORCE_SYNC and OP_CODE to ordinary extraction versus M13b.4 state application and decide whether platform-specific HIDDEN_ATTR restoration is wanted."
-        ]
-      },
-      "compatibility_impact": "documentation_only",
+      "resolution_owner": "M13b.3",
+      "compatibility_impact": "clarification_only",
       "verification": {
         "test_requirement": "not_required"
       },
@@ -5307,9 +5301,25 @@
       },
       "notes": [
         "Recorded by M13b.3 Package F as planning candidate C-10; not implemented in Package F by instruction.",
-        "Applicability record (SAR-M13b3-EXTRACTION-CLOSURE-RECORD-001), verified against current source: HIDDEN_ATTR is written by create and exposed as `is_hidden` by ArchiveReader but is not restored by ordinary extraction on any platform (no CLI extraction code reads it); FORCE_SYNC is not applicable to ordinary archive extraction, which has no local conflict-resolution step and already follows the Section 6.1.5 final state, and belongs to state application (M13b.4); OP_CODE and SESSION_CONTROL Entries are rejected by ArchiveReader with SAR_ERR_UNSUPPORTED by default (inert audit mode only reports them), so they cannot reach the extractor, and their processing is limited to Stateful Streaming Mode (M13b.4). Optional HIDDEN_ATTR restoration and state application are not implemented.",
-        "Status intentionally left open with owner pending_triage: the remediation requirement to decide whether platform-specific HIDDEN_ATTR restoration is wanted (explicitly policy-gated per platform) is not yet decided, and the CONFORMANCE.md applicability statement has not been confirmed against that decision. The closure record does not close this finding."
-      ]
+        "Applicability record (SAR-M13b3-EXTRACTION-CLOSURE-RECORD-001), verified against current source: HIDDEN_ATTR is encodable through the `sar-archive` writer API and exposed as `is_hidden` by ArchiveReader (the CLI `sar create` does not set it; corrected by SAR-M13b3-EXTRACT008-CLOSURE-IMPLEMENTATION-001) but is not restored by ordinary extraction on any platform (no CLI extraction code reads it); FORCE_SYNC is not applicable to ordinary archive extraction, which has no local conflict-resolution step and already follows the Section 6.1.5 final state, and belongs to state application (M13b.4); OP_CODE and SESSION_CONTROL Entries are rejected by ArchiveReader with SAR_ERR_UNSUPPORTED by default (inert audit mode only reports them), so they cannot reach the extractor, and their processing is limited to Stateful Streaming Mode (M13b.4). Optional HIDDEN_ATTR restoration and state application are not implemented.",
+        "Status was left open by the extraction closure record pending the HIDDEN_ATTR restoration decision. That decision is recorded in the resolution below (SAR-M13b3-EXTRACT008-CONTROLLER-DECISION-001).",
+        "Correction (SAR-M13b3-EXTRACT008-CLOSURE-IMPLEMENTATION-001): earlier text stated that HIDDEN_ATTR is written by create. The sar-archive writer API can encode the flag, but the CLI `sar create` currently does not set it; readers expose existing hidden metadata and ordinary CLI extraction does not restore it."
+      ],
+      "resolution": {
+        "decision_type": "specification_change",
+        "milestone": "M13b.3",
+        "summary": "Resolved by SAR-M13b3-EXTRACT008-CONTROLLER-DECISION-001 (implemented by SAR-M13b3-EXTRACT008-CLOSURE-IMPLEMENTATION-001). New specification Section 6.2.4 (HIDDEN_ATTR Materialization) states that ordinary extraction is not required to materialize HIDDEN_ATTR, that non-materialization alone is not an error, incomplete result or unsupported feature, that any restoration is an optional, explicitly caller-selected capability not implied by permission, ownership or timestamp options, that it must follow the Section 22.4 confinement model and Section 6.1.5 final-state semantics, that explicitly requested but unsupported restoration reports SAR_ERR_UNSUPPORTED (application failures SAR_ERR_IO or a more specific error), and that Name String and Path String must not be rewritten to represent hidden state. The stale Section 6.3 cross-reference to Section 16.1 now points to Section 18. Accepted applicability decisions: FORCE_SYNC does not apply to ordinary archive extraction, which has no conflict-resolution step and follows Section 6.1.5 final state; OP_CODE and SESSION_CONTROL are processed only in Stateful Streaming Mode (Section 6.3) and are rejected by ArchiveReader with SAR_ERR_UNSUPPORTED by default; ATOMIC_WRITE (Section 18.4.1) is satisfied for ordinary Unix extraction by secure staging, integrity verification and atomic publication. HIDDEN_ATTR remains encodable through the sar-archive writer API (the CLI `sar create` does not set it) and exposed by readers as metadata; ordinary CLI extraction does not restore it. Any future restoration is a separately scoped opt-in capability, not planned by this resolution. No wire-format, CLI, extraction, archive-reader or public Rust API change; no implementation testing is required for the applicability decision.",
+        "references": [
+          "specification.md",
+          "docs/CONFORMANCE.md",
+          "docs/MILESTONES.md",
+          "crates/sar-archive/src/archive.rs",
+          "crates/sar-cli/src/commands/create.rs",
+          "crates/sar-cli/src/commands/extract.rs"
+        ],
+        "resolved_date": "2026-10-31",
+        "rationale": "The specification previously contained only the one-line description of HIDDEN_ATTR in the Entry Mode table and no restoration, platform-capability or failure semantics. Section 6.2.4 resolves that gap without imposing a mandatory restoration obligation, which no platform backend could currently satisfy under the secure descriptor-relative Unix extraction design (Windows and other non-Unix extraction remains refused, macOS runtime remains unverified, FreeBSD evidence remains limited). The scoped Unix extraction closure, macOS waiver, FreeBSD evidence limits and non-Unix fail-closed posture are unchanged."
+      }
     },
     {
       "id": "M13-PARSER-018",
@@ -5431,7 +5441,8 @@
       "SAR-M13b-WP6-IMPLEMENTATION-REVIEW-001/002: corrective passes. Additional-control-stream decryption preserves normative statuses (missing LFH encryption fields MALFORMED, reserved/unsupported/flag-conflicting algorithm IDs, invalid TLS_EXPORTER payloads, KEY_MISSING, KEY_REJECTED, LIMIT_EXCEEDED); only AEAD failures are AUTH_FAILED. KDF defaults narrowed (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) while still admitting the mandatory interoperable ranges; callers may raise them. The KMS Master Secret is now retained in a context-owned MasterSecretScope per archive reader, stream parser (reset on each Global Header) and transport session (dropped at session close), so PBKDF2/Argon2 run once per scope while Entry keys are still HKDF-derived per Entry. No finding statuses changed and no new finding was added.",
       "SAR-M13b-WP7C-IMPLEMENTATION-001: WP-7C reconciliation. Closed (resolved) with tests/evidence: M13-CRYPTO-001, M13-CRYPTO-002, M13-TRANSFORM-007, M13-TRANSFORM-008, M13-RECOVERY-001, M13-TRANSFORM-010. Retained open with specific outstanding obligations: M13-CRYPTO-007, M13-CRYPTO-008, M13-TRANSFORM-009. M13b.2 is not fully closed; M13b.3 and M13b.4 scope is unchanged.",
       "SAR-M13b3-EXTRACTION-WPF-IMPLEMENTATION-001: M13b.3 Package F reconciles the extraction findings with Packages A-E and the platform posture. M13-EXTRACT-001 is retained as confirmed with a precise residual record and a closure recommendation for Controller decision; M13-EXTRACT-002..006 were annotated with preserved historical evidence; M13-EXTRACT-007 (repair temporary output) and M13-EXTRACT-008 (HIDDEN_ATTR/FORCE_SYNC/OP_CODE applicability) were added as residual findings with pending_triage ownership.",
-      "SAR-M13b3-EXTRACTION-CLOSURE-RECORD-001 / SAR-M13b3-EXTRACTION-CLOSURE-DECISION-001: M13-EXTRACT-001 is closed (resolved, implementation_change) with a scoped platform claim: Unix descriptor-relative extraction (PRs #95-#100), Linux full validation, FreeBSD 15.1 Package A evidence only, macOS native runtime waived and unverified, Windows and other non-Unix refused. The closure does not claim full cross-platform SAR extraction conformance, transactional or crash-recoverable extraction, elimination of POSIX identity-check/use races, or execution of filesystem-specific case-folding and Unicode-normalization tests. M13-EXTRACT-002, -003 and -006 evidence was refreshed with historical content preserved; M13-EXTRACT-004 and -005 are unchanged. M13-EXTRACT-007 is assigned to a separately scoped M13b.3 CLI repair-security package and remains open; M13-EXTRACT-008 applicability is recorded and the finding remains open pending the HIDDEN_ATTR restoration decision. M13-PARSER-018 (archive-reader Name/Path validation, recommended owner M13b.4) is registered. No implementation code was changed; Partition Set work (M13-BOUNDARY-003) and M13b.4 stream/session materialization are not assigned to the extraction workstream."
+      "SAR-M13b3-EXTRACTION-CLOSURE-RECORD-001 / SAR-M13b3-EXTRACTION-CLOSURE-DECISION-001: M13-EXTRACT-001 is closed (resolved, implementation_change) with a scoped platform claim: Unix descriptor-relative extraction (PRs #95-#100), Linux full validation, FreeBSD 15.1 Package A evidence only, macOS native runtime waived and unverified, Windows and other non-Unix refused. The closure does not claim full cross-platform SAR extraction conformance, transactional or crash-recoverable extraction, elimination of POSIX identity-check/use races, or execution of filesystem-specific case-folding and Unicode-normalization tests. M13-EXTRACT-002, -003 and -006 evidence was refreshed with historical content preserved; M13-EXTRACT-004 and -005 are unchanged. M13-EXTRACT-007 is assigned to a separately scoped M13b.3 CLI repair-security package and remains open; M13-EXTRACT-008 applicability is recorded and the finding remains open pending the HIDDEN_ATTR restoration decision. M13-PARSER-018 (archive-reader Name/Path validation, recommended owner M13b.4) is registered. No implementation code was changed; Partition Set work (M13-BOUNDARY-003) and M13b.4 stream/session materialization are not assigned to the extraction workstream.",
+      "SAR-M13b3-EXTRACT008-CLOSURE-IMPLEMENTATION-001 / SAR-M13b3-EXTRACT008-CONTROLLER-DECISION-001: M13-EXTRACT-008 is resolved (specification_change) by new specification Section 6.2.4 (HIDDEN_ATTR Materialization) and the Section 6.3 cross-reference correction; ordinary extraction has no HIDDEN_ATTR restoration obligation and any future restoration is a separately scoped opt-in capability. The earlier statement that CLI create writes HIDDEN_ATTR is corrected: only the sar-archive writer API can encode it. No implementation code, wire format, CLI or public API was changed."
     ],
     "source_commit": "5b2bd50e9d00e62798de1fb65542d366a8f7cec2"
   }
