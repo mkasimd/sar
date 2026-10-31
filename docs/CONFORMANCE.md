@@ -489,7 +489,7 @@ Integration tests that depend on a successful CLI extraction are `#[cfg(unix)]`,
 - Best-effort or skip-on-failure extraction modes (not provided; `--allow-lossy` does not skip Entries).
 - `HIDDEN_ATTR` restoration, `FORCE_SYNC` and `OP_CODE` handling in extraction: not applied (`OP_CODE` and `SESSION_CONTROL` Entries are rejected by the archive reader by default; see `M13-EXTRACT-008`).
 - Cross-Partition extraction and Partition metadata handling, and stream/session materialization (M13b.4).
-- The `repair` command's temporary output file is not part of extraction and still uses a predictable path-based name (`M13-EXTRACT-007`).
+- The `repair` command's output is not part of extraction. On Unix it uses an exclusively created random staging file in the output directory, verified through its descriptor and published by a descriptor-relative rename; POSIX check/use races remain where atomic identity operations are unavailable, there is no crash recovery or rollback, and non-Unix targets refuse the repair output operation (`M13-EXTRACT-007`, open pending integration and closure review).
 - Archive-reader validation of encoded Name String and Path String syntax (specification Section 6.1.5, `SAR_ERR_MALFORMED`) is not implemented; these rules are enforced only by the CLI at extraction time (`M13-PARSER-018`).
 
 ## Known gaps

@@ -8,7 +8,9 @@ use sar_archive::{
 };
 use sar_core::{ResourceLimits, SarError};
 
-use crate::commands::read_file_with_archive_limit;
+#[cfg(not(unix))]
+use crate::commands::repair_output::require_secure_output_backend;
+use crate::commands::{read_file_with_archive_limit, repair_output::write_verified_output};
 
 pub(crate) fn repair_cmd(
     archive: PathBuf,
@@ -23,6 +25,9 @@ pub(crate) fn repair_cmd(
 
     let erasures_file =
         erasures_path.ok_or(SarError::Malformed("repair requires --erasures <file>"))?;
+
+    #[cfg(not(unix))]
+    require_secure_output_backend()?;
 
     let erasures_bytes = fs::read(&erasures_file)?;
     let erasures: ErasureInput = serde_json::from_slice(&erasures_bytes)
@@ -63,38 +68,15 @@ pub(crate) fn repair_cmd(
         Err(err) => return Err(err),
     };
 
-    let tmp_path = PathBuf::from(format!("{}.tmp", output.display()));
-    if let Err(err) = fs::write(&tmp_path, &repaired_bytes) {
-        eprintln!("repair: failed to write temp file: {err}");
-        return Err(SarError::Io(err));
-    }
-
-    let verify_result = (|| -> Result<(), SarError> {
-        let mut re_reader = ArchiveReader::new(BufReader::new(File::open(&tmp_path)?))?;
+    let mut verify = |staged: &File| -> Result<(), SarError> {
+        let mut re_reader = ArchiveReader::new(BufReader::new(staged.try_clone()?))?;
         let _ = re_reader.read_global_header()?;
         re_reader.verify()?;
         Ok(())
-    })();
-
-    if let Err(err) = verify_result {
-        eprintln!("repair: temp file verification failed: {err}");
-        if let Err(rm_err) = fs::remove_file(&tmp_path) {
-            eprintln!(
-                "repair: warning: could not remove temp file {}: {rm_err}",
-                tmp_path.display()
-            );
-        }
+    };
+    if let Err(err) = write_verified_output(&output, &repaired_bytes, &mut verify) {
+        eprintln!("repair: output not published: {err}");
         return Err(err);
-    }
-
-    if let Err(err) = fs::rename(&tmp_path, &output) {
-        if let Err(rm_err) = fs::remove_file(&tmp_path) {
-            eprintln!(
-                "repair: warning: could not remove temp file {}: {rm_err}",
-                tmp_path.display()
-            );
-        }
-        return Err(SarError::Io(err));
     }
 
     println!(
