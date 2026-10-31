@@ -10,6 +10,7 @@ pub(crate) mod extract;
 pub(crate) mod inspect;
 pub(crate) mod list;
 pub(crate) mod repair;
+pub(crate) mod repair_output;
 pub(crate) mod verify;
 pub(crate) mod version;
 

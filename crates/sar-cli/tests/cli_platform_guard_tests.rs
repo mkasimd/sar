@@ -66,3 +66,26 @@ fn read_only_commands_still_work() {
         .assert()
         .success();
 }
+
+#[test]
+fn repair_output_is_refused_without_touching_the_output() {
+    let dir = tempdir().expect("tempdir");
+    let archive = create_archive(dir.path());
+    let erasures = dir.path().join("erasures.json");
+    fs::write(&erasures, br#"{"entries":[],"archive_ranges":[]}"#).expect("erasures");
+    let out = dir.path().join("repaired.sar");
+
+    Command::cargo_bin("sar-cli")
+        .expect("binary")
+        .arg("repair")
+        .arg(&archive)
+        .arg(&out)
+        .args(["--fec", "--erasures"])
+        .arg(&erasures)
+        .assert()
+        .failure()
+        .stderr(contains("SAR_ERR_UNSUPPORTED"));
+
+    assert!(!out.exists());
+    assert!(!dir.path().join("repaired.sar.tmp").exists());
+}

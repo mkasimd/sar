@@ -144,7 +144,7 @@ See `docs/API.md`, `docs/CRATE_RESPONSIBILITIES.md`, and `docs/SPEC_QUESTIONS.md
 * production-hardening completion is planned in M13 and is not yet complete
 * M12b bounded local fuzzing is complete, but exhaustive fuzzing and malicious corpus completeness are not claimed
 * CLI extraction on Unix uses a descriptor-relative confinement backend; it is runtime-tested on Linux (FreeBSD 15.1 for the Package A backend), macOS is unverified, and non-Unix targets refuse extraction. POSIX check/use races remain where atomic identity operations are unavailable
-* the `repair` command writes a predictable temporary output path without symlink protection (`M13-EXTRACT-007`)
+* the `repair` command on Unix stages its output exclusively under a random name in the output's parent directory (descriptor-relative, no symlink following), verifies it through the staged descriptor and publishes it by rename; a narrow POSIX check/use window remains between the staging identity check and the rename or cleanup unlink, there is no crash recovery, and non-Unix targets refuse the repair output operation (`M13-EXTRACT-007`, open pending integration and closure review)
 * extraction into attacker-writable directories is not recommended
 * metadata restoration can create platform-dependent risk; see the Filesystem metadata policy section above
 * the implementation has not demonstrated multi-implementation interoperability
