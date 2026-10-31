@@ -2318,7 +2318,7 @@ No Partition Manifest parsing, member-relative CD/Footer offsets, Current/Previo
 
 #### Expected Behavior
 
-Implement Partition Set semantics of Section 19: terminal PARTITION_MANIFEST, partition-local CD/Footer, Data Area CRC32, hash linkage (mismatches map to SAR_ERR_HASH_MISMATCH), finality and known-boundary handling, incomplete Partition Set rules (19.1.8), and fragment groups spanning Partitions.
+Implement Partition Set semantics of Section 19: terminal PARTITION_MANIFEST, partition-local CD/Footer, Data Area CRC32, hash linkage (Current Partition Hash and Anchor Hash mismatches map to SAR_ERR_HASH_MISMATCH; predecessor-link mismatches map to SAR_ERR_PARTITION_MISMATCH), finality and known-boundary handling, incomplete Partition Set rules (19.1.8), and fragment groups spanning Partitions.
 
 #### Impact
 
@@ -2335,7 +2335,7 @@ Partitioned archives cannot be produced or consumed interoperably.
 #### Remediation
 
 * Implement the Section 19 Partition Set model, including manifest validation, local offsets, and incomplete-set behavior.
-* Map Partition, Previous Partition, and Anchor hash mismatches to SAR_ERR_HASH_MISMATCH.
+* Map Current Partition Hash and Anchor Hash mismatches to SAR_ERR_HASH_MISMATCH and Previous Partition Hash predecessor-link mismatches to SAR_ERR_PARTITION_MISMATCH (Section 10.4.1, Section 19.1.4).
 
 #### Verification
 
