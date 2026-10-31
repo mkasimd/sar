@@ -450,7 +450,7 @@ Scope: `sar extract` in `sar-cli`, the only materializer. Section 22.4 requires 
 | --- | --- | --- | --- |
 | Linux | Unix descriptor-relative backend (`root_unix.rs`) | Full workspace tests run natively | Implemented and runtime-tested |
 | FreeBSD | Same Unix backend | Package A backend tests passed natively on FreeBSD 15.1; Packages B-E were not natively re-run | Package A backend runtime-tested; later-package behavior is not equivalent to a native full-suite run |
-| macOS | Same Unix backend (intended) | None | Native runtime unverified; APFS case-insensitivity and normalization behavior untested |
+| macOS | Same Unix backend (intended) | None | Native runtime unverified (waived for scoped closure, `SAR-M13b3-EXTRACTION-CLOSURE-DECISION-001`); APFS case-insensitivity and normalization behavior untested |
 | Windows and other non-Unix | None | Type-checked only (`x86_64-pc-windows-gnu`, host C compiler substituted for the C dependency); never executed natively | Secure extraction not implemented; extraction refused |
 
 On targets without `cfg(unix)`, `sar extract` (including the `-x` shorthand) fails with `SAR_ERR_PATH_ESCAPE` because confinement cannot be established (Section 22.4), before the archive is opened or the destination is created. `create`, `list`, `inspect`, `verify` and `repair` are unaffected. There is no silent insecure fallback, and a cross-compilation check proves compilation, not native filesystem correctness. Future Windows support requires a separately scoped secure implementation (handle-relative operations, reserved-name, alternate-data-stream and reparse-point handling) and native validation; it is not part of M13b.3.
@@ -490,6 +490,7 @@ Integration tests that depend on a successful CLI extraction are `#[cfg(unix)]`,
 - `HIDDEN_ATTR` restoration, `FORCE_SYNC` and `OP_CODE` handling in extraction: not applied (`OP_CODE` and `SESSION_CONTROL` Entries are rejected by the archive reader by default; see `M13-EXTRACT-008`).
 - Cross-Partition extraction and Partition metadata handling, and stream/session materialization (M13b.4).
 - The `repair` command's temporary output file is not part of extraction and still uses a predictable path-based name (`M13-EXTRACT-007`).
+- Archive-reader validation of encoded Name String and Path String syntax (specification Section 6.1.5, `SAR_ERR_MALFORMED`) is not implemented; these rules are enforced only by the CLI at extraction time (`M13-PARSER-018`).
 
 ## Known gaps
 
