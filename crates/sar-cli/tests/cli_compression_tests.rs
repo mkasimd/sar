@@ -8,6 +8,7 @@ use predicates::str::contains;
 use serde_json::Value;
 use tempfile::tempdir;
 
+#[cfg(unix)]
 #[test]
 fn create_extract_verify_with_deflate_and_long_option() {
     let td = tempdir().expect("tmp");

@@ -290,6 +290,7 @@ fn verify_cdc_succeeds_on_valid_cdc_archive() {
         .stdout(contains("cdc_support=true"));
 }
 
+#[cfg(unix)]
 #[test]
 fn verify_cdc_non_literal_recipe_is_structural_only() {
     let td = tempdir().expect("tmp");

@@ -229,6 +229,7 @@ fn list_fec_archive_shows_entry_name() {
 // FEC archive extract recovers correct bytes
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 #[test]
 fn extract_fec_archive_recovers_payload() {
     let td = tempdir().expect("tmp");
@@ -309,6 +310,7 @@ fn no_fec_inspect_json_selective_fec_false() {
 // FEC + compression roundtrip via CLI
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 #[test]
 fn create_xor_fec_with_zstd_compression_roundtrip() {
     let td = tempdir().expect("tmp");

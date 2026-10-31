@@ -19,6 +19,7 @@ impl SafeRelativePath {
         Ok(Self { components })
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn file_name(&self) -> Result<&str, SarError> {
         self.components
             .last()
@@ -34,6 +35,7 @@ impl SafeRelativePath {
         }
     }
 
+    #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn components(&self) -> &[String] {
         &self.components
     }

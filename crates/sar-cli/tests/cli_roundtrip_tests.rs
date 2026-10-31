@@ -7,6 +7,7 @@ use assert_cmd::Command;
 use serde_json::Value;
 use tempfile::tempdir;
 
+#[cfg(unix)]
 #[test]
 fn create_list_extract_verify_no_index_roundtrip() {
     let td = tempdir().expect("tmp");

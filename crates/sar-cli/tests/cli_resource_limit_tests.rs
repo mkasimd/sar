@@ -11,21 +11,24 @@ use tempfile::tempdir;
 
 use sar_core::{
     GlobalFlags,
-    flags::EntryMode,
-    format::{
-        CentralDictionary, GlobalHeader, LocalFileHeader, write_central_dictionary,
-        write_global_header, write_lfh,
-    },
-    sparse::{SparseExtent, write_sparse_map},
+    format::{CentralDictionary, GlobalHeader, write_central_dictionary, write_global_header},
     tlv::Tlv,
 };
+#[cfg(unix)]
+use sar_core::{
+    flags::EntryMode,
+    format::{LocalFileHeader, write_lfh},
+    sparse::{SparseExtent, write_sparse_map},
+};
 
+#[cfg(unix)]
 const DEFAULT_MAX_DECODED_ENTRY_SIZE: u64 = 1024 * 1024 * 1024;
 
 fn sar() -> Command {
     Command::cargo_bin("sar-cli").expect("sar-cli binary")
 }
 
+#[cfg(unix)]
 fn write_sparse_archive(
     dir: &tempfile::TempDir,
     name: &str,
@@ -59,6 +62,7 @@ fn write_sparse_archive(
     archive_path
 }
 
+#[cfg(unix)]
 fn write_two_fragment_sparse_archive(
     dir: &tempfile::TempDir,
     logical_size: u64,
@@ -154,6 +158,7 @@ fn write_global_ec_archive(dir: &tempfile::TempDir) -> std::path::PathBuf {
     archive_path
 }
 
+#[cfg(unix)]
 #[test]
 fn huge_apparent_sparse_file_fails_by_default_without_final_output() {
     let td = tempdir().expect("tmp");
@@ -187,6 +192,7 @@ fn huge_apparent_sparse_file_fails_by_default_without_final_output() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn sparse_expansion_bomb_limit_failure_is_reported_clearly() {
     let td = tempdir().expect("tmp");
@@ -216,6 +222,7 @@ fn sparse_expansion_bomb_limit_failure_is_reported_clearly() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn fragmented_sparse_extraction_respects_fragment_span_limit() {
     let td = tempdir().expect("tmp");
@@ -241,6 +248,7 @@ fn fragmented_sparse_extraction_respects_fragment_span_limit() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn sparse_extract_succeeds_with_small_in_memory_buffer() {
     let td = tempdir().expect("tmp");

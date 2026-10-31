@@ -76,21 +76,25 @@ Extraction lexically rejects:
 * backslash usage in archive paths
 * NUL-byte usage in archive paths
 
-Extraction rejects per-component symlink traversal while resolving destination paths.
+Extraction rejects per-component symlink traversal while resolving destination paths. On Unix this is enforced with descriptor-relative `O_NOFOLLOW` traversal rather than lexical checks; escapes and unconfinable paths report `SAR_ERR_PATH_ESCAPE`.
 
-Symlink extraction is disabled unless `--allow-symlinks` is provided. Even when enabled, symlink targets must be relative and non-traversing.
+Symlink extraction is disabled unless `--allow-symlinks` is provided. Even when enabled, a relative symlink target is evaluated lexically from the link directory and must not escape the extraction root, an absolute or platform-specific target outside the root is refused with `SAR_ERR_PATH_ESCAPE`, and stored targets are never rewritten.
 
 Hardlink/device/FIFO/socket extraction behavior is not provided as a general CLI restore path in the current implementation.
 
 ## Extraction staging and mutation safety
 
-Extraction creates directories with restrictive staging permissions.
+Extraction creates directories with restrictive staging permissions (mode `0700`, never group- or world-accessible while created).
 
 Final directory permissions are applied only after child entries are extracted.
 
 Regular/sparse extraction uses temporary files with exclusive creation and atomic-style finalization behavior.
 
-Metadata application re-checks final path type before applying filesystem metadata.
+Metadata is applied through open directory or file descriptors; paths are not re-resolved.
+
+Extraction is fail-fast and not all-or-nothing, and there is no crash-recovery journal; see `docs/CONFORMANCE.md` for the failure and cleanup contract.
+
+Targets without `cfg(unix)` (including Windows) have no secure extraction backend and refuse `sar extract` with `SAR_ERR_PATH_ESCAPE` before any filesystem access. Native runtime evidence exists for Linux (and the Package A backend on FreeBSD 15.1); macOS is unverified.
 
 ## Filesystem metadata policy
 
@@ -139,7 +143,8 @@ See `docs/API.md`, `docs/CRATE_RESPONSIBILITIES.md`, and `docs/SPEC_QUESTIONS.md
 * no independent external security audit has completed
 * production-hardening completion is planned in M13 and is not yet complete
 * M12b bounded local fuzzing is complete, but exhaustive fuzzing and malicious corpus completeness are not claimed
-* CLI extraction currently uses lexical/per-component validation and symlink checks, but is not yet a full `openat`/directory-fd confinement engine on every platform
+* CLI extraction on Unix uses a descriptor-relative confinement backend; it is runtime-tested on Linux (FreeBSD 15.1 for the Package A backend), macOS is unverified, and non-Unix targets refuse extraction. POSIX check/use races remain where atomic identity operations are unavailable
+* the `repair` command writes a predictable temporary output path without symlink protection (`M13-EXTRACT-007`)
 * extraction into attacker-writable directories is not recommended
 * metadata restoration can create platform-dependent risk; see the Filesystem metadata policy section above
 * the implementation has not demonstrated multi-implementation interoperability

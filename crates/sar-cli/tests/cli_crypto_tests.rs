@@ -1,12 +1,15 @@
 // SPDX-FileCopyrightText: 2026 M. Kasim Doenmez
 // SPDX-License-Identifier: Apache-2.0
 
+#[cfg(unix)]
 use std::fs;
 
 use assert_cmd::Command;
 use predicates::str::contains;
+#[cfg(unix)]
 use tempfile::tempdir;
 
+#[cfg(unix)]
 #[test]
 fn encrypted_create_extract_round_trip() {
     let td = tempdir().expect("tmp");
@@ -47,6 +50,7 @@ fn encrypted_create_extract_round_trip() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn wrong_password_fails() {
     let td = tempdir().expect("tmp");
@@ -98,6 +102,7 @@ fn password_help_documents_precedence_and_argv_exposure() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn password_source_precedence_is_argv_then_environment() {
     let td = tempdir().expect("tmp");

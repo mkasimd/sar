@@ -13,7 +13,9 @@ use crate::{
     extraction::{
         metadata::{PendingDirectoryMetadata, finalize_directory_metadata},
         paths::{SafeRelativePath, full_logical_entry_path, validate_symlink_target},
-        policy::{ExtractMetadataOptions, validate_extract_metadata_support},
+        policy::{
+            ExtractMetadataOptions, SECURE_EXTRACTION_BACKEND, require_secure_extraction_backend,
+        },
         report::ExtractionFailure,
         root::ExtractionRoot,
         staging::{compute_sparse_crc32, stage_bytes, stage_sparse, verify_crc32},
@@ -29,7 +31,7 @@ pub(crate) fn extract_archive(
     limits: ResourceLimits,
     metadata: ExtractMetadataOptions,
 ) -> Result<(), ExtractionFailure> {
-    validate_extract_metadata_support(metadata)?;
+    require_secure_extraction_backend(SECURE_EXTRACTION_BACKEND)?;
     // The root is resolved exactly once; every later mutation is relative to it.
     let root = ExtractionRoot::open(&output_dir, limits)?;
     // Extraction stays fail-fast. After a failure the primary error is kept

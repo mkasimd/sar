@@ -33,23 +33,13 @@ const ENTRY_OVERHEAD_BYTES: u64 = 128;
 /// Identity of a destination filesystem object as reported by the host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum ObjectId {
-    #[cfg(unix)]
     Inode { device: u64, inode: u64 },
-    /// Canonical on-disk path; the only identity the non-Unix fallback
-    /// backend can obtain without platform-specific APIs.
-    #[cfg(not(unix))]
-    CanonicalPath(std::path::PathBuf),
 }
 
 impl ObjectId {
     pub(crate) fn accounted_bytes(&self) -> u64 {
         match self {
-            #[cfg(unix)]
             Self::Inode { .. } => ENTRY_OVERHEAD_BYTES,
-            #[cfg(not(unix))]
-            Self::CanonicalPath(path) => {
-                ENTRY_OVERHEAD_BYTES.saturating_add(path.as_os_str().len() as u64)
-            }
         }
     }
 }
