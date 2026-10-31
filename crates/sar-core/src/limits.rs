@@ -157,8 +157,10 @@ pub struct ResourceLimits {
     /// Maximum byte gap between consecutive fragments when `LOSS_TOLERANT` is
     /// set.  Default: 1 GiB.
     ///
-    /// Not consulted by canonical fragment reassembly (a missing fragment's
-    /// length is unknowable); see M13b.2.
+    /// Currently inactive: no code path consults this limit, and it never
+    /// authorizes zero-filling a fragment gap (a missing fragment's length is
+    /// unknowable).  The field is retained for API compatibility; its final
+    /// disposition is tracked under M13b.2.
     pub max_loss_tolerant_gap: u64,
 
     // ── Stateful streaming session layer ──────────────────────────────────────
@@ -593,6 +595,8 @@ impl ResourceLimits {
 
     /// Checks that a loss-tolerant gap size does not exceed
     /// `max_loss_tolerant_gap`.
+    ///
+    /// This helper is not called by archive reassembly; the limit is inactive.
     ///
     /// # Errors
     ///

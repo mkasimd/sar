@@ -35,6 +35,21 @@ Current wire-format compatibility status:
   silently ignored.
 * Partition/multi-volume format semantics are not implemented (see Deferred
   Functionality below).
+* Deterministic cryptographic reference vectors
+  (`test-vectors/crypto-reference/`) show agreement with independent
+  third-party primitive libraries and an independent byte-layout derivation of
+  Global Header, LFH and AAD. This is not second-implementation SAR archive
+  interoperability.
+* No complete Section 12 Compliance Profile is claimed; the `ComplianceProfile`
+  presets in `sar-archive` are repository policy presets, not automatically
+  Section 12 profiles.
+* Standard Profile CDC resolution is incomplete; non-literal CDC Algo IDs are
+  rejected with `SAR_ERR_UNSUPPORTED`.
+* SAR-over-QUIC binding code exists, but complete directional `TLS_EXPORTER`
+  interoperability is not claimed. ASYMMETRIC_WRAP (KMS Mode `0x03`) is not
+  claimed as a fully implemented KMS mode.
+* `max_loss_tolerant_gap` and `--max-loss-tolerant-gap` are retained but
+  currently inactive, and never authorize zero-filling a fragment gap.
 
 If `specification.md` and any other document conflict, `specification.md` wins.
 

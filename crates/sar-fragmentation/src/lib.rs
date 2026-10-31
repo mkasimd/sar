@@ -92,9 +92,10 @@ pub struct FragmentLimits {
     pub max_decoded_entry_size: u64,
     /// Maximum permitted loss-tolerant gap size in bytes.
     ///
-    /// Not consulted by canonical reassembly: the length of a missing fragment
-    /// is not recoverable, so no gap length can be measured.  Retained for
-    /// limit-set compatibility pending M13b.2 review.
+    /// Currently inactive: not consulted by canonical reassembly, because the
+    /// length of a missing fragment is not recoverable.  It never authorizes
+    /// zero-filling a gap.  Retained for limit-set compatibility pending
+    /// M13b.2 review.
     pub max_loss_tolerant_gap: u64,
     /// Maximum in-memory allocation in bytes for a single operation.
     pub max_allocation_bytes: u64,
