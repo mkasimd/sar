@@ -274,9 +274,38 @@ pub struct PartitionManifestParams {
 pub(super) struct PartitionWriterState {
     params: PartitionManifestParams,
     hasher: Option<Box<dyn Hasher>>,
+    admission: Option<PartitionAdmission>,
+    /// Set when a pre-publication admission check refused an Entry; nothing
+    /// was written or recorded for it.
+    rejected: bool,
+    current_hash: Option<[u8; 32]>,
+}
+
+/// Pre-publication bounds enforced by the multi-Partition writer.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PartitionAdmission {
+    /// Upper bound for the complete physical Partition.
+    pub(crate) max_partition_bytes: u64,
+    /// Upper bound for physical Entries (including Empty Areas).
+    pub(crate) max_entries: u64,
+    /// Upper bound for one Entry staged in memory: input, wire payload and
+    /// encoded payload (plus FEC value) are each checked against it, and the
+    /// encoded LFH plus payload again before publication.
+    pub(crate) max_entry_bytes: u64,
+}
+
+/// Facts about a finished Partition computed by the writer itself.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PartitionCommitment {
+    pub(crate) current_hash: [u8; 32],
+    pub(crate) manifest_offset: u64,
 }
 
 impl PartitionWriterState {
+    pub(super) const fn current_hash(&self) -> Option<[u8; 32]> {
+        self.current_hash
+    }
+
     /// Feeds encoded Partition bytes that precede the Manifest LFH.
     pub(super) fn commit(&mut self, bytes: &[u8]) {
         if let Some(hasher) = &mut self.hasher {
@@ -319,8 +348,250 @@ impl<W: Write> ArchiveWriter<W> {
         self.partition = Some(PartitionWriterState {
             params,
             hasher: Some(new_hasher(params.hash_algorithm_id).map_err(SarError::from)?),
+            admission: None,
+            rejected: false,
+            current_hash: None,
         });
         Ok(self)
+    }
+
+    /// Installs pre-publication size bounds.  Plaintext Partitions only.
+    pub(crate) fn set_partition_admission(
+        &mut self,
+        admission: PartitionAdmission,
+    ) -> Result<(), SarError> {
+        if self.flags.contains(GlobalFlags::ENCRYPTED) {
+            return Err(SarError::Unsupported(
+                "capacity accounting for encrypted Partitions is not supported",
+            ));
+        }
+        if self.header_written {
+            return Err(SarError::Malformed(
+                "Partition bounds must be set before the Global Header",
+            ));
+        }
+        let state = self
+            .partition
+            .as_mut()
+            .ok_or(SarError::Internal("Partition Manifest state missing"))?;
+        state.admission = Some(admission);
+        Ok(())
+    }
+
+    /// Sets the finality and total of the Manifest still to be written.
+    pub(crate) fn set_partition_finality(
+        &mut self,
+        final_partition: bool,
+        total_partitions: u32,
+    ) -> Result<(), SarError> {
+        let state = self
+            .partition
+            .as_mut()
+            .ok_or(SarError::Internal("Partition Manifest state missing"))?;
+        if state.hasher.is_none() {
+            return Err(SarError::Malformed("Partition Manifest already written"));
+        }
+        let mut params = state.params;
+        params.final_partition = final_partition;
+        params.total_partitions = total_partitions;
+        manifest_from_params(&params, 0, [0u8; 32])?
+            .validate_fields(PARTITION_MAX_SUPPORTED_COUNT)?;
+        state.params = params;
+        Ok(())
+    }
+
+    /// Emits the Global Header now (admission-checked) so an undersized
+    /// capacity is reported before the first Entry.
+    pub(crate) fn begin_partition_output(&mut self) -> Result<(), SarError> {
+        self.emit_global_header_if_needed()
+    }
+
+    /// True once (and only if) an admission check refused an Entry without
+    /// writing or recording anything for it.  Clears the marker.
+    pub(crate) fn take_admission_rejection(&mut self) -> bool {
+        self.partition
+            .as_mut()
+            .is_some_and(|s| std::mem::take(&mut s.rejected))
+    }
+
+    fn reject_admission(&mut self, msg: &'static str) -> SarError {
+        if let Some(state) = &mut self.partition {
+            state.rejected = true;
+        }
+        SarError::LimitExceeded(msg)
+    }
+
+    /// Exact byte length of the structures that must follow `position`
+    /// (terminal Manifest, local CD, padding, Footer) when `indexed_before`
+    /// indexed LFHs precede the Manifest.  Empty Areas are physical Entries
+    /// but are never indexed (spec §7.1), so they must not be counted here.
+    fn partition_closing_len(&self, position: u64, indexed_before: u64) -> Result<u64, SarError> {
+        let state = self
+            .partition
+            .as_ref()
+            .ok_or(SarError::Internal("Partition Manifest state missing"))?;
+        let manifest_len = u64::try_from(PARTITION_MANIFEST_V1_LEN)
+            .map_err(|_| SarError::Overflow("Manifest length"))?;
+        let lfh = manifest_lfh(self.flags, &state.params, manifest_len, false);
+        let lfh_len = u64::try_from(lfh_to_bytes(&lfh, self.flags)?.len())
+            .map_err(|_| SarError::Overflow("Manifest LFH length"))?;
+        let manifest_end = position
+            .checked_add(lfh_len)
+            .and_then(|n| n.checked_add(manifest_len))
+            .ok_or(SarError::Overflow("Partition Manifest end"))?;
+        let mut closing = manifest_end - position;
+        if self.flags.contains(GlobalFlags::NO_INDEX) {
+            return Ok(closing);
+        }
+        // The Manifest is the last indexed LFH; offsets have a fixed width, so
+        // the CD length is linear in the offset count.
+        let cd_len = |offsets: Vec<u64>| -> Result<u64, SarError> {
+            let cd = CentralDictionary {
+                version: SUPPORTED_CD_VERSION,
+                file_count: u64::try_from(offsets.len())
+                    .map_err(|_| SarError::Overflow("offset count"))?,
+                global_crc32: self
+                    .flags
+                    .contains(GlobalFlags::HAS_GLOBAL_CRC32)
+                    .then_some(0),
+                metadata: self.cd_metadata.clone(),
+                offsets,
+            };
+            u64::try_from(write_partition_central_dictionary(&cd, self.flags)?.len())
+                .map_err(|_| SarError::Overflow("CD length"))
+        };
+        let base = cd_len(Vec::new())?;
+        let width = cd_len(vec![0])?
+            .checked_sub(base)
+            .ok_or(SarError::Internal("CD offset width"))?;
+        let count = indexed_before
+            .checked_add(1)
+            .ok_or(SarError::Overflow("indexed entry count"))?;
+        let cd = width
+            .checked_mul(count)
+            .and_then(|n| n.checked_add(base))
+            .ok_or(SarError::Overflow("CD length"))?;
+        let cd_end = manifest_end
+            .checked_add(cd)
+            .ok_or(SarError::Overflow("CD end"))?;
+        let pad = (8 - (cd_end % 8)) % 8;
+        closing = closing
+            .checked_add(cd)
+            .and_then(|n| n.checked_add(pad))
+            .and_then(|n| n.checked_add(8))
+            .ok_or(SarError::Overflow("Partition closing length"))?;
+        Ok(closing)
+    }
+
+    /// Pre-encoding staging check on caller-supplied input.  Runs before any
+    /// transformation allocates, so an oversized Entry (or delta base) is
+    /// refused with nothing written or recorded.
+    pub(super) fn admit_partition_input(&mut self, entry: &EntryInput) -> Result<(), SarError> {
+        let Some(adm) = self.partition.as_ref().and_then(|s| s.admission) else {
+            return Ok(());
+        };
+        let mut largest = entry.payload.len();
+        if let Some(delta) = &entry.delta {
+            largest = largest.max(delta.base.len());
+        }
+        self.check_staging(adm, largest)
+    }
+
+    /// Staging check on the wire payload (patch output for delta Entries)
+    /// before it is copied and encoded.
+    pub(super) fn admit_partition_wire(&mut self, wire_len: usize) -> Result<(), SarError> {
+        let Some(adm) = self.partition.as_ref().and_then(|s| s.admission) else {
+            return Ok(());
+        };
+        self.check_staging(adm, wire_len)
+    }
+
+    /// Staging check on the encoded payload plus the FEC value that is about
+    /// to be derived from it, before the FEC value is allocated and before any
+    /// writer state changes.
+    pub(super) fn admit_partition_encoded(&mut self, encoded_len: usize) -> Result<(), SarError> {
+        let Some(adm) = self.partition.as_ref().and_then(|s| s.admission) else {
+            return Ok(());
+        };
+        let fec_len = match &self.fec {
+            Some(fec) => compute_fec_value_len(fec, encoded_len)?,
+            None => 0,
+        };
+        let staged = encoded_len
+            .checked_add(fec_len)
+            .ok_or(SarError::Overflow("staged Entry length"))?;
+        self.check_staging(adm, staged)
+    }
+
+    fn check_staging(&mut self, adm: PartitionAdmission, len: usize) -> Result<(), SarError> {
+        let len = u64::try_from(len).map_err(|_| SarError::Overflow("staged Entry length"))?;
+        if len > adm.max_entry_bytes {
+            return Err(self.reject_admission("Entry exceeds the staging limit"));
+        }
+        Ok(())
+    }
+
+    /// Admission check for the Global Header; nothing has been written yet.
+    pub(super) fn admit_partition_header(&mut self, header_len: u64) -> Result<(), SarError> {
+        let Some(adm) = self.partition.as_ref().and_then(|s| s.admission) else {
+            return Ok(());
+        };
+        let total = header_len
+            .checked_add(self.partition_closing_len(header_len, 0)?)
+            .ok_or(SarError::Overflow("Partition size"))?;
+        if total > adm.max_partition_bytes {
+            return Err(self.reject_admission(
+                "Partition capacity cannot hold the Global Header and closing structures",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Admission check run before any byte of an Entry is written or recorded.
+    pub(super) fn admit_partition_entry(
+        &mut self,
+        lfh: &LocalFileHeader,
+        entry_len: u64,
+    ) -> Result<(), SarError> {
+        let Some(adm) = self.partition.as_ref().and_then(|s| s.admission) else {
+            return Ok(());
+        };
+        if lfh.entry_mode.is_partition_manifest() {
+            return Ok(());
+        }
+        if entry_len > adm.max_entry_bytes {
+            return Err(self.reject_admission("encoded Entry exceeds the staging limit"));
+        }
+        let entries_after = self
+            .entry_count
+            .checked_add(1)
+            .ok_or(SarError::Overflow("entry count"))?;
+        if entries_after > adm.max_entries {
+            return Err(self.reject_admission("Partition Entry count limit exceeded"));
+        }
+        let new_position = self
+            .position
+            .checked_add(entry_len)
+            .ok_or(SarError::Overflow("archive position"))?;
+        let indexed_after = if is_empty_area(lfh) {
+            self.offsets.len()
+        } else {
+            self.offsets
+                .len()
+                .checked_add(1)
+                .ok_or(SarError::Overflow("indexed entry count"))?
+        };
+        let indexed_after =
+            u64::try_from(indexed_after).map_err(|_| SarError::Overflow("indexed entry count"))?;
+        let total = new_position
+            .checked_add(self.partition_closing_len(new_position, indexed_after)?)
+            .ok_or(SarError::Overflow("Partition size"))?;
+        if total > adm.max_partition_bytes {
+            return Err(self.reject_admission(
+                "Entry does not fit within the Partition capacity with its closing structures",
+            ));
+        }
+        Ok(())
     }
 
     /// Writes the terminal Partition Manifest Entry.
@@ -337,6 +608,9 @@ impl<W: Write> ArchiveWriter<W> {
             .finalize();
         let current_hash = <[u8; 32]>::try_from(digest.as_slice())
             .map_err(|_| SarError::Internal("Partition hash is not 32 bytes"))?;
+        if let Some(state) = &mut self.partition {
+            state.current_hash = Some(current_hash);
+        }
         let committed = self.position;
         let plain = manifest_from_params(&params, committed, current_hash)?
             .encode(PARTITION_MAX_SUPPORTED_COUNT)?;
@@ -344,21 +618,13 @@ impl<W: Write> ArchiveWriter<W> {
         let manifest_len = u64::try_from(PARTITION_MANIFEST_V1_LEN)
             .map_err(|_| SarError::Overflow("Manifest length"))?;
         let is_encrypted = self.flags.contains(GlobalFlags::ENCRYPTED);
-        let mut mode = EntryMode::PARTITION_MANIFEST;
         let mut payload_len = manifest_len;
         if is_encrypted {
-            mode |= EntryMode::ENCRYPTED;
             payload_len = payload_len
                 .checked_add(16)
                 .ok_or(SarError::Overflow("encrypted Manifest length"))?;
         }
-        let mut lfh = LocalFileHeader::minimal_store(Vec::new(), payload_len);
-        lfh.entry_mode = EntryMode::from_bits(mode);
-        lfh.uncompressed_size = manifest_len;
-        if self.flags.contains(GlobalFlags::DEDUPLICATION) {
-            lfh.hash_algo_id = Some(params.hash_algorithm_id);
-        }
-
+        let mut lfh = manifest_lfh(self.flags, &params, payload_len, is_encrypted);
         let payload = if is_encrypted {
             let algo_id = self
                 .encr_algo_id
@@ -392,6 +658,26 @@ impl<W: Write> ArchiveWriter<W> {
         self.write_entry(lfh, lfh_bytes, payload)?;
         Ok(())
     }
+}
+
+/// LFH of the terminal Manifest Entry (payload length given by the caller).
+fn manifest_lfh(
+    flags: GlobalFlags,
+    params: &PartitionManifestParams,
+    payload_len: u64,
+    encrypted: bool,
+) -> LocalFileHeader {
+    let mut mode = EntryMode::PARTITION_MANIFEST;
+    if encrypted {
+        mode |= EntryMode::ENCRYPTED;
+    }
+    let mut lfh = LocalFileHeader::minimal_store(Vec::new(), payload_len);
+    lfh.entry_mode = EntryMode::from_bits(mode);
+    lfh.uncompressed_size = u64::try_from(PARTITION_MANIFEST_V1_LEN).unwrap_or(u64::MAX);
+    if flags.contains(GlobalFlags::DEDUPLICATION) {
+        lfh.hash_algo_id = Some(params.hash_algorithm_id);
+    }
+    lfh
 }
 
 fn manifest_from_params(

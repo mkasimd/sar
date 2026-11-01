@@ -45,7 +45,12 @@ use sar_core::{
 };
 
 mod partition;
+mod partition_writer;
 pub use partition::{PartitionManifestParams, ValidatedPartition, ValidatedPartitionSet};
+pub use partition_writer::{
+    PartitionMemberSummary, PartitionSetSummary, PartitionSetWriter, PartitionSetWriterLimits,
+    PartitionSetWriterOptions, PartitionWriter,
+};
 
 use crate::transform::{
     DecodingPlanV2, EncodingPlanV2, EntryCryptoContext, decode_payload_v2, encode_payload_v2,
@@ -2865,6 +2870,9 @@ impl<W: Write> ArchiveWriter<W> {
             }
             self.track_archive_recovery_bytes(&bytes[recovery_start..])?;
         }
+        self.admit_partition_header(
+            u64::try_from(bytes.len()).map_err(|_| SarError::Overflow("header len"))?,
+        )?;
         self.writer.write_all(&bytes)?;
         if let Some(state) = &mut self.partition {
             state.commit(&bytes);
@@ -2923,6 +2931,7 @@ impl<W: Write> ArchiveWriter<W> {
 
         // Validate metadata vs global flags before encoding anything.
         self.validate_entry_input_metadata(&entry)?;
+        self.admit_partition_input(&entry)?;
 
         // Generate the wire payload: patch bytes for VCDIFF/BSDIFF, target bytes otherwise.
         let wire_payload: Vec<u8> = if let Some(ref delta_opts) = entry.delta {
@@ -2930,6 +2939,7 @@ impl<W: Write> ArchiveWriter<W> {
         } else {
             entry.payload.clone()
         };
+        self.admit_partition_wire(wire_payload.len())?;
 
         // `uncompressed_size` is the decoded size of the stored representation
         // (spec Sections 6.1.2 and 8.4): the patch length for a delta Entry,
@@ -2947,6 +2957,7 @@ impl<W: Write> ArchiveWriter<W> {
                 crypto: None,
             },
         )?;
+        self.admit_partition_encoded(encoded_payload.len())?;
         let is_encrypted = self.flags.contains(GlobalFlags::ENCRYPTED);
         let is_fec = self.fec.is_some();
 
@@ -3082,6 +3093,14 @@ impl<W: Write> ArchiveWriter<W> {
         encoded_payload: Vec<u8>,
     ) -> Result<EntryWritten, SarError> {
         let lfh_offset = self.position;
+        self.admit_partition_entry(
+            &lfh,
+            u64::try_from(lfh_bytes.len())
+                .ok()
+                .zip(u64::try_from(encoded_payload.len()).ok())
+                .and_then(|(a, b)| a.checked_add(b))
+                .ok_or(SarError::Overflow("entry write length"))?,
+        )?;
         self.stream_state = StreamWriteState::NeedPayload;
         self.track_archive_recovery_bytes(&lfh_bytes)?;
         self.track_archive_recovery_bytes(&encoded_payload)?;
@@ -3567,12 +3586,21 @@ impl<W: Write> ArchiveWriter<W> {
     }
 
     /// Finalizes archive and optionally writes CD/Footer.
-    pub fn finish(mut self) -> Result<ArchiveSummary, SarError> {
+    pub fn finish(self) -> Result<ArchiveSummary, SarError> {
+        self.finish_with_commitment().map(|(summary, _)| summary)
+    }
+
+    /// [`Self::finish`] that also reports the Partition commitment computed
+    /// by the writer (Partition writers only) and flushes the sink.
+    pub(crate) fn finish_with_commitment(
+        mut self,
+    ) -> Result<(ArchiveSummary, Option<partition::PartitionCommitment>), SarError> {
         if self.finished {
             self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
         }
         self.emit_global_header_if_needed()?;
+        let manifest_offset = self.position;
         if self.partition.is_some() {
             self.write_partition_manifest()?;
         }
@@ -3623,13 +3651,28 @@ impl<W: Write> ArchiveWriter<W> {
                 .ok_or(SarError::Overflow("archive position after footer"))?;
         }
 
+        let commitment = match &self.partition {
+            Some(state) => {
+                self.writer.flush()?;
+                state
+                    .current_hash()
+                    .map(|current_hash| partition::PartitionCommitment {
+                        current_hash,
+                        manifest_offset,
+                    })
+            }
+            None => None,
+        };
         self.finished = true;
         self.stream_state = StreamWriteState::ArchiveComplete;
-        Ok(ArchiveSummary {
-            entry_count: self.entry_count,
-            archive_size: self.position,
-            indexed: !self.flags.contains(GlobalFlags::NO_INDEX),
-        })
+        Ok((
+            ArchiveSummary {
+                entry_count: self.entry_count,
+                archive_size: self.position,
+                indexed: !self.flags.contains(GlobalFlags::NO_INDEX),
+            },
+            commitment,
+        ))
     }
 }
 

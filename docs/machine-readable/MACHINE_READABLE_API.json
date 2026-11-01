@@ -4555,6 +4555,198 @@
             ]
           },
           {
+            "name": "PartitionSetWriter::new",
+            "description": "Initializes a multi-Partition writer for one Partition Set (plaintext only; encryption and archive recovery are rejected).",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<PartitionSetWriter, SarError>"
+            },
+            "signature": "pub fn new(options: PartitionSetWriterOptions) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::Unsupported",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::partition_set_uuid",
+            "description": "Returns the UUID shared by every member.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "[u8; 16]"
+            },
+            "signature": "pub const fn partition_set_uuid(&self) -> [u8; 16]",
+            "errors": []
+          },
+          {
+            "name": "PartitionSetWriter::next_partition_index",
+            "description": "Returns the index the next member receives.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "u32"
+            },
+            "signature": "pub const fn next_partition_index(&self) -> u32",
+            "errors": []
+          },
+          {
+            "name": "PartitionSetWriter::begin_partition",
+            "description": "Starts the next physical Partition in a caller-supplied sink with an optional capacity upper bound; writes the Global Header.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<PartitionWriter<'_, W>, SarError>"
+            },
+            "signature": "pub fn begin_partition<W: Write>(&mut self, sink: W, capacity: Option<u64>) -> Result<PartitionWriter<'_, W>, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::PartitionMismatch",
+              "SarError::LimitExceeded"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::finish_set",
+            "description": "Completes the Set; succeeds only after the final Partition was finalized. A writer-side claim, not validation.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<PartitionSetSummary, SarError>"
+            },
+            "signature": "pub fn finish_set(self) -> Result<PartitionSetSummary, SarError>",
+            "errors": [
+              "SarError::PartitionMissing",
+              "SarError::Malformed"
+            ]
+          },
+          {
+            "name": "PartitionWriter::partition_index",
+            "description": "Partition Index of the open member.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "u32"
+            },
+            "signature": "pub const fn partition_index(&self) -> u32",
+            "errors": []
+          },
+          {
+            "name": "PartitionWriter::add_entry",
+            "description": "Writes one complete Entry; capacity refusals happen before any output and leave the member usable.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<EntryWritten, SarError>"
+            },
+            "signature": "pub fn add_entry(&mut self, entry: EntryInput) -> Result<EntryWritten, SarError>",
+            "errors": [
+              "SarError::LimitExceeded",
+              "SarError::Io"
+            ]
+          },
+          {
+            "name": "PartitionWriter::finish",
+            "description": "Finalizes the member as a nonfinal Partition (consumes it).",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<PartitionMemberSummary, SarError>"
+            },
+            "signature": "pub fn finish(self) -> Result<PartitionMemberSummary, SarError>",
+            "errors": [
+              "SarError::PartitionMismatch",
+              "SarError::Io"
+            ]
+          },
+          {
+            "name": "PartitionWriter::finish_final",
+            "description": "Finalizes the member as the final Partition, fixing Total Partitions (consumes it).",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<PartitionMemberSummary, SarError>"
+            },
+            "signature": "pub fn finish_final(self) -> Result<PartitionMemberSummary, SarError>",
+            "errors": [
+              "SarError::PartitionMismatch",
+              "SarError::Io"
+            ]
+          },
+          {
             "name": "ArchiveReader::inspect_partition",
             "description": "Validates a source as exactly one physical Partition; consumes the reader. Generic reader paths still reject PARTITIONED_ARCHIVE.",
             "metadata": {
@@ -5611,6 +5803,114 @@
             },
             "kind": "struct",
             "signature": "pub struct PartitionManifestParams { pub partition_set_uuid: [u8; 16], pub partition_index: u32, pub total_partitions: u32, pub final_partition: bool, pub hash_algorithm_id: u8, pub previous_partition_hash: [u8; 32] }"
+          },
+          {
+            "name": "PartitionSetWriterLimits",
+            "description": "Resource limits of PartitionSetWriter.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetWriterLimits { pub max_partitions: u32, pub max_partition_bytes: u64, pub max_aggregate_bytes: u64, pub max_entries_per_partition: u64, pub max_entry_bytes: u64 }"
+          },
+          {
+            "name": "PartitionSetWriterOptions",
+            "description": "Set-wide configuration shared by every member.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetWriterOptions { pub partition_set_uuid: Option<[u8; 16]>, pub known_total: Option<u32>, pub hash_algorithm_id: u8, pub data_area_crc32: bool, pub archive: ArchiveWriterOptions, pub compression: CompressionSettings, pub limits: PartitionSetWriterLimits }"
+          },
+          {
+            "name": "PartitionMemberSummary",
+            "description": "Writer-side facts about one finished member; not a validation result.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionMemberSummary { pub partition_index: u32, pub is_final: bool, pub total_partitions: u32, pub entry_count: u64, pub indexed: bool, pub partition_len: u64, pub committed_content_length: u64, pub previous_partition_hash: [u8; 32], pub current_partition_hash: [u8; 32] }"
+          },
+          {
+            "name": "PartitionSetSummary",
+            "description": "Writer-side facts about a completed Set; not a validation result.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetSummary { pub partition_set_uuid: [u8; 16], pub total_partitions: u32, pub aggregate_bytes: u64 }"
+          },
+          {
+            "name": "PartitionSetWriter",
+            "description": "Sequential multi-Partition Set writer with an explicit, fail-closed state machine.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetWriter { /* private */ }"
+          },
+          {
+            "name": "PartitionWriter",
+            "description": "One open physical Partition; finalizing consumes it, dropping it unfinished fails the Set writer.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionWriter<'a, W: Write> { /* private */ }"
           },
           {
             "name": "ValidatedPartition",
