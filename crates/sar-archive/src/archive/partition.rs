@@ -355,6 +355,20 @@ impl<W: Write> ArchiveWriter<W> {
         Ok(self)
     }
 
+    /// Sets `FILE_FRAGMENTATION` so the Partition may carry archival fragment
+    /// LFHs.  Must be called before the Global Header is emitted.
+    pub(crate) fn with_file_fragmentation(mut self) -> Result<Self, SarError> {
+        if self.finished || self.header_written {
+            return Err(SarError::Malformed(
+                "FILE_FRAGMENTATION must be enabled before the Global Header is emitted",
+            ));
+        }
+        let flags = self.flags | GlobalFlags::FILE_FRAGMENTATION;
+        validate_global_flags(flags)?;
+        self.flags = flags;
+        Ok(self)
+    }
+
     /// Installs pre-publication size bounds.  Plaintext Partitions only.
     pub(crate) fn set_partition_admission(
         &mut self,
@@ -751,6 +765,19 @@ impl<R: Read + Seek> ArchiveReader<R> {
         mut self,
         max_partitions: u32,
     ) -> Result<ValidatedPartition, SarError> {
+        self.inspect_partition_in_place(max_partitions)
+    }
+
+    /// The P1 inspection without consuming the reader.  Every call re-reads
+    /// the Global Header, Footer, CD and the whole committed range, so it is a
+    /// fresh validation of whatever the source currently contains.  On success
+    /// the reader is positioned at the first Entry and its data end is the
+    /// Manifest offset, so [`Self::next_entry`] yields exactly the
+    /// application Entries.
+    pub(super) fn inspect_partition_in_place(
+        &mut self,
+        max_partitions: u32,
+    ) -> Result<ValidatedPartition, SarError> {
         let header = self.read_global_header_inner(true)?;
         if !header.flags.contains(GlobalFlags::PARTITIONED_ARCHIVE) {
             return Err(SarError::FlagConflict(
@@ -801,10 +828,13 @@ impl<R: Read + Seek> ArchiveReader<R> {
         }
 
         let kms = PartitionKmsProfile::from_kms(header.kms.as_ref())?;
+        let file_len = self.file_len;
+        self.data_end = site.offset;
+        self.next_offset = self.header_len;
         Ok(ValidatedPartition {
             manifest,
             manifest_offset: site.offset,
-            partition_len: self.file_len,
+            partition_len: file_len,
             indexed: self.cd.is_some(),
             authentication,
             header_version: header.version,

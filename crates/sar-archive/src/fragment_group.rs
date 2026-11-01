@@ -208,8 +208,13 @@ impl FragmentGroup {
         limits.check_total_pipeline_memory(peak)
     }
 
+    /// Number of fragments held by the group.
+    pub(crate) fn fragment_count(&self) -> usize {
+        self.entries.len()
+    }
+
     /// Returns true when Fragment Indices `0..=LAST_FRAGMENT` are all present.
-    fn is_complete(&self) -> bool {
+    pub(crate) fn is_complete(&self) -> bool {
         self.resolved.is_some()
             || self
                 .entries
@@ -280,7 +285,7 @@ impl FragmentGroup {
         Ok(Some(sparse))
     }
 
-    fn contribution_total(&self) -> Result<u64, SarError> {
+    pub(crate) fn contribution_total(&self) -> Result<u64, SarError> {
         let mut gathered: u64 = 0;
         for entry in &self.entries {
             gathered = gathered
@@ -396,6 +401,8 @@ struct GroupState {
     /// state is kept (without payloads) after emission so that a later
     /// fragment of the same group is still rejected.
     complete: bool,
+    /// A `LAST_FRAGMENT` LFH has been seen; nothing may follow it.
+    terminal_seen: bool,
 }
 
 enum Slot {
@@ -672,6 +679,7 @@ impl FragmentGroupCollector {
                     retained: 0,
                     aux: 0,
                     complete: false,
+                    terminal_seen: false,
                 },
             );
         }
@@ -727,9 +735,9 @@ impl FragmentGroupCollector {
                 ));
             }
         }
-        if group.complete {
+        if group.terminal_seen {
             return Err(SarError::MetadataConflict(
-                "fragment follows the LAST_FRAGMENT of a complete fragment group",
+                "fragment follows the LAST_FRAGMENT of its fragment group",
             ));
         }
 
@@ -748,6 +756,7 @@ impl FragmentGroupCollector {
             .ok_or(SarError::Overflow("fragment group retained byte count"))?;
 
         if entry.metadata.is_last_fragment {
+            group.terminal_seen = true;
             // The terminal LFH carries the authoritative CRC32 and Content
             // Hash; an all-zero terminal value is still authoritative.
             group.terminal_crc32 = entry.header.file_crc32;

@@ -4658,7 +4658,53 @@
             "signature": "pub fn finish_set(self) -> Result<PartitionSetSummary, SarError>",
             "errors": [
               "SarError::PartitionMissing",
+              "SarError::FragmentGap",
               "SarError::Malformed"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::finish_set_with_fragments",
+            "description": "Completes the Set like finish_set and also reports fragment group and fragment counts; a writer-side claim, not validation. Open fragment groups fail with SAR_ERR_FRAGMENT_GAP.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<FragmentedPartitionSetSummary, SarError>"
+            },
+            "signature": "pub fn finish_set_with_fragments(self) -> Result<FragmentedPartitionSetSummary, SarError>",
+            "errors": [
+              "SarError::PartitionMissing",
+              "SarError::FragmentGap",
+              "SarError::Malformed"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::with_fragmentation",
+            "description": "Consuming builder enabling fragment writing with FragmentWriterLimits; must precede the first member so FILE_FRAGMENTATION is set on every Partition header.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<Self, SarError>"
+            },
+            "signature": "pub fn with_fragmentation(self, limits: FragmentWriterLimits) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::LimitExceeded"
             ]
           },
           {
@@ -4843,6 +4889,195 @@
               "SarError::InvalidVersion",
               "SarError::LimitExceeded",
               "SarError::Overflow"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::begin_fragment_group",
+            "description": "Registers a Set-scoped Fragment ID and its group-invariant metadata; requires PartitionSetWriter::with_fragmentation.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn begin_fragment_group(&mut self, spec: FragmentGroupSpec) -> Result<(), SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded",
+              "SarError::Unsupported"
+            ]
+          },
+          {
+            "name": "PartitionWriter::begin_fragment_group",
+            "description": "Registers a fragment group through the open member.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn begin_fragment_group(&mut self, spec: FragmentGroupSpec) -> Result<(), SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded",
+              "SarError::Unsupported"
+            ]
+          },
+          {
+            "name": "PartitionWriter::add_fragment",
+            "description": "Appends the next Fragment Index contribution of an open group to this member as one complete LFH structure.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<EntryWritten, SarError>"
+            },
+            "signature": "pub fn add_fragment(&mut self, fragment_id: u32, contribution: Vec<u8>, is_last: bool) -> Result<EntryWritten, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded",
+              "SarError::Unsupported",
+              "SarError::FragmentGap"
+            ]
+          },
+          {
+            "name": "PartitionSetFragmentReader::open",
+            "description": "P1-inspects every source, P2-validates the complete Set and takes ownership of the sources in Partition Index order.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "Result<PartitionSetFragmentReader<R>, SarError>"
+            },
+            "signature": "pub fn open(sources: Vec<R>, options: PartitionSetFragmentOptions) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::PartitionMissing",
+              "SarError::PartitionMismatch",
+              "SarError::Unsupported",
+              "SarError::HashMismatch"
+            ]
+          },
+          {
+            "name": "PartitionSetFragmentReader::partition_set_uuid",
+            "description": "Partition Set UUID shared by all members.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "[u8; 16]"
+            },
+            "signature": "pub const fn partition_set_uuid(&self) -> [u8; 16]",
+            "errors": []
+          },
+          {
+            "name": "PartitionSetFragmentReader::partitions",
+            "description": "P1 results in Partition Index order.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "&[ValidatedPartition]"
+            },
+            "signature": "pub fn partitions(&self) -> &[ValidatedPartition]",
+            "errors": []
+          },
+          {
+            "name": "PartitionSetFragmentReader::validate_fragment_groups",
+            "description": "Re-inspects the sources and validates fragment-group structure over the complete Set without reconstructing content.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "Result<PartitionSetFragmentReport, SarError>"
+            },
+            "signature": "pub fn validate_fragment_groups(&mut self) -> Result<PartitionSetFragmentReport, SarError>",
+            "errors": [
+              "SarError::MetadataConflict",
+              "SarError::Malformed",
+              "SarError::FragmentGap",
+              "SarError::LimitExceeded",
+              "SarError::PartitionMismatch"
+            ]
+          },
+          {
+            "name": "PartitionSetFragmentReader::reassemble",
+            "description": "Strict bounded reassembly of plaintext literal fragments (per-fragment compression) with final CRC32/Content Hash verification; unsupported group-wide stages fail with Unsupported.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "Result<PartitionSetFragmentReport, SarError>"
+            },
+            "signature": "pub fn reassemble(&mut self, sink: impl FnMut(PartitionLogicalEntry) -> Result<(), SarError>) -> Result<PartitionSetFragmentReport, SarError>",
+            "errors": [
+              "SarError::Unsupported",
+              "SarError::CrcMismatch",
+              "SarError::HashMismatch",
+              "SarError::FragmentGap",
+              "SarError::PartitionMismatch",
+              "SarError::LimitExceeded"
             ]
           }
         ],
@@ -5823,6 +6058,24 @@
             "signature": "pub struct PartitionSetWriterLimits { pub max_partitions: u32, pub max_partition_bytes: u64, pub max_aggregate_bytes: u64, pub max_entries_per_partition: u64, pub max_entry_bytes: u64 }"
           },
           {
+            "name": "FragmentWriterLimits",
+            "description": "Fragment-writing limits supplied through PartitionSetWriter::with_fragmentation; separate from PartitionSetWriterLimits to keep its P3 layout.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentWriterLimits { pub max_fragment_groups: u32, pub max_open_fragment_groups: u32, pub max_fragments_per_group: u32, pub max_fragments_total: u64, pub max_group_logical_bytes: u64, pub max_total_fragment_bytes: u64 }"
+          },
+          {
             "name": "PartitionSetWriterOptions",
             "description": "Set-wide configuration shared by every member.",
             "metadata": {
@@ -5875,6 +6128,24 @@
             },
             "kind": "struct",
             "signature": "pub struct PartitionSetSummary { pub partition_set_uuid: [u8; 16], pub total_partitions: u32, pub aggregate_bytes: u64 }"
+          },
+          {
+            "name": "FragmentedPartitionSetSummary",
+            "description": "Writer-side Set summary plus fragment statistics from finish_set_with_fragments; not a validation result.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentedPartitionSetSummary { pub summary: PartitionSetSummary, pub fragment_groups: u32, pub fragments: u64 }"
           },
           {
             "name": "PartitionSetWriter",
@@ -5947,6 +6218,132 @@
             },
             "kind": "struct",
             "signature": "pub struct ValidatedPartitionSet { .. }"
+          },
+          {
+            "name": "FragmentGroupSpec",
+            "description": "Group-invariant metadata of one cross-Partition fragment group; Index-0 Name/Path are written once, Class G values in every fragment.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentGroupSpec { pub fragment_id: u32, pub name: String, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<[u64; 3]>, pub is_hidden: bool, pub loss_tolerant: bool, pub stream_id: Option<u16>, pub hash_algo_id: Option<u8>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]> }"
+          },
+          {
+            "name": "PartitionSetFragmentLimits",
+            "description": "Limits of the P4 fragment walk (groups, fragments, aggregate bytes, group logical bytes).",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentLimits { pub max_fragment_groups: u32, pub max_fragments_total: u64, pub max_fragments_per_group: u32, pub max_total_fragment_bytes: u64, pub max_group_logical_bytes: u64 }"
+          },
+          {
+            "name": "PartitionSetFragmentOptions",
+            "description": "Reader options, P2 Set limits and P4 fragment limits for PartitionSetFragmentReader.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentOptions { pub archive: ArchiveReaderOptions, pub set: PartitionSetLimits, pub fragments: PartitionSetFragmentLimits }"
+          },
+          {
+            "name": "FragmentGroupStructure",
+            "description": "Structure of one validated fragment group; says nothing about content integrity.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentGroupStructure { pub fragment_id: u32, pub name: String, pub fragments: u32, pub first_partition: u32, pub last_partition: u32, pub logical_bytes: u64 }"
+          },
+          {
+            "name": "PartitionSetFragmentReport",
+            "description": "Result of a P4 walk; distinct from ValidatedPartitionSet and never an authenticity claim.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentReport { pub partition_set_uuid: [u8; 16], pub partitions: u32, pub logical_entries: u64, pub groups: Vec<FragmentGroupStructure>, pub reconstructed: bool }"
+          },
+          {
+            "name": "PartitionLogicalEntry",
+            "description": "A fully reconstructed logical Entry delivered to the reassembly sink.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionLogicalEntry { pub name: String, pub fragment_id: Option<u32>, pub fragment_count: u32, pub metadata: EntryMetadata, pub data: Vec<u8> }"
+          },
+          {
+            "name": "PartitionSetFragmentReader",
+            "description": "Owns P1-inspected sources of one complete Partition Set; validates fragment groups and performs bounded strict reassembly.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentReader<R: Read + Seek> { /* private */ }"
           }
         ],
         "constants": [

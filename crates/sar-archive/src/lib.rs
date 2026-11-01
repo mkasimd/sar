@@ -34,9 +34,12 @@ pub use archive::{
     ArchiveReader, ArchiveReaderOptions, ArchiveRecoverySettings, ArchiveSummary, ArchiveWriter,
     ArchiveWriterOptions, CompressionSettings, ControlEntryPolicy, DeltaWriteOptions,
     EncryptionSettings, EntryInput, EntryMetadata, EntryReader, EntryWritten, FecSettings,
-    LfhSizeFieldPolicy, LogicalFile, PartitionManifestParams, PartitionMemberSummary,
-    PartitionSetSummary, PartitionSetWriter, PartitionSetWriterLimits, PartitionSetWriterOptions,
-    PartitionWriter, PayloadAuditPolicy, SparseWriteOptions, StreamWriteState, ValidatedPartition,
+    FragmentGroupSpec, FragmentGroupStructure, FragmentWriterLimits, FragmentedPartitionSetSummary,
+    LfhSizeFieldPolicy, LogicalFile, PartitionLogicalEntry, PartitionManifestParams,
+    PartitionMemberSummary, PartitionSetFragmentLimits, PartitionSetFragmentOptions,
+    PartitionSetFragmentReader, PartitionSetFragmentReport, PartitionSetSummary,
+    PartitionSetWriter, PartitionSetWriterLimits, PartitionSetWriterOptions, PartitionWriter,
+    PayloadAuditPolicy, SparseWriteOptions, StreamWriteState, ValidatedPartition,
     ValidatedPartitionSet, VerificationReport,
 };
 pub use profile::{ComplianceProfile, ProfileReport, validate_archive_profile};
