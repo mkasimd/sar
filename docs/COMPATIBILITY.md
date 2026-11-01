@@ -134,9 +134,12 @@ adds metadata-only Partition Set validation (`sar_partition::assess_partition_se
 `sar_archive::ValidatedPartitionSet`): identity, canonical order, completeness,
 predecessor links, equivalent replicas, Global Header and KMS-configuration
 consistency and limits. Results are not pinned to their sources and do not
-authenticate the logical set. Cross-Partition fragmentation/CDC, per-Partition
-KMS orchestration, multi-member writing and extraction are not implemented
-(M13-BOUNDARY-003 remains open).
+authenticate the logical set. SAR-M13b3-PARTITION-P3-IMPLEMENTATION-001 adds a plaintext multi-Partition
+**writer** (`sar_archive::PartitionSetWriter`) producing complete Sets of separate
+members from caller-directed boundaries; it does not split Entries, reconstruct
+or extract across Partitions, or support encryption. Cross-Partition
+fragmentation/CDC, per-Partition KMS orchestration and Partition Set
+extraction are not implemented (M13-BOUNDARY-003 remains open).
 
 All generic archive, stream, recovery, transcript, CLI and Central Dictionary
 entry points still reject `PARTITIONED_ARCHIVE` with `SAR_ERR_UNSUPPORTED`.

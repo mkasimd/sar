@@ -17,6 +17,7 @@ sar-delta = { path = "../sar-delta" }
 sar-fragmentation = { path = "../sar-fragmentation" }
 sar-sparse = { path = "../sar-sparse" }
 sar-partition = { path = "../sar-partition" }
+getrandom.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

@@ -530,6 +530,7 @@ name = "sar-archive"
 version = "0.1.0"
 dependencies = [
  "crc32fast",
+ "getrandom 0.4.3",
  "sar-cdc",
  "sar-compression",
  "sar-core",
