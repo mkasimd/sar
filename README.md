@@ -155,7 +155,7 @@ crates/
   sar-fragmentation/   fragment semantic validation and reassembly
   sar-sparse/          sparse extent validation and sparse reconstruction
   sar-loss-tolerant/   degraded reconstruction policy helpers
-  sar-partition/       Partition status types and metadata-only Partition Set validation (writer in sar-archive; extraction deferred)
+  sar-partition/       Partition status types and metadata-only Partition Set validation (writer, cross-Partition fragment writer/reader in sar-archive; extraction deferred)
   sar-stream/          stateful streaming session semantics and transcript validation/recording
   sar-transport/       transport abstraction, TCP binding, QUIC binding
   sar-cli/             command-line tool

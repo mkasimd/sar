@@ -14,7 +14,7 @@
     {
       "name": "sar-cdc",
       "path": "crates/sar-cdc",
-      "description": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0 Milestone 9a; stored CDC metadata is authoritative for parsing, while FASTCDC boundary-regeneration interoperability remains implementation-defined where the spec is incomplete.",
+      "description": "Content-defined chunking (CDC) algorithm and data model for SAR Protocol v1.0; stored CDC metadata is authoritative for parsing, while FASTCDC boundary-regeneration interoperability remains implementation-defined where the spec is incomplete.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -1540,7 +1540,7 @@
           },
           {
             "name": "global_header_flags_bytes",
-            "description": "Validate the Global Header version and Global Flags, then return the exact 12-byte magic/version/reserved/Flags-Size/flags prefix used by AEAD/AAD integration. No longer the AEAD AAD prefix: WP-6 authenticates the complete raw encoded Global Header.",
+            "description": "Validate the Global Header version and Global Flags, then return the exact 12-byte magic/version/reserved/Flags-Size/flags prefix. This prefix is not the AEAD AAD; AEAD authenticates the complete raw encoded Global Header.",
             "metadata": {
               "since_milestone": "5",
               "returns": "Result<Vec<u8>, SarError>",
@@ -1603,7 +1603,7 @@
           },
           {
             "name": "parse_central_dictionary",
-            "description": "Parse a central dictionary from bytes. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred).",
+            "description": "Parse a central dictionary from bytes. Returns Unsupported when PARTITIONED_ARCHIVE is set (Partition-local dictionaries are parsed by parse_partition_central_dictionary).",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<(CentralDictionary, usize), SarError>",
@@ -1691,7 +1691,7 @@
           },
           {
             "name": "write_central_dictionary",
-            "description": "Serialize a central dictionary. Returns Unsupported when PARTITIONED_ARCHIVE is set (partition processing is deferred).",
+            "description": "Serialize a central dictionary. Returns Unsupported when PARTITIONED_ARCHIVE is set (Partition-local dictionaries are written by write_partition_central_dictionary).",
             "metadata": {
               "since_milestone": "2",
               "returns": "Result<Vec<u8>, SarError>",
@@ -2989,7 +2989,7 @@
           },
           {
             "name": "ResourceLimits",
-            "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. M13b WP-6 adds max_pbkdf2_iterations, max_kdf_salt_bytes, max_argon2_memory_kib, max_argon2_time_cost and max_argon2_parallelism; defaults (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) admit the mandatory interoperable KDF ranges with a 2-4x margin and unlimited() disables them. max_loss_tolerant_gap is retained but currently inactive: no reassembly path consults it and it never authorizes zero-filling fragment gaps.",
+            "description": "Unified resource-limit configuration threaded through all parsing and reconstruction paths, including CDC map/recipe metadata limits. Configured limits are the primary protection against allocation-based DoS. Includes the KDF limits max_pbkdf2_iterations, max_kdf_salt_bytes, max_argon2_memory_kib, max_argon2_time_cost and max_argon2_parallelism; defaults (PBKDF2 2000000 iterations, 64-byte salt, Argon2 262144 KiB / time 6 / parallelism 8) admit the mandatory interoperable KDF ranges with a 2-4x margin and unlimited() disables them. max_loss_tolerant_gap is retained but currently inactive: no reassembly path consults it and it never authorizes zero-filling fragment gaps.",
             "metadata": {
               "safety_notes": [
                 "All archive-declared sizes and counts are attacker-controlled; ResourceLimits enforces checked preflight before any dangerous allocation.",
@@ -4658,7 +4658,53 @@
             "signature": "pub fn finish_set(self) -> Result<PartitionSetSummary, SarError>",
             "errors": [
               "SarError::PartitionMissing",
+              "SarError::FragmentGap",
               "SarError::Malformed"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::finish_set_with_fragments",
+            "description": "Completes the Set like finish_set and also reports fragment group and fragment counts; a writer-side claim, not validation. Open fragment groups fail with SAR_ERR_FRAGMENT_GAP.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<FragmentedPartitionSetSummary, SarError>"
+            },
+            "signature": "pub fn finish_set_with_fragments(self) -> Result<FragmentedPartitionSetSummary, SarError>",
+            "errors": [
+              "SarError::PartitionMissing",
+              "SarError::FragmentGap",
+              "SarError::Malformed"
+            ]
+          },
+          {
+            "name": "PartitionSetWriter::with_fragmentation",
+            "description": "Consuming builder enabling fragment writing with FragmentWriterLimits; must precede the first member so FILE_FRAGMENTATION is set on every Partition header.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<Self, SarError>"
+            },
+            "signature": "pub fn with_fragmentation(self, limits: FragmentWriterLimits) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::LimitExceeded"
             ]
           },
           {
@@ -4844,6 +4890,195 @@
               "SarError::LimitExceeded",
               "SarError::Overflow"
             ]
+          },
+          {
+            "name": "PartitionSetWriter::begin_fragment_group",
+            "description": "Registers a Set-scoped Fragment ID and its group-invariant metadata; requires PartitionSetWriter::with_fragmentation.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn begin_fragment_group(&mut self, spec: FragmentGroupSpec) -> Result<(), SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded",
+              "SarError::Unsupported"
+            ]
+          },
+          {
+            "name": "PartitionWriter::begin_fragment_group",
+            "description": "Registers a fragment group through the open member.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<(), SarError>"
+            },
+            "signature": "pub fn begin_fragment_group(&mut self, spec: FragmentGroupSpec) -> Result<(), SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded",
+              "SarError::Unsupported"
+            ]
+          },
+          {
+            "name": "PartitionWriter::add_fragment",
+            "description": "Appends the next Fragment Index contribution of an open group to this member as one complete LFH structure.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs",
+              "returns": "Result<EntryWritten, SarError>"
+            },
+            "signature": "pub fn add_fragment(&mut self, fragment_id: u32, contribution: Vec<u8>, is_last: bool) -> Result<EntryWritten, SarError>",
+            "errors": [
+              "SarError::Malformed",
+              "SarError::MetadataConflict",
+              "SarError::FlagConflict",
+              "SarError::LimitExceeded",
+              "SarError::Unsupported",
+              "SarError::FragmentGap"
+            ]
+          },
+          {
+            "name": "PartitionSetFragmentReader::open",
+            "description": "Opens a complete Partition Set from the supplied physical member sources. Validates each member's structure and content commitment, checks Set membership and hash linkage, and retains the member sources in ascending Partition Index order. Rejects incomplete Sets (SAR_ERR_PARTITION_MISSING), replicas or mixed Sets (SAR_ERR_PARTITION_MISMATCH) and encrypted or KMS-protected members (SAR_ERR_UNSUPPORTED). Partition hash linkage is unkeyed and does not authenticate the Set.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "Result<PartitionSetFragmentReader<R>, SarError>"
+            },
+            "signature": "pub fn open(sources: Vec<R>, options: PartitionSetFragmentOptions) -> Result<Self, SarError>",
+            "errors": [
+              "SarError::PartitionMissing",
+              "SarError::PartitionMismatch",
+              "SarError::Unsupported",
+              "SarError::HashMismatch"
+            ]
+          },
+          {
+            "name": "PartitionSetFragmentReader::partition_set_uuid",
+            "description": "Partition Set UUID shared by all members.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "[u8; 16]"
+            },
+            "signature": "pub const fn partition_set_uuid(&self) -> [u8; 16]",
+            "errors": []
+          },
+          {
+            "name": "PartitionSetFragmentReader::partitions",
+            "description": "Returns the locally validated physical Partition descriptors in ascending Partition Index order.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "&[ValidatedPartition]"
+            },
+            "signature": "pub fn partitions(&self) -> &[ValidatedPartition]",
+            "errors": []
+          },
+          {
+            "name": "PartitionSetFragmentReader::validate_fragment_groups",
+            "description": "Re-inspects the sources and validates fragment-group structure over the complete Set without reconstructing content.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "Result<PartitionSetFragmentReport, SarError>"
+            },
+            "signature": "pub fn validate_fragment_groups(&mut self) -> Result<PartitionSetFragmentReport, SarError>",
+            "errors": [
+              "SarError::MetadataConflict",
+              "SarError::Malformed",
+              "SarError::FragmentGap",
+              "SarError::LimitExceeded",
+              "SarError::PartitionMismatch"
+            ]
+          },
+          {
+            "name": "PartitionSetFragmentReader::reassemble",
+            "description": "Strict bounded reassembly of plaintext literal fragments (per-fragment compression) with final CRC32/Content Hash verification; unsupported group-wide stages fail with Unsupported.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs",
+              "returns": "Result<PartitionSetFragmentReport, SarError>"
+            },
+            "signature": "pub fn reassemble(&mut self, sink: impl FnMut(PartitionLogicalEntry) -> Result<(), SarError>) -> Result<PartitionSetFragmentReport, SarError>",
+            "errors": [
+              "SarError::Unsupported",
+              "SarError::CrcMismatch",
+              "SarError::HashMismatch",
+              "SarError::FragmentGap",
+              "SarError::PartitionMismatch",
+              "SarError::LimitExceeded"
+            ]
           }
         ],
         "types": [
@@ -4963,7 +5198,7 @@
           },
           {
             "name": "ArchiveWriterOptions",
-            "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. New in M11a: with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. New in M11a.1: lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`). WP-6 adds limits (ResourceLimits, default ResourceLimits::default()) applied to KDF work; Content Hash is generated for every DEDUPLICATION Entry (BLAKE3-256, holes included for sparse Entries).",
+            "description": "Writer options for indexing, sparse, encryption, Selective FEC, and archive-level Recovery TLV generation. archive_recovery is indexed-only, sets HAS_GLOBAL_EC plus OPT_PRESENT before the Global Header is emitted, and rejects no_index=true. LFH Selective FEC and archive-level Recovery TLV are separate wire-format features. with_path, with_permissions, with_uid_gid, with_timestamps, with_per_file_crc, with_content_hash, with_symlinks enable corresponding GlobalFlags and allow the matching EntryInput fields. lfh_size_field_policy controls LFH size-field layout policy (`Auto`/`Force32`/`Force64`). limits (ResourceLimits, default ResourceLimits::default()) is applied to KDF work; Content Hash is generated for every DEDUPLICATION Entry (BLAKE3-256, holes included for sparse Entries).",
             "metadata": {
               "since_milestone": "3",
               "stability": "stable",
@@ -5001,7 +5236,7 @@
           },
           {
             "name": "ArchiveRecoverySettings",
-            "description": "Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary. Current repair APIs for this archive-level recovery metadata are bounded in-memory APIs; streaming repair and external-storage-backed repair are future work.",
+            "description": "Writer-side archive-level RECOVERY TLV configuration. The writer uses these settings during finish() to generate one Central Dictionary RECOVERY TLV over the protected range from the first Global Flags byte through the final byte before the Central Dictionary. Repair APIs for this archive-level recovery metadata are bounded in-memory APIs; streaming repair and external-storage-backed repair are not provided.",
             "metadata": {
               "since_milestone": "8",
               "stability": "stable",
@@ -5102,7 +5337,7 @@
           },
           {
             "name": "EntryMetadata",
-            "description": "Complete metadata for a parsed archive entry. Includes all LFH fields, M11a presence-model fields, and M11b filesystem metadata FieldPresence fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but semantically inactive), PresentActive(T) (global flag set and active). New in M11b: path_presence (HAS_PATH), permissions_presence (HAS_PERMS), owner_presence (EXT_UID_GID), timestamps_presence (EXT_TIME), and symlink_target decoded from symlink payload bytes. Symlink target payload is validated as strict UTF-8; invalid UTF-8 is rejected (not lossy). Zero values are preserved and never collapsed to Absent. kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value. uncompressed_size is the decoded contribution length of this physical Entry (spec 6.1.2): for an unfragmented delta Entry it is the decoded patch representation size, never the patch output size.",
+            "description": "Complete metadata for a parsed archive entry. Includes all LFH fields, the presence-model fields, and the filesystem metadata FieldPresence fields. FieldPresence<T> fields distinguish: Absent (global flag not set), PresentInactive(T) (global flag set but semantically inactive), PresentActive(T) (global flag set and active). Filesystem metadata fields: path_presence (HAS_PATH), permissions_presence (HAS_PERMS), owner_presence (EXT_UID_GID), timestamps_presence (EXT_TIME), and symlink_target decoded from symlink payload bytes. Symlink target payload is validated as strict UTF-8; invalid UTF-8 is rejected (not lossy). Zero values are preserved and never collapsed to Absent. kind is derived from entry mode bits. raw_entry_mode preserves the raw wire value. uncompressed_size is the decoded contribution length of this physical Entry (spec 6.1.2): for an unfragmented delta Entry it is the decoded patch representation size, never the patch output size.",
             "metadata": {
               "since_milestone": "9a",
               "stability": "stable",
@@ -5259,7 +5494,7 @@
           },
           {
             "name": "ComplianceProfile",
-            "description": "Repository policy preset selector. The variants are not automatically the normative Section 12 Compliance Profiles and selecting one is not a Compliance Profile claim; no complete Section 12 profile is currently claimed. MinimalInteroperableArchive is a legacy preset that rejects encrypted archives and is not the Section 12.2 Minimal Archive profile; Standard is a placeholder. Alignment with Section 12 belongs to M13b.4.",
+            "description": "Repository policy preset selector. The variants are not automatically the normative Section 12 Compliance Profiles and selecting one is not a Compliance Profile claim; no complete Section 12 profile is currently claimed. MinimalInteroperableArchive is a legacy preset that rejects encrypted archives and is not the Section 12.2 Minimal Archive profile; Standard is a placeholder.",
             "metadata": {
               "since_milestone": "3",
               "stability": "experimental",
@@ -5582,7 +5817,7 @@
           {
             "name": "EntryErasure",
             "kind": "struct",
-            "description": "Per-entry erasure specification (reserved for future entry-level repair). Currently not used in archive-level repair.",
+            "description": "Per-entry erasure specification. Reserved: not used by archive-level repair.",
             "use_for": "ErasureInput field for future selective-FEC entry-level repair.",
             "notes": [
               "Not used in current archive-level repair; included for future expansion.",
@@ -5659,7 +5894,7 @@
           {
             "name": "ConformanceManifest",
             "kind": "struct",
-            "description": "Top-level conformance test vector manifest (M12a). Describes expected archive entries, transform expectations, error expectations, and profile/outcome expectations for conformance test vectors.",
+            "description": "Top-level conformance test vector manifest. Describes expected archive entries, transform expectations, error expectations, and profile/outcome expectations for conformance test vectors.",
             "use_for": "Deserializing conformance test vector manifests for conformance check workflows.",
             "notes": [
               "Accessible via sar_archive::conformance::ConformanceManifest. Not re-exported at crate root.",
@@ -5823,6 +6058,24 @@
             "signature": "pub struct PartitionSetWriterLimits { pub max_partitions: u32, pub max_partition_bytes: u64, pub max_aggregate_bytes: u64, pub max_entries_per_partition: u64, pub max_entry_bytes: u64 }"
           },
           {
+            "name": "FragmentWriterLimits",
+            "description": "Resource limits for fragment-group creation and fragment writing, including group counts, fragment counts and byte budgets. Supplied to PartitionSetWriter::with_fragmentation.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentWriterLimits { pub max_fragment_groups: u32, pub max_open_fragment_groups: u32, pub max_fragments_per_group: u32, pub max_fragments_total: u64, pub max_group_logical_bytes: u64, pub max_total_fragment_bytes: u64 }"
+          },
+          {
             "name": "PartitionSetWriterOptions",
             "description": "Set-wide configuration shared by every member.",
             "metadata": {
@@ -5875,6 +6128,24 @@
             },
             "kind": "struct",
             "signature": "pub struct PartitionSetSummary { pub partition_set_uuid: [u8; 16], pub total_partitions: u32, pub aggregate_bytes: u64 }"
+          },
+          {
+            "name": "FragmentedPartitionSetSummary",
+            "description": "Writer-side Set summary plus fragment statistics from finish_set_with_fragments; not a validation result.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentedPartitionSetSummary { pub summary: PartitionSetSummary, pub fragment_groups: u32, pub fragments: u64 }"
           },
           {
             "name": "PartitionSetWriter",
@@ -5947,6 +6218,132 @@
             },
             "kind": "struct",
             "signature": "pub struct ValidatedPartitionSet { .. }"
+          },
+          {
+            "name": "FragmentGroupSpec",
+            "description": "Group-invariant metadata of one cross-Partition fragment group; Index-0 Name/Path are written once, Class G values in every fragment.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_writer",
+              "path": "src/archive/partition_writer.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentGroupSpec { pub fragment_id: u32, pub name: String, pub path: Option<String>, pub permissions: Option<u16>, pub uid_gid: Option<u32>, pub timestamps: Option<[u64; 3]>, pub is_hidden: bool, pub loss_tolerant: bool, pub stream_id: Option<u16>, pub hash_algo_id: Option<u8>, pub file_crc32: Option<u32>, pub content_hash: Option<[u8; 32]> }"
+          },
+          {
+            "name": "PartitionSetFragmentLimits",
+            "description": "Resource limits for fragment-group validation and reassembly over a Partition Set: distinct Fragment IDs, fragment counts, aggregate encoded payload bytes and per-group Fragment Reassembly Sequence length. Each limit is checked before the corresponding allocation or expansion.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentLimits { pub max_fragment_groups: u32, pub max_fragments_total: u64, pub max_fragments_per_group: u32, pub max_total_fragment_bytes: u64, pub max_group_logical_bytes: u64 }"
+          },
+          {
+            "name": "PartitionSetFragmentOptions",
+            "description": "Options for PartitionSetFragmentReader: per-member reader options and resource limits, Partition Set validation limits, and fragment-group limits.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentOptions { pub archive: ArchiveReaderOptions, pub set: PartitionSetLimits, pub fragments: PartitionSetFragmentLimits }"
+          },
+          {
+            "name": "FragmentGroupStructure",
+            "description": "Structure of one validated fragment group; says nothing about content integrity.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct FragmentGroupStructure { pub fragment_id: u32, pub name: String, pub fragments: u32, pub first_partition: u32, pub last_partition: u32, pub logical_bytes: u64 }"
+          },
+          {
+            "name": "PartitionSetFragmentReport",
+            "description": "Result of a fragment-group walk over a complete Partition Set: the structure of each fragment group and, after reassembly, whether content was reconstructed. Distinct from ValidatedPartitionSet; it makes no claim about Partition Set authenticity.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentReport { pub partition_set_uuid: [u8; 16], pub partitions: u32, pub logical_entries: u64, pub groups: Vec<FragmentGroupStructure>, pub reconstructed: bool }"
+          },
+          {
+            "name": "PartitionLogicalEntry",
+            "description": "A fully reconstructed logical Entry delivered to the reassembly sink.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionLogicalEntry { pub name: String, pub fragment_id: Option<u32>, pub fragment_count: u32, pub metadata: EntryMetadata, pub data: Vec<u8> }"
+          },
+          {
+            "name": "PartitionSetFragmentReader",
+            "description": "Reader over the physical member sources of one complete Partition Set. Retains the sources in ascending Partition Index order, validates fragment-group structure over the Set, and performs bounded strict reassembly. Sources are re-inspected on each operation and compared with the recorded validation results, which detects changes but is not an atomic snapshot.",
+            "metadata": {
+              "since_milestone": "13b.3",
+              "stability": "experimental",
+              "implemented": true,
+              "visibility": "public",
+              "ffi": {
+                "candidate": false,
+                "readiness": "not_applicable"
+              },
+              "module": "archive/partition_fragments",
+              "path": "src/archive/partition_fragments.rs"
+            },
+            "kind": "struct",
+            "signature": "pub struct PartitionSetFragmentReader<R: Read + Seek> { /* private */ }"
           }
         ],
         "constants": [
@@ -6009,7 +6406,7 @@
     {
       "name": "sar-crypto",
       "path": "crates/sar-crypto",
-      "description": "Hashing, AEAD, KMS parsing, key-provider abstraction, zeroizing secret helpers, and TLS_EXPORTER KMS mode types/context encoding (M10e).",
+      "description": "Hashing, AEAD, KMS parsing, key-provider abstraction, zeroizing secret helpers, and TLS_EXPORTER KMS mode types/context encoding.",
       "status": "partial",
       "api": {
         "functions": [
@@ -6485,7 +6882,7 @@
         "types": [
           {
             "name": "SarCryptoError",
-            "description": "Error type for crypto primitives and KMS helpers. WP-6 adds KeyRejected (SAR_ERR_KEY_REJECTED) and LimitExceeded (SAR_ERR_LIMIT_EXCEEDED); reserved nonce bytes map to ReservedValue and PLAINTEXT+IS_ENCRYPTED to FlagConflict.",
+            "description": "Error type for crypto primitives and KMS helpers. Includes KeyRejected (SAR_ERR_KEY_REJECTED) and LimitExceeded (SAR_ERR_LIMIT_EXCEEDED); reserved nonce bytes map to ReservedValue and PLAINTEXT+IS_ENCRYPTED to FlagConflict.",
             "metadata": {
               "since_milestone": "5",
               "stability": "stable",
@@ -7712,7 +8109,7 @@
           },
           {
             "name": "PATCH_ALGO_VCDIFF",
-            "description": "Algorithm ID for VCDIFF (0x01). Assigned; application implemented per RFC 3284 (M9b Delta pass). Explicit base bytes required via ArchiveReaderOptions.delta_base.",
+            "description": "Algorithm ID for VCDIFF (0x01). Assigned; applied per RFC 3284. Explicit base bytes required via ArchiveReaderOptions.delta_base.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -7752,7 +8149,7 @@
           },
           {
             "name": "PATCH_ALGO_ZSTD_PATCH",
-            "description": "Algorithm ID for ZSTD_PATCH (0x03). Assigned optional; application unsupported in M9b.",
+            "description": "Algorithm ID for ZSTD_PATCH (0x03). Assigned optional; application is unsupported.",
             "metadata": {
               "since_milestone": "9b",
               "stability": "stable",
@@ -8385,7 +8782,7 @@
     {
       "name": "sar-fragmentation",
       "path": "crates/sar-fragmentation",
-      "description": "Fragment semantic validation and reassembly logic (moved from sar-core in M11c).",
+      "description": "Fragment semantic validation and reassembly logic.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -8502,7 +8899,7 @@
     {
       "name": "sar-loss-tolerant",
       "path": "crates/sar-loss-tolerant",
-      "description": "Pure policy helpers for LOSS_TOLERANT degraded reconstruction (added in M11c). No dependency on sar-core.",
+      "description": "Pure policy helpers for LOSS_TOLERANT degraded reconstruction. No dependency on sar-core.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -8579,7 +8976,7 @@
     {
       "name": "sar-partition",
       "path": "crates/sar-partition",
-      "description": "Status vocabulary for one physical Partition (M13b.3 P1). Holds no constructor for validated results: the validated type lives in sar-archive. Partition Set assembly, predecessor-link validation, cross-Partition fragmentation/CDC, KMS consistency and extraction remain deferred (M13-BOUNDARY-003 open).",
+      "description": "Partition status vocabulary and metadata-only Partition Set assessment. Holds no constructor for validated results: the validated type lives in sar-archive. Cross-Partition CDC, KMS orchestration and Partition-aware extraction are not provided.",
       "status": "partial",
       "api": {
         "functions": [
@@ -8670,7 +9067,7 @@
           },
           {
             "name": "PredecessorLink",
-            "description": "Declared predecessor link; never verified in P1.",
+            "description": "Declared predecessor link of one physical Partition; inspecting a single Partition never verifies it against a predecessor.",
             "metadata": {
               "since_milestone": "13b.3",
               "stability": "experimental",
@@ -8688,7 +9085,7 @@
           },
           {
             "name": "PartitionSetStatus",
-            "description": "Partition Set evaluation status; always NotEvaluated in P1.",
+            "description": "Partition Set evaluation status carried by a ValidatedPartition; always NotEvaluated, because inspecting one Partition does not evaluate any Set.",
             "metadata": {
               "since_milestone": "13b.3",
               "stability": "experimental",
@@ -8886,7 +9283,7 @@
     {
       "name": "sar-sparse",
       "path": "crates/sar-sparse",
-      "description": "Sparse extent validation and reconstruction logic (moved from sar-core in M11c). Wire-format parse/write remains in sar-core.",
+      "description": "Sparse extent validation and reconstruction logic. Wire-format parse/write remains in sar-core.",
       "status": "implemented",
       "api": {
         "functions": [
@@ -9233,7 +9630,7 @@
     {
       "name": "sar-transport",
       "path": "crates/sar-transport",
-      "description": "Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, SAR-over-TCP binding (M10d), and SAR-over-QUIC binding (M10e, quic feature).",
+      "description": "Transport abstraction traits, deterministic in-memory TCP-like/QUIC-like harness over sar-stream, SAR-over-TCP binding, and SAR-over-QUIC binding (quic feature).",
       "status": "implemented",
       "api": {
         "functions": [
@@ -9553,7 +9950,7 @@
           },
           {
             "name": "QuicSarConnection::feed_stream_bytes",
-            "description": "Feed bytes for a specific QUIC stream into the M10c QUIC-policy harness. Returns transport actions. Control-frame bytes are buffered; call flush_pending_control_frames to send.",
+            "description": "Feed bytes for a specific QUIC stream into the QUIC-policy harness. Returns transport actions. Control-frame bytes are buffered; call flush_pending_control_frames to send.",
             "metadata": {
               "feature_flags": [
                 "quic"
@@ -9900,7 +10297,7 @@
           },
           {
             "name": "InMemoryTransport",
-            "description": "Deterministic in-memory transport model implementing TCP-like and QUIC-like policy behaviors.  M10i adds with_key_provider() for TLS_EXPORTER post-binding AEAD enforcement.",
+            "description": "Deterministic in-memory transport model implementing TCP-like and QUIC-like policy behaviors.  with_key_provider() enables TLS_EXPORTER post-binding AEAD enforcement.",
             "metadata": {
               "safety_notes": [
                 "No sockets, async runtime, TLS, retransmission, or congestion control.",
@@ -10028,7 +10425,7 @@
           },
           {
             "name": "TcpSarConnection",
-            "description": "SAR-over-TCP connection binding. Generic over any Read+Write stream. Uses a single TransportStreamId(0). Drives M10c TCP policy. Uses std::net blocking I/O; no async runtime, no TLS, no QUIC.",
+            "description": "SAR-over-TCP connection binding. Generic over any Read+Write stream. Uses a single TransportStreamId(0). Drives the TCP policy model. Uses std::net blocking I/O; no async runtime, no TLS, no QUIC.",
             "metadata": {
               "safety_notes": [
                 "No TLS is implemented. For untrusted networks, SAR AEAD and/or external transport security is required.",

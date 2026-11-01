@@ -24,7 +24,7 @@ Repository root crates:
 - `sar-loss-tolerant`
 - `sar-stream`
 - `sar-transport`
-- `sar-partition` (single-Partition status enums and metadata-only Partition Set assessment; fragment grouping/orchestration deferred; the plaintext multi-Partition writer lives in `sar-archive`)
+- `sar-partition` (single-Partition status enums and metadata-only Partition Set assessment; fragment grouping/orchestration lives in `sar-archive` (P4 `PartitionSetFragmentReader`); the plaintext multi-Partition writer lives in `sar-archive`)
 
 Other top-level directories:
 - `fuzz/` — libFuzzer fuzz workspace (M12b). A separate Cargo workspace containing fuzz targets

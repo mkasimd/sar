@@ -45,11 +45,18 @@ use sar_core::{
 };
 
 mod partition;
+mod partition_fragments;
 mod partition_writer;
 pub use partition::{PartitionManifestParams, ValidatedPartition, ValidatedPartitionSet};
+pub use partition_fragments::{
+    FragmentGroupStructure, PartitionLogicalEntry, PartitionSetFragmentLimits,
+    PartitionSetFragmentOptions, PartitionSetFragmentReader, PartitionSetFragmentReport,
+};
+pub(crate) use partition_writer::FragmentLfhParams;
 pub use partition_writer::{
-    PartitionMemberSummary, PartitionSetSummary, PartitionSetWriter, PartitionSetWriterLimits,
-    PartitionSetWriterOptions, PartitionWriter,
+    FragmentGroupSpec, FragmentWriterLimits, FragmentedPartitionSetSummary, PartitionMemberSummary,
+    PartitionSetSummary, PartitionSetWriter, PartitionSetWriterLimits, PartitionSetWriterOptions,
+    PartitionWriter,
 };
 
 use crate::transform::{
@@ -2924,6 +2931,16 @@ impl<W: Write> ArchiveWriter<W> {
 
     /// Adds one archive entry.
     pub fn add_entry(&mut self, entry: EntryInput) -> Result<EntryWritten, SarError> {
+        self.add_entry_with_fragment(entry, None)
+    }
+
+    /// Shared Entry path; `fragment` turns the LFH into an archival fragment
+    /// LFH (spec Section 6.1.3) without changing any other encoding step.
+    pub(crate) fn add_entry_with_fragment(
+        &mut self,
+        entry: EntryInput,
+        fragment: Option<FragmentLfhParams>,
+    ) -> Result<EntryWritten, SarError> {
         if self.finished {
             self.stream_state = StreamWriteState::Error;
             return Err(SarError::Malformed("archive writer already finished"));
@@ -2979,6 +2996,9 @@ impl<W: Write> ArchiveWriter<W> {
 
         // Apply expanded EntryInput metadata to the LFH.
         self.apply_entry_input_to_lfh(&entry, &mut lfh)?;
+        if let Some(fragment) = fragment {
+            fragment.apply(&mut lfh)?;
+        }
 
         if self.flags.contains(GlobalFlags::CDC_SUPPORT) {
             lfh.cdc_algo_id = Some(sar_core::cdc::CDC_ALGO_LITERAL);
